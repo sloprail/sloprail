@@ -33,7 +33,7 @@ func TestT038_08_ADeleteThatWasReadSaysSo(t *testing.T) {
 		"sr-file delete docs/pinned.md --cite:user 'delete the pinned doc'",
 	} {
 		t.Run(command, func(t *testing.T) {
-			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": "include"})
+			e, proj, _ := project(t, static(echoKnownCheck), map[string]string{"echo-known": "include"})
 			res := e.Run(proj, "s-038-08", "delete the pinned doc", Turns("done",
 				Bash("b1", command),
 			))
@@ -55,7 +55,7 @@ func TestT038_09_DeletingALinkToAFIFOReturns(t *testing.T) {
 		"sr-file delete docs/to-zero.md --cite:user 'delete the links'",
 	} {
 		t.Run(command, func(t *testing.T) {
-			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": "include"})
+			e, proj, _ := project(t, static(echoKnownCheck), map[string]string{"echo-known": "include"})
 			fifo := filepath.Join(t.TempDir(), "fifo")
 			if err := syscall.Mkfifo(fifo, 0o644); err != nil {
 				t.Fatal(err)

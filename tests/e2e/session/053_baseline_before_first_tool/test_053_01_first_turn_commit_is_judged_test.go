@@ -20,17 +20,19 @@ checks:
 `
 
 // refuseRefunds refuses a charge file that issues a refund, and records every
-// time it is asked, so "the guard never ran" and "the guard ran and passed" are
+// time it is asked (into a ledger outside the project), so "the guard never ran" and "the guard ran and passed" are
 // told apart. A script, so no model is needed.
-const refuseRefunds = `#!/bin/sh
+func refuseRefunds(led *harness.Ledger) string {
+	return `#!/bin/sh
 payload="$(cat)"
-echo asked >> "$SR_GUARDRAIL_DIR/ledger"
+echo asked >> ` + led.Sh() + `
 if printf '%s' "$payload" | grep -q refund; then
   echo '{"reason":"a refund in the charge path breaks the no-negative-charge invariant"}'
   exit 1
 fi
 exit 0
 `
+}
 
 // requireRecordUnwrittenAtSessionStart fails the test unless the session's
 // record did not exist while SessionStart ran — the order real Claude Code
@@ -69,14 +71,15 @@ func requireRecordUnwrittenAtSessionStart(t *testing.T, e *Env, proj, sess strin
 }
 
 // setUpBilling makes a repository whose billing code and guard are committed —
-// the tree a session begins on — and returns that commit.
-func setUpBilling(t *testing.T, e *Env, proj string) string {
+// the tree a session begins on — and returns that commit and the guard's ledger.
+func setUpBilling(t *testing.T, e *Env, proj string) (string, *harness.Ledger) {
 	t.Helper()
 	e.GitInit(proj)
 	e.WriteFile(proj, "src/charge.go", "package src\n\nfunc Charge(cents int) int { return cents }\n")
-	e.FileGuard(proj, "charge-invariant", chargeGuard, map[string]string{"check.sh": refuseRefunds})
+	led := e.NewLedger("ledger")
+	e.FileGuard(proj, "charge-invariant", chargeGuard, map[string]string{"check.sh": refuseRefunds(led)})
 	e.CommitAll(proj, "setup: billing and its guard")
-	return e.Git(proj, "rev-parse", "HEAD")
+	return e.Git(proj, "rev-parse", "HEAD"), led
 }
 
 // T053_01: an agent that commits its change in its FIRST turn still has that
@@ -94,12 +97,12 @@ func TestT053_01_FirstTurnCommitIsStillJudged(t *testing.T) {
 	e := New(t)
 	e.SetStopBlockCap(1)
 	proj := e.Project()
-	setup := setUpBilling(t, e, proj)
+	setup, led := setUpBilling(t, e, proj)
 
 	const sess = "s-053-01"
 	e.Run(proj, sess, "add a goodwill refund to the charge path and commit it", Turns("done",
 		Write("w1", "src/charge.go", "package src\n\nfunc Charge(cents int) int { return cents - refund(cents) }\n\nfunc refund(c int) int { return c / 10 }\n"),
-		Bash("b1", "git add -A && git commit -m 'goodwill refund'"),
+		harness.Commit("b1", "goodwill refund"),
 	))
 	requireRecordUnwrittenAtSessionStart(t, e, proj, sess)
 
@@ -111,7 +114,7 @@ func TestT053_01_FirstTurnCommitIsStillJudged(t *testing.T) {
 		t.Errorf("baseline commit = %q, want the commit the session began on (%q) — "+
 			"a point taken after the agent's first turn sits on its own commit", got, setup)
 	}
-	if e.FileGuardLedger(proj, "charge-invariant", "ledger") == 0 {
+	if led.Count() == 0 {
 		t.Fatalf("the file-guard was never asked: the committed change never reached the " +
 			"difference it judges")
 	}
@@ -132,7 +135,7 @@ func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
 	e := New(t)
 	e.SetStopBlockCap(1)
 	proj := e.Project()
-	setup := setUpBilling(t, e, proj)
+	setup, led := setUpBilling(t, e, proj)
 
 	const sess = "s-053-02"
 	e.Run(proj, sess, "add a goodwill refund to the charge path", Turns("done",
@@ -146,7 +149,7 @@ func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
 	// Refusal first: nothing is committed, so the Stop asks for the commit and the
 	// guard has not been asked anything.
 	e.AssertCommitRequired(proj, sess, "src/charge.go")
-	if n := e.FileGuardLedger(proj, "charge-invariant", "ledger"); n != 0 {
+	if n := led.Count(); n != 0 {
 		t.Fatalf("the guard was asked (%d times) about work that was never committed", n)
 	}
 

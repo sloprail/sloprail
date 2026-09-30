@@ -347,8 +347,7 @@ checks:
 	// New-format refusal contract: exit non-zero refuses and a `{"reason":…}` on
 	// stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
 	// The whole flat payload still carries `"path":"…bad…"`, so a `*bad*` match on it
-	// works unchanged. The ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine
-	// sets for the check.
+	// works unchanged. The ledger is a file outside the project (LEDGER below).
 	const judgeTemplate = `#!/bin/sh
 payload="$(cat)"
 printf '%s\n' "$payload" >> "LEDGER"

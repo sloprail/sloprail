@@ -45,8 +45,8 @@ checks:
 // sliceScript advances the mark through `query`, then records what `normalize`
 // returns by default and with --whole-session. The `raw` command line of each
 // PreCommandInvoke is the distinctive token the assertions look for — a cheap way
-// to ask "did this read include cycle N's Bash turn". The ledgers are under
-// $SR_GUARDRAIL_DIR, the folder the engine sets for the check.
+// to ask "did this read include cycle N's Bash turn". The ledgers are in a temp
+// dir outside the project (DIR below).
 const sliceTemplate = `#!/bin/sh
 cat > /dev/null
 if [ -z "${SR_TRANSCRIPT:-}" ]; then

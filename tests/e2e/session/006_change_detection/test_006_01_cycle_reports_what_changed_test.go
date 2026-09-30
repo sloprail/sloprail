@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 	"os"
 	"path/filepath"
@@ -30,14 +31,10 @@ import (
 //     GateEventKind, so a rule bound to it is a GATE waking on Stop, never a
 //     file-guard; session/026_stop_subjectless is the dedicated Stop suite.
 //
-// The file-guard check reads the Changeset (`.changeset.files[]`), and records into $SR_GUARDRAIL_DIR (the folder the
-// engine sets for a check) rather than $PWD. A check's cwd is its rule's folder
-// INSIDE the compared tree, so recording is itself a change the next comparison
-// would report — the rules are therefore committed before the session runs (see
-// the session-start commit), and every assertion names the path it expects rather than
-// counting events, so a ledger file appearing in a later cycle's difference
-// cannot make a test lie. The ledgers (`events`, `seen` — no `.md` suffix) fall
-// outside `**/*.md`, so a guard never re-observes its own bookkeeping.
+// The file-guard check reads the Changeset (`.changeset.files[]`), and records into a
+// harness ledger OUTSIDE the project (changesetkit.RecordScript): inside the rule's
+// folder the recording would change the rule's hash between cycles. The rules are
+// committed before the session runs (see the session-start commit).
 
 // recordFileEvent is a NEW-FORMAT file-guard that records every Changeset it is handed, one line per run, and permits unconditionally — the
 // question here is which changes were observed, not what anyone decided about
@@ -51,15 +48,6 @@ checks:
   - script: ./record.sh
 `
 
-// recordFileScript appends the whole payload as one line, into the folder the
-// engine sets for a file-guard check ($SR_GUARDRAIL_DIR =
-// `.sloprail/file-guard/<name>/`).
-const recordFileScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/events"
-printf '\n' >> "$SR_GUARDRAIL_DIR/events"
-exit 0
-`
-
 // recordStopGate is a NEW-FORMAT gate that wakes on Stop and records the event it
 // was handed. No `match`: Stop's kind declaration carries no fields, so there is
 // nothing a match could narrow on. Its check permits, so nothing here blocks
@@ -68,14 +56,6 @@ const recordStopGate = `on:
   - event: Stop
 checks:
   - script: ./record.sh
-`
-
-// recordStopScript appends the whole Stop payload as one line, into the folder the
-// engine sets for a gate check ($SR_GUARDRAIL_DIR = `.sloprail/gate/<name>/`).
-const recordStopScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/events"
-printf '\n' >> "$SR_GUARDRAIL_DIR/events"
-exit 0
 `
 
 // T006_01: what a cycle changed reaches a file-guard as one changeset entry per file.
@@ -97,7 +77,8 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 	e.CommitAll(proj, "the project before the rule")
 	// The rule goes in its own commit: its range starts at that commit's parent, so
 	// the files above are the base, not part of the first range.
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
+	led := e.NewLedger("events")
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule, before the session")
 
@@ -107,7 +88,7 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 		Bash("b1", "rm doomed.md"),
 	).ThenCommit("change some files"))
 
-	events := e.FileGuardLedgerLines(proj, "records", "events")
+	events := led.Lines()
 	if len(events) == 0 {
 		t.Fatalf("the end of the cycle dispatched nothing — no changeset reached a file-guard")
 	}
@@ -135,26 +116,38 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 // The agent commits once mid-cycle and once at the end. A rule's range spans
 // both commits, so a changeset reading only the last one would report the cycle
 // as smaller than it was.
-func TestT006_02_CommittedAndUncommittedWorkBothCount(t *testing.T) {
+func TestT006_02_WorkInSeparateCommitsIsOneChangeset(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
-	e.CommitAll(proj, "the project before the session")
+	led := e.NewLedger("events")
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	base := e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-02", "write and commit", Turns("done",
 		Write("w1", "committed.md", "this gets committed"),
-		Bash("b1", "git add committed.md && git commit -m 'agent commit'"),
+		harness.CommitPaths("b1", "agent commit", "committed.md"),
 		Write("w2", "outstanding.md", "this does not"),
 	).ThenCommit("the rest"))
 
-	events := e.FileGuardLedgerLines(proj, "records", "events")
+	// The premise: committed.md really was committed in a commit of its own, before
+	// the end-of-cycle one, so the range holds two commits and a changeset reading only
+	// the last would miss it. Without this the test is one commit at the end and proves
+	// nothing about spanning.
+	if subjects := e.Git(proj, "log", "--format=%s", base+"..HEAD", "--", "committed.md"); subjects != "agent commit" {
+		t.Fatalf("committed.md was not committed mid-cycle in its own commit (commits touching it: %q)", subjects)
+	}
+	if n := e.Git(proj, "rev-list", "--count", base+"..HEAD"); n != "2" {
+		t.Fatalf("the cycle made %s commits, want 2 (the mid-cycle one and the last)", n)
+	}
+
+	events := led.Lines()
 
 	if !changesetkit.Has(changesetkit.Files(t, events), "A", "committed.md") {
 		t.Errorf("work committed during the cycle fell out of the difference:\n%s", strings.Join(events, "\n"))
 	}
 	if !changesetkit.Has(changesetkit.Files(t, events), "A", "outstanding.md") {
-		t.Errorf("work left outstanding fell out of the difference:\n%s", strings.Join(events, "\n"))
+		t.Errorf("work committed at the end fell out of the difference:\n%s", strings.Join(events, "\n"))
 	}
 }
 
@@ -173,7 +166,8 @@ func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Gate(proj, "cyclestop", recordStopGate, map[string]string{"record.sh": recordStopScript})
+	led := e.NewLedger("events")
+	e.Gate(proj, "cyclestop", recordStopGate, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-03", "write several files", Turns("done",
@@ -182,7 +176,7 @@ func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 		Write("w3", "c.md", "three"),
 	))
 
-	lines := e.GateLedgerLines(proj, "cyclestop", "events")
+	lines := led.Lines()
 
 	var stops []string
 	for _, l := range lines {
@@ -347,7 +341,8 @@ func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
+	led := e.NewLedger("events")
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-05", "write a scratch file", Turns("done",
@@ -359,7 +354,7 @@ func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 		t.Fatalf("scratch.md is tracked (%q), so this test does not exercise the untracked half", tracked)
 	}
 	e.AssertCommitRequired(proj, "s-006-05", "scratch.md")
-	if events := e.FileGuardLedgerLines(proj, "records", "events"); changesetkit.Saw(changesetkit.Files(t, events), "scratch.md") {
+	if events := led.Lines(); changesetkit.Saw(changesetkit.Files(t, events), "scratch.md") {
 		t.Fatalf("an uncommitted file was judged:\n%s", strings.Join(events, "\n"))
 	}
 	seen := len(CommitRequired(e.BlockingErrorsFrom(proj, "s-006-05", "Stop")))
@@ -367,7 +362,7 @@ func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 	e.Run(proj, "s-006-05", "now commit it", Turns("committed").ThenCommit("the scratch file"))
 
 	e.NoCommitRequired(proj, "s-006-05", seen)
-	if events := e.FileGuardLedgerLines(proj, "records", "events"); !changesetkit.Has(changesetkit.Files(t, events), "A", "scratch.md") {
+	if events := led.Lines(); !changesetkit.Has(changesetkit.Files(t, events), "A", "scratch.md") {
 		t.Errorf("the committed file never reached the rule:\n%s", strings.Join(events, "\n"))
 	}
 }

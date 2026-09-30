@@ -74,7 +74,7 @@ checks:
 // time — an answer in which every marker below reads as absent, indistinguishable
 // from correct narrowing. SR_TRANSCRIPT and SR_WORKSPACE are set on every check
 // process by the new dispatch for exactly this. The ledger is
-// $SR_GUARDRAIL_DIR/answers.
+// a file outside the project.
 //
 // The answer is bracketed so one cycle's span can be told from the next's even
 // when a cycle is driven round more than once by a block.

@@ -3,9 +3,7 @@ package harness
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"os/exec"
 	"strings"
-	"testing"
 )
 
 // The agent committing, as a step of a scenario, and the refusal it meets when it
@@ -22,17 +20,13 @@ import (
 // the turn that writes a file and commits it). The id must be unique among the
 // session's turns, like any other turn's.
 func Commit(id, msg string, trailers ...string) Turn {
-	return Bash(id, commitCmd(msg, trailers...))
+	return Bash(id, commitCmd(stageArgs(), msg, trailers...))
 }
 
 // CommitPaths is a scenario turn in which the AGENT commits only the given paths,
 // leaving everything else (an untracked nested clone, say) uncommitted.
 func CommitPaths(id, msg string, paths ...string) Turn {
-	args := make([]string, len(paths))
-	for i, p := range paths {
-		args[i] = shQuote(p)
-	}
-	return Bash(id, commitStagedCmd("git add -- "+strings.Join(args, " "), msg))
+	return Bash(id, commitCmd(stageArgs(paths...), msg))
 }
 
 // ThenCommit is the scenario followed by the agent committing its work: the
@@ -73,9 +67,11 @@ func (e *Env) AssertCommitRequired(projDir, sessionID string, paths ...string) {
 	if len(refused) == 0 {
 		e.t.Fatalf("uncommitted guarded work did not refuse the Stop; blocking errors: %q", e.BlockingErrors(projDir, sessionID))
 	}
-	for _, p := range paths {
-		if !strings.Contains(refused[0], p) {
-			e.t.Fatalf("the commit-required refusal should name %q:\n%s", p, refused[0])
+	for i, msg := range refused {
+		for _, p := range paths {
+			if !strings.Contains(msg, p) {
+				e.t.Fatalf("commit-required refusal %d of %d should name %q:\n%s", i+1, len(refused), p, msg)
+			}
 		}
 	}
 }
@@ -87,23 +83,5 @@ func (e *Env) NoCommitRequired(projDir, sessionID string, seen int) {
 	e.t.Helper()
 	if n := len(CommitRequired(e.BlockingErrorsFrom(projDir, sessionID, "Stop"))); n != seen {
 		e.t.Fatalf("the Stop was refused for uncommitted work (%d refusals, had %d)", n, seen)
-	}
-}
-
-// CommitInstalled commits everything in dir so a freshly installed guardrail tree is
-// part of the session's history rather than a change waiting to be committed: an
-// uncommitted rule folder is itself a guarded path (the sloprail plugin's
-// authoring-slop selects every hook script), so the first Stop would ask for a commit
-// of it. A no-op when dir is not a git repository. A package function, not an Env
-// method, for the installers that have no Env — they are handed a directory.
-func CommitInstalled(t testing.TB, dir string) {
-	t.Helper()
-	if err := exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
-		return
-	}
-	for _, args := range [][]string{{"add", "-A"}, {"commit", "--allow-empty", "-m", "install the guardrail tree"}} {
-		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("harness: git %v: %v\n%s", args, err, out)
-		}
 	}
 }

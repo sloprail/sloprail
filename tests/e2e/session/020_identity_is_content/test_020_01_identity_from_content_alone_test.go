@@ -1,9 +1,6 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -44,43 +41,17 @@ checks:
   - script: ./judge.sh
 `
 
-// judgeScript records and permits.
+// The check is changesetkit.RecordScript: it records every payload and permits.
 //
 // Permitting matters here: the skip this directory is about only applies to
 // content a guardrail has judged AND passed, so a refusing fixture would keep
 // every file eligible for re-judging and make the assertions meaningless. The
-// ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine sets for the check.
-//
-// The ledger lives OUTSIDE the rule's folder, at a path the test bakes into the
-// script: a rule's hash covers its whole folder, and a ledger growing inside it
-// would change the hash between runs and drop the rule's watermark.
-func judgeScript(ledger string) string {
-	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
-}
-
-// ledgerFile is where this test's check records what it is handed.
-func ledgerFile(t *testing.T) string { return filepath.Join(t.TempDir(), "seen") }
+// ledger lives OUTSIDE the rule's folder (harness.Ledger): a rule's hash covers its
+// whole folder, and a ledger growing inside it would change the hash between runs
+// and drop the rule's watermark.
 
 func countPath(got []changesetkit.Observed, path string) int {
 	return len(changesetkit.Statuses(got, path))
-}
-
-func seen(t *testing.T, ledger string) []changesetkit.Observed {
-	t.Helper()
-	body, err := os.ReadFile(ledger)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return changesetkit.Files(t, lines)
 }
 
 // T020_01: content restored to something already judged is not judged again.
@@ -92,14 +63,21 @@ func seen(t *testing.T, ledger string) []changesetkit.Observed {
 // fingerprint" revalidation is retired; the intent, that identity derives from
 // content and not from when it was written, is carried here.)
 //
+// Why only WITHIN one range, and not across cycles: the later-cycle version (judge
+// A, pass, change to B in a cycle, restore A in a later one, expect silence) no
+// longer holds. A passing Stop moves the rule's base to the judged commit, so the
+// restore in the later cycle is a real difference against B and is judged; the
+// engine keeps no per-file memory of fingerprints it once passed. That cross-cycle
+// skip was the old revalidation record, which the commit model retired.
+//
 // The control is the last run: genuinely new content IS judged, so silence about
 // the reverted file is not an engine that judges nothing.
 func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e := New(t)
-	ledger := ledgerFile(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript(ledger)})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-020-01"
@@ -108,7 +86,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e.Run(proj, sess, "write it", Turns("done",
 		Write("w1", "subject.md", original),
 	).ThenCommit("add subject"))
-	afterFirst := countPath(seen(t, ledger), "subject.md")
+	afterFirst := countPath(changesetkit.Files(t, led.Lines()), "subject.md")
 	if afterFirst == 0 {
 		t.Fatalf("the file was never judged at all, so nothing below can be a skip")
 	}
@@ -120,7 +98,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 		Write("w3", "subject.md", original),
 		harness.Commit("c3", "restore subject"),
 	))
-	if got := countPath(seen(t, ledger), "subject.md"); got != afterFirst {
+	if got := countPath(changesetkit.Files(t, led.Lines()), "subject.md"); got != afterFirst {
 		t.Fatalf("content restored to what the range started with was judged again (%d then %d) — "+
 			"identity is being derived from the commits made rather than from what the file holds",
 			afterFirst, got)
@@ -130,7 +108,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e.Run(proj, sess, "change it for real", Turns("done",
 		Write("w4", "subject.md", "genuinely new content\n"),
 	).ThenCommit("really change subject"))
-	if got := countPath(seen(t, ledger), "subject.md"); got <= afterFirst {
+	if got := countPath(changesetkit.Files(t, led.Lines()), "subject.md"); got <= afterFirst {
 		t.Fatalf("changed content was not judged (%d then %d) — the hook is not running for new "+
 			"content, so the skip asserted above would hold for the wrong reason", afterFirst, got)
 	}
@@ -148,10 +126,10 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 // content byte-identical to something already passed.
 func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 	e := New(t)
-	ledger := ledgerFile(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript(ledger)})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": changesetkit.RecordScript(led.Path())})
 
 	const sess = "s-020-02"
 	const content = "content that will move\n"
@@ -161,7 +139,7 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 	e.Run(proj, sess, "write it", Turns("done",
 		Write("w1", "origin.md", content),
 	).ThenCommit("add origin"))
-	if countPath(seen(t, ledger), "origin.md") == 0 {
+	if countPath(changesetkit.Files(t, led.Lines()), "origin.md") == 0 {
 		t.Fatalf("the file was never judged at its original path, so the move below proves nothing")
 	}
 
@@ -169,7 +147,7 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 		Bash("b1", "mv origin.md moved.md"),
 	).ThenCommit("move origin"))
 
-	got := seen(t, ledger)
+	got := changesetkit.Files(t, led.Lines())
 	if countPath(got, "moved.md") == 0 {
 		t.Fatalf("content that moved to a new path was never judged there: %v — the verdict was "+
 			"recorded for the old path, so identity keyed on content alone lets a file arrive "+

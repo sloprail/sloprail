@@ -168,11 +168,18 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 			"commits into the range the dispatching session's Stop judges; judging it at its own "+
 			"stop too is one verdict twice. Ledger: %v", len(judges), judges, lines)
 	}
-	// Whose: the dispatching session's own identity, the one that also judged its
-	// own work — here the scenario file the harness leaves in the tree.
-	if root, ok := lineAbout(lines, ".scenario.sh"); ok && sessionOf(root) != judges[0] {
-		t.Fatalf("the sub-agent's file was judged under %s, not the dispatching session's (%s)",
-			judges[0], sessionOf(root))
+	// Whose: the dispatching session's own identity, asked of the engine itself —
+	// never inferred from another ledger line, which the harness's scenario file (kept
+	// out of commits) would not supply. Unconditional: an empty identity fails rather
+	// than skips the comparison.
+	rootID := e.SessionIdentity(proj, "s-015-02")
+	if rootID == "" {
+		t.Fatalf("the engine resolved no identity for the dispatching session, so whose verdict " +
+			"this was cannot be told")
+	}
+	if judges[0] != rootID {
+		t.Fatalf("the sub-agent's file was judged under %q, not the dispatching session's (%q)",
+			judges[0], rootID)
 	}
 }
 

@@ -57,12 +57,6 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
 // underWorktree reports the observed paths that lie inside a nested worktree.
 func underWorktree(got []changesetkit.Observed) []string {
 	var out []string
@@ -251,7 +245,8 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	// The mock does not APPLY a sub-agent's tool calls, so this script's Write
@@ -285,7 +280,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 			"the pollution this test is about is not present, so its conclusion would be vacuous", staged)
 	}
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 
 	// The control: the root's own work reached the rule.
 	if !changesetkit.Saw(got, "root-own.md") {

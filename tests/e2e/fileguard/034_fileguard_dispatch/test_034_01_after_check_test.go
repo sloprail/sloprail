@@ -1,9 +1,9 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // This file covers a file-guard's AFTER-check (the only moment a file-guard acts): a
@@ -15,60 +15,25 @@ import (
 // forbidSecretGuard is a file-guard: a memories/ markdown file is
 // not fine if it holds the word SECRET. The check reads the Changeset payload
 // (the committed files' content) and refuses on a match, appending a line to its
-// own ledger each time it is ASKED — so a test can count how often it was judged.
+// own ledger (a harness ledger) each time it is ASKED — so a test can count how often it was judged.
 const forbidSecretGuard = `match: memories/**/*.md
 checks:
   - script: ./check.sh
 `
 
-// checkForbidSecret refuses a file whose newContent holds SECRET, recording every
-// time it runs into a ledger under the guard's own folder (SR_GUARDRAIL_DIR).
-const checkForbidSecret = `#!/bin/sh
+// checkForbidSecret refuses a file whose content holds SECRET, recording every time it
+// runs — and the paths of the files it was handed — into led, a harness ledger OUTSIDE
+// the project (inside the rule's folder it would change the rule's hash: T034_19).
+func checkForbidSecret(led *harness.Ledger) string {
+	return `#!/bin/sh
 payload="$(cat)"
-echo asked >> "$SR_GUARDRAIL_DIR/ledger"
+echo "asked $(printf '%s' "$payload" | jq -r '[.changeset.files[].path] | join(",")')" >> ` + led.Sh() + `
 if printf '%s' "$payload" | grep -q SECRET; then
   echo '{"reason":"this file holds a SECRET and is not fine"}'
   exit 1
 fi
 exit 0
 `
-
-// fileGuardLedger reads the ledger a file-guard's check appended to, counting how
-// many times the check was asked. Absent means it never ran.
-func fileGuardLedger(t *testing.T, projDir, guardName string) int {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", guardName, "ledger"))
-	if os.IsNotExist(err) {
-		return 0
-	}
-	if err != nil {
-		t.Fatalf("read file-guard ledger: %v", err)
-	}
-	n := 0
-	for _, line := range splitNonEmpty(string(body)) {
-		_ = line
-		n++
-	}
-	return n
-}
-
-func splitNonEmpty(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == '\n' {
-			if cur != "" {
-				out = append(out, cur)
-			}
-			cur = ""
-			continue
-		}
-		cur += string(r)
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
 }
 
 // T034_01: a not-fine committed file blocks the TURN at Stop.
@@ -80,7 +45,8 @@ func TestT034_01_NotFineFileBlocksTurn(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	led := e.NewLedger("ledger")
+	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
 	e.CommitAll(proj, "the rule and its scripts")
 
 	e.Run(proj, "s-034-01", "write a memory with a secret", Turns("done",
@@ -111,7 +77,8 @@ func TestT034_02_FineFileAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	led := e.NewLedger("ledger")
+	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
 	e.CommitAll(proj, "the rule and its scripts")
 
 	e.Run(proj, "s-034-02", "write a clean memory", Turns("done",
@@ -124,7 +91,7 @@ func TestT034_02_FineFileAdmits(t *testing.T) {
 	}
 	// The guard DID run — it just passed. (Proves the pass is a real check, not a
 	// guard that never fired.)
-	if n := fileGuardLedger(t, proj, "no-secrets"); n == 0 {
+	if n := led.Count(); n == 0 {
 		t.Errorf("the file-guard never ran on a matching file")
 	}
 }
@@ -143,7 +110,8 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	led := e.NewLedger("ledger")
+	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
 	e.CommitAll(proj, "the rule and its scripts")
 
 	sess := "s-034-03"
@@ -152,7 +120,7 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	e.Run(proj, sess, "write a memory with a secret", Turns("done",
 		Write("w1", "memories/note.md", "holds a SECRET"),
 	).ThenCommit("add the memory"))
-	afterFirst := fileGuardLedger(t, proj, "no-secrets")
+	afterFirst := led.Count()
 	if afterFirst == 0 {
 		t.Fatalf("the file-guard never ran in the first cycle")
 	}
@@ -162,7 +130,7 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	e.Run(proj, sess, "do something unrelated", Turns("done",
 		Write("w2", "memories/other.md", "clean"),
 	).ThenCommit("add another memory"))
-	afterSecond := fileGuardLedger(t, proj, "no-secrets")
+	afterSecond := led.Count()
 	if afterSecond <= afterFirst {
 		t.Fatalf("an unfixed not-fine file was NOT judged again on the next cycle: "+
 			"asked %d times after cycle 1, %d after cycle 2 — the range is still refused and must be judged with the new commit",
@@ -173,26 +141,26 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	}
 
 	// Cycle 3: FIX the file. The squashed range passes, and is not reported again.
-	blocked := len(e.BlockingErrorsFrom(proj, sess, "Stop"))
+	blocked := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 	e.Run(proj, sess, "fix the memory", Turns("done",
 		Write("w3", "memories/note.md", "the secret is gone now"),
 	).ThenCommit("fix the memory"))
-	if n := len(e.BlockingErrorsFrom(proj, sess, "Stop")); n != blocked {
+	if n := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); n != blocked {
 		t.Errorf("the fixed range was still refused: %d blocking errors, had %d", n, blocked)
 	}
-	afterFix := fileGuardLedger(t, proj, "no-secrets")
+	afterFix := led.Count()
 
 	// Cycle 4: unrelated work. Only the new commit is judged: the passed range
 	// is behind the rule's watermark.
 	e.Run(proj, sess, "more unrelated work", Turns("done",
 		Write("w4", "memories/third.md", "clean"),
 	).ThenCommit("add a third memory"))
-	afterUnrelated := fileGuardLedger(t, proj, "no-secrets")
+	afterUnrelated := led.Count()
 	if afterUnrelated != afterFix+1 {
 		t.Errorf("after a pass the next cycle judged more than its own commit: asked %d times after the fix, "+
 			"%d after one unrelated cycle (want exactly one more)", afterFix, afterUnrelated)
 	}
-	if n := len(e.BlockingErrorsFrom(proj, sess, "Stop")); n != blocked {
+	if n := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); n != blocked {
 		t.Errorf("the unrelated clean commit was refused: %d blocking errors, had %d", n, blocked)
 	}
 }

@@ -7,9 +7,9 @@ package changesetkit
 
 import (
 	"encoding/json"
-	"os"
-	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // Observed is one file entry of one recorded changeset.
@@ -82,20 +82,7 @@ func RecordScript(ledger string) string {
 // Ledger is the recorded payloads, one per line; a ledger not yet written is empty.
 func Ledger(t testing.TB, path string) []string {
 	t.Helper()
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
+	return harness.ReadLedgerLines(t, path)
 }
 
 // Has reports whether some recorded changeset holds the path with the given

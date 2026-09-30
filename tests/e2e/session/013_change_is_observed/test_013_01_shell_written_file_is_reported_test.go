@@ -45,16 +45,6 @@ checks:
   - script: ./record.sh
 `
 
-// recordScript appends the whole payload as one line.
-//
-// The ledger is $SR_GUARDRAIL_DIR/seen — the folder the engine sets for a
-// file-guard check (`.sloprail/file-guard/<name>/`), the new-format ledger idiom.
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
 // T013_01: a file written by a shell redirect is reported.
 //
 // The file is created by `printf > path` inside a Bash turn. There is no Write
@@ -70,14 +60,15 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-013-01", "write through a script", Turns("done",
 		Bash("b1", "printf 'made by a script\n' > from-script.md"),
 	).ThenCommit("script output"))
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	if !changesetkit.Saw(got, "from-script.md") {
 		t.Fatalf("a file created by a shell redirect was not reported: got %v — "+
 			"no tool call and no parseable argument names it, so only looking at the tree finds it", got)
@@ -99,7 +90,8 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	// One turn that genuinely writes, so the cycle is not empty and a build
@@ -110,7 +102,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 		Bash("b2", "echo would have written never-written.md"),
 	).ThenCommit("real output"))
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	// The control: the cycle DID report something, so the absence asserted next
 	// is a real absence rather than an engine that dispatched nothing.
 	if !changesetkit.Saw(got, "really-written.md") {

@@ -273,15 +273,32 @@ exit 1
 // carry no information — and a rule bound to created files would refuse a
 // sub-agent that created none.
 //
-// Two shapes, because they fail differently: one that runs a command touching
-// nothing, and one that creates a file and removes it again within the cycle. The
-// second is the interesting one — the tree ends where it started, so a cycle
-// diffing START against END correctly sees nothing, while one that tracked
-// individual tool calls would see a creation.
+// A file-guard judges COMMITS, so a sub-agent that merely wrote something and never
+// committed would be unjudged whatever the engine does with differences. Every case
+// therefore commits, and the silence is about what the commits net to:
+//
+//   - one that commits nothing new (an empty commit);
+//   - one that commits a file and then commits its removal — the tree ends where it
+//     started, so a range measured START against END correctly sees nothing, while one
+//     that tracked individual commits or tool calls would see a creation;
+//   - the control, which commits a file it keeps: its cycle IS judged, so the silence
+//     of the other two is an engine that looked and found nothing, not one that never
+//     judges a sub-agent's commits.
 func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
-	for _, tc := range []struct{ name, command string }{
-		{"writes nothing at all", "true"},
-		{"writes then deletes it again", "echo x > transient.md && rm transient.md"},
+	for _, tc := range []struct {
+		name       string
+		turns      []harness.Turn
+		wantJudged bool
+	}{
+		{"commits nothing new", []harness.Turn{harness.Commit("sb1", "an empty commit")}, false},
+		{"commits a file and then its removal", []harness.Turn{
+			harness.CommitFile("sb1", "transient.md", "x\n", "add transient"),
+			Bash("sb2", "rm transient.md"),
+			harness.Commit("sb3", "remove transient"),
+		}, false},
+		{"control: commits a file it keeps", []harness.Turn{
+			harness.CommitFile("sb1", "kept.md", "x\n", "add kept"),
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := New(t)
@@ -289,7 +306,7 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 			e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 			e.GitInit(proj)
 
-			sub := harness.SubagentScript(t, harness.Turns("sub done", Bash("sb1", tc.command)))
+			sub := harness.SubagentScript(t, harness.Turns("sub done", tc.turns...))
 
 			res := e.Run(proj, "s-015-09-"+strings.ReplaceAll(tc.name, " ", "-"),
 				"delegate work that leaves nothing", Turns("root done",
@@ -306,9 +323,24 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 			// The dispatch was real, so "nothing was judged" is about a cycle
 			// that happened rather than one that never ran.
 			wt := theWorktree(t, proj)
+			wtPath := filepath.Join(proj, ".claude", "worktrees", wt)
 
-			if lines := subLedger(t, proj, wt, "recorder", "log"); len(lines) != 0 {
-				t.Fatalf("a sub-agent whose cycle left the tree as it found it still had %d "+
+			// The premise: the sub-agent really did commit, in its own worktree.
+			if e.Git(wtPath, "log", "--oneline", "-1", "--format=%s") == e.Git(proj, "log", "--oneline", "-1", "--format=%s") {
+				t.Fatalf("the sub-agent's worktree holds no commit of its own, so no commit was made " +
+					"and the silence below would be about an uncommitted cycle")
+			}
+
+			lines := subLedger(t, proj, wt, "recorder", "log")
+			if tc.wantJudged {
+				if len(lines) == 0 {
+					t.Fatalf("the control did not get its committed file judged, so the silence in the " +
+						"other cases proves nothing")
+				}
+				return
+			}
+			if len(lines) != 0 {
+				t.Fatalf("a sub-agent whose commits leave the tree as they found it still had %d "+
 					"verdict(s) recorded (%v). A cycle with no difference must judge nothing — "+
 					"otherwise a rule bound to created files refuses a sub-agent that created "+
 					"none, and every positive assertion in this package stops carrying "+
@@ -317,10 +349,13 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 
 			// And the transient file really is gone, so the second case is the
 			// case it claims to be.
-			if tc.command != "true" {
-				if _, err := os.Stat(filepath.Join(proj, ".claude", "worktrees", wt, "transient.md")); err == nil {
+			if strings.Contains(tc.name, "removal") {
+				if _, err := os.Stat(filepath.Join(wtPath, "transient.md")); err == nil {
 					t.Fatalf("the file the sub-agent deleted is still there, so the tree DID differ " +
 						"and this case did not exercise what it says")
+				}
+				if e.Git(wtPath, "log", "--format=%s", "--", "transient.md") == "" {
+					t.Fatalf("the transient file was never committed, so its removal is not a netted-out range")
 				}
 			}
 		})
@@ -348,12 +383,8 @@ func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
-	// Identity given on the command line so the run does not depend on whatever
-	// the machine has configured, and --no-gpg-sign so a signing setup cannot
-	// make this hang.
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
-		Bash("sb1", "echo committed > committed-by-the-sub.md && git add -A && "+
-			"git -c user.email=sub@example.invalid -c user.name=sub commit -q -m 'sub work' --no-gpg-sign"),
+		harness.CommitFile("sb1", "committed-by-the-sub.md", "committed\n", "sub work"),
 	))
 
 	res := e.Run(proj, "s-015-10", "delegate work that gets committed", Turns("root done",

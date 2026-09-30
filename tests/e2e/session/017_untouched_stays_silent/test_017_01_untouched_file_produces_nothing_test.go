@@ -3,6 +3,7 @@ package e2e
 import (
 	"testing"
 
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
@@ -34,12 +35,6 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
 // seedUntouched writes the files that exist BEFORE the session starts and
 // commits them, so they are part of the baseline rather than part of the
 // cycle's work.
@@ -54,8 +49,8 @@ func seedUntouched(e *Env, proj string) {
 // installWatcher adds the rule in its OWN commit, after the seed: a file-guard's
 // range starts at the parent of the commit that last touched its folder, so a
 // seed committed together with the rule would fall inside the first range.
-func installWatcher(e *Env, proj string) {
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+func installWatcher(e *Env, proj string, led *harness.Ledger) {
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "install the rule")
 }
@@ -73,13 +68,14 @@ func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 	writeFile(t, proj, "old-one.md", "original\n")
 	writeFile(t, proj, "old-two.md", "original\n")
 	seedUntouched(e, proj)
-	installWatcher(e, proj)
+	led := e.NewLedger("seen")
+	installWatcher(e, proj, led)
 
 	e.Run(proj, "s-017-01", "touch one file", Turns("done",
 		Write("w1", "old-one.md", "changed by the agent\n"),
 	).ThenCommit("the work"))
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	if !changesetkit.Saw(got, "old-one.md") {
 		t.Fatalf("the file the cycle changed was not reported: got %v — "+
 			"this ledger cannot register a change, so no absence asserted in this directory means anything", got)
@@ -104,13 +100,14 @@ func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 	writeFile(t, proj, "touched.md", "original\n")
 	writeFile(t, proj, "untouched.md", "original\n")
 	seedUntouched(e, proj)
-	installWatcher(e, proj)
+	led := e.NewLedger("seen")
+	installWatcher(e, proj, led)
 
 	e.Run(proj, "s-017-02", "touch one of two", Turns("done",
 		Write("w1", "touched.md", "changed by the agent\n"),
 	).ThenCommit("the work"))
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	// The positive half, in this same session. Without it the next assertion
 	// holds for an engine that dispatched nothing whatsoever.
 	if !changesetkit.Saw(got, "touched.md") {
@@ -141,7 +138,8 @@ func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
 	writeFile(t, proj, "round-trip.md", "original\n")
 	writeFile(t, proj, "genuinely-changed.md", "original\n")
 	seedUntouched(e, proj)
-	installWatcher(e, proj)
+	led := e.NewLedger("seen")
+	installWatcher(e, proj, led)
 
 	e.Run(proj, "s-017-03", "change one back", Turns("done",
 		Write("w1", "round-trip.md", "temporarily different\n"),
@@ -150,7 +148,7 @@ func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
 		Write("w3", "round-trip.md", "original\n"),
 	).ThenCommit("the work"))
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	if !changesetkit.Saw(got, "genuinely-changed.md") {
 		t.Fatalf("the file left different is missing from %v — nothing was observed, so the "+
 			"silence about the restored file proves nothing", got)

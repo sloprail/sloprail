@@ -27,12 +27,6 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
 // T016_01: work the agent committed during the cycle is still reported.
 //
 // The whole cycle's output is committed, so the tree has nothing outstanding at
@@ -43,7 +37,8 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-016-01", "write and commit", Turns("done",
@@ -67,7 +62,7 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 		t.Fatalf("the agent's file was never committed, so this does not test the committed case")
 	}
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	if !changesetkit.Saw(got, "committed-work.md") {
 		t.Fatalf("work the agent committed mid-cycle was not reported: %v — the tree is clean, "+
 			"so a difference that only looked at outstanding work found nothing and called the "+
@@ -86,7 +81,8 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-016-02"
@@ -102,7 +98,7 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 		t.Fatalf("the file meant to be committed is still outstanding (%q)", status)
 	}
 	e.AssertCommitRequired(proj, sess, "outstanding.md")
-	if got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen")); changesetkit.Saw(got, "outstanding.md") {
+	if got := changesetkit.Files(t, led.Lines()); changesetkit.Saw(got, "outstanding.md") {
 		t.Fatalf("uncommitted work was judged before it was committed: %v", got)
 	}
 	seen := len(CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")))
@@ -110,7 +106,7 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	e.Run(proj, sess, "now commit it", Turns("committed").ThenCommit("the outstanding file"))
 	e.NoCommitRequired(proj, sess, seen)
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	if !changesetkit.Saw(got, "committed.md") {
 		t.Fatalf("the committed half of the cycle's work is missing: %v", got)
 	}
