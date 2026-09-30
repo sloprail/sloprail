@@ -361,3 +361,20 @@ func TestCheckResults_ClosedStoreReportsErrClosed(t *testing.T) {
 	_, _, err = s.CachedCheck("a", "b", "c")
 	assert.ErrorIs(t, err, ErrClosed)
 }
+
+// Clearing a stale fail must not turn the run that failed into a pass: a
+// watermark there would sweep a refused range into the baseline.
+func TestPassedHeads_ARunWhoseFailWentStaleStillDidNotPass(t *testing.T) {
+	s := openTestStore(t)
+	failedRun := record(t, s, run("h0"), judge("fail", "old"))
+	live := record(t, s, run("h1"), judge("pass", "new"))
+
+	n, err := s.ResolveStale(rule, "h1", live)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	_ = failedRun
+
+	heads, err := s.PassedHeads(rule, "h1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"h1"}, heads, "h0 failed; only h1 passed")
+}

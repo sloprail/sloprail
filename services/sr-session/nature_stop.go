@@ -9,7 +9,9 @@ import (
 	"github.com/sloprail/sloprail/internal/cyclemod"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -95,25 +97,24 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// file-STATE), so these go only to the context enters below.
 	tagWriteEvents, recordEnd := tagEvents(cmd, store, p, reg, bound)
 
-	// revalidation over the SAME store the caller opened, so a file-guard's verdict
-	// lands where the re-fire reads it. Constructed inline rather than opened afresh
-	// — a second handle on the same DB is avoidable, and the caller owns Close.
-	rev := &revalidation{store: store}
-
 	var refusals []string
 
 	// 0. commit required: a file-guard judges commits, so uncommitted work on a
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
+	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap)); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
+		commitOwed = true
 	}
 
-	// 1. file-guard after-checks on the Post FILE events. Records verdicts
-	//    (re-fire), collects refusals.
-	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap, histories) {
-		if r.Refused {
-			refusals = append(refusals, r.Reason+citedUnknownNote(store, r.Path)+" (file-guard "+r.Attribution+")")
+	// 1. file-guards: each rule is evaluated once, over the changeset of commits it
+	//    has not yet passed, and every run is recorded (changeset_eval.go). Not while
+	//    work is owed a commit: judging HEAD would judge an incomplete set, and the
+	//    agent has a commit to make first.
+	if !commitOwed {
+		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, store) {
+			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
 		}
 	}
 
@@ -189,4 +190,27 @@ func joinRefusals(refusals []string) string {
 		return refusals[0]
 	}
 	return "the following rules refused this turn's work:\n  - " + strings.Join(refusals, "\n  - ")
+}
+
+// evaluateStopChangesets opens what a changeset evaluation needs — the repository
+// and the session's check results — and evaluates every file-guard. A tree that
+// is not a repository has no commits to judge; a repository that cannot be read
+// refuses, since a state that could not be read must not be read as clean.
+func evaluateStopChangesets(cmd *cobra.Command, p HookPayload, scope hookScope, guards []declaration.FileGuard,
+	contextMap map[string]natures.ContextState, state sessionstate.Store) []fileGuardResult {
+	if len(guards) == 0 {
+		return nil
+	}
+	root, err := gitrepo.Root(p.Cwd)
+	if err != nil {
+		if isNotARepo(err) {
+			return nil
+		}
+		return []fileGuardResult{{Name: "file-guards", Attribution: "file-guards", Refused: true, Reason: failClosed(err)}}
+	}
+	results := openChecksStore(cmd, p, scope)
+	if results != nil {
+		defer results.Close()
+	}
+	return evaluateChangesets(cmd, guards, p, scope, root, contextMap, state, results)
 }

@@ -246,7 +246,7 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 	res, err := db.Exec(`
 		UPDATE checks
 		SET status = 'skip',
-		    metadata = json_set(metadata, '$.reason', 'stale: its input is no longer in the range'),
+		    metadata = json_set(metadata, '$.reason', 'stale: its input is no longer in the range', '$.staleFrom', 'fail'),
 		    checked_at = ?
 		WHERE status = 'fail'
 		  AND run_id IN (SELECT id FROM check_runs
@@ -264,7 +264,8 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 
 // PassedHeads is a10n's EffectiveBase, kept as a list so the caller can skip the
 // heads a rebase has orphaned. A run passed when it is not an engine failure and
-// holds no failing check; a run with no checks at all (`match` selected nothing)
+// holds no failing check — including one whose failure was later resolved as
+// stale: it failed, and clearing the orphan must not turn it into a pass; a run with no checks at all (`match` selected nothing)
 // passed too, which is what lets an empty selection advance the watermark.
 func (s *store) PassedHeads(rule, ruleHash string) ([]string, error) {
 	db, err := s.conn()
@@ -276,7 +277,8 @@ func (s *store) PassedHeads(rule, ruleHash string) ([]string, error) {
 		WHERE cr.check_id = ? AND json_extract(cr.metadata, '$.ruleHash') = ?
 		  AND cr.head_ref <> '' AND cr.exit_code = 0 AND cr.error IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
-		                  AND c.status IN ('fail', 'error', 'interrupted'))
+		                  AND (c.status IN ('fail', 'error', 'interrupted')
+		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
 		ORDER BY cr.run_at DESC, cr.rowid DESC`, rule, ruleHash)
 	if err != nil {
 		return nil, fmt.Errorf("checkstore: passed heads for %q: %w", rule, err)

@@ -13,7 +13,11 @@
 // shape and the rules that shape follows.
 package changeset
 
-import "github.com/sloprail/sloprail/internal/transcript"
+import (
+	"strings"
+
+	"github.com/sloprail/sloprail/internal/transcript"
+)
 
 // Kind is the event kind a file-guard's check is handed.
 const Kind = "Changeset"
@@ -139,4 +143,17 @@ func NewPayload(cs Changeset, subject Subject, transcriptPath string, context ma
 		TranscriptPath: transcriptPath,
 		Context:        context,
 	}
+}
+
+// Change is the combined diff of the changeset's selected files: what a judge's
+// `{{ change }}` renders. Each file's own part of the squashed diff, in order.
+func (cs Changeset) Change() string {
+	var b strings.Builder
+	for _, f := range cs.Files {
+		b.WriteString(f.Diff)
+		if f.Diff != "" && !strings.HasSuffix(f.Diff, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }

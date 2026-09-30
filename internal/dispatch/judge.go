@@ -115,6 +115,11 @@ type judgeCall struct {
 	// verdict blind (seen in real sr-eval runs as ~10 denials per judge). Empty
 	// (a caller with no workspace) grants no project access at all.
 	Workspace string
+
+	// Env is extra environment appended last: a changeset's SR_TREE, SR_BASE and
+	// SR_HEAD, so the judge's agent reads the snapshot of head rather than the
+	// working tree.
+	Env []string
 }
 
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
@@ -348,7 +353,7 @@ func judgeEnv(j judgeCall, prompt string) []string {
 		env = append(env, launchedByEnv+"="+j.LaunchedBy)
 	}
 	env = append(env, judgePromptEnv+"="+prompt)
-	return env
+	return append(env, j.Env...)
 }
 
 // judgeRefusalReason extracts what to tell the agent from a rejected judge.

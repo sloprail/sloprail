@@ -47,6 +47,7 @@
 package dispatch
 
 import (
+	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -157,6 +158,19 @@ type Request struct {
 	// `when`, no such part may exist). Nil for every other event — a Pre event
 	// IS one change, and its citations ride on it.
 	History *FileHistory
+
+	// Changeset, when set, is what a file-guard's checks are handed instead of a
+	// file event: a script's stdin and a judge's template variables are this
+	// payload (`event: {kind: "Changeset"}`, `changeset`, `subject`, ...), and a
+	// judge additionally gets `change`, the combined diff of the selected files.
+	// Event still carries the changeset's citations (under `citations`), which is
+	// what a `require: citation` prerequisite reads.
+	Changeset *changeset.Payload
+
+	// Env is extra environment for every script and judge this request runs,
+	// appended after the inherited one so it wins — SR_TREE, SR_BASE and SR_HEAD for
+	// a changeset: the read-only snapshot of head the checks read, and the range.
+	Env []string
 }
 
 // UncitedChange is one stretch of a file's history that no citation rode on:
