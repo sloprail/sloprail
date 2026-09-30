@@ -218,6 +218,16 @@ func Contains(dir, commit string) (bool, error) {
 	return false, err
 }
 
+// exitCode is the exit status of a failed git command, or -1 when err is not an
+// exit status (git missing, directory gone).
+func exitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
 // isUnknownObject recognises git declining because the object named is not in
 // this repository — as opposed to declining because the repository itself is
 // unreadable, which exits the same way.
