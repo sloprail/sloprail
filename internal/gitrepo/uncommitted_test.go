@@ -93,3 +93,26 @@ func TestUncommittedChanges_AGitErrorIsAnErrorNotACleanTree(t *testing.T) {
 	_, err = UncommittedChanges(dir)
 	assert.Error(t, err)
 }
+
+func TestUncommittedChanges_AnUntrackedNestedRepositoryIsNotListedButATrackedOneIs(t *testing.T) {
+	dir := initRepo(t)
+	commit(t, dir, "a.txt", "1")
+
+	// A clone the agent made to look at: untracked, so not this repository's.
+	nested := filepath.Join(dir, "vendor", "clone")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	git(t, nested, "init", "-q", "--initial-branch=main")
+	git(t, nested, "config", "user.email", "t@example.invalid")
+	git(t, nested, "config", "user.name", "T")
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "f.txt"), []byte("x"), 0o644))
+	git(t, nested, "add", ".")
+	git(t, nested, "commit", "-qm", "inner")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "vendor", "plain.txt"), []byte("p"), 0o644))
+
+	assert.Equal(t, map[string]byte{"vendor/plain.txt": 'A'}, statusOf(t, dir),
+		"the nested repository is left out; its neighbours are not")
+
+	// Once it is tracked (a gitlink), it is this repository's, and counts.
+	git(t, dir, "add", "vendor/clone")
+	assert.Equal(t, byte('A'), statusOf(t, dir)["vendor/clone"])
+}
