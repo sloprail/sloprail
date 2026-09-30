@@ -70,3 +70,26 @@ func (r Result) SubagentStopBlocked(reason string) bool {
 func (r Result) AnySubagentStopBlocked() bool {
 	return strings.Contains(r.Output, "SubagentStop blocked (")
 }
+
+// shippedFileGuards are the file-guards the sloprail plugin ships for authoring
+// guardrails: they judge rule folders and skill reads, which the rule's own files
+// (in the range, since the commit that adds a rule is judged) are not about.
+var shippedFileGuards = []string{
+	"sloprail/file-guard/authoring-slop",
+	"sloprail/file-guard/misplaced-declaration",
+	"sloprail/file-guard/read-context-doc",
+	"sloprail/file-guard/read-file-guard-doc",
+	"sloprail/file-guard/read-gate-doc",
+	"sloprail/file-guard/read-judge-checks-doc",
+	"sloprail/file-guard/read-script-checks-doc",
+	"sloprail/file-guard/read-structure-gate-doc",
+}
+
+// DisableShippedFileGuards switches off the sloprail plugin's authoring guards in a
+// project, so a test about ONE rule is not also a test of those. The commit that
+// adds a rule is judged by the rule, which puts the rule's own files in every range
+// that starts before it — exactly what the authoring guards exist to judge.
+func (e *Env) DisableShippedFileGuards(projDir string) {
+	e.t.Helper()
+	e.DisablePluginGuardrail(projDir, shippedFileGuards...)
+}

@@ -10,7 +10,7 @@ import (
 // added; without the trailer nothing is selected — an empty selection is an
 // answer, not an error.
 func TestT001_08_MatchSeesStatusAndTrailers(t *testing.T) {
-	rule := "match: 'status == \"A\" and \"move-only\" in (trailers[\"Sloprail-Refactor\"] ?? [])'\n" +
+	rule := "match: 'path startsWith \"docs/\" and status == \"A\" and \"move-only\" in (trailers[\"Sloprail-Refactor\"] ?? [])'\n" +
 		"checks:\n  - script: ./check.sh\n"
 	e, proj, _ := repoWithRule(t, rule)
 

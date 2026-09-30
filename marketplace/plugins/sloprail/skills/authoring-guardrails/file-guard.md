@@ -42,9 +42,11 @@ A file-guard is evaluated **once per rule at Stop**, over its range of commits:
 from its base to `HEAD`, as one squashed net diff (`git diff -M base head`). The
 base is the first of these that exists and is still an ancestor of `HEAD`:
 **the rule's watermark** (the last head it passed, at its current definition),
-**the last commit that touched the rule's folder** (a rule in this repository: it
-applies going forward from the commit that added or changed it, so files already
-on `main` are not judged until a change touches them), **the HEAD recorded when the
+**the parent of the last commit that touched the rule's folder** (a rule in this
+repository: the commit that adds or changes a rule is judged by the rule, so
+touching its folder is not a way to get work past it; files already on `main`
+before it are not judged until a change touches them; a root commit has no parent,
+so its base is git's empty tree and all of it is judged), **the HEAD recorded when the
 session began** (a plugin's rule, whose folder is in the plugin cache, or a repo
 rule not committed yet). Every base is a SHA, checked with
 `git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
@@ -55,8 +57,9 @@ selects nothing is a pass with no `files`, never the same as a range that could
 not be computed.
 
 A file-guard must not write into its own rule folder (ledgers, caches): the rule
-hash covers the whole folder, so any write changes it, voids the watermark, and
-re-judges forever. Keep such state in `sr-session state` or under `.git/`.
+hash covers the whole folder, so a write there (once committed) changes it and
+voids the watermark: the rule is judged again from the parent of that commit.
+Keep such state in `sr-session state` or under `.git/`.
 
 **Commit required.** Work that is not committed cannot be judged, so at Stop an
 uncommitted change to a path some file-guard's `match` selects refuses the Stop:

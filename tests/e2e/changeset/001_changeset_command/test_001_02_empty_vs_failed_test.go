@@ -29,16 +29,19 @@ func TestT001_02_EmptyRangeIsAnAnswerAndNoBaseIsAnError(t *testing.T) {
 		t.Fatalf("the error should say what was missing (the session-start commit):\n%s", res.Output)
 	}
 
+	before := e.Git(proj, "rev-parse", "HEAD")
 	head := e.CommitAll(proj, "add the rule")
 	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("after committing the rule: exit %d:\n%s", res.Code, res.Output)
 	}
-	if got.Origin != "floor" || got.Base != head || got.Head != head {
-		t.Fatalf("range = %s %s..%s, want an empty floor range at %s", got.Origin, got.Base, got.Head, head)
+	// The floor is the PARENT of the rule's commit, so that commit is in the range —
+	// and, selecting nothing, it is a pass with no files.
+	if got.Origin != "floor" || got.Base != before || got.Head != head {
+		t.Fatalf("range = %s %s..%s, want floor %s..%s", got.Origin, got.Base, got.Head, before, head)
 	}
-	if len(got.Payload.Changeset.Files) != 0 || len(got.Payload.Changeset.Commits) != 0 {
-		t.Fatalf("an empty range holds nothing: %+v", got.Payload.Changeset)
+	if len(got.Payload.Changeset.Files) != 0 || len(got.Payload.Changeset.Commits) != 1 {
+		t.Fatalf("a range where match selects nothing holds no files: %+v", got.Payload.Changeset)
 	}
 }
 

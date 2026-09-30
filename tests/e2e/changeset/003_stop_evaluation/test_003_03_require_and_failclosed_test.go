@@ -44,8 +44,8 @@ func TestT003_03_CitationTrailersGroundTheRange(t *testing.T) {
 		t.Fatal("with the citation in place the checks never ran")
 	}
 	last := runs[len(runs)-1]
-	if len(last.Citations) != 1 || last.Citations[0] != "document the release process" || len(last.Commits) != 3 {
-		t.Fatalf("the check was handed %+v; want the resolved citation and all three commits of the range", last)
+	if len(last.Citations) != 1 || last.Citations[0] != "document the release process" || len(last.Commits) != 4 {
+		t.Fatalf("the check was handed %+v; want the resolved citation and all four commits of the range (the rule's own, and three of the agent's)", last)
 	}
 }
 

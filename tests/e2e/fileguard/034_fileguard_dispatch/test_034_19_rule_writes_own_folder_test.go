@@ -24,18 +24,17 @@ echo asked >> "$SR_GUARDRAIL_DIR/ledger"
 exit 0
 `
 
-// T034_19: a file-guard that writes into its own rule folder loses its place.
+// T034_19: a file-guard that writes into its own rule folder voids its watermark.
 //
 // Every other test in this tree keeps such a ledger out of commits (GitInit
 // excludes untracked non-code files at the top of a rule folder), which is what a
 // test wants and what hides this trap. Here the exclusion is removed, so the
-// agent's `git add -A` sweeps the ledger into its commit and the rule folder changes:
-// its hash changes, so the watermark the rule earned by passing is voided and the
-// rule's range restarts at the last commit that touched its own folder, which is
-// that very commit. The work committed together with the ledger is therefore never
-// judged: the rule is asked about cycle one, silently NOT about cycle two, and is
-// asked again about cycle three (whose range starts after cycle two's commit),
-// and every commit that sweeps the ledger up again repeats the gap.
+// agent's `git add -A` sweeps the ledger into its commit and the rule folder
+// changes: its hash changes, so the watermark the rule earned by passing is voided
+// and the rule is judged again from the PARENT of the last commit that touched its
+// folder. That parent is the commit before the sweep, so the work committed together
+// with the ledger IS judged (the floor is the parent, not the commit itself), and so
+// is whatever the rule has already passed: the rule is re-asked about it.
 //
 // Keep a rule's state in `sr-session state` or under .git/, never in its folder.
 func TestT034_19_ARuleThatWritesItsOwnFolderLosesItsWatermark(t *testing.T) {
@@ -49,7 +48,7 @@ func TestT034_19_ARuleThatWritesItsOwnFolderLosesItsWatermark(t *testing.T) {
 	e.FileGuard(proj, "own-ledger", writesOwnFolderGuard, map[string]string{"check.sh": writesOwnFolderCheck})
 	harness.CommitInstalled(t, proj)
 
-	const session = "s-034-09"
+	const session = "s-034-19"
 	asked := func() int { return len(e.FileGuardLedgerLines(proj, "own-ledger", "ledger")) }
 
 	e.Run(proj, session, "first note", Turns("done",
@@ -63,20 +62,11 @@ func TestT034_19_ARuleThatWritesItsOwnFolderLosesItsWatermark(t *testing.T) {
 	e.Run(proj, session, "second note", Turns("done",
 		Write("w2", "notes/b.md", "b\n"),
 	).ThenCommit("second note, with the ledger"))
-	if got := asked(); got != first {
-		t.Fatalf("the rule was asked about the commit that swept its ledger into its own folder (%d asks, was %d): "+
-			"the trap this test documents (the watermark voided, the floor moved to that commit) did not happen", got, first)
-	}
-	if out := e.Git(proj, "show", "--stat", "--format=", "HEAD"); !contains(out, ".sloprail/file-guard/own-ledger/ledger") {
+	if out := e.Git(proj, "show", "--stat", "--format=", "HEAD"); !strings.Contains(out, ".sloprail/file-guard/own-ledger/ledger") {
 		t.Fatalf("premise: the second commit should have swept the ledger into the rule's folder:\n%s", out)
 	}
-
-	e.Run(proj, session, "third note", Turns("done",
-		Write("w3", "notes/c.md", "c\n"),
-	).ThenCommit("third note"))
-	if got := asked(); got != first+1 {
-		t.Fatalf("the rule was not asked about the third note (%d asks): its range should start after the commit that touched its folder", got)
+	if got := asked(); got <= first {
+		t.Fatalf("the commit that swept the rule's ledger into its folder was not judged (%d asks, was %d): "+
+			"the floor is the parent of the last commit that touched the folder, so that commit is in the range", got, first)
 	}
 }
-
-func contains(s, sub string) bool { return strings.Contains(s, sub) }

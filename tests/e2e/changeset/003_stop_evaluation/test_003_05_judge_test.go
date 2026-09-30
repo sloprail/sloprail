@@ -33,8 +33,10 @@ func judgeProject(t *testing.T, verdict string) (*Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
+	e.CommitAll(proj, "the project")
+	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
-	e.CommitAll(proj, "the project and its judged rule")
+	e.CommitAll(proj, "the judged rule")
 	e.InstallJudgeClaudeCapturing(proj, promptFile, verdict)
 	return e, proj
 }

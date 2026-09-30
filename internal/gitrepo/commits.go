@@ -36,7 +36,11 @@ const (
 // Every commit, merges included: development happens through agents, so there
 // are no commits to tell apart and skip.
 func CommitsIn(dir, base, head string) ([]Commit, error) {
-	out, err := run(dir, "log", "--reverse", "-z", "--format="+commitFormat, base+".."+head)
+	rng := base + ".." + head
+	if base == EmptyTree {
+		rng = head // a range from before the first commit: every commit head reaches
+	}
+	out, err := run(dir, "log", "--reverse", "-z", "--format="+commitFormat, rng)
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: log %s..%s: %w", short(base), short(head), err)
 	}

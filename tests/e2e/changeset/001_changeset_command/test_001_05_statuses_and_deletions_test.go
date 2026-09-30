@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"strings"
 	"testing"
 )
 
@@ -41,9 +42,15 @@ func filesOf(s Shown) map[string]string {
 	return m
 }
 
+// othersOf is the changeset's `others` WITHOUT the rule's own files: the commit that
+// adds the rule is in the range (it is judged by the rule), and what it added is
+// not what these tests are about.
 func othersOf(s Shown) map[string]string {
 	m := map[string]string{}
 	for _, o := range s.Payload.Changeset.Others {
+		if strings.HasPrefix(o.Path, ".sloprail/") {
+			continue
+		}
 		m[o.Path] = o.Status
 	}
 	return m

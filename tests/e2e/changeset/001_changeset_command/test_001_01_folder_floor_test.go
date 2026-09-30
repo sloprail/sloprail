@@ -32,12 +32,13 @@ func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 		t.Fatalf("event kind = %q, want Changeset", got.Payload.Event.Kind)
 	}
 
-	// Both commits, oldest first, the trailer on the one that carried it.
+	// The rule's own commit and both edits, oldest first: the commit that adds a rule
+	// is judged by it. The trailer is on the one that carried it.
 	commits := got.Payload.Changeset.Commits
-	if len(commits) != 2 || commits[0].Subject != "first edit" || commits[1].Subject != "second edit" {
+	if len(commits) != 3 || commits[0].Subject != "add the size rule" || commits[1].Subject != "first edit" || commits[2].Subject != "second edit" {
 		t.Fatalf("commits = %+v", commits)
 	}
-	if v := commits[1].Trailers["Sloprail-Refactor"]; len(v) != 1 || v[0] != "move-only" {
+	if v := commits[2].Trailers["Sloprail-Refactor"]; len(v) != 1 || v[0] != "move-only" {
 		t.Fatalf("trailers = %+v", commits[1].Trailers)
 	}
 
@@ -59,9 +60,13 @@ func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 	}
 
 	// What the rule did not select is named, not carried.
-	others := got.Payload.Changeset.Others
-	if len(others) != 1 || others[0].Path != "README.md" || others[0].Status != "M" {
-		t.Fatalf("others = %+v", others)
+	others := map[string]string{}
+	for _, o := range got.Payload.Changeset.Others {
+		others[o.Path] = o.Status
+	}
+	want := map[string]string{"README.md": "M", ".sloprail/file-guard/size/file-guard.yaml": "A", ".sloprail/file-guard/size/check.sh": "A"}
+	if !equal(others, want) {
+		t.Fatalf("others = %v, want %v (the rule's own files are in the range, and not selected)", others, want)
 	}
 	if s := got.Payload.Subject; s.ID != "changeset" || len(s.Files) != 2 {
 		t.Fatalf("subject = %+v", s)
