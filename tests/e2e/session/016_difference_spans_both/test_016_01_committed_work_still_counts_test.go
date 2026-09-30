@@ -1,8 +1,9 @@
 package e2e
 
 import (
-	"encoding/json"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // difference_spans_both: a cycle's difference covers work that has been
@@ -38,41 +39,6 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
-type observed struct {
-	Kind string
-	Path string
-}
-
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
-	}
-	return got
-}
-
-func sawPath(got []observed, path string) bool {
-	for _, o := range got {
-		if o.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
 // T016_01: work the agent committed during the cycle is still reported.
 //
 // The whole cycle's output is committed, so the tree has nothing outstanding at
@@ -84,11 +50,11 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-016-01", "write and commit", Turns("done",
 		Write("w1", "committed-work.md", "written then committed\n"),
-		Bash("b1", "git add -A && git commit -m 'agent commit'"),
-	))
+	).ThenCommit("agent commit"))
 
 	// The premise: the agent's work really was committed, so an engine looking
 	// only at outstanding work genuinely has nothing to find. Without this check
@@ -107,55 +73,54 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 		t.Fatalf("the agent's file was never committed, so this does not test the committed case")
 	}
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "committed-work.md") {
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	if !changesetkit.Saw(got, "committed-work.md") {
 		t.Fatalf("work the agent committed mid-cycle was not reported: %v — the tree is clean, "+
 			"so a difference that only looked at outstanding work found nothing and called the "+
 			"cycle empty; committing must not be a way out of review", got)
 	}
 }
 
-// T016_02: committed and uncommitted work are reported together.
+// T016_02: outstanding work is refused until committed, and both halves then arrive.
 //
-// "Spans both" is a claim about one difference covering two kinds of work at
-// once, and an engine could satisfy T016_01 by looking ONLY at what is
-// committed since the point — which loses everything still outstanding, the
-// ordinary case for most cycles.
-//
-// So the cycle here ends with one file committed and one file not, and both must
-// arrive. Neither assertion is redundant: they fail for opposite
-// implementations.
+// On the commit model the tree's uncommitted work is not judged: the Stop is
+// refused ("commit your work") until the agent commits it, so a cycle can no longer
+// end with the two kinds of work side by side. The intent of "spans both" is kept:
+// the one committed mid-cycle and the one committed only after the refusal end up in
+// the same changeset, and neither is lost.
 func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the guardrail before the session")
 
-	e.Run(proj, "s-016-02", "commit one, leave one", Turns("done",
+	const sess = "s-016-02"
+	e.Run(proj, sess, "commit one, leave one", Turns("done",
 		Write("w1", "committed.md", "this one is committed\n"),
-		Bash("b1", "git add -A && git commit -m 'agent commit'"),
+		Bash("b1", "git add committed.md && git commit -q -m 'agent commit'"),
 		Write("w2", "outstanding.md", "this one is not\n"),
 	))
 
-	// The premise: one is committed, the other is not. Asked per path, because
-	// the guardrail's own ledger is untracked and would satisfy a whole-tree
-	// check on its own.
+	// The premise: one is committed, the other is not, and the Stop refused
+	// for the outstanding one without judging it.
 	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
 		t.Fatalf("the file meant to be committed is still outstanding (%q)", status)
 	}
-	if status := e.Git(proj, "status", "--porcelain", "--", "outstanding.md"); status == "" {
-		t.Fatalf("the file meant to be outstanding was committed, so the uncommitted half " +
-			"of this test is not set up")
+	e.AssertCommitRequired(proj, sess, "outstanding.md")
+	if got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen")); changesetkit.Saw(got, "outstanding.md") {
+		t.Fatalf("uncommitted work was judged before it was committed: %v", got)
 	}
+	seen := len(CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")))
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "committed.md") {
-		t.Fatalf("the committed half of the cycle's work is missing: %v — an engine looking only "+
-			"at outstanding work reports this cycle as smaller than it was", got)
+	e.Run(proj, sess, "now commit it", Turns("committed").ThenCommit("the outstanding file"))
+	e.NoCommitRequired(proj, sess, seen)
+
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	if !changesetkit.Saw(got, "committed.md") {
+		t.Fatalf("the committed half of the cycle's work is missing: %v", got)
 	}
-	if !sawPath(got, "outstanding.md") {
-		t.Fatalf("the uncommitted half of the cycle's work is missing: %v — an engine looking only "+
-			"at commits since the point loses everything the agent has not committed, "+
-			"which is most cycles", got)
+	if !changesetkit.Saw(got, "outstanding.md") {
+		t.Fatalf("the half committed after the refusal is missing: %v", got)
 	}
 }
