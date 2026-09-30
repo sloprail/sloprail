@@ -45,9 +45,12 @@ esac
 exit 0
 `
 
-// judgeRail installs the rule.
+// judgeRail installs the rule and commits it. A rule's range starts at the last
+// commit that touched its own folder, so a rule committed together with the
+// session's work would judge an empty range.
 func judgeRail(e *harness.Env, proj string) {
 	e.FileGuard(proj, "no-secrets", judgeGuard, map[string]string{"judge.sh": judgeScript})
+	e.CommitAll(proj, "the project before the session")
 }
 
 // asks is how many times the check was asked — the ledger line count.

@@ -89,7 +89,7 @@ func TestT027_01_JudgeRefusesTheDerivableCreateBugTheGrepMisses(t *testing.T) {
 
 	got := e.Run(proj, "s-027-01", "write a guardrail hook", Turns("done",
 		append(readShippedDocs(t), Write("w1", fixtureHookPath, buggyDerivableCreateHook))...,
-	))
+	).ThenCommit("write a guardrail hook"))
 
 	// The pre-write GATE is the cheap grep only, so it lets this hook land; the
 	// judge belongs to the plain file-guard, which judges what SETTLED at Stop and
@@ -130,7 +130,7 @@ func TestT027_02_TheRuleAndTheOffendingCodeBothReachTheJudgePrompt(t *testing.T)
 
 	e.Run(proj, "s-027-02", "write a guardrail hook", Turns("done",
 		append(readShippedDocs(t), Write("w1", fixtureHookPath, buggyDerivableCreateHook))...,
-	))
+	).ThenCommit("write a guardrail hook"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -182,7 +182,7 @@ func TestT027_03_CorrectDispatchHookPassesBothGrepAndJudge(t *testing.T) {
 		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "script-checks.md")}),
 		ToolUse("r1b", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "check-template.sh")}),
 		Write("w1", fixtureHookPath, correctDispatchHook),
-	))
+	).ThenCommit("write a correct guardrail hook"))
 
 	if got.Refused() {
 		t.Fatalf("a correct kind-dispatch hook was refused — the judge is refusing a shape it should "+

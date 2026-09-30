@@ -163,6 +163,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	// And a sub-agent grounds the finding in that output.
 	write := subagentScript(t, harness.Turns("written",
 		Bash("sb2", `sr-file write memories/findings.md --cite:tool_result 'SUBPROBE-4417 attempts' --content '# findings'`),
+		harness.Commit("sc2", "write down the retry budget", harness.CitesTool("SUBPROBE-4417 attempts")),
 	))
 	res = e.Run(proj, "s-041-21", "now write it down", Turns("done",
 		harness.Dispatch("d2", "write down the retry budget", write, ""),
@@ -186,9 +187,9 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	if !strings.Contains(pre, `"record":"`+subs[0]+`"`) {
 		t.Errorf("the citation does not point into the sub-agent's own record %s: %s", subs[0], pre)
 	}
-	// The change was grounded when it was made, so neither the sub-agent's own
-	// cycle end nor the root's — both of which see it in the shared tree —
-	// refuses it as uncited.
+	// The sub-agent committed with a trailer citing its own tool output, which the
+	// session resolves against the sub-agent's record. The tree is shared, so it is
+	// the root's Stop that judges the range — and it finds the citation.
 	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-21"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
@@ -243,19 +244,18 @@ func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 	}
 }
 
-// T041_23: a sub-agent's cited write is judged at the sub-agent's own cycle end
-// with the citation its pre-tool call recorded — a sub-agent is a session of its
-// own, and its pre-tool call and its SubagentStop must key to the same one — and
-// at the root's Stop, which sees the same change in the shared tree. An uncited
-// sub-agent write is still refused there, so the guard is live.
-func TestT041_23_SubagentCitationsReachItsCycleEnd(t *testing.T) {
+// T041_23: a shared-tree sub-agent's cited commit is judged at the ROOT's Stop —
+// the sub-agent owns none of the tree, so its own stop judges nothing — and the
+// trailer it committed with grounds the range. An uncited sub-agent commit is
+// refused there, so the guard is live.
+func TestT041_23_SubagentCitationsReachTheRootsStop(t *testing.T) {
 	const afterGuard = `match: "memories/**"
 require:
   - citation: {source_types: [user]}
 `
 	e, proj := guarded(t, afterGuard)
 	sub := subagentScript(t, harness.Turns("sub done",
-		Bash("sb1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content '# a'`),
+		harness.CommitFile("sb1", "memories/a.md", "# a", "write it down", harness.CitesUser("adopt a decision log")),
 	))
 	res := e.Run(proj, "s-041-23", prompt, Turns("done", harness.Dispatch("d1", "write it down", sub, "")))
 	if !e.Exists(proj, "memories/a.md") {
@@ -271,11 +271,14 @@ require:
 	e2, proj2 := guarded(t, afterGuard)
 	e2.SetStopBlockCap(1)
 	uncited := subagentScript(t, harness.Turns("sub done",
-		Bash("sb1", `mkdir -p memories && echo '# b' > memories/b.md`),
+		harness.CommitFile("sb1", "memories/b.md", "# b", "write it down"),
 	))
 	e2.Run(proj2, "s-041-23b", prompt, Turns("done", harness.Dispatch("d1", "write it down", uncited, "")))
-	if len(e2.SubagentBlockingErrors(proj2, "s-041-23b")) == 0 {
-		t.Errorf("an uncited sub-agent write was not refused at its cycle end, so the guard never ran there")
+	if blocks := stopRefusal(e2, proj2, "s-041-23b"); !strings.Contains(blocks, noCitation) {
+		t.Errorf("an uncited sub-agent commit was not refused at the root's Stop, so the guard never ran:\n%s", blocks)
+	}
+	if blocks := e2.SubagentBlockingErrors(proj2, "s-041-23b"); len(blocks) != 0 {
+		t.Errorf("the sub-agent's own stop judged a range it does not own: %v", blocks)
 	}
 }
 
