@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,22 +11,53 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// project is a git repository with the store probe installed and committed: the
-// probe is a file-guard, so it runs once per Stop over the range of commits it has
-// not passed, and each cycle here writes a markdown file and commits it.
-func project(t *testing.T) (*harness.Env, string) {
+// probeScript is the harness's store probe (harness.ControlScript) logging to a
+// ledger OUTSIDE the repository: in the rule's own folder the log would be committed
+// with the agent's work, and a rule whose folder changed forgets its earlier passes,
+// so the next cycle's range would collapse to nothing and the probe would not run.
+func probeScript(ledger string) string {
+	return "#!/bin/sh\ncat >/dev/null\n" +
+		"echo \"before=[$(sr-session state get seen 2>&1)]\" >> '" + ledger + "'\n" +
+		"sr-session state set seen yes >/dev/null 2>&1\nexit 0\n"
+}
+
+// installProbe puts the store probe in dir and returns the ledger it logs to.
+func installProbe(t *testing.T, e *harness.Env, dir string) string {
+	t.Helper()
+	ledger := filepath.Join(t.TempDir(), "log")
+	e.FileGuard(dir, "control", harness.ControlGuard, map[string]string{"probe.sh": probeScript(ledger)})
+	return ledger
+}
+
+// project is a git repository with the store probe installed and committed, so the
+// rule's folder is part of the baseline and the first commit is its own.
+func project(t *testing.T) (*harness.Env, string, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
-	e.CommitAll(proj, "the project and the store probe")
-	return e, proj
+	ledger := installProbe(t, e, proj)
+	e.CommitAll(proj, "the project before the session")
+	return e, proj, ledger
 }
 
-// probeLines is the store probe's log in dir's copy of the guard.
-func probeLines(e *harness.Env, dir string) []string {
-	return e.FileGuardLedgerLines(dir, "control", "log")
+// probeLines is the store probe's log.
+func probeLines(t *testing.T, ledger string) []string {
+	t.Helper()
+	body, err := os.ReadFile(ledger)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
 }
 
 // readsBack runs one cycle and requires that EVERY probe run it caused found
@@ -37,11 +69,11 @@ func probeLines(e *harness.Env, dir string) []string {
 // store too. Only a FIRST probe run in the cycle reading "yes" proves the store
 // was already written to before this cycle began — by an earlier transcript of
 // the same conversation.
-func readsBack(t *testing.T, e *harness.Env, dir, what string, run func()) {
+func readsBack(t *testing.T, ledger, what string, run func()) {
 	t.Helper()
-	before := len(probeLines(e, dir))
+	before := len(probeLines(t, ledger))
 	run()
-	added := probeLines(e, dir)[before:]
+	added := probeLines(t, ledger)[before:]
 	if len(added) == 0 {
 		t.Fatalf("%s: the probe never ran in this cycle, so nothing about the store can be concluded", what)
 	}
@@ -76,17 +108,18 @@ func sameConversation(t *testing.T, e *harness.Env, proj string, sessions ...str
 // other file holding the logical parent" goes from one fork to the other and
 // back, and the session runs with no store.
 func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
 	e.Run(proj, "z-original", "start", Turns("done",
 		Write("w1", "one.md", "first"),
+		harness.Commit("k1", "first"),
 		Compact("c1"),
-	).ThenCommit("the first cycle"))
+	))
 	e.RunForked(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
-	readsBack(t, e, proj, "the second fork", func() {
+	readsBack(t, ledger, "the second fork", func() {
 		e.RunForked(proj, "z-original", "a-fork-2", "resume again", Turns("done",
 			Write("w2", "two.md", "second"),
-		).ThenCommit("the second cycle"))
+		).ThenCommit("second"))
 	})
 	sameConversation(t, e, proj, "z-original", "a-fork-1", "a-fork-2")
 }
@@ -96,16 +129,17 @@ func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 // parent that no transcript holds; the file it compacted still holds the
 // boundary itself, part-way down.
 func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
 	e.Run(proj, "orig-02", "start", Turns("done",
 		Write("w1", "one.md", "first"),
+		harness.Commit("k1", "first"),
 		CompactNamingUnwrittenParent("c1"),
-	).ThenCommit("the first cycle"))
-	readsBack(t, e, proj, "the fork", func() {
+	))
+	readsBack(t, ledger, "the fork", func() {
 		e.RunForked(proj, "orig-02", "fork-02", "resume", Turns("done",
 			Write("w2", "two.md", "second"),
-		).ThenCommit("the second cycle"))
+		).ThenCommit("second"))
 	})
 	sameConversation(t, e, proj, "orig-02", "fork-02")
 }
@@ -121,7 +155,7 @@ func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
 // hooks. What was stored before is not carried over, and the session is told
 // so exactly once, at its SessionStart.
 func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 	start := e.Git(proj, "rev-parse", "HEAD")
 
 	e.Run(proj, "orig-03", "start", Turns("done",
@@ -148,9 +182,9 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 		t.Fatalf("after the deletion the continuation resolves to %q, want its own root %q", got, want)
 	}
 
-	e.Run(proj, "fork-03", "carry on", Turns("done", Write("w2", "two.md", "second")).ThenCommit("carry on"))
-	readsBack(t, e, proj, "the continuation's next cycle", func() {
-		e.Run(proj, "fork-03", "and more", Turns("done", Write("w3", "three.md", "third")).ThenCommit("and more"))
+	e.Run(proj, "fork-03", "carry on", Turns("done", Write("w2", "two.md", "second")).ThenCommit("second"))
+	readsBack(t, ledger, "the continuation's next cycle", func() {
+		e.Run(proj, "fork-03", "and more", Turns("done", Write("w3", "three.md", "third")).ThenCommit("third"))
 	})
 
 	// The fallback store is new, so its baseline is where HEAD was at its
@@ -197,17 +231,17 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 // exists. Resumed from a subdirectory of the same repository, the session is
 // the same tree, so the same store.
 func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
-	e, proj := project(t)
+	e, proj, _ := project(t)
 	sub := proj + "/sub"
 	e.WriteFile(proj, "sub/.keep", "")
-	e.FileGuard(sub, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
+	subLedger := installProbe(t, e, sub)
 	e.CommitAll(proj, "sub")
 
-	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")).ThenCommit("start"))
-	readsBack(t, e, sub, "the cycle resumed from below", func() {
+	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")).ThenCommit("first"))
+	readsBack(t, subLedger, "the cycle resumed from below", func() {
 		e.RunFrom(proj, "sub", "moved-04", "carry on from below", Turns("done",
 			Write("w2", "two.md", "second"),
-		).ThenCommit("carry on from below"))
+		).ThenCommit("second"))
 	})
 
 	if _, err := os.Stat(e.TranscriptPath(sub, "moved-04")); err == nil {

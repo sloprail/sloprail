@@ -1,13 +1,13 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // A session whose hooks fire from a SUBDIRECTORY of the repository, end to end.
@@ -76,53 +76,32 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
-// observed is one file a recorded changeset selected.
-type observed struct {
-	Status string
-	Path   string
+// recordScript appends the whole payload as one line to a ledger OUTSIDE the
+// repository. Inside the rule's own folder the ledger would be committed with the
+// agent's work, and a rule whose folder changed no longer has its earlier passes as
+// a watermark: every later cycle's range would collapse to the last commit.
+func recordScript(ledger string) string {
+	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
 }
 
-// observedFiles decodes what a file-guard's check was handed: the Changeset
-// payload's files.
-func observedFiles(t *testing.T, lines []string) []observed {
+// readLedger is the recorded payloads, one per line.
+func readLedger(t *testing.T, path string) []string {
 	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Changeset struct {
-				Files []struct {
-					Path   string `json:"path"`
-					Status string `json:"status"`
-				} `json:"files"`
-			} `json:"changeset"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
-		}
-		for _, f := range p.Changeset.Files {
-			got = append(got, observed{Status: f.Status, Path: f.Path})
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
 		}
 	}
-	return got
+	return lines
 }
-
-func statusesFor(got []observed, path string) []string {
-	var out []string
-	for _, o := range got {
-		if o.Path == path {
-			out = append(out, o.Status)
-		}
-	}
-	return out
-}
-
-func sawPath(got []observed, path string) bool { return len(statusesFor(got, path)) > 0 }
 
 // subProject is a repository whose guardrail lives in a subdirectory two levels
 // down, with the whole arrangement committed so none of it is any cycle's work.
@@ -134,23 +113,16 @@ func sawPath(got []observed, path string) bool { return len(statusesFor(got, pat
 // Returns the repository root and the subdirectory the session reports. Callers
 // read the ledger from the SUBDIRECTORY, because that is where the rule the
 // cycle loaded actually lives.
-func subProject(t *testing.T) (e *harness.Env, proj, sub string) {
-	return subProjectRecording(t, recordScript)
-}
-
-// subProjectRecording is subProject with the recorder's script chosen by the
-// caller: a test that needs the rule's watermark to hold records OUTSIDE the
-// project, because the rule's verdicts are keyed on a hash of its whole folder and
-// a ledger inside it would make the rule a different one at every Stop.
-func subProjectRecording(t *testing.T, script string) (e *harness.Env, proj, sub string) {
+func subProject(t *testing.T) (e *harness.Env, proj, sub, ledger string) {
 	t.Helper()
 	e = New(t)
 	proj = e.Project()
 	e.GitInit(proj)
 	sub = filepath.Join(proj, "sub", "deep")
-	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": script})
+	ledger = filepath.Join(t.TempDir(), "seen")
+	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
-	return e, proj, sub
+	return e, proj, sub, ledger
 }
 
 // T025_01: a cycle reporting a subdirectory reports its work at all, and names
@@ -167,11 +139,11 @@ func subProjectRecording(t *testing.T, script string) (e *harness.Env, proj, sub
 // "inner.md" here would mean the paths are cwd-relative, and the same joining
 // would resolve nothing.
 func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
-	e, proj, sub := subProject(t)
+	e, proj, _, ledger := subProject(t)
 
 	e.RunFrom(proj, "sub/deep", "s-025-01", "work from below", Turns("done",
 		Bash("b1", "printf 'written from the subdirectory\n' > inner.md"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the agent's work"))
 
 	// The premise: the file really landed inside the subdirectory. The mock runs
 	// Bash turns in the directory it was given, and a test that assumed otherwise
@@ -181,8 +153,8 @@ func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
 			"it, so this is not testing the arrangement it claims to")
 	}
 
-	got := observedFiles(t, e.FileGuardLedgerLines(sub, "watcher", "seen"))
-	if !sawPath(got, "sub/deep/inner.md") {
+	got := changesetkit.Files(t, readLedger(t, ledger))
+	if !changesetkit.Saw(got, "sub/deep/inner.md") {
 		t.Fatalf("a file written by a cycle reporting a subdirectory was not reported under its "+
 			"repository-relative path: %v — either the session could not be identified from "+
 			"there (no store, no baseline, nothing dispatched) or the paths are relative to the "+
@@ -200,29 +172,31 @@ func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
 // for a file sitting on disk, unchanged in every way except that the session
 // reported a directory below it.
 //
-// A rule bound to PostFileDelete is exactly the rule that must not be told this:
+// A rule bound to D is exactly the rule that must not be told this:
 // "the agent removed a file" is the claim, and it is false.
 //
 // The assertion is on the KIND rather than on mere presence. An engine with this
 // defect still reports the path — it reports it wrongly — so a test checking
 // only that `top.md` arrived passes against the broken build.
 func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T) {
-	e, proj, sub := subProject(t)
-
-	// A file at the top of the tree, committed before the session so it is
+	// A file at the top of the tree, committed BEFORE the rule is installed: the
+	// rule's range starts at the commit that added the rule, so the file is
 	// unambiguously at the baseline. It is the one a cwd-rooted differ loses.
-	// The rule's own folder is touched in the same commit: a rule's range starts at
-	// the last commit that touched its folder, so a file committed after the rule
-	// would be part of its first range and its edit would squash to an add.
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
 	e.WriteFile(proj, "top.md", "original\n")
-	e.WriteFile(proj, "sub/deep/.sloprail/file-guard/watcher/settled.md", "a file at the top of the tree\n")
 	e.CommitAll(proj, "a file at the top of the tree")
+	sub := filepath.Join(proj, "sub", "deep")
+	ledger := filepath.Join(t.TempDir(), "seen")
+	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.CommitAll(proj, "the project before the session")
 
 	// The session reports the subdirectory and edits the file ABOVE it, which is
 	// the ordinary thing an agent does after cd'ing somewhere to work.
 	e.RunFrom(proj, "sub/deep", "s-025-02", "edit upwards", Turns("done",
 		Bash("b1", "printf 'edited from below\n' > ../../top.md"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the agent's work"))
 
 	// The premise: the file is still there and really was changed. Without this
 	// the assertion below could pass on a cycle that deleted it for real.
@@ -230,13 +204,13 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 		t.Fatalf("the file at the top of the tree is gone, so a reported deletion would be " +
 			"correct and this test proves nothing")
 	}
-	if status := e.Git(proj, "diff", "--name-status", "HEAD~1", "HEAD", "--", "top.md"); status == "" {
+	if changed := e.Git(proj, "diff", "--name-only", "HEAD~1", "HEAD", "--", "top.md"); changed == "" {
 		t.Fatalf("the file at the top of the tree was not modified, so there is nothing for " +
 			"the cycle to report and its silence would be correct")
 	}
 
-	got := observedFiles(t, e.FileGuardLedgerLines(sub, "watcher", "seen"))
-	k := statusesFor(got, "top.md")
+	got := changesetkit.Files(t, readLedger(t, ledger))
+	k := changesetkit.Statuses(got, "top.md")
 	if len(k) == 0 {
 		t.Fatalf("a file modified outside the reported subdirectory was not reported at all: %v — "+
 			"the difference is rooted below it, so everything above went unjudged", got)
@@ -327,51 +301,41 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 // the store follows. The two cycles being in one conversation is what the
 // transcript's root keying provides.
 func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T) {
-	ledger := filepath.Join(t.TempDir(), "seen")
-	e, proj, _ := subProjectRecording(t, "#!/bin/sh\ncat >> "+ledger+"\necho >> "+ledger+"\nexit 0\n")
-	read := func() []string {
-		body, _ := os.ReadFile(ledger)
-		var lines []string
-		for _, l := range strings.Split(string(body), "\n") {
-			if strings.TrimSpace(l) != "" {
-				lines = append(lines, l)
-			}
-		}
-		return lines
-	}
+	e, proj, _, ledger := subProject(t)
 
 	const sess = "s-025-04"
 
 	e.RunFrom(proj, "sub/deep", sess, "settle a file", Turns("done",
 		Write("w1", "settled.md", "judged and passed\n"),
-	).ThenCommit("the cycle"))
-	first := read()
-	if len(statusesFor(observedFiles(t, first), "sub/deep/settled.md")) == 0 {
+	).ThenCommit("the agent's work"))
+	first := readLedger(t, ledger)
+	if len(changesetkit.Statuses(changesetkit.Files(t, first), "sub/deep/settled.md")) == 0 {
 		t.Fatalf("the file was never judged in the first cycle (%v), so there is no verdict for "+
 			"the second cycle to inherit and the skip below would hold for the wrong reason",
-			observedFiles(t, first))
+			changesetkit.Files(t, first))
 	}
 
 	e.RunFrom(proj, "sub/deep", sess, "work elsewhere from below", Turns("done",
 		Write("w2", "other.md", "cycle two\n"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the agent's work"))
 
-	all := read()
+	all := readLedger(t, ledger)
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d) — a session "+
 			"whose hooks report a subdirectory judged nothing", len(all), len(first))
 	}
-	second := observedFiles(t, all[len(first):])
+	second := changesetkit.Files(t, all[len(first):])
 
 	// The control: this cycle's own work reached the rule.
-	if !sawPath(second, "sub/deep/other.md") {
+	if !changesetkit.Saw(second, "sub/deep/other.md") {
 		t.Fatalf("the second cycle's own file never reached the rule: %v — nothing was "+
 			"dispatched, so the exemption asserted below is vacuous", second)
 	}
-	if k := statusesFor(second, "sub/deep/settled.md"); len(k) > 0 {
-		t.Fatalf("a file the rule already passed was put in front of it again (%v): %v\n"+
+	if k := changesetkit.Statuses(second, "sub/deep/settled.md"); len(k) > 0 {
+		t.Fatalf("content already judged and passed was put in front of the rule again (%v): %v\n"+
 			"the verdict was recorded in one database and looked for in another, so the session "+
-			"re-judges everything it had settled", k, second)
+			"re-judges everything it had settled — and a judge hook is a model call, free to "+
+			"answer differently about work the agent has moved on from", k, second)
 	}
 }
 
@@ -388,6 +352,14 @@ func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T)
 // can put it in front of the rule again.
 func TestT025_05_ARefusalStillRefusesInASubdirectoryCycle(t *testing.T) {
 	e := New(t)
+	// This test's Stop block is PERMANENT: the retained refusal for bad-file.md
+	// never clears across the two cycles, so the mock re-runs the agent to its
+	// blocked-Stop cap every time, and each re-run re-judges the (subdirectory)
+	// Stop changeset — with the default cap of 8 that is ~56s of wasted
+	// retries for a fact one re-run already establishes. The assertions read the
+	// RETAINED refusal out of the store (BlockingErrors), not the count of
+	// re-prompts, so one re-run is enough. Cap it at 1.
+	e.SetStopBlockCap(1)
 	proj := e.Project()
 	e.GitInit(proj)
 	sub := filepath.Join(proj, "sub", "deep")
@@ -408,30 +380,16 @@ checks:
 	// The whole flat payload still carries `"path":"…bad…"`, so a `*bad*` match on it
 	// works unchanged. The ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine
 	// sets for the check.
-	//
-	// The ledger is OUTSIDE the project: the rule sits in a subdirectory, where
-	// the harness's ledger exclusion (anchored at the repository root) does not
-	// reach, so a ledger inside the rule's folder would be committed with the
-	// agent's work and move the floor of the rule's range to that commit.
-	ledger := filepath.Join(t.TempDir(), "seen")
-	judgeScript := `#!/bin/sh
+	const judgeTemplate = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> ` + ledger + `
+printf '%s\n' "$payload" >> "LEDGER"
 case "$payload" in
   *bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
 esac
 exit 0
 `
-	read := func() []string {
-		body, _ := os.ReadFile(ledger)
-		var lines []string
-		for _, l := range strings.Split(string(body), "\n") {
-			if strings.TrimSpace(l) != "" {
-				lines = append(lines, l)
-			}
-		}
-		return lines
-	}
+	ledger := filepath.Join(t.TempDir(), "seen")
+	judgeScript := strings.Replace(judgeTemplate, "LEDGER", ledger, 1)
 	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
 	e.CommitAll(proj, "the project before the session")
 
@@ -439,12 +397,12 @@ exit 0
 
 	e.RunFrom(proj, "sub/deep", sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
-	).ThenCommit("the cycle"))
-	first := read()
-	if len(statusesFor(observedFiles(t, first), "sub/deep/bad-file.md")) == 0 {
+	).ThenCommit("the agent's work"))
+	first := readLedger(t, ledger)
+	if len(changesetkit.Statuses(changesetkit.Files(t, first), "sub/deep/bad-file.md")) == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle (%v), so there "+
 			"is no refusal on record and nothing for the second cycle to carry",
-			observedFiles(t, first))
+			changesetkit.Files(t, first))
 	}
 	// The premise: it really was REFUSED, not merely seen. A pass would leave
 	// nothing outstanding, and the second cycle's silence would be correct.
@@ -464,20 +422,20 @@ exit 0
 	// can bring it back.
 	e.RunFrom(proj, "sub/deep", sess, "work elsewhere from below", Turns("done",
 		Write("w2", "fine.md", "acceptable\n"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the agent's work"))
 
-	all := read()
+	all := readLedger(t, ledger)
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d)", len(all), len(first))
 	}
-	second := observedFiles(t, all[len(first):])
+	second := changesetkit.Files(t, all[len(first):])
 
 	// The control: the cycle is live and dispatching from down there.
-	if !sawPath(second, "sub/deep/fine.md") {
+	if !changesetkit.Saw(second, "sub/deep/fine.md") {
 		t.Fatalf("the second cycle's own file never reached the rule: %v — nothing was "+
 			"dispatched, so the absence below proves nothing", second)
 	}
-	if len(statusesFor(second, "sub/deep/bad-file.md")) == 0 {
+	if len(changesetkit.Statuses(second, "sub/deep/bad-file.md")) == 0 {
 		t.Fatalf("an unfixed refusal was dropped in a cycle reporting a subdirectory: %v\n"+
 			"the refusal is recorded in the session's store, and the store was looked for in "+
 			"another place — so the file is still broken and nothing is left to report it", second)

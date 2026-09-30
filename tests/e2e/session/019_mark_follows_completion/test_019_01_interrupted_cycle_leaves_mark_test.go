@@ -1,8 +1,6 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -53,29 +51,21 @@ printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
 exit 0
 `
 
-// refusingAskScript asks the same question and then refuses for as long as the
-// flag file exists.
+// crashingAsk asks the same question and then refuses.
 //
-// A non-zero exit is a refusal, not a crash of the engine — but from the mark's
-// point of view what matters is that the cycle did not finish cleanly. This is
-// the closest a test can get to an interrupted cycle through the real wiring,
-// because a cycle killed outright leaves no hook to observe from. The refusal
-// contract: exit non-zero refuses and a `{"reason":…}` on stdout is the reason
-// the agent is told.
-//
-// Gated on a flag file OUTSIDE the project rather than swapped for a different
-// script: the rule's own folder is what its verdicts are keyed on, so rewriting
-// it between the two cycles would be a different rule, not the same rule
-// finishing.
-const refusingAskScript = `#!/bin/sh
+// A non-zero exit at an after-the-fact point is a refusal, not a crash of the
+// engine — but from the mark's point of view what matters is that the cycle did
+// not finish cleanly. This is the closest a test can get to an interrupted cycle
+// through the real wiring, because a cycle killed outright leaves no hook to
+// observe from. New-format refusal contract: exit non-zero refuses and a
+// `{"reason":…}` on stdout is the reason the agent is told — the replacement for
+// the old exit-2-with-stderr channel.
+const crashingAskScript = `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
   sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
-if [ -e "REFUSEFLAG" ]; then
-  echo '{"reason":"this cycle did not finish"}'
-  exit 1
-fi
-exit 0
+echo '{"reason":"this cycle did not finish"}'
+exit 1
 `
 
 // answered fails the test when the engine reported an error instead of entries.
@@ -107,9 +97,9 @@ func promptsIn(answer string, markers ...string) []string {
 // without completing. Its turns must therefore still be available to the next
 // cycle — the mark may not have advanced over work whose judging was cut short.
 //
-// The refusal is lifted before the second cycle so that it completes and its
-// answer can be read without a refusal in the way. Both cycles write to the same
-// ledger file, so the answers accumulate in order.
+// The guardrail is swapped for a clean one before the second cycle so that the
+// second cycle completes and its answer can be read without a refusal in the
+// way. Both write to the same ledger file, so the answers accumulate in order.
 func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -123,15 +113,11 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	const secondMarker = "MARKERZETA"
 
 	// A cycle whose judging is cut short.
-	flag := filepath.Join(t.TempDir(), "refuse")
-	if err := os.WriteFile(flag, nil, 0o644); err != nil {
-		t.Fatalf("write flag: %v", err)
-	}
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": strings.ReplaceAll(refusingAskScript, "REFUSEFLAG", flag)})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript})
 	e.CommitAll(proj, "the guards")
 	first := e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "interrupted cycle\n"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the cycle's work"))
 	// The premise: the cycle really did not finish cleanly. Without this the
 	// test is about an ordinary completed cycle and proves nothing.
 	//
@@ -152,12 +138,11 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 
 	// The next cycle finishes cleanly, and must still be offered the turns the
 	// interrupted one never settled.
-	if err := os.Remove(flag); err != nil {
-		t.Fatalf("lift the refusal: %v", err)
-	}
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.CommitAll(proj, "the clean guard replaces the crashing one")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "completed cycle\n"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the cycle's work"))
 
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= before {
@@ -205,7 +190,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the cycle's work"))
 	before := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if before == 0 {
 		t.Fatalf("the first cycle never reached the hook, so this proves nothing")
@@ -213,7 +198,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
-	).ThenCommit("the cycle"))
+	).ThenCommit("the cycle's work"))
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= before {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",

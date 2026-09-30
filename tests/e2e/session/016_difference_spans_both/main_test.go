@@ -17,6 +17,8 @@ var (
 	Turns = harness.Turns
 	Write = harness.Write
 	Bash  = harness.Bash
+
+	CommitRequired = harness.CommitRequired
 )
 
 // writeFile puts a file into the project directly, without going through the

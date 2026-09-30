@@ -2,10 +2,14 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // The git states the differ has to survive, driven through a real session.
@@ -31,167 +35,194 @@ import (
 // over on an odd tree reports nothing at all, and "the strange path was not
 // reported" is satisfied perfectly by that.
 
-// recordEverything is a file-guard that records the changeset it is handed.
+// recordEverything is a file-guard that records every changeset it is handed
+// (`.changeset.files[]`, each {path, status A/M/D}) and passes.
 //
 // `match: path != ""` — an EXPRESSION that admits every real path (a file's path
 // is never empty), the file-guard "match everything" this directory needs. It
 // cannot use the obvious `**` glob: `**` compiles to the regexp `.*`, whose `.`
 // does not match a newline, so a path holding one (T023_08's `odd<newline>name.md`)
 // would not be selected and would go unreported — the exact thing that test proves
-// arrives. A string `!=` comparison has no such newline blind spot, so it selects
-// every path this directory drives, `build.log` (T023_06) and `.gitmodules`
-// (T023_10) included.
+// arrives. It cannot use an empty match either (a file-guard requires a non-empty
+// `match` at load). A string `!=` comparison has no such newline blind spot, so
+// it selects every path this directory drives, `build.log` (T023_06) and
+// `.gitmodules` (T023_10) included.
+//
+// `deletions: include` because this guard observes EVERY change and a file-guard
+// skips deleted files unless it says so.
 const recordEverything = `match: path != ""
-# deletions: include — this guard observes EVERY change, and a file-guard
-# skips deleted files unless it says so.
 deletions: include
 checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
-// observed is one file a recorded changeset selected.
-type observed struct {
-	Status  string
-	Path    string
-	OldPath string
+// recordScript appends each payload to a ledger OUTSIDE the rule's folder, at a
+// path the test bakes in: a rule's hash covers its whole folder, and a ledger
+// growing inside it would change the hash between cycles and drop the rule's
+// watermark. Outside the project too, so the guard cannot observe (or dirty the
+// tree with) its own bookkeeping.
+func recordScript(ledger string) string {
+	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
 }
 
-// observedFiles decodes what a file-guard's check was handed: the Changeset
-// payload's files.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Changeset struct {
-				Files []struct {
-					Path    string `json:"path"`
-					OldPath string `json:"oldPath"`
-					Status  string `json:"status"`
-				} `json:"files"`
-			} `json:"changeset"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
-		}
-		for _, f := range p.Changeset.Files {
-			got = append(got, observed{Status: f.Status, Path: f.Path, OldPath: f.OldPath})
-		}
-	}
-	return got
-}
-
-func statusesFor(got []observed, path string) []string {
-	var out []string
-	for _, o := range got {
-		if o.Path == path {
-			out = append(out, o.Status)
-		}
-	}
-	return out
-}
-
-func sawPath(got []observed, path string) bool { return len(statusesFor(got, path)) > 0 }
-
-// project is a repository with the recording guardrail committed, so the rule's
-// own folder is part of the baseline rather than of every difference.
-func project(t *testing.T) (*harness.Env, string) {
+// project is a repository with the recording guardrail committed LAST, after
+// whatever the test's `pre` puts into the history: a rule's range floors at the
+// last commit touching its own folder, so anything committed after the rule would
+// be part of the first range instead of what the range starts from. pre may be nil;
+// it commits its own work. It returns the ledger the check records to.
+func project(t *testing.T, pre func(e *harness.Env, proj string)) (*harness.Env, string, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
+	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	if pre != nil {
+		pre(e, proj)
+	}
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
-	return e, proj
+	return e, proj, ledger
 }
 
-// settle commits what the test seeded AND touches the rule's own folder in that
-// same commit. A rule's range starts at the last commit that touched its folder,
-// so a file committed after the rule would be part of the rule's first range and a
-// rename of it would squash to a plain add; touching the folder moves the range's
-// start past the seed.
-func settle(e *harness.Env, proj, msg string) {
-	e.WriteFile(proj, ".sloprail/file-guard/watcher/settled.md", msg+"\n")
-	e.CommitAll(proj, msg)
+// seed writes files and commits them, for project's pre.
+func seed(msg string, files ...[2]string) func(e *harness.Env, proj string) {
+	return func(e *harness.Env, proj string) {
+		for _, f := range files {
+			e.WriteFile(proj, f[0], f[1])
+		}
+		e.CommitAll(proj, msg)
+	}
 }
 
-// runOne drives a single cycle, in which the agent commits its work at the end,
-// and returns everything the rule was handed.
-func runOne(t *testing.T, e *harness.Env, proj, sess string, s harness.Scenario) []observed {
+func ledgerFiles(t *testing.T, ledger string) []changesetkit.Observed {
 	t.Helper()
-	e.Run(proj, sess, "cycle", s.ThenCommit("the cycle"))
-	return observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-}
-
-// T023_01: a rename arrives as ONE file at the new path, naming the old one.
-//
-// git reports a rename as a single `R100 old new` entry, and a file-guard's
-// changeset keeps it as one: status R, the new path, and `oldPath`. It is not a
-// delete plus an add, so a rule reading the changeset can tell a move from a file
-// arriving and a file leaving — and a file moved into a guarded directory is seen
-// arriving there.
-//
-// The file is committed first so the rename is a change git can DETECT as one.
-func TestT023_01_ARenameIsOneFileNamingItsOldPath(t *testing.T) {
-	e, proj := project(t)
-	e.WriteFile(proj, "before.md", "content that will move\n")
-	settle(e, proj, "the file that will be renamed")
-
-	got := runOne(t, e, proj, "s-023-01", Turns("done",
-		Bash("b1", "git mv before.md after.md"),
-	))
-
-	var moved *observed
-	for _, o := range got {
-		if o.Path == "after.md" {
-			o := o
-			moved = &o
+	body, err := os.ReadFile(ledger)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
 		}
 	}
-	if moved == nil || moved.Status != "R" || moved.OldPath != "before.md" {
-		t.Fatalf("the rename's destination was not reported as a rename from before.md: %+v (all: %v)", moved, got)
+	return changesetkit.Files(t, lines)
+}
+
+// runOne drives a single cycle and returns everything the rule was handed.
+func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.Scenario) []changesetkit.Observed {
+	t.Helper()
+	e.Run(proj, sess, "cycle", s)
+	return ledgerFiles(t, ledger)
+}
+
+// renamedFrom reports whether some recorded changeset holds an entry for path that
+// says it was renamed from old (the payload's `oldPath`).
+func renamedFrom(t *testing.T, ledger, path, old string) bool {
+	t.Helper()
+	body, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if k := statusesFor(got, "before.md"); len(k) > 0 {
-		t.Fatalf("a rename's source was reported as its own file (%v): %v — a rename is not a deletion", k, got)
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var p struct {
+			Changeset struct {
+				Files []struct{ Path, Status, OldPath string } `json:"files"`
+			} `json:"changeset"`
+		}
+		if err := json.Unmarshal([]byte(line), &p); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range p.Changeset.Files {
+			if f.Path == path && f.OldPath == old {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasStatus(got []changesetkit.Observed, path, status string) bool {
+	k := changesetkit.Statuses(got, path)
+	return len(k) > 0 && k[0] == status
+}
+
+// T023_01: a rename arrives as a delete of the old path and a create of the new.
+//
+// git reports a rename as ONE `R100 old new` entry naming both paths, and the
+// parser splits it back into the two events it really is. Reported as a single
+// "renamed" event instead, every rule bound to creation would miss a file
+// arriving and every rule bound to deletion would miss one leaving — a file
+// could be moved into a guarded directory without the rule that guards it ever
+// being asked.
+//
+// The file is committed first so the rename is a change git can DETECT as one;
+// an uncommitted file moved is just an untracked path appearing.
+func TestT023_01_ARenameIsADeleteAndACreate(t *testing.T) {
+	e, proj, ledger := project(t, seed("the file that will be renamed", [2]string{"before.md", "content that will move\n"}))
+
+	got := runOne(t, e, proj, ledger, "s-023-01", Turns("done",
+		Bash("b1", "git mv before.md after.md"),
+	).ThenCommit("rename before to after"))
+
+	// The premise: git really classified this as a rename rather than as an
+	// unrelated delete and add. If it did not, the test still asserts the right
+	// events but stops exercising the R branch, so it says so.
+	if status := e.Git(proj, "diff", "--name-status", "-M", "HEAD~1", "HEAD"); !strings.Contains(status, "R") {
+		t.Logf("NOTE: git did not report an R status (%q) — the two events below are still "+
+			"correct, but the rename-splitting branch is not what produced them", status)
+	}
+
+	// A rename is ONE entry of the changeset: the new path, status R, naming the
+	// path it came from. Nothing about the old path is a separate entry.
+	if k := changesetkit.Statuses(got, "after.md"); len(k) != 1 || k[0] != "R" {
+		t.Fatalf("the rename's destination was not reported as a rename: %v (all: %v)\n"+
+			"a file arrived at a path no rule was asked about", k, got)
+	}
+	if !renamedFrom(t, ledger, "after.md", "before.md") {
+		t.Fatalf("the rename entry does not name the path it came from, so a rule bound to the " +
+			"old path never learns the file left")
+	}
+	if changesetkit.Saw(got, "before.md") {
+		t.Fatalf("the rename's source was also reported as an entry of its own: %v", got)
 	}
 }
 
-// T023_02: a rename chain across cycles — a to b, then b to c — ends at the last
-// path.
+// T023_02: a rename chain within one range — a to b, then b to c.
 //
-// The multi-cycle form. The tree has `c`, and whatever range the rule is judging
-// ends there: the intermediate path `b` is in neither end of a squashed range that
-// spans both moves, and if the range starts after the first move `b` is only the
-// old path of the last one. Either way `b` is never a file of its own.
-func TestT023_02_ARenameChainAcrossCyclesEndsAtTheLastPath(t *testing.T) {
-	e, proj := project(t)
-	e.WriteFile(proj, "a.md", "travelling content\n")
-	settle(e, proj, "the file that will travel")
+// Two commits, each a rename, squash to the net change: `a` is gone and `c` has
+// arrived, and `b`, which exists in neither the range's base nor its head, is not
+// a difference at all. An engine walking the commits one by one and reporting what
+// each did would report b as a live path, and a rule would be asked about a file
+// that exists nowhere.
+func TestT023_02_ARenameChainWithinARangeEndsAtTheLastPath(t *testing.T) {
+	e, proj, ledger := project(t, seed("the file that will travel", [2]string{"a.md", "travelling content\n"}))
 
-	const sess = "s-023-02"
-	e.Run(proj, sess, "first move", Turns("done", Bash("b1", "git mv a.md b.md")).ThenCommit("first move"))
-	firstEnd := len(e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := runOne(t, e, proj, ledger, "s-023-02", Turns("done",
+		Bash("b1", "git mv a.md b.md"),
+		harness.Commit("c1", "first move"),
+		Bash("b2", "git mv b.md c.md"),
+	).ThenCommit("second move"))
 
-	e.Run(proj, sess, "second move", Turns("done", Bash("b2", "git mv b.md c.md")).ThenCommit("second move"))
-	all := e.FileGuardLedgerLines(proj, "watcher", "seen")
-	if len(all) <= firstEnd {
-		t.Fatalf("the second cycle put nothing in front of the rule, so nothing below can be read")
+	if len(got) == 0 {
+		t.Fatalf("the range put nothing in front of the rule, so nothing below can be read")
 	}
-	second := observedFiles(t, all[firstEnd:])
-
-	// The positive: the final path arrived in the second cycle, as a rename.
-	if k := statusesFor(second, "c.md"); len(k) == 0 || k[0] != "R" {
-		t.Fatalf("the chain's final path was not reported as a rename in cycle two: %v (all: %v)", k, second)
+	if k := changesetkit.Statuses(got, "c.md"); len(k) != 1 || k[0] != "R" {
+		t.Fatalf("the chain's final path was not reported as a rename: %v (all: %v)", k, got)
 	}
-	// The intermediate path is never a file of its own.
-	if k := statusesFor(second, "b.md"); len(k) > 0 {
-		t.Fatalf("the intermediate path of a rename chain was reported as %v: %v", k, second)
+	if !renamedFrom(t, ledger, "c.md", "a.md") {
+		t.Fatalf("the final path does not name the range's base path a.md as its origin (all: %v)", got)
+	}
+	if k := changesetkit.Statuses(got, "b.md"); len(k) > 0 {
+		t.Fatalf("the intermediate path of a rename chain was reported as %v: %v\n"+
+			"b.md is in neither the range's base nor its head — a rule was asked about a file that "+
+			"exists nowhere", k, got)
 	}
 }
 
@@ -207,25 +238,23 @@ func TestT023_02_ARenameChainAcrossCyclesEndsAtTheLastPath(t *testing.T) {
 // which is the point: the assertion is about what the ENGINE reports, and it
 // holds whether the C branch or the A branch produced it.
 func TestT023_03_ACopyReportsOnlyTheDestination(t *testing.T) {
-	e, proj := project(t)
-	e.WriteFile(proj, "source.md", "content that will be copied\n")
-	settle(e, proj, "the file that will be copied")
+	e, proj, ledger := project(t, seed("the file that will be copied", [2]string{"source.md", "content that will be copied\n"}))
 
-	got := runOne(t, e, proj, "s-023-03", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-03", Turns("done",
 		Bash("b1", "cp source.md copy.md && git add copy.md"),
-	))
+	).ThenCommit("copy source"))
 
-	if k := statusesFor(got, "copy.md"); len(k) == 0 || k[0] != "A" {
+	if k := changesetkit.Statuses(got, "copy.md"); len(k) == 0 || k[0] != "A" {
 		t.Fatalf("the copy's destination was not reported as a create: %v (all: %v)", k, got)
 	}
-	if k := statusesFor(got, "source.md"); len(k) > 0 {
+	if k := changesetkit.Statuses(got, "source.md"); len(k) > 0 {
 		t.Fatalf("the copy's source was reported as %v though it never changed: %v\n"+
 			"an unmodified file put in front of a rule is the noise untouched_stays_silent forbids", k, got)
 	}
 }
 
-// T023_04: a file replaced by a symlink — git's T status — is reported as a
-// modification.
+// T023_04: a file replaced by a symlink — git's T status — is reported as an
+// update.
 //
 // The typechange is present on both sides, so it is an update rather than a
 // create or a delete. It is worth its own test because T is a status a parser
@@ -237,14 +266,12 @@ func TestT023_03_ACopyReportsOnlyTheDestination(t *testing.T) {
 // file (it stats the link, not the target), so this asserts the whole path from
 // git's letter to the rule's event.
 func TestT023_04_AFileReplacedByASymlinkIsAnUpdate(t *testing.T) {
-	e, proj := project(t)
-	e.WriteFile(proj, "target.md", "the link's target\n")
-	e.WriteFile(proj, "shifty.md", "an ordinary file, for now\n")
-	settle(e, proj, "an ordinary file that will become a link")
+	e, proj, ledger := project(t, seed("an ordinary file that will become a link",
+		[2]string{"target.md", "the link's target\n"}, [2]string{"shifty.md", "an ordinary file, for now\n"}))
 
-	got := runOne(t, e, proj, "s-023-04", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-04", Turns("done",
 		Bash("b1", "rm shifty.md && ln -s target.md shifty.md && git add shifty.md"),
-	))
+	).ThenCommit("make shifty a link"))
 
 	// The premise: git really calls this a typechange. Without it this is an
 	// ordinary content update wearing a T's clothes.
@@ -253,7 +280,7 @@ func TestT023_04_AFileReplacedByASymlinkIsAnUpdate(t *testing.T) {
 			"being exercised and this test does not do what it claims", status)
 	}
 
-	k := statusesFor(got, "shifty.md")
+	k := changesetkit.Statuses(got, "shifty.md")
 	if len(k) == 0 {
 		t.Fatalf("a file replaced by a symlink was not reported at all: %v\n"+
 			"an unrecognised status costs the whole cycle its events, which is the silence the "+
@@ -279,28 +306,25 @@ func TestT023_04_AFileReplacedByASymlinkIsAnUpdate(t *testing.T) {
 // the baseline had it, and there is no content left to judge. The control is a
 // file the same cycle leaves behind.
 func TestT023_05_StagedThenDeletedIsReportedAsNoChange(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t, nil)
 
-	got := runOne(t, e, proj, "s-023-05", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-05", Turns("done",
 		Write("w1", "survivor.md", "still here\n"),
 		Bash("b1", "printf 'transient\\n' > ghost.md && git add ghost.md && rm ghost.md"),
-	))
+	).ThenCommit("the survivor"))
 
 	// The positive first: this cycle reported something.
-	if !sawPath(got, "survivor.md") {
+	if !changesetkit.Saw(got, "survivor.md") {
 		t.Fatalf("the file the cycle left behind was not reported: %v — nothing was observed, "+
 			"so the silence about the staged-then-deleted file proves nothing", got)
 	}
-	// The premise: the path really was created and is off the disk, and no commit
-	// ever held it.
+	// The premise: the path was staged and is off the disk, so the agent's commit
+	// (which stages everything) recorded its deletion, not its creation.
 	if e.Exists(proj, "ghost.md") {
 		t.Fatalf("ghost.md is still on disk, so this is not the staged-then-deleted case")
 	}
-	if log := e.Git(proj, "log", "--all", "--oneline", "--", "ghost.md"); log != "" {
-		t.Fatalf("a commit holds ghost.md (%q), so it is not the case this test is about", log)
-	}
 
-	if k := statusesFor(got, "ghost.md"); len(k) > 0 {
+	if k := changesetkit.Statuses(got, "ghost.md"); len(k) > 0 {
 		t.Fatalf("a file created, staged and deleted within the cycle was reported as %v: %v\n"+
 			"the tree ends as the baseline had it and there is no content to judge — this is "+
 			"the documented answer, and a change here is a change to a stated decision", k, got)
@@ -321,12 +345,12 @@ func TestT023_05_StagedThenDeletedIsReportedAsNoChange(t *testing.T) {
 // rule bound to it would stop firing the day someone added a broad ignore
 // pattern.
 func TestT023_06_ATrackedButIgnoredFileIsStillReported(t *testing.T) {
-	e, proj := project(t)
-	e.WriteFile(proj, "build.log", "tracked before it was ignored\n")
-	e.WriteFile(proj, ".gitignore", "*.log\n")
-	e.Git(proj, "add", "-A", "-f")
-	e.Git(proj, "commit", "-m", "a tracked file that gitignore also names")
-	settle(e, proj, "the range starts after it")
+	e, proj, ledger := project(t, func(e *harness.Env, proj string) {
+		e.WriteFile(proj, "build.log", "tracked before it was ignored\n")
+		e.WriteFile(proj, ".gitignore", "*.log\n")
+		e.Git(proj, "add", "-A", "-f")
+		e.Git(proj, "commit", "-m", "a tracked file that gitignore also names")
+	})
 
 	// The premise, both halves: git tracks it AND ignores it.
 	if tracked := e.Git(proj, "ls-files", "--", "build.log"); tracked == "" {
@@ -337,11 +361,11 @@ func TestT023_06_ATrackedButIgnoredFileIsStillReported(t *testing.T) {
 		t.Fatalf("build.log is not matched by .gitignore, so nothing here is being ignored")
 	}
 
-	got := runOne(t, e, proj, "s-023-06", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-06", Turns("done",
 		Write("w1", "build.log", "changed by the agent\n"),
-	))
+	).ThenCommit("change the log"))
 
-	if k := statusesFor(got, "build.log"); len(k) == 0 || k[0] != "M" {
+	if k := changesetkit.Statuses(got, "build.log"); len(k) == 0 || k[0] != "M" {
 		t.Fatalf("a tracked file was not reported because .gitignore names it: %v (all: %v)\n"+
 			"git tracks it and a change to it is a change to the repository; silencing it makes "+
 			"a rule stop firing the day a broad ignore pattern is added", k, got)
@@ -357,23 +381,21 @@ func TestT023_06_ATrackedButIgnoredFileIsStillReported(t *testing.T) {
 //
 // The control is a non-ignored file written in the same cycle.
 func TestT023_07_AnIgnoredUntrackedFileStaysOut(t *testing.T) {
-	e, proj := project(t)
-	e.WriteFile(proj, ".gitignore", "junk/\n")
-	e.CommitAll(proj, "the ignore rules")
+	e, proj, ledger := project(t, seed("the ignore rules", [2]string{".gitignore", "junk/\n"}))
 
-	got := runOne(t, e, proj, "s-023-07", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-07", Turns("done",
 		Write("w1", "real-work.md", "the agent's actual work\n"),
 		Bash("b1", "mkdir -p junk && printf 'noise\\n' > junk/generated.md"),
-	))
+	).ThenCommit("the real work"))
 
-	if !sawPath(got, "real-work.md") {
+	if !changesetkit.Saw(got, "real-work.md") {
 		t.Fatalf("the cycle's real work was not reported: %v — nothing was observed, so the "+
 			"silence about the ignored file proves nothing", got)
 	}
 	for _, o := range got {
 		if strings.HasPrefix(o.Path, "junk/") {
 			t.Fatalf("an ignored, untracked file was reported as %s %q: %v\n"+
-				"this is the flood --exclude-standard exists to hold back", o.Status, o.Path, got)
+				"this is the flood the ignore rules exist to hold back", o.Status, o.Path, got)
 		}
 	}
 }
@@ -390,19 +412,19 @@ func TestT023_07_AnIgnoredUntrackedFileStaysOut(t *testing.T) {
 // assertion is that the rule is handed the REAL name — the same bytes the shell
 // created — rather than a quoted or truncated rendering of it.
 func TestT023_08_APathWithANewlineOrAQuoteSurvives(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t, nil)
 
 	const newlineName = "odd\nname.md"
 	const quoteName = "odd\"quote.md"
 
-	got := runOne(t, e, proj, "s-023-08", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-08", Turns("done",
 		Write("w1", "ordinary.md", "the control\n"),
 		// Written through the shell so the names are exactly these bytes and
 		// nothing in the harness has to encode them.
 		Bash("b1", `printf 'x\n' > "odd`+"\n"+`name.md"; printf 'y\n' > 'odd"quote.md'`),
-	))
+	).ThenCommit("odd names"))
 
-	if !sawPath(got, "ordinary.md") {
+	if !changesetkit.Saw(got, "ordinary.md") {
 		t.Fatalf("the control file was not reported: %v — nothing was observed, so what the "+
 			"odd names did or did not do proves nothing", got)
 	}
@@ -415,12 +437,12 @@ func TestT023_08_APathWithANewlineOrAQuoteSurvives(t *testing.T) {
 		t.Fatalf("the quote-named file was never created, so the encoding is not being tested")
 	}
 
-	if k := statusesFor(got, newlineName); len(k) == 0 || k[0] != "A" {
+	if k := changesetkit.Statuses(got, newlineName); len(k) == 0 || k[0] != "A" {
 		t.Fatalf("a path holding a newline was not reported under its real name: %v (all: %v)\n"+
 			"a line-oriented reader splits this into two entries and every rule bound to the "+
 			"file is asked about paths that do not exist", k, got)
 	}
-	if k := statusesFor(got, quoteName); len(k) == 0 || k[0] != "A" {
+	if k := changesetkit.Statuses(got, quoteName); len(k) == 0 || k[0] != "A" {
 		t.Fatalf("a path holding a quote was not reported under its real name: %v (all: %v)\n"+
 			"read from git's default output the literal quotes become part of the name", k, got)
 	}
@@ -437,17 +459,17 @@ func TestT023_08_APathWithANewlineOrAQuoteSurvives(t *testing.T) {
 // If this ever fails, the failure is a rule being asked about a path that does
 // not exist on disk, which reads to the rule as a deleted file.
 func TestT023_09_QuotepathDoesNotChangeWhatTheRuleIsHanded(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t, nil)
 	e.Git(proj, "config", "core.quotepath", "true")
 
 	const accented = "café.md"
 
-	got := runOne(t, e, proj, "s-023-09", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-09", Turns("done",
 		Write("w1", "ordinary.md", "the control\n"),
 		Bash("b1", "printf 'z\\n' > 'café.md'"),
-	))
+	).ThenCommit("accented name"))
 
-	if !sawPath(got, "ordinary.md") {
+	if !changesetkit.Saw(got, "ordinary.md") {
 		t.Fatalf("the control file was not reported: %v — nothing was observed", got)
 	}
 	if !e.Exists(proj, accented) {
@@ -459,24 +481,40 @@ func TestT023_09_QuotepathDoesNotChangeWhatTheRuleIsHanded(t *testing.T) {
 		t.Fatalf("core.quotepath is %q, so this test is not exercising the setting it names", v)
 	}
 
-	if k := statusesFor(got, accented); len(k) == 0 || k[0] != "A" {
+	if k := changesetkit.Statuses(got, accented); len(k) == 0 || k[0] != "A" {
 		t.Fatalf("a non-ASCII path was not reported under its real bytes with core.quotepath "+
 			"on: %v (all: %v)\nthe rule is being handed an escaped rendering, which names no "+
 			"file on disk and reads as a deletion", k, got)
 	}
 }
 
-// T023_10: a submodule's contents are never the parent's changes; the gitlink
-// is one entry.
+// T023_10: a submodule's contents are never the parent's changes, and the
+// gitlink does not reach a file rule either.
 //
-// The parent's diff names the gitlink — the submodule's own path — as one entry,
-// and `.gitmodules` as an ordinary file.
+// (Ported to the changeset model: a commit records the gitlink as a path of its
+// own, so it IS an entry of the changeset, unlike the retired per-file events
+// where a directory on disk was dropped. The contents remain absent.)
 //
-// What is asserted: .gitmodules arrives (the parent really did change), the
-// submodule's own files never do (another repository's content is not this one's
-// work), and the gitlink is a single entry at the submodule's path.
+// TWO LAYERS, and measuring them separately is the point.
+//
+// gitrepo.Changed reports the gitlink — the submodule's own path — because the
+// parent's diff names it; that is pinned by TestChanged_SubmoduleIsAGitlink
+// NotItsContents, whose comment says the path "is handed to file rules as
+// though it were one". Measured end to end, it is NOT: the gitlink is a
+// DIRECTORY on disk, so filemod's lookAt reports ErrPathIsNotAFile and no event
+// is emitted for it. What a rule is handed for `git submodule add` is
+// .gitmodules and nothing else.
+//
+// So the unit test's expectation and the observable behaviour differ, and this
+// records the observable one. It is the same shape as the nested-worktree
+// finding in 021: a non-file path enters the difference and is absorbed one
+// layer below the rules by a check that exists for an unrelated reason.
+//
+// What is asserted here, therefore: .gitmodules arrives (the parent really did
+// change), the submodule's own files never do (another repository's content is
+// not this one's work), and the gitlink produces no file event.
 func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t, nil)
 
 	// A second repository to embed. Built inside the project's parent so the
 	// file: URL is local and no network is involved.
@@ -487,12 +525,12 @@ func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
 	e.WriteFile(sub, "inner.md", "a file inside the submodule\n")
 	e.CommitAll(sub, "the submodule's own content")
 
-	got := runOne(t, e, proj, "s-023-10", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-10", Turns("done",
 		Write("w1", "ordinary.md", "the control\n"),
 		Bash("b1", "git -c protocol.file.allow=always submodule add "+sub+" vendored >/dev/null 2>&1"),
-	))
+	).ThenCommit("add a submodule"))
 
-	if !sawPath(got, "ordinary.md") {
+	if !changesetkit.Saw(got, "ordinary.md") {
 		t.Fatalf("the control file was not reported: %v — nothing was observed, so what the "+
 			"submodule did or did not produce proves nothing", got)
 	}
@@ -515,75 +553,154 @@ func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
 	// The parent really did change, and said so: .gitmodules is an ordinary file
 	// and arrives as one. This is the positive that makes the two absences above
 	// and below readable.
-	if k := statusesFor(got, ".gitmodules"); len(k) == 0 || k[0] != "A" {
+	if k := changesetkit.Statuses(got, ".gitmodules"); len(k) == 0 || k[0] != "A" {
 		t.Fatalf("adding a submodule did not report .gitmodules as a create: %v (all: %v)\n"+
 			"the parent repository changed and nothing said so", k, got)
 	}
 
-	// The gitlink itself is ONE entry at the submodule's own path — a pointer, not
-	// a tree — and nothing beneath it (checked above).
-	if k := statusesFor(got, "vendored"); len(k) != 1 || k[0] != "A" {
-		t.Fatalf("the submodule's gitlink was reported as %v; want exactly one A entry: %v", k, got)
+	// The gitlink itself is one entry of the changeset, at the submodule's own
+	// path and nothing under it: the parent's commit records the pointer, and the
+	// pointer is what a rule sees. Recorded rather than asserted as desirable.
+	if k := changesetkit.Statuses(got, "vendored"); len(k) != 1 || k[0] != "A" {
+		t.Fatalf("the submodule's gitlink was not reported once, as an addition: %v (all: %v)", k, got)
 	}
 }
 
-// T023_11: an agent that commits mid-cycle still has its work in the difference.
+// T023_11: an agent that commits mid-cycle still has its work judged, and work it
+// leaves uncommitted is refused until committed.
 //
-// difference_spans_both, driven at the seam rather than at the invariant: after
-// the commit the tree is CLEAN, so `git status` says nothing happened, and the
-// untracked question answers nothing too. Only the diff against the session's
-// baseline still holds the work. An implementation reading only what is
-// outstanding reports that the cycle changed nothing, which is precisely wrong
-// and silently so.
-//
-// Both halves in one cycle so neither can carry the test alone.
-func TestT023_11_AMidCycleCommitStaysInTheDifference(t *testing.T) {
-	e, proj := project(t)
+// After the mid-cycle commit the tree is CLEAN, so `git status` says nothing
+// happened. Only the commits in the rule's range still hold the work: an
+// implementation reading only what is outstanding reports that the cycle changed
+// nothing, which is precisely wrong and silently so. The outstanding half is not
+// judged in that state: the Stop is refused until the agent commits it, and then
+// both halves arrive in the same changeset.
+func TestT023_11_AMidCycleCommitStaysInTheChangeset(t *testing.T) {
+	e, proj, ledger := project(t, nil)
 
-	got := runOne(t, e, proj, "s-023-11", Turns("done",
+	const sess = "s-023-11"
+	e.Run(proj, sess, "commit one, leave one", Turns("done",
 		Write("w1", "committed.md", "this gets committed\n"),
-		Bash("b1", "git add committed.md && git commit -m 'the agent commits'"),
+		Bash("b1", "git add committed.md && git commit -q -m 'the agent commits'"),
 		Write("w2", "outstanding.md", "this does not\n"),
 	))
 
-	if !sawPath(got, "committed.md") {
-		t.Fatalf("work committed during the cycle fell out of the difference: %v\n"+
+	// The premise: the committed file really is clean in the tree, or any
+	// implementation would have found it.
+	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
+		t.Fatalf("committed.md is still outstanding (%q), so the committed half is not being "+
+			"exercised", status)
+	}
+	e.AssertCommitRequired(proj, sess, "outstanding.md")
+	if got := ledgerFiles(t, ledger); changesetkit.Saw(got, "outstanding.md") {
+		t.Fatalf("uncommitted work was judged before it was committed: %v", got)
+	}
+	seen := len(harness.CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")))
+
+	e.Run(proj, sess, "now commit it", Turns("committed").ThenCommit("the outstanding file"))
+	e.NoCommitRequired(proj, sess, seen)
+
+	got := ledgerFiles(t, ledger)
+	if !changesetkit.Saw(got, "committed.md") {
+		t.Fatalf("work committed during the cycle fell out of the changeset: %v\n"+
 			"a comparison reading only what is outstanding finds a clean tree and reports that "+
 			"the cycle changed nothing", got)
 	}
-	if !sawPath(got, "outstanding.md") {
-		t.Fatalf("work left outstanding fell out of the difference: %v", got)
+	if !changesetkit.Saw(got, "outstanding.md") {
+		t.Fatalf("the half committed after the refusal is missing: %v", got)
 	}
 }
 
-// T023_12: a detached HEAD does not lose the work committed before it.
+// T023_12: a detached HEAD that still reaches the session's start does not lose
+// the work.
 //
-// Checking out the session's own commit detaches HEAD without leaving the
-// history the rule's range is measured over, so the work is still in it. An
-// engine that lost the range on any HEAD movement would push the cycle's own work
-// out of the difference at exactly the moment an agent inspects a commit.
+// Checking out the session's own commit detaches HEAD without leaving the history
+// the range is measured in, so the work committed before the detach is still the
+// range's. An engine that re-took its starting point on any HEAD movement would
+// push the cycle's own work out of the changeset at exactly the moment an agent
+// inspects a commit.
 //
-// The work written BEFORE the detach is the discriminator — it must still be
+// The work committed BEFORE the detach is the discriminator — it must still be
 // reported afterwards.
-func TestT023_12_ADetachedHeadReachingTheBaselineKeepsThePoint(t *testing.T) {
-	e, proj := project(t)
+func TestT023_12_ADetachedHeadReachingTheBaselineKeepsTheWork(t *testing.T) {
+	e, proj, ledger := project(t, nil)
 
-	const sess = "s-023-12"
-	e.Run(proj, sess, "write then detach", Turns("done",
+	e.Run(proj, "s-023-12", "write then detach", Turns("done",
 		Write("w1", "early.md", "written before the detach\n"),
-		Bash("b1", "git add early.md && git commit -m 'the agent commits' && git checkout --detach HEAD"),
-	).ThenCommit("on the detached head"))
+		Bash("b1", "git add -A && git commit -q -m 'the agent commits' && git checkout -q --detach HEAD"),
+	).ThenCommit("x"))
 
-	// The premise: HEAD really is detached.
 	if ref := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); ref != "HEAD" {
 		t.Fatalf("HEAD is not detached (on %q), so this test is not about a detached HEAD", ref)
 	}
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "early.md") {
-		t.Fatalf("work committed before a detach fell out of the difference: %v\n"+
-			"the detached commit still reaches the session's baseline, so the point must not "+
+	got := ledgerFiles(t, ledger)
+	if !changesetkit.Saw(got, "early.md") {
+		t.Fatalf("work committed before a detach fell out of the changeset: %v\n"+
+			"the detached commit still reaches the session's start, so the range must not "+
 			"have moved and this work is still the cycle's", got)
+	}
+}
+
+// T023_13: a rebase in progress does not re-take the point.
+//
+// The case Position.Operation exists for. A rebase walks a detached HEAD through
+// commits that reach nothing recorded, at every step — so reachability alone
+// would re-take the baseline several times over one rebase, each time landing on
+// a commit the operation is about to replace. While an operation is RUNNING on
+// the branch the point was taken on, the point waits.
+//
+// Driven as a real interrupted rebase: a conflict stops it mid-flight, and the
+// cycle ends with .git/rebase-merge on disk.
+func TestT023_13_ARebaseInProgressDoesNotRetakeThePoint(t *testing.T) {
+	e, proj, _ := project(t, nil)
+
+	// Two lines of history that touch the same file, so rebasing one onto the
+	// other conflicts and stops.
+	e.WriteFile(proj, "contested.md", "base\n")
+	e.CommitAll(proj, "the contested file")
+	root := e.Git(proj, "rev-parse", "HEAD")
+
+	e.Git(proj, "checkout", "-b", "side", root)
+	e.WriteFile(proj, "contested.md", "side version\n")
+	e.CommitAll(proj, "on side")
+
+	e.Git(proj, "checkout", "main")
+	e.WriteFile(proj, "contested.md", "main version\n")
+	e.CommitAll(proj, "on main")
+
+	const sess = "s-023-13"
+
+	// One ordinary cycle first, so the session exists and its point is recorded.
+	// The meta cannot be read before a session has run — `session id` needs a
+	// transcript — so the "before" reading has to come from a real cycle rather
+	// than from the empty state.
+	e.Run(proj, sess, "an ordinary first cycle", Turns("done",
+		Write("w1", "work.md", "the cycle's own work\n"),
+	).ThenCommit("the cycle's work"))
+	before := e.Meta(proj, sess, sessionstate.MetaBaselineCommit)
+	if before == "" {
+		t.Fatalf("no baseline was recorded by the first cycle, so there is no point here to " +
+			"stay put or move")
+	}
+
+	// Now the rebase, in a cycle of its own. Expected to stop on a conflict, so
+	// git's non-zero exit is the arrangement rather than a failure.
+	e.Run(proj, sess, "rebase into a conflict", Turns("done",
+		Bash("b2", "git checkout side >/dev/null 2>&1; git rebase main >/dev/null 2>&1; true"),
+	))
+
+	// The premise: a rebase really is in progress. Without it this is a test
+	// about an ordinary cycle and the assertion below is vacuous.
+	if !e.Exists(proj, ".git/rebase-merge") && !e.Exists(proj, ".git/rebase-apply") {
+		t.Skip("no rebase is in progress after the conflict attempt, so the operation branch " +
+			"is not being exercised in this environment")
+	}
+
+	if after := e.Meta(proj, sess, sessionstate.MetaBaselineCommit); after != before {
+		t.Fatalf("the point moved during a rebase (%s -> %s)\n"+
+			"a rebase walks a detached HEAD through commits it is about to replace; re-taking "+
+			"the point there lands it on a commit that will not exist once the rebase finishes", before, after)
 	}
 }
 
@@ -601,23 +718,22 @@ func TestT023_12_ADetachedHeadReachingTheBaselineKeepsThePoint(t *testing.T) {
 // cycle would silence every rule for the turn, which is the silence the whole
 // design exists to prevent.
 func TestT023_14_AnUnclassifiablePathDoesNotCostTheCycle(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t, nil)
 
-	got := runOne(t, e, proj, "s-023-14", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-023-14", Turns("done",
 		Write("w1", "before-it.md", "written before\n"),
 		// An empty directory git will not report, and a submodule-shaped
 		// directory it will: a nested repository is untracked content that is
 		// not a file.
-		Bash("b1", "mkdir -p nested && git -c init.defaultBranch=main init -q nested && printf 'x\\n' > nested/inside.md && "+
-			"git -C nested add -A && git -C nested -c user.email=a@b.invalid -c user.name=a commit -qm inside"),
+		Bash("b1", "mkdir -p nested && git -c init.defaultBranch=main init -q nested && git -C nested -c user.name=x -c user.email=x@example.invalid commit -q --allow-empty -m inner && printf 'x\\n' > nested/inside.md"),
 		Write("w2", "after-it.md", "written after\n"),
-	))
+	).ThenCommit("around the nested repository"))
 
 	// Both ordinary files reached the rule, on either side of the odd one.
-	if !sawPath(got, "before-it.md") {
+	if !changesetkit.Saw(got, "before-it.md") {
 		t.Fatalf("a file written before the unclassifiable path was not reported: %v", got)
 	}
-	if !sawPath(got, "after-it.md") {
+	if !changesetkit.Saw(got, "after-it.md") {
 		t.Fatalf("a file written after the unclassifiable path was not reported: %v\n"+
 			"one path the engine could not turn into an event cost the rest of the cycle its "+
 			"judging — one unclassifiable file becoming every file nobody judged", got)

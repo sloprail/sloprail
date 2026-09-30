@@ -1,113 +1,182 @@
 package e2e
 
 import (
-	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
-// identity_is_content: a file's identity is what it holds, not where it sits or
-// when it was written.
+// identity_is_content: a file check's fingerprint derives from a file's content,
+// and from nothing else about it.
 //
-// A file-guard judges a range of commits (a changeset), and what it is handed for
-// a file is that file's old and new content. So the two halves of the invariant
-// are observable from a check's payload:
+// The spec's reasoning: "A file reverted to something already judged has not
+// become new again, and one moved to another path has not become the same file
+// there. Deriving identity from when it was written or where it sits would get
+// both of those backwards."
 //
-//   - a file moved to another path has not become the same file there: the move
-//     arrives as ONE file at the new path, a rename that names where it came from
-//     (T020_01), never as an unrelated create
-//   - the old "reverted content is not re-judged" half belonged to the retired
-//     per-path fingerprint. What replaced it is the verdict cache, keyed on the
-//     input a check receives: an unchanged input is not judged again, proven in
-//     fileguard/034 (T034_03) and changeset/003.
+// The fingerprint itself is an internal value with no command that prints it, so
+// this directory tests the two CONSEQUENCES the spec names — which is what the
+// invariant is for. Each is an observation a test can make from outside:
+//
+//   - reverted content is not re-judged (T020_01) — identity does not include
+//     WHEN the content was written
+//   - the same content at another path IS judged (T020_02) — identity is not the
+//     content alone in a way that ignores where the check was recorded, and a
+//     move is a new file to judge
+//
+// The pair is deliberate. An engine keying identity on the path alone passes the
+// first and fails the second; one keying on content alone across all paths
+// passes the second's letter and fails its spirit; one keying on modification
+// time fails both.
 
-// recordEverything is a file-guard that records the changeset it is handed and
-// passes it.
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed and passes everything (re-vehicled from the old
+// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md). `match: "**/*.md"` fires
+// on whichever Post kind each change produced, the same three kinds the old hooks
+// bound. The content-identity SKIP this directory is about is the file-guard's own
+// revalidation record — a guard that judged AND passed a fingerprint of content
+// skips that content when it recurs, keyed per guard (rev.Skip/rev.Record in the
+// post dispatch) — the exact mechanism the old dispatch used, so the same
+// behavior is observed through the new one. The ledger (`seen`, no `.md`) is not
+// matched, so the guard cannot re-observe its own bookkeeping.
 const recordEverything = `match: "**/*.md"
 checks:
   - script: ./judge.sh
 `
 
-// judgeScript records and permits. The ledger is $SR_GUARDRAIL_DIR/seen.
-const judgeScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
-// observed is one file a recorded changeset selected.
-type observed struct {
-	Status  string
-	Path    string
-	OldPath string
-}
-
-// observedFiles decodes what a file-guard's check was handed: the Changeset
-// payload's files.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Changeset struct {
-				Files []struct {
-					Path    string `json:"path"`
-					OldPath string `json:"oldPath"`
-					Status  string `json:"status"`
-				} `json:"files"`
-			} `json:"changeset"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
-		}
-		for _, f := range p.Changeset.Files {
-			got = append(got, observed{Status: f.Status, Path: f.Path, OldPath: f.OldPath})
-		}
-	}
-	return got
-}
-
-func countPath(got []observed, path string) int {
-	n := 0
-	for _, o := range got {
-		if o.Path == path {
-			n++
-		}
-	}
-	return n
-}
-
-// T020_01: the same content at a different path is judged there, as a rename.
+// judgeScript records and permits.
 //
-// A file moved to another path has not become the same file there: the new path
-// has never been judged, whatever its bytes. The move is a real rename through
-// the shell, so the destination is byte-identical to the file it replaces, and it
-// still reaches the rule — at the new path, naming the old one.
-func TestT020_01_TheSameContentAtANewPathIsJudged(t *testing.T) {
+// Permitting matters here: the skip this directory is about only applies to
+// content a guardrail has judged AND passed, so a refusing fixture would keep
+// every file eligible for re-judging and make the assertions meaningless. The
+// ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine sets for the check.
+//
+// The ledger lives OUTSIDE the rule's folder, at a path the test bakes into the
+// script: a rule's hash covers its whole folder, and a ledger growing inside it
+// would change the hash between runs and drop the rule's watermark.
+func judgeScript(ledger string) string {
+	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
+}
+
+// ledgerFile is where this test's check records what it is handed.
+func ledgerFile(t *testing.T) string { return filepath.Join(t.TempDir(), "seen") }
+
+func countPath(got []changesetkit.Observed, path string) int {
+	return len(changesetkit.Statuses(got, path))
+}
+
+func seen(t *testing.T, ledger string) []changesetkit.Observed {
+	t.Helper()
+	body, err := os.ReadFile(ledger)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return changesetkit.Files(t, lines)
+}
+
+// T020_01: content restored to something already judged is not judged again.
+//
+// On the changeset model a rule judges the difference between two commits, and a
+// file's identity there is its content: a file changed in one commit and put back
+// to the bytes it had at the range's start by a later commit nets out to nothing,
+// so the range holds no change to judge. (Per-file "already judged at this
+// fingerprint" revalidation is retired; the intent, that identity derives from
+// content and not from when it was written, is carried here.)
+//
+// The control is the last run: genuinely new content IS judged, so silence about
+// the reverted file is not an engine that judges nothing.
+func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e := New(t)
+	ledger := ledgerFile(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript})
-	// The file exists, with the rule, before the session: the rule's range starts
-	// at the commit that last touched its folder, so the move is all that is in it.
-	writeFile(t, proj, "origin.md", "content that will move\n")
-	e.CommitAll(proj, "the project and its guardrail, before the session")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript(ledger)})
+	e.CommitAll(proj, "the project before the session")
 
-	e.Run(proj, "s-020-01", "move it", Turns("done",
+	const sess = "s-020-01"
+	const original = "the original content\n"
+
+	e.Run(proj, sess, "write it", Turns("done",
+		Write("w1", "subject.md", original),
+	).ThenCommit("add subject"))
+	afterFirst := countPath(seen(t, ledger), "subject.md")
+	if afterFirst == 0 {
+		t.Fatalf("the file was never judged at all, so nothing below can be a skip")
+	}
+
+	// Changed and put back within one range: two commits, no net difference.
+	e.Run(proj, sess, "change it and put it back", Turns("done",
+		Write("w2", "subject.md", "different content\n"),
+		harness.Commit("c2", "change subject"),
+		Write("w3", "subject.md", original),
+		harness.Commit("c3", "restore subject"),
+	))
+	if got := countPath(seen(t, ledger), "subject.md"); got != afterFirst {
+		t.Fatalf("content restored to what the range started with was judged again (%d then %d) — "+
+			"identity is being derived from the commits made rather than from what the file holds",
+			afterFirst, got)
+	}
+
+	// The control: content that genuinely differs IS judged.
+	e.Run(proj, sess, "change it for real", Turns("done",
+		Write("w4", "subject.md", "genuinely new content\n"),
+	).ThenCommit("really change subject"))
+	if got := countPath(seen(t, ledger), "subject.md"); got <= afterFirst {
+		t.Fatalf("changed content was not judged (%d then %d) — the hook is not running for new "+
+			"content, so the skip asserted above would hold for the wrong reason", afterFirst, got)
+	}
+}
+
+// T020_02: the same content at a different path is judged there.
+//
+// The other half. A file moved to another path has not become the same file
+// there — the check was recorded for a path, and the new path has never been
+// judged, whatever its bytes. An engine keying identity on content alone, with
+// no regard for where the verdict was recorded, would skip the new path and let
+// a file arrive somewhere it has never been checked.
+//
+// The move is done as a real rename through the shell, so the destination has
+// content byte-identical to something already passed.
+func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
+	e := New(t)
+	ledger := ledgerFile(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript(ledger)})
+
+	const sess = "s-020-02"
+	const content = "content that will move\n"
+
+	e.CommitAll(proj, "the project before the session")
+
+	e.Run(proj, sess, "write it", Turns("done",
+		Write("w1", "origin.md", content),
+	).ThenCommit("add origin"))
+	if countPath(seen(t, ledger), "origin.md") == 0 {
+		t.Fatalf("the file was never judged at its original path, so the move below proves nothing")
+	}
+
+	e.Run(proj, sess, "move it", Turns("done",
 		Bash("b1", "mv origin.md moved.md"),
-	).ThenCommit("move it"))
+	).ThenCommit("move origin"))
 
-	var moved *observed
-	for _, o := range observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen")) {
-		if o.Path == "moved.md" {
-			o := o
-			moved = &o
-		}
-	}
-	if moved == nil {
-		t.Fatalf("content that moved to a new path was never judged there — the verdict was " +
-			"recorded for the old path, so a file could arrive somewhere it has never been checked")
-	}
-	if moved.Status != "R" || moved.OldPath != "origin.md" {
-		t.Fatalf("the move arrived as %+v, want a rename from origin.md", *moved)
+	got := seen(t, ledger)
+	if countPath(got, "moved.md") == 0 {
+		t.Fatalf("content that moved to a new path was never judged there: %v — the verdict was "+
+			"recorded for the old path, so identity keyed on content alone lets a file arrive "+
+			"somewhere it has never been checked", got)
 	}
 }

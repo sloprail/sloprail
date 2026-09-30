@@ -31,7 +31,7 @@
 // (PreFileCreate, PreCommandInvoke) is a GateEventKind too, so the subject-naming
 // half is a gate on those pre-action kinds. The mechanical transformation is the
 // one in tests/e2e/REVEHICLE-PATTERN.md: the check receives the FLAT event
-// (`.event.kind`, `.event.path`, `.event.invocations`), never the old nested
+// (`.event.kind`, `.event.invocations`), never the old nested
 // `.event.fields`, and the subjectless-Stop assertion is read against that flat
 // shape — `{"kind":"Stop"}`, an object with no subject, which is the flat-form
 // version of the old `"fields":{}`.
