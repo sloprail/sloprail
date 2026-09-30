@@ -294,7 +294,7 @@ func TestRules_UnitWriteJudgesTheDraft(t *testing.T) {
 	if !containsStr(prompt, "--- 02_draft.md ---") || !containsStr(prompt, "ZZ_DRAFT Ever wonder why builds keep failing?") {
 		t.Fatalf("the rules judge was not handed the unit's draft on a UNIT.md write:\n%s", prompt)
 	}
-	if !containsStr(prompt, "01_announce/02_draft.md`") {
+	if !containsStr(prompt, "01_announce/02_draft.md</measure-at>") {
 		t.Errorf("a measurement is not pointed at the draft:\n%s", prompt)
 	}
 }

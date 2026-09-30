@@ -175,10 +175,10 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	}
 
 	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !containsStr(joined, "was changed without citing a tool's output from this session (--cite:tool_result)") {
+	if !containsStr(joined, "must cite a tool's output from this session, and no commit in its range carries a citation") {
 		t.Fatalf("an in_review claim with no cited tool output was not refused at Stop:\n%s", joined)
 	}
-	if !containsStr(joined, "--cite:tool_result") {
+	if !containsStr(joined, "Sloprail-Cites-Tool: <exact quote>") {
 		t.Errorf("the refusal does not say how to cite the proof:\n%s", joined)
 	}
 }
@@ -210,7 +210,7 @@ func TestReview_UncitedEditAfterCitedTransitionAccumulates(t *testing.T) {
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "priority: P2") {
 		t.Fatalf("the uncited edit did not land:\n%s", got)
 	}
-	if joined := stopBlocks(e, proj, sess); containsStr(joined, "without citing") || containsStr(joined, "without a citation") {
+	if joined := stopBlocks(e, proj, sess); containsStr(joined, "no commit in its range carries a citation") {
 		t.Fatalf("the range's earlier commit cited the proof, yet the Stop refused for missing proof:\n%s", joined)
 	}
 }

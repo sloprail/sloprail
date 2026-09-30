@@ -33,6 +33,7 @@ lib_init() {
   field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }
 
   kind="$(field '.event.kind // ""')"
+  path="$(field '.event.path // ""')"
 }
 
 lib_check() {
