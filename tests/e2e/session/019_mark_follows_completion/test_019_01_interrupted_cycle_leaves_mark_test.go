@@ -114,9 +114,10 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 
 	// A cycle whose judging is cut short.
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript})
+	e.CommitAll(proj, "the guards")
 	first := e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "interrupted cycle\n"),
-	))
+	).ThenCommit("the cycle's work"))
 	// The premise: the cycle really did not finish cleanly. Without this the
 	// test is about an ordinary completed cycle and proves nothing.
 	//
@@ -138,9 +139,10 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	// The next cycle finishes cleanly, and must still be offered the turns the
 	// interrupted one never settled.
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.CommitAll(proj, "the clean guard replaces the crashing one")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "completed cycle\n"),
-	))
+	).ThenCommit("the cycle's work"))
 
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= before {
@@ -188,7 +190,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
-	))
+	).ThenCommit("the cycle's work"))
 	before := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if before == 0 {
 		t.Fatalf("the first cycle never reached the hook, so this proves nothing")
@@ -196,7 +198,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
-	))
+	).ThenCommit("the cycle's work"))
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= before {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
