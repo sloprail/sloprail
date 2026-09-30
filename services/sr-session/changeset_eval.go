@@ -161,7 +161,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 		return ev.engineFailure(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
 
-	r, err := resolveRuleRange(ev.root, g, hash, ev.results, ev.state)
+	r, err := resolveRuleRange(ev.root, g, ev.results, ev.state)
 	if errors.Is(err, gitrepo.ErrNoCommits) {
 		return fileGuardResult{}, false // nothing has been committed, so nothing can be judged
 	}

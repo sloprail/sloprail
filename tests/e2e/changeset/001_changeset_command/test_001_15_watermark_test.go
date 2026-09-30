@@ -95,9 +95,10 @@ func TestT001_16_AnAmendedAwayWatermarkIsDropped(t *testing.T) {
 	}
 }
 
-// T001_17: a pass belongs to the rule definition it was reached under. Edit
-// anything in the rule's folder and the old pass is no watermark.
-func TestT001_17_AnEditedRuleHasNoWatermark(t *testing.T) {
+// T001_17: a pass is not keyed on the rule's definition: work up to it was approved,
+// even under an older rule. Edit the rule and the hash changes (so verdicts are not
+// replayed), but the watermark stays, and only what comes after the pass is judged.
+func TestT001_17_AnEditedRuleKeepsItsWatermark(t *testing.T) {
 	e, proj, rule, hash, c1 := watermarkRepo(t)
 	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
 	e.WriteFile(proj, ".sloprail/file-guard/size/check.sh", passingCheck+"# edited\n")
@@ -106,8 +107,11 @@ func TestT001_17_AnEditedRuleHasNoWatermark(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
-	if got.Origin != "floor" || got.RuleHash == hash {
-		t.Fatalf("origin %q, hash unchanged=%v; the edited rule must not inherit the old pass", got.Origin, got.RuleHash == hash)
+	if got.RuleHash == hash {
+		t.Fatalf("the edit left the rule's hash unchanged")
+	}
+	if got.Origin != "watermark" || got.Base != c1 {
+		t.Fatalf("origin %q base %s; the pass reached under the older rule must still be the watermark (%s)", got.Origin, got.Base, c1)
 	}
 }
 
@@ -123,16 +127,15 @@ func TestT001_18_APassIsPerRule(t *testing.T) {
 }
 
 // T001_19: a rule's identity is its whole .sloprail root, not its folder alone. A
-// shared lib, a schema or another rule's folder edited OUTSIDE the rule's own folder
-// still changes what the rule does, so the pass reached before is no watermark: the
-// hash changes and the range restarts at the PARENT of the commit that edited the
-// root — which is where the work approved before it ends, so it is not judged again.
-func TestT001_19_AnEditOutsideTheRuleFolderButInsideSloprailRestartsTheRange(t *testing.T) {
+// shared lib edited OUTSIDE the rule's own folder changes the hash, and commits made
+// after a pass are judged by the new rule — but the pass stays the watermark, so
+// only the commits after it are judged: the work approved before is not judged again.
+func TestT001_19_AnEditOutsideTheRuleFolderButInsideSloprailChangesTheHashNotTheWatermark(t *testing.T) {
 	e, proj, rule, hash, c1 := watermarkRepo(t)
 	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
 
 	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# what rules share\n")
-	lib := e.CommitAll(proj, "edit the shared lib")
+	e.CommitAll(proj, "edit the shared lib")
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\nthree\n")
 	head := e.CommitAll(proj, "third edit")
 
@@ -141,13 +144,11 @@ func TestT001_19_AnEditOutsideTheRuleFolderButInsideSloprailRestartsTheRange(t *
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
 	if got.RuleHash == hash {
-		t.Fatalf("editing .sloprail/lib/shared.sh left the rule's hash unchanged; the old pass still counts")
+		t.Fatalf("editing .sloprail/lib/shared.sh left the rule's hash unchanged")
 	}
-	if got.Origin != "floor" || got.Base != e.Git(proj, "rev-parse", lib+"^") || got.Head != head {
-		t.Fatalf("range = %s %s..%s, want the floor %s^..%s", got.Origin, got.Base, got.Head, lib, head)
+	if got.Origin != "watermark" || got.Base != c1 || got.Head != head {
+		t.Fatalf("range = %s %s..%s, want watermark %s..%s", got.Origin, got.Base, got.Head, c1, head)
 	}
-	// What was approved at c1 is not judged again: a.md is read from c1, so the
-	// squashed change is the third edit alone.
 	files := got.Payload.Changeset.Files
 	if len(files) != 1 || files[0].Path != "docs/a.md" || files[0].OldContent != "one\ntwo\n" || files[0].NewContent != "one\ntwo\nthree\n" {
 		t.Fatalf("files = %+v, want only the change made after the pass", files)

@@ -26,13 +26,13 @@ func TestResolveRuleRange_ABaselineTakenAtTheSubagentsStopIsNotAFloor(t *testing
 	state := openStore(t)
 	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, start))
 
-	r, err := resolveRuleRange(repo, plugin, "h", nil, state)
+	r, err := resolveRuleRange(repo, plugin, nil, state)
 	require.NoError(t, err)
 	assert.Equal(t, start, r.Base, "a baseline recorded as the work began is the floor")
 	assert.Equal(t, gitrepo.FromSessionStart, r.Origin)
 
 	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineAtStop, "1"))
-	_, err = resolveRuleRange(repo, plugin, "h", nil, state)
+	_, err = resolveRuleRange(repo, plugin, nil, state)
 	assert.ErrorIs(t, err, gitrepo.ErrNoSessionStart, "one taken at the Stop is where the work ended, not a floor")
 }
 
@@ -49,7 +49,7 @@ func TestResolveRuleRange_TheFloorIsTheParentOfTheLastCommitTouchingTheSloprailR
 	ruleCommit := runGit(t, repo, "rev-parse", "HEAD")
 	g := declaration.FileGuard{Name: "size", Dir: ruleDir}
 
-	r, err := resolveRuleRange(repo, g, "h", nil, nil)
+	r, err := resolveRuleRange(repo, g, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, gitrepo.FromFloor, r.Origin)
 	assert.Equal(t, runGit(t, repo, "rev-parse", ruleCommit+"^"), r.Base)
@@ -60,14 +60,14 @@ func TestResolveRuleRange_TheFloorIsTheParentOfTheLastCommitTouchingTheSloprailR
 	runGit(t, repo, "add", "-A")
 	runGit(t, repo, "commit", "-m", "edit the lib")
 	lib := runGit(t, repo, "rev-parse", "HEAD")
-	r, err = resolveRuleRange(repo, g, "h", nil, nil)
+	r, err = resolveRuleRange(repo, g, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ruleCommit, r.Base, "the parent of the lib edit")
 	assert.Equal(t, lib, r.Head)
 
 	// A commit outside .sloprail moves nothing.
 	commitFile(t, repo, "later.txt", "later")
-	r, err = resolveRuleRange(repo, g, "h", nil, nil)
+	r, err = resolveRuleRange(repo, g, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ruleCommit, r.Base)
 }

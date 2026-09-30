@@ -15,8 +15,9 @@ import (
 // scripts. What a rule does depends on all of it, and a hash over the rule's
 // folder alone kept serving passes reached under a schema that had since changed.
 //
-// Editing any of them changes the hash, and a verdict or a watermark keyed on
-// the old one no longer applies. a10n's key left the rubric out, and kept
+// Editing any of them changes the hash, and a verdict keyed on the old one no
+// longer applies. (A watermark is not keyed on it: work a rule approved stays
+// approved when the rule changes, and only what comes after is judged anew.) a10n's key left the rubric out, and kept
 // serving passes reached under a rubric that no longer existed.
 //
 // What is hashed is what is on disk, because that is what will run. Each file
@@ -28,7 +29,7 @@ import (
 //
 // .DS_Store is the one thing left out — a file the operating system writes into
 // folders a person merely looked at, which would otherwise reset a rule's
-// watermark for no change of the rule.
+// verdicts for no change of the rule.
 func RuleHash(dir string) (string, error) {
 	info, err := os.Stat(dir)
 	if err != nil {

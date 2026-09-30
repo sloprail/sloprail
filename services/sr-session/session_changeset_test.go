@@ -107,6 +107,6 @@ func TestOpenChangesetSession_ReadsWhatExistsAndCreatesNothing(t *testing.T) {
 	defer sess2.close()
 	assert.NotNil(t, sess2.state)
 	assert.NotNil(t, sess2.checks)
-	_, err = sess2.checks.PassedHeads("file-guard/x", "h")
+	_, err = sess2.checks.PassedHeads("file-guard/x")
 	assert.NoError(t, err, "a readable, read-only results store")
 }

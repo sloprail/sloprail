@@ -195,7 +195,10 @@ func TestResolveRange_ARuleOutsideTheRepoHasNoFolderAndUsesTheSessionStart(t *te
 	assert.Equal(t, FromSessionStart, r.Origin)
 }
 
-func TestResolveRange_TheFolderFloorOutranksTheSessionStart(t *testing.T) {
+// Without a watermark the base is the EARLIER of the floor and the session start:
+// a rule added mid-session judges the session's work from its start, and a rule
+// that predates the session judges from its own floor, never from before it.
+func TestResolveRange_TheEarlierOfTheFloorAndTheSessionStartWins(t *testing.T) {
 	dir := initRepo(t)
 	start := commit(t, dir, "a.go", "x")
 	mid := commit(t, dir, "mid.go", "m")
@@ -204,7 +207,39 @@ func TestResolveRange_TheFolderFloorOutranksTheSessionStart(t *testing.T) {
 
 	r, err := ResolveRange(dir, ruleDir, "", start)
 	require.NoError(t, err)
-	assert.Equal(t, mid, r.Base, "the parent of the rule's commit, not the session's start")
+	assert.Equal(t, start, r.Base, "a rule added mid-session: the session's own work is judged")
+	assert.Equal(t, FromSessionStart, r.Origin)
+
+	r, err = ResolveRange(dir, ruleDir, "", mid)
+	require.NoError(t, err)
+	assert.Equal(t, mid, r.Base)
+
+	late := commit(t, dir, "c.go", "z")
+	r, err = ResolveRange(dir, ruleDir, "", late)
+	require.NoError(t, err)
+	assert.Equal(t, mid, r.Base, "a rule older than the session: its floor, history before it stays grandfathered")
+	assert.Equal(t, FromFloor, r.Origin)
+}
+
+func TestResolveRange_ARuleEditedAfterTheSessionBeganDoesNotSkipTheWorkBeforeTheEdit(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	start := commit(t, dir, "a.go", "x")
+	commit(t, dir, "violation.go", "bad")
+	commitIn(t, dir, ".sloprail/lib/shared.sh", "edit")
+
+	r, err := ResolveRange(dir, ".sloprail", "", start)
+	require.NoError(t, err)
+	assert.Equal(t, start, r.Base, "the violation sits inside the range")
+}
+
+func TestResolveRange_AnUnreachableSessionStartIsNotNeededWhenThereIsAFloor(t *testing.T) {
+	dir := initRepo(t)
+	before := commit(t, dir, "a.go", "x")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	r, err := ResolveRange(dir, ruleDir, "", "0123456789012345678901234567890123456789")
+	require.NoError(t, err)
+	assert.Equal(t, before, r.Base)
 	assert.Equal(t, FromFloor, r.Origin)
 }
 

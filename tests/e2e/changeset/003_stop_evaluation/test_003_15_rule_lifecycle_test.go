@@ -84,16 +84,16 @@ func TestT003_18_ARuleRemovedOrDisabledStopsFiring(t *testing.T) {
 	}
 }
 
-// T003_19: a rule added mid-session judges only from its own commit's parent. Work
-// committed before the rule existed (a forbidden doc) is not its business; the
-// rule's own commit and everything after are.
+// T003_19: a rule added mid-session judges from the EARLIER of its own commit's parent
+// and the session's start, so the session's work committed before the rule existed (a
+// forbidden doc) is judged too, and history from before the session is not.
 func TestT003_19_ARuleAddedMidSessionJudgesFromItsOwnCommit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
 	e.DisableShippedFileGuards(proj)
-	e.CommitAll(proj, "the project")
+	sessionStart := e.CommitAll(proj, "the project")
 
 	// The rule is prepared outside the tree and arrives in a commit of its own.
 	led := t.TempDir() + "/ledger.jsonl"
@@ -116,24 +116,22 @@ func TestT003_19_ARuleAddedMidSessionJudgesFromItsOwnCommit(t *testing.T) {
 	if !strings.Contains(newBlocks(e, proj, sess, 0), "FORBIDDEN text in the changeset") {
 		t.Fatalf("the rule did not judge the work committed after it arrived: %q", e.BlockingErrors(proj, sess))
 	}
-	ruleCommit := e.Git(proj, "log", "--format=%H", "--grep", "add the docs rule", "-1")
-	parent := e.Git(proj, "rev-parse", ruleCommit+"^")
 	for _, r := range ledger(t, led) {
-		if r.Base != parent {
-			t.Fatalf("the rule was judged from %s, want the parent of its own commit %s", r.Base, parent)
+		if r.Base != sessionStart {
+			t.Fatalf("the rule was judged from %s, want the session's start %s (earlier than its own commit's parent)", r.Base, sessionStart)
 		}
-		if !reflect.DeepEqual(paths(r.Files), []string{"docs/new.md"}) {
-			t.Fatalf("the rule judged %v; only the file committed after it arrived is its business", paths(r.Files))
+		if !reflect.DeepEqual(paths(r.Files), []string{"docs/new.md", "docs/old.md"}) && !reflect.DeepEqual(paths(r.Files), []string{"docs/old.md", "docs/new.md"}) {
+			t.Fatalf("the rule judged %v; the session's work before the rule and after it are both its business, and the seed is neither", paths(r.Files))
 		}
 	}
 	if len(ledger(t, led)) == 0 {
 		t.Fatal("the check never ran")
 	}
 
-	// Fixed, it passes; the old forbidden doc never mattered.
+	// Both docs are the rule's business now; fixed, the range passes.
 	seen := stopBlocks(e, proj, sess)
 	e.Run(proj, sess, "fix it", Turns("done",
-		harness.CommitFile("c3", "docs/new.md", "clean words", "fix new"),
+		Bash("f1", "printf 'clean words' > docs/old.md && printf 'clean words' > docs/new.md && git add -A && git commit -q -m 'fix both'"),
 	))
 	if n := stopBlocks(e, proj, sess); n != seen {
 		t.Fatalf("the fixed work was still refused:\n%s", newBlocks(e, proj, sess, seen))

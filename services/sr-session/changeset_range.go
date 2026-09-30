@@ -12,11 +12,13 @@ import (
 // evaluation and for `sr-session changeset` alike, so what the command shows is
 // what Stop judges.
 //
-// base is the first usable of: the rule's watermark — derived from the check
-// results as the newest FINISHED run that passed at the rule's current
-// definition and whose head is still an ancestor of HEAD — then the last commit
-// touching the rule's folder (a rule in this repository), then the HEAD
-// recorded when the session began. results and state may be nil (nothing
+// base is the rule's watermark — derived from the check results as the newest
+// FINISHED run that passed, at ANY definition of the rule (the work up to it was
+// approved, even under an older rule), and whose head is still an ancestor of
+// HEAD. Without one, it is the EARLIER of the parent of the last commit touching
+// the rule's whole .sloprail root (a rule in this repository) and the HEAD
+// recorded when the session began: nothing made in this session is skipped, and
+// history from before the session and the rule stays grandfathered. results and state may be nil (nothing
 // recorded yet); any failure of either, or of git, is an error and no range.
 //
 // A watermark that had to be passed over — an amend or a rebase orphaned the
@@ -24,10 +26,10 @@ import (
 // reported on the returned range as DroppedWatermark, so a range that widened
 // says why. gitrepo.ErrNoCommits is returned as itself: nothing is committed, so
 // nothing can be judged.
-func resolveRuleRange(root string, g declaration.FileGuard, ruleHash string, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
+func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
 	var watermark, dropped, sessionStart string
 	if results != nil {
-		heads, err := results.PassedHeads(g.Qualified(), ruleHash)
+		heads, err := results.PassedHeads(g.Qualified())
 		if err != nil {
 			return gitrepo.Range{}, err
 		}

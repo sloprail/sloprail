@@ -40,16 +40,20 @@ A file-guard's match sees a file's own facts **bare** — `path`, `status`,
 
 A file-guard is evaluated **once per rule at Stop**, over its range of commits:
 from its base to `HEAD`, as one squashed net diff (`git diff -M base head`). The
-base is the first of these that exists and is still an ancestor of `HEAD`:
-**the rule's watermark** (the last head it passed, at its current definition),
-**the parent of the last commit that touched the rule's whole `.sloprail` root**
-(a rule in this repository: the commit that adds or changes a rule, a schema or a
-shared script under `.sloprail/` is judged by the rule, so touching it is not a way
-to get work past it; work approved before that commit is not judged again; files
-already on `main` before it are not judged until a change touches them; a root
-commit has no parent, so its base is git's empty tree and all of it is judged),
-**the HEAD recorded when the session began** (a plugin's rule, whose `.sloprail`
-root is in the plugin cache, or a repo rule not committed yet). Every base is a SHA, checked with
+base is, in order:
+**the rule's watermark** — the latest head the rule passed, *at any definition of
+the rule*, if it is still an ancestor of `HEAD` (work up to it was approved, even
+under an older rule, and is not judged again; editing the rule changes its hash,
+so verdicts are not replayed, but the watermark stays); otherwise **the earlier, in
+ancestry, of** the parent of the last commit that touched the rule's whole
+`.sloprail` root (a rule in this repository: the commit that adds or changes a
+rule, a schema or a shared script is judged by the rule; a root commit has no
+parent, so its base is git's empty tree) **and the HEAD recorded when the session
+began**. So nothing made in this session is skipped — a violating commit followed
+by a commit under `.sloprail` is still judged, and a rule added mid-session judges
+the session's earlier work — while history from before both stays grandfathered.
+For a plugin's rule, whose `.sloprail` root is in the plugin cache, the base is the
+session start. Every base is a SHA, checked with
 `git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
 drops a base that no longer exists instead of silently shrinking the diff. If none
 is usable (the session start was never recorded, or the tree left its history) the
@@ -60,9 +64,8 @@ not be computed.
 A rule's identity is its whole `.sloprail` root — its own folder, every other rule,
 schemas and shared scripts, whichever of the project's or its plugin's it lives in.
 The rule hash covers all of it, so editing any file there changes the hash and
-voids the watermark, and the range restarts at the parent of the commit that made
-the edit. A file-guard must therefore not write into `.sloprail` (ledgers, caches):
-a write there (once committed) does exactly that. Keep such state in
+invalidates stored verdicts (the watermark stays). A file-guard must therefore not
+write into `.sloprail` (ledgers, caches): a write there changes the hash each time. Keep such state in
 `sr-session state` or under `.git/`.
 
 A rename is selected if `match` holds on its new path **or** on the path it came
