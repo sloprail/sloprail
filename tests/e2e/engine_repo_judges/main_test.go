@@ -1,9 +1,11 @@
 // The engine repo's OWN judges — rule-quality and skill-quality, the two rules in
 // this repo's .sloprail/ that judge the repo's own rules and skills. Each is a
-// pair of natures under one name: a GATE (.sloprail/gate/<name>/) that judges the
-// pending write on PreFileWrite and refuses before it lands, and a plain
-// FILE-GUARD (.sloprail/file-guard/<name>/) that judges the settled file at Stop.
-// A test installs only the nature it is about, so a refusal can only come from it.
+// pair of natures under one name: a plain FILE-GUARD (.sloprail/file-guard/<name>/)
+// that judges the committed changeset at Stop, and a PreFileWrite GATE
+// (.sloprail/gate/<name>/) whose only check is the deterministic size cap (the
+// judge never runs in a gate), sharing size-cap-lib.sh with the file-guard.
+// A test installs only the nature it is about, except the size-cap test, which
+// needs both (the gate sources the lib from the file-guard folder).
 //
 // Each test here maps to an invariant those judges must uphold, driven through
 // the claude-MOCK exactly as the rest of the e2e is: the harness runs

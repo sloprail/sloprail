@@ -3,9 +3,8 @@
 # behavior; a prompt that reveals the required skill, the gate, or the
 # .sloprail/ machinery hands the agent the answer instead of letting the
 # guardrail supply it, and a pass then proves nothing. This file-guard judges the
-# settled prompt at Stop; the sibling gate of the same name refuses the write
-# before the hint lands — a fixture author should learn this while still writing
-# the prompt.
+# settled prompt at Stop. There is no gate for it: the question is one of meaning,
+# and a judge runs only in a file-guard, never before the write.
 match: path matches "^examples/.+/eval/.+/prompt\\.md$"
 checks:
   # "Does this prompt reveal — literally or by paraphrase — the guardrail it

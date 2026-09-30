@@ -40,10 +40,9 @@
 # own two-level regex plus the gates/ segment and the two extensions.
 match: path matches "^memories/tasks/[^/]+/[^/]+/gates/[^/]+\\.(sh|md)$"
 
-# The PREVENTION half — a gate that fails the grounding bar must never land — is
-# the PreFileWrite gate of the same name, beside this guard under gate/. This
-# file-guard judges the committed gates, backstopping a write the gate could not
-# derive. All the gates in the changeset go to one judge.
+# There is no PreFileWrite gate for this rule: whether a gate is grounded is a
+# judge's question, and a judge runs only in a file-guard (Stop), never before the
+# write. All the gates in the changeset go to one judge.
 
 checks:
   # The judge. prepare (resolve-gate-context.sh) reads each gate from
