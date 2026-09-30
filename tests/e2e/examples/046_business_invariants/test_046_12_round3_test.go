@@ -7,6 +7,7 @@ package e2e
 // that carry the same pin does not let each vouch for the other.
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,7 +145,7 @@ func TestT046_46_SpecConventionAgrees(t *testing.T) {
 	pinSh := filepath.Join(root, "pinned-invariant", "pin.sh")
 	for p, want := range paths {
 		watched, err := match.Match(event.Event{Fields: map[string]any{
-			"path": p, "markers": []any{}, "oldMarkers": []any{}, "context": map[string]any{},
+			"path": p, "status": "M", "markers": []any{}, "oldMarkers": []any{}, "context": map[string]any{},
 		}})
 		if err != nil {
 			t.Fatalf("%s: match: %v", p, err)
@@ -184,7 +185,8 @@ func TestT046_47_DeletingTwoHoldersOfOnePinInOneCommand(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-046-47"
-	e.Run(proj, sess, "clean up", Turns("done",
+	settleBaseline(t, e, proj, sess, "clean up")
+	e.Run(proj, sess, "go on", Turns("done",
 		Bash("b1", "rm src/a.go src/b.go"),
 	).ThenCommit("write the files"))
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
@@ -247,7 +249,7 @@ func TestT046_50_CitedNewRuleTheUserAskedForIsAdmitted(t *testing.T) {
 	const ask = "add a rule 3 to the spec: a refund must be issued within 30 days of the charge"
 	res := e.Run(proj, "s-046-50", ask, Turns("done",
 		Bash("b1", "sr-file edit SPEC.md --old-string '(end)' --new-string '3. A refund must be issued within 30 days of the charge.\n(end)' --cite:user '"+ask+"'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("a cited new rule the user asked for was refused:\n%s", res.Output)
 	}
