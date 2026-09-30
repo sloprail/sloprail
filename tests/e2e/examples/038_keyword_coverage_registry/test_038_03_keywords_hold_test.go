@@ -104,7 +104,7 @@ func TestT038_11_DropCitingUnrelatedWordsRefused(t *testing.T) {
 	const ask = "search GitHub for guardrail projects"
 	res := e.Run(proj, "s-038-11", ask, Turns("done",
 		srWriteScanner("b1", narrowedScanner, ask),
-	))
+	).ThenCommit("narrow the scanner", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited drop:\n%s", res.Output)
 	}

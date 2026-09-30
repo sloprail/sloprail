@@ -72,26 +72,34 @@ func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	const sess = "s-038-28"
 	const ask = "remove the mine scanner, we no longer track it"
 
-	res := e.Run(proj, sess, ask, Turns("done",
+	// A scanner written and deleted inside one range is no change at all, so the
+	// declaration is committed first; the delete is then its own changeset, whose
+	// commit carries the user's words as a trailer.
+	e.Run(proj, sess, ask, Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
+	).ThenCommit("declare the scanner"))
+	// The declaring Stop was owed a search, rightly; what counts is what comes after.
+	before := coverageRefusals(t, e.TranscriptPath(proj, sess))
+	res := e.Run(proj, sess, "go ahead", Turns("done",
 		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
-	).ThenCommit("write the files"))
+	).ThenCommit("remove the scanner", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("the delete the user asked for was refused:\n%s", res.Output)
 	}
 	if _, err := os.Stat(filepath.Join(proj, "scanners", "mine", "scanner.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: the cited delete should have landed: %v", err)
 	}
-	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n != 0 {
+	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)) - before; n != 0 {
 		t.Fatalf("Stop was refused %d time(s) for a scanner the user asked to remove:\n%s", n, stopRefusals(e, proj, sess))
 	}
 
 	// Declared again, it is a new obligation — the retirement was of the
 	// declaration the user removed, not of the name.
+	retired := coverageRefusals(t, e.TranscriptPath(proj, sess))
 	e.Run(proj, sess, "declare it again", Turns("done",
 		Write("w2", "scanners/mine/scanner.yaml", activeScanner),
 	).ThenCommit("write the files"))
-	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n == 0 {
+	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)) - retired; n == 0 {
 		t.Errorf("a scanner declared again after its retirement was not owed a search")
 	}
 }
