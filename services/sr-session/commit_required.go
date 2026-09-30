@@ -15,6 +15,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -144,8 +145,12 @@ func uncommittedScope(root string, c gitrepo.Uncommitted) changeset.Scope {
 		}
 	}
 	if c.Status != 'D' {
-		if b, err := os.ReadFile(filepath.Join(root, c.Path)); err == nil {
-			markers = changesetMarkers(string(b))
+		// The engine's one safe read: regular files only once links are followed,
+		// capped. A path that is a FIFO, a device or a link to one is still an
+		// uncommitted guarded path — it just has no markers to read — and must never
+		// block the Stop (opening a FIFO waits for a writer; /dev/zero never ends).
+		if text, ok := filemod.ReadRegular(filepath.Join(root, c.Path), filemod.MaxContentReadBytes); ok {
+			markers = changesetMarkers(text)
 		}
 	} else {
 		markers = oldMarkers

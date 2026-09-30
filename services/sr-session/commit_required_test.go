@@ -3,7 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/sloprail/sloprail/internal/gitrepo"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,4 +50,38 @@ func TestOwnsTree(t *testing.T) {
 	assert.True(t, ownsTree(sub(filepath.Join(dir, "missing.jsonl"), repo)), "a root record that is not there gates")
 	assert.True(t, ownsTree(sub("", repo)), "no root record at all gates")
 	assert.True(t, ownsTree(sub(rootRecord, t.TempDir())), "a sub-agent tree that is not a repository gates")
+}
+
+// An uncommitted guarded path that is a FIFO, a device, or a link to one is read
+// the safe way: it is still owed a commit, and reading it must not block.
+func TestUncommittedScope_NeverBlocksOnAFifoOrADevice(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "a.txt", "one")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "docs"), 0o755))
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o644))
+	require.NoError(t, os.Symlink(fifo, filepath.Join(repo, "docs", "to-fifo.md")))
+	require.NoError(t, os.Symlink("/dev/zero", filepath.Join(repo, "docs", "to-zero.md")))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "docs", "real.md"), []byte("// sr:invariant a.b\n"), 0o644))
+
+	changes, err := gitrepo.UncommittedChanges(repo)
+	require.NoError(t, err)
+	require.Len(t, changes, 3)
+
+	done := make(chan map[string]int, 1)
+	go func() {
+		markers := map[string]int{}
+		for _, c := range changes {
+			markers[c.Path] = len(uncommittedScope(repo, c).Markers)
+		}
+		done <- markers
+	}()
+	select {
+	case got := <-done:
+		assert.Equal(t, 1, got["docs/real.md"], "a regular file's markers are still read")
+		assert.Equal(t, 0, got["docs/to-fifo.md"])
+		assert.Equal(t, 0, got["docs/to-zero.md"])
+	case <-time.After(20 * time.Second):
+		t.Fatal("reading an uncommitted FIFO or device blocked")
+	}
 }
