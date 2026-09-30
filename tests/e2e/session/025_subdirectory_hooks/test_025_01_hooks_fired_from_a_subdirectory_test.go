@@ -408,14 +408,30 @@ checks:
 	// The whole flat payload still carries `"path":"…bad…"`, so a `*bad*` match on it
 	// works unchanged. The ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine
 	// sets for the check.
-	const judgeScript = `#!/bin/sh
+	//
+	// The ledger is OUTSIDE the project: the rule sits in a subdirectory, where
+	// the harness's ledger exclusion (anchored at the repository root) does not
+	// reach, so a ledger inside the rule's folder would be committed with the
+	// agent's work and move the floor of the rule's range to that commit.
+	ledger := filepath.Join(t.TempDir(), "seen")
+	judgeScript := `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
+printf '%s\n' "$payload" >> ` + ledger + `
 case "$payload" in
   *bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
 esac
 exit 0
 `
+	read := func() []string {
+		body, _ := os.ReadFile(ledger)
+		var lines []string
+		for _, l := range strings.Split(string(body), "\n") {
+			if strings.TrimSpace(l) != "" {
+				lines = append(lines, l)
+			}
+		}
+		return lines
+	}
 	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
 	e.CommitAll(proj, "the project before the session")
 
@@ -424,7 +440,7 @@ exit 0
 	e.RunFrom(proj, "sub/deep", sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
 	).ThenCommit("the cycle"))
-	first := e.FileGuardLedgerLines(sub, "watcher", "seen")
+	first := read()
 	if len(statusesFor(observedFiles(t, first), "sub/deep/bad-file.md")) == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle (%v), so there "+
 			"is no refusal on record and nothing for the second cycle to carry",
@@ -450,7 +466,7 @@ exit 0
 		Write("w2", "fine.md", "acceptable\n"),
 	).ThenCommit("the cycle"))
 
-	all := e.FileGuardLedgerLines(sub, "watcher", "seen")
+	all := read()
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d)", len(all), len(first))
 	}

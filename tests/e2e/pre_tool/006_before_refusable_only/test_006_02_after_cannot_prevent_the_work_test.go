@@ -83,7 +83,7 @@ func TestT006_02_AnAfterRefusalCannotPreventTheWork(t *testing.T) {
 
 	got := e.Run(proj, "s-006-02", "write a note", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
-	))
+	).ThenCommit("write a note"))
 
 	// The check RAN. This is the assertion the whole file rests on, and the one
 	// whose absence made the original deletion correct: a guard bound to a kind

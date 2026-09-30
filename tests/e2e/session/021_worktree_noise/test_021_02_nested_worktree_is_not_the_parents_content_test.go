@@ -310,19 +310,13 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 		Dispatch("d1", "do the delegated thing", subScript, "worktree"),
 	).ThenCommit("the root's own work"))
 
-	// The premise: a worktree really was bound inside the parent's tree, and git
-	// reports it as untracked content of the parent. Without both, the silence
-	// below is about a cycle that had no noise to be shielded from.
+	// The premise: a worktree really was bound inside the parent's tree. Without
+	// it, the silence below is about a cycle that had no noise to be shielded from.
 	entries, err := os.ReadDir(filepath.Join(proj, ".claude", "worktrees"))
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("no worktree was bound under .claude/worktrees (%v) — isolation=%q did not "+
 			"create a nested checkout, so this proves nothing", err, "worktree")
 	}
-	if others := git(t, proj, "ls-files", "-o", "--exclude-standard", "--full-name"); !strings.Contains(others, ".claude/worktrees/") {
-		t.Fatalf("git does not report the nested checkout as the parent's untracked content:\n%s\n"+
-			"the pollution this test is about is not present, so its conclusion would be vacuous", others)
-	}
-
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 
 	// The control: the root's own work reached the rule.

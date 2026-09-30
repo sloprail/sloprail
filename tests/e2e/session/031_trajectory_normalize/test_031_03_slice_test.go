@@ -81,11 +81,11 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	e.Run(proj, sess, "first cycle", Turns("done",
 		Bash("b1", "echo CYCLEONECOMMAND"),
 		Write("w1", "one.md", "first\n"),
-	))
+	).ThenCommit("the cycle"))
 	e.Run(proj, sess, "second cycle", Turns("done",
 		Bash("b2", "echo CYCLETWOCOMMAND"),
 		Write("w2", "two.md", "second\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	scoped := strings.Join(e.FileGuardLedgerLines(proj, "slicer", "scoped"), "\n")
 	whole := strings.Join(e.FileGuardLedgerLines(proj, "slicer", "whole"), "\n")
