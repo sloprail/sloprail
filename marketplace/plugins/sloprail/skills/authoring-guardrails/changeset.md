@@ -48,6 +48,8 @@ The base is the first of these that exists and is still an ancestor of `HEAD`:
 3. **the HEAD recorded when the session began** — for a plugin's rule (its folder
    is in the plugin cache, not the repo) and for a repo rule not committed yet.
 
+A file-guard must not write into its own rule folder (ledgers, caches): the rule hash covers the whole folder, so any write changes it, voids the watermark, and re-judges forever. Keep such state in `sr-session state` or under `.git/`.
+
 Every base is a SHA, never a branch name, and is checked with
 `git merge-base --is-ancestor` on every run. An amend, rebase or branch switch
 that orphans a base drops it and the next one is used. If nothing usable is left —

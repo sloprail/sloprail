@@ -56,6 +56,8 @@ exists instead of silently shrinking the diff. `sr-session changeset --rule
 <name>` prints the range and the payload without running anything
 ([changeset.md](changeset.md)).
 
+A file-guard must not write into its own rule folder (ledgers, caches): the rule hash covers the whole folder, so any write changes it, voids the watermark, and re-judges forever. Keep such state in `sr-session state` or under `.git/`.
+
 **Commit required.** Work that is not committed cannot be judged, so at Stop an
 uncommitted change to a path some file-guard's `match` selects refuses the Stop:
 "commit these". It is always on, never commits for the agent, applies only to an
