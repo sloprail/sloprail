@@ -6,6 +6,7 @@ package e2e
 // caught, and the pin itself must be one pinned-spec-holds guards.
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os/exec"
 	"strings"
 	"testing"
@@ -69,7 +70,7 @@ func TestT046_29_CitedDeleteOfACurrentPinLands(t *testing.T) {
 	sess := "s-046-29"
 	e.Run(proj, sess, ask, Turns("done",
 		Bash("b1", "sr-file delete src/charge.go --cite:user '"+ask+"'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if e.Exists(proj, "src/charge.go") {
 		t.Fatalf("the cited delete did not land")
 	}

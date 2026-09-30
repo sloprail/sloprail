@@ -30,7 +30,7 @@ mk() { printf '%s' "$payload" | jq -r --argjson i "$1" "[(.changeset.files[\$i].
 
 # A committed change has a known result, and "before" is the range's base: a created
 # file had nothing there, and a rename is the old path deleted and the new one created.
-new_known=1 emptied=""
+new_known=1 emptied="" applied=""
 i=0
 while [ "$i" -lt "$n" ]; do
   status="$(fld "$i" '.status')" || exit 0
@@ -43,16 +43,27 @@ while [ "$i" -lt "$n" ]; do
   i=$((i + 1))
   [ -n "$path" ] || exit 0
 
+  # Each file is judged on its own, so a refusal names every file the change moves
+  # (`rm a.go b.go`, both holding one pin), not only the first: apply() exits, so
+  # it runs in a subshell, and the sentinel says whether the file was decided.
   case "$status" in
-    A) had_old=0; lib_evaluate create "$path" "" "$newc" "" "$new_f" ;;
-    M) had_old=1; lib_evaluate update "$path" "$oldc" "$newc" "$old_f" "$new_f" ;;
-    D) had_old=1; lib_evaluate delete "$path" "$oldc" "" "$old_f" "" ;;
-    R)
-      had_old=1; lib_evaluate delete "${oldpath:-$path}" "$oldc" "" "$old_f" ""
-      had_old=0; lib_evaluate create "$path" "" "$newc" "" "$new_f"
-      ;;
+    A) res="$(had_old=0; lib_evaluate create "$path" "" "$newc" "" "$new_f"; printf '\037')" ;;
+    M) res="$(had_old=1; lib_evaluate update "$path" "$oldc" "$newc" "$old_f" "$new_f"; printf '\037')" ;;
+    D) res="$(had_old=1; lib_evaluate delete "$path" "$oldc" "" "$old_f" ""; printf '\037')" ;;
+    R) res="$(had_old=1; lib_evaluate delete "${oldpath:-$path}" "$oldc" "" "$old_f" ""; had_old=0; lib_evaluate create "$path" "" "$newc" "" "$new_f"; printf '\037')" ;;
     *) exit 0 ;;
   esac
+  case "$res" in
+    "$(printf '\037')") ;; # decided: this file changes nothing pinned
+    *"$(printf '\037')") applied="$applied$(printf '%s' "${res%"$(printf '\037')"}")"$'\n' ;;
+    "") exit 0 ;;         # exited without deciding: apply, with no hint
+    *) applied="$applied$res"$'\n' ;;
+  esac
 done
+
+if [ -n "$applied" ]; then
+  printf '%s' "$applied" | jq -s '{hint: (map(.hint) | join("\n\n")), what: (map(.what) | join(" "))}'
+  exit 0
+fi
 
 lib_finish

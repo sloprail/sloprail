@@ -100,25 +100,26 @@ func TestT046_41_PinnedInvariantNeverSeesAPreDelete(t *testing.T) {
 	}
 }
 
-// unreadWrite is a Post create or update whose settled file the engine could not
-// read (newContentKnown false: a link to a FIFO, a device or a directory, or past
-// the read cap), with the baseline's markers as the engine gives them.
+// unreadWrite is a Pre create or update whose resulting bytes the engine could not
+// work out (resultKnown false: a `sed -i`, a `>`, an sr-file line it could not
+// resolve), with the file's markers as the engine gives them.
 func unreadWrite(kind, path, oldMarkers string) string {
 	return `{"event":{"kind":"` + kind + `","path":"` + path + `","oldContent":"","newContent":"",` +
-		`"oldMarkers":` + oldMarkers + `,"newMarkers":[],"newContentKnown":false}}`
+		`"oldMarkers":` + oldMarkers + `,"newMarkers":[],"resultKnown":false}}`
 }
 
-// T046_60: an unread Post create or update is not a pass, but it is not a
-// citation for every file either. A file nothing pins that carries no marker is
-// waived — nothing pinned is at stake — while a pinned spec, or a file that
-// carried a pin, applies, with a hint about the file as it was left rather than
-// about how a Pre edit was made. Before, an early exit applied the citation to
-// every unread write, pinned or not (data/big.bin in a project with no pin on it).
+// T046_60: a write whose result is unknown is not a pass, but it is not a citation
+// for every file either. A file nothing pins that carries no marker is waived —
+// nothing pinned is at stake — while a pinned spec, or a file that carried a pin,
+// applies, with a hint about what could not be worked out. Before, an early exit
+// applied the citation to every unknown write, pinned or not (data/big.bin in a
+// project with no pin on it). The committed changeset has no unknown result (the
+// file-guard reads what head holds), so this is the gate's predicate.
 func TestT046_60_UnreadWriteAppliesOnlyWherePinned(t *testing.T) {
 	repo, shaV1 := unreadDeleteRepo(t)
-	dir := ruleDir(t, "pinned-spec-holds")
+	dir := gateDir(t, "pinned-spec-holds")
 
-	for _, kind := range []string{"PostFileCreate", "PostFileUpdate"} {
+	for _, kind := range []string{"PreFileCreate", "PreFileUpdate"} {
 		if out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", repo, unreadWrite(kind, "data/big.bin", "[]")); code != 1 || !strings.Contains(out, `"waived"`) {
 			t.Errorf("%s of an unread file nothing pins was not waived (exit %d): %s", kind, code, out)
 		}
@@ -126,8 +127,8 @@ func TestT046_60_UnreadWriteAppliesOnlyWherePinned(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%s of an unread pinned spec was waived (exit %d): %s", kind, code, out)
 		}
-		if !strings.Contains(out, "what it left could not be read") {
-			t.Errorf("%s of an unread pinned spec: the hint does not say the file could not be read: %s", kind, out)
+		if !strings.Contains(out, "what it would leave cannot be worked out") {
+			t.Errorf("%s of an unread pinned spec: the hint does not say the result could not be worked out: %s", kind, out)
 		}
 		marker := `[{"kind":"invariant","fqn":"` + repo + "@" + shaV1 + `:SPEC.md#L3-3"}]`
 		if out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", repo, unreadWrite(kind, "charge.go", marker)); code != 0 {

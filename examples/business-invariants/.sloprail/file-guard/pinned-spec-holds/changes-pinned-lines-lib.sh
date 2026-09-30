@@ -74,8 +74,14 @@ git -C "$workspace" rev-parse -q --verify "$base" >/dev/null 2>&1 && has_head=1
 memo="$(mktemp -d "${TMPDIR:-/tmp}/pinned-spec-holds.XXXXXX")" || exit 0
 trap 'rc=$?; rm -rf "$memo"; if [ "$rc" = 1 ] && [ "$waived" != 1 ]; then exit 0; fi' EXIT
 
-# Every marker in the project, in the tree and at the base: a marker dropped or moved
-# in this change must not unpin the rule it pinned at the base.
+tree="" committed="" scanned=0
+}
+
+# lib_scan: every marker in the project, in the tree and at the base: a marker dropped
+# or moved in this change must not unpin the rule it pinned at the base. Once, and only
+# when a file needs it: a file nothing pins is answered before any of this runs.
+lib_scan() {
+[ "$scanned" = 0 ] || return 0
 tree="$(git -C "$workspace" grep $grep_flags -h -I -E "$MARKER_RE" 2>/dev/null)"
 [ $? -le 1 ] || exit 0
 committed=""
@@ -83,6 +89,7 @@ if [ "$has_head" = 1 ]; then
   committed="$(git -C "$workspace" grep -h -I -E "$MARKER_RE" "$base" 2>/dev/null)"
   [ $? -le 1 ] || exit 0
 fi
+scanned=1
 }
 
 # norm <path>: repository-relative, with `./`, `//`, `.` and `..` resolved, so a pin
@@ -234,6 +241,7 @@ lib_evaluate() {
 
   # 1. Spec lines. Every marker in the project, at head and at the base, and in
   # what this file held.
+  lib_scan
   all_fqns="$({ printf '%s\n' "$tree" "$committed"; printf '%s\n' "$old"; } | fqns_in | sort -u)"
 
   changed=""

@@ -71,7 +71,7 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	}
 	// The pinned spec line, read by the prepare at the marker's pin, so the judge
 	// rules on it without having to read the spec itself.
-	if !strings.Contains(prompt, "<pinned fqn=\""+fqn+"\"") ||
+	if !strings.Contains(prompt, "<pinned file=\"src/charge.go\" fqn=\""+fqn+"\"") ||
 		!strings.Contains(prompt, "an order total must never be negative\n</pinned>") {
 		t.Fatalf("the pinned spec text did not reach the judge prompt — the prepare's output is not wired:\n%s", prompt)
 	}
