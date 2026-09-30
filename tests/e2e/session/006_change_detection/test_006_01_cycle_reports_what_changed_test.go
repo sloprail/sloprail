@@ -92,50 +92,43 @@ func commitRules(e *Env, proj string) {
 	e.CommitAll(proj, "the project before the session")
 }
 
-// hasEvent reports whether the recorded events hold one of the given kind naming
-// the given path.
-//
-// Both on ONE line, which is what makes it an assertion about a single event: a
-// cycle dispatching a create for one file and a delete for another would satisfy
-// any test that looked for the kind and the path separately. Read against the
-// FLAT wire form — `.event.kind` and `.event.path` spread directly under `event`,
-// not nested under an `event.fields` envelope the way the old format wrote them.
-func hasEvent(events []string, kind, path string) bool {
+// changesetFiles is the recorded Changeset payloads' selected files, as
+// path -> status, over every line of the ledger.
+func changesetFiles(events []string) map[string]string {
+	out := map[string]string{}
 	for _, line := range events {
 		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+			Changeset struct {
+				Files []struct {
+					Path   string `json:"path"`
+					Status string `json:"status"`
+				} `json:"files"`
+			} `json:"changeset"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
 			continue
 		}
-		if p.Event.Kind == kind && p.Event.Path == path {
-			return true
+		for _, f := range p.Changeset.Files {
+			out[f.Path] = f.Status
 		}
 	}
-	return false
+	return out
 }
 
-// mentions reports whether any recorded event names the given path at all,
-// whatever its kind — for the untouched-stays-silent assertion, which is about a
-// path never appearing rather than about a particular kind.
+// hasFile reports whether the recorded changesets hold a file with the given
+// status (A, M, D) at the given path: both on the SAME file entry, so a changeset
+// holding one file added and another deleted cannot satisfy a claim about either
+// by mixing them up.
+func hasFile(events []string, status, path string) bool {
+	return changesetFiles(events)[path] == status
+}
+
+// mentions reports whether any recorded changeset names the given path at all,
+// whatever its status — for the untouched-stays-silent assertion, which is about
+// a path never appearing rather than about a particular status.
 func mentions(events []string, path string) bool {
-	for _, line := range events {
-		var p struct {
-			Event struct {
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			continue
-		}
-		if p.Event.Path == path {
-			return true
-		}
-	}
-	return false
+	_, ok := changesetFiles(events)[path]
+	return ok
 }
 
 // T006_01: what a cycle changed becomes Post events, one per file.
@@ -161,20 +154,20 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 		Write("w1", "created.md", "new file"),
 		Write("w2", "existing.md", "changed"),
 		Bash("b1", "rm doomed.md"),
-	))
+	).ThenCommit("change some files"))
 
 	events := e.FileGuardLedgerLines(proj, "records", "events")
 	if len(events) == 0 {
-		t.Fatalf("the end of the cycle dispatched nothing — no Post event reached a file-guard")
+		t.Fatalf("the end of the cycle dispatched nothing — no changeset reached a file-guard")
 	}
 
-	for _, want := range []struct{ kind, path string }{
-		{"PostFileCreate", "created.md"},
-		{"PostFileUpdate", "existing.md"},
-		{"PostFileDelete", "doomed.md"},
+	for _, want := range []struct{ status, path string }{
+		{"A", "created.md"},
+		{"M", "existing.md"},
+		{"D", "doomed.md"},
 	} {
-		if !hasEvent(events, want.kind, want.path) {
-			t.Errorf("no %s for %q in what the cycle dispatched:\n%s", want.kind, want.path, strings.Join(events, "\n"))
+		if !hasFile(events, want.status, want.path) {
+			t.Errorf("no file with status %s for %q in what the cycle dispatched:\n%s", want.status, want.path, strings.Join(events, "\n"))
 		}
 	}
 
@@ -186,14 +179,11 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 	}
 }
 
-// T006_02: work the agent COMMITTED is still the cycle's work.
+// T006_02: work committed in separate commits is one changeset.
 //
-// difference_spans_both, and the half a naive implementation loses. An agent
-// that commits leaves a tree with nothing outstanding in it, so a comparison
-// reading only what is outstanding reports that the cycle changed nothing —
-// precisely wrong, and silently so.
-//
-// Both halves in one cycle, so the test cannot pass by covering either alone.
+// The agent commits once mid-cycle and once at the end. A rule's range spans
+// both commits, so a changeset reading only the last one would report the cycle
+// as smaller than it was.
 func TestT006_02_CommittedAndUncommittedWorkBothCount(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -205,21 +195,14 @@ func TestT006_02_CommittedAndUncommittedWorkBothCount(t *testing.T) {
 		Write("w1", "committed.md", "this gets committed"),
 		Bash("b1", "git add committed.md && git commit -m 'agent commit'"),
 		Write("w2", "outstanding.md", "this does not"),
-	))
+	).ThenCommit("the rest"))
 
 	events := e.FileGuardLedgerLines(proj, "records", "events")
 
-	// The tree really is clean of the committed file, or this proves nothing:
-	// it would be reported by any implementation that looked only at what is
-	// outstanding.
-	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
-		t.Fatalf("committed.md is still outstanding (%q), so this test does not exercise the committed half", status)
-	}
-
-	if !hasEvent(events, "PostFileCreate", "committed.md") {
+	if !hasFile(events, "A", "committed.md") {
 		t.Errorf("work committed during the cycle fell out of the difference:\n%s", strings.Join(events, "\n"))
 	}
-	if !hasEvent(events, "PostFileCreate", "outstanding.md") {
+	if !hasFile(events, "A", "outstanding.md") {
 		t.Errorf("work left outstanding fell out of the difference:\n%s", strings.Join(events, "\n"))
 	}
 }
@@ -353,7 +336,7 @@ func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 
 	got := e.Run(proj, "s-006-04", "write a file", Turns("done",
 		Write("w1", "unwanted.md", "it landed anyway"),
-	))
+	).ThenCommit("write a file"))
 
 	// The rule ran and refused. Without this the rest is a test about a file
 	// existing after nothing tried to stop it.
@@ -404,12 +387,12 @@ func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 	}
 }
 
-// T006_05: a file the agent created and never staged is still the cycle's work.
+// T006_05: a file the agent created and never committed is not judged: the Stop
+// is refused for the commit, and once the agent commits it the rule sees it.
 //
-// `git diff` compares tracked content, so an untracked file appears in no diff
-// at all — an implementation asking only that question reports nothing for
-// exactly the files an agent writing scratch output produces.
-func TestT006_05_UntrackedWorkIsReported(t *testing.T) {
+// An untracked file appears in no diff at all, so the engine cannot judge it; it
+// asks for the commit instead (never making one itself).
+func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -420,15 +403,21 @@ func TestT006_05_UntrackedWorkIsReported(t *testing.T) {
 		Write("w1", "scratch.md", "never staged"),
 	))
 
-	// The control: git really is not tracking it, so the diff alone cannot have
-	// been what found it.
+	// The control: git really is not tracking it.
 	if tracked := e.Git(proj, "ls-files", "--", "scratch.md"); tracked != "" {
 		t.Fatalf("scratch.md is tracked (%q), so this test does not exercise the untracked half", tracked)
 	}
+	e.AssertCommitRequired(proj, "s-006-05", "scratch.md")
+	if events := e.FileGuardLedgerLines(proj, "records", "events"); mentions(events, "scratch.md") {
+		t.Fatalf("an uncommitted file was judged:\n%s", strings.Join(events, "\n"))
+	}
+	seen := len(CommitRequired(e.BlockingErrorsFrom(proj, "s-006-05", "Stop")))
 
-	events := e.FileGuardLedgerLines(proj, "records", "events")
-	if !hasEvent(events, "PostFileCreate", "scratch.md") {
-		t.Errorf("an untracked file the agent created was never reported:\n%s", strings.Join(events, "\n"))
+	e.Run(proj, "s-006-05", "now commit it", Turns("committed").ThenCommit("the scratch file"))
+
+	e.NoCommitRequired(proj, "s-006-05", seen)
+	if events := e.FileGuardLedgerLines(proj, "records", "events"); !hasFile(events, "A", "scratch.md") {
+		t.Errorf("the committed file never reached the rule:\n%s", strings.Join(events, "\n"))
 	}
 }
 
@@ -457,7 +446,7 @@ func TestT006_06_EveryRefusalReachesTheAgentAtOnce(t *testing.T) {
 
 	e.Run(proj, "s-006-06", "write a file", Turns("done",
 		Write("w1", "f.md", "x"),
-	))
+	).ThenCommit("write a file"))
 
 	blocking := e.BlockingErrors(proj, "s-006-06")
 	if len(blocking) == 0 {
