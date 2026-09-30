@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,8 +256,8 @@ func TestSessionDBPathRefusesATraversingSessionID(t *testing.T) {
 	// What the path WOULD be without the guard: out of this session's directory,
 	// out of the workspace's, out of sessions/, into another project's state.
 	const escape = "../../../-another-workspace/victim-session"
-	unguarded := filepath.Join(data, AppName, "sessions", encodeWorkspace(tree), escape, "state.db")
-	require.False(t, strings.HasPrefix(unguarded, filepath.Join(data, AppName, "sessions", encodeWorkspace(tree))+string(filepath.Separator)),
+	unguarded := filepath.Join(data, AppName, "sessions", sessionpath.EncodeWorkspace(tree), escape, "state.db")
+	require.False(t, strings.HasPrefix(unguarded, filepath.Join(data, AppName, "sessions", sessionpath.EncodeWorkspace(tree))+string(filepath.Separator)),
 		"the fixture must actually escape this workspace's state, got %q", unguarded)
 
 	for _, id := range []string{escape, "..", ".", "a/b", `a\b`} {

@@ -262,13 +262,7 @@ func settleCitedChanges(store sessionstate.Store) error {
 	}); err != nil {
 		return err
 	}
-	// A cited change to the file landed, and its citations are tied to it: an
-	// earlier uncomputable cited call no longer explains anything.
-	return swapJSON(store, sessionstate.MetaCitedUnknown, func(all *map[string]bool) {
-		for _, p := range landed {
-			delete(*all, p.Path)
-		}
-	})
+	return nil
 }
 
 // landedOf is the pending changes whose file holds exactly what they produce.
@@ -928,60 +922,4 @@ func otherMarks(p HookPayload, record string) []string {
 		}
 	})
 	return dedupeStrings(by)
-}
-
-// markCitedUnknown remembers each file a permitted call changed with citations
-// that resolved but a result that could not be computed ahead of time — an
-// sr-file call the dry run never ran (not on its own in the line, named by a
-// path that is not the engine's own sr-file, sr-file not on PATH). Such a
-// change cannot be tied to its citations; if a rule refuses the file at Stop,
-// the refusal says why (citedUnknownNote).
-func markCitedUnknown(store sessionstate.Store, events []event.Event) error {
-	var paths []string
-	for _, e := range events {
-		if (e.Kind == filemod.KindPreCreate || e.Kind == filemod.KindPreUpdate) && !resultKnown(e) &&
-			len(grounding.FromWire(e.Fields[grounding.FieldCitations])) > 0 {
-			path, _ := e.Fields[filemod.FieldPath].(string)
-			paths = append(paths, path)
-		}
-	}
-	if store == nil || len(paths) == 0 {
-		return nil
-	}
-	return swapJSON(store, sessionstate.MetaCitedUnknown, func(all *map[string]bool) {
-		if *all == nil {
-			*all = map[string]bool{}
-		}
-		for _, p := range paths {
-			(*all)[p] = true
-		}
-	})
-}
-
-// citedUnknownNote is what a Stop refusal of path adds when a cited change to
-// it could not be computed ahead of time; "" otherwise.
-func citedUnknownNote(store sessionstate.Store, path string) string {
-	if store == nil || path == "" {
-		return ""
-	}
-	raw, ok, err := store.Meta(sessionstate.MetaCitedUnknown)
-	if err != nil || !ok {
-		return ""
-	}
-	var all map[string]bool
-	if json.Unmarshal([]byte(raw), &all) != nil || !all[path] {
-		return ""
-	}
-	return "\nA cited sr-file call changed this file, but its result could not be computed before it ran, so its citations could not be tied to what landed. " +
-		"Run sr-file ON ITS OWN in the line and by its bare name `sr-file` (it must be on PATH: check `command -v sr-file`; if that fails, install sloprail's binaries onto PATH), with every value quoted verbatim."
-}
-
-// clearCitedUnknown forgets, once a Stop has said what it had to, which files
-// an uncomputable cited call changed: the next cycle's calls speak for
-// themselves.
-func clearCitedUnknown(store sessionstate.Store) error {
-	if store == nil {
-		return nil
-	}
-	return swapJSON(store, sessionstate.MetaCitedUnknown, func(all *map[string]bool) { *all = nil })
 }

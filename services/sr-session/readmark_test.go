@@ -738,30 +738,18 @@ func TestStop_CompletedCycleRebaselinesAndSaysSo(t *testing.T) {
 	divergentBranch(t, s.dir, "feature")
 	s.dispatched(false)
 
-	// A guardrail refused something, and nobody fixed it.
-	store, err := openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
-	require.NoError(t, err)
-	require.NoError(t, store.RecordFileCheck("broken.txt", "no-slop",
-		sessionstate.Verdict{Fingerprint: "bad", Passed: false}))
-	require.NoError(t, store.Close())
-
 	runGit(t, s.dir, "checkout", "feature")
 	_, stderr := s.dispatched(false)
 
 	assert.Contains(t, stderr, "another branch")
 
-	store, err = openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
+	store, err := openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
 	require.NoError(t, err)
 	defer store.Close()
 
 	branch, _, err := store.Meta(sessionstate.MetaBaselineBranch)
 	require.NoError(t, err)
 	assert.Equal(t, "feature", branch, "the point followed the tree")
-
-	// And the refusal came through it untouched.
-	skippable, err := store.Skippable("broken.txt", "no-slop", "bad")
-	require.NoError(t, err)
-	assert.False(t, skippable, "an unfixed refusal outlives the point moving")
 }
 
 func TestStart_RecordsTheBaselineAndNeverBlocks(t *testing.T) {

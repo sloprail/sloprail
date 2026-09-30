@@ -36,8 +36,6 @@ const TranscriptEnv = "SR_TRANSCRIPT"
 // Where a session's data lives is internal/sessionpath's answer, shared with
 // sr-checks so both find the same files. These are this package's names for it.
 var (
-	dataHome        = sessionpath.DataHome
-	encodeWorkspace = sessionpath.EncodeWorkspace
 	workspaceAnchor = sessionpath.WorkspaceAnchor
 )
 

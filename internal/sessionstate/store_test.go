@@ -159,3 +159,10 @@ func TestStore_CloseIsIdempotent(t *testing.T) {
 	require.NoError(t, s.Close())
 	assert.NoError(t, s.Close())
 }
+
+func TestMigration_DropsTheRetiredFileChecksTable(t *testing.T) {
+	s := openTestStore(t)
+	var n int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'file_checks'`).Scan(&n))
+	assert.Equal(t, 0, n, "file-guards judge commits now; their verdicts are internal/checkstore's")
+}

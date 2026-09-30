@@ -467,3 +467,10 @@ func trimSpace(b []byte) []byte {
 }
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// CheckRequire evaluates only req.Require, without running any check. A
+// changeset evaluation records each prerequisite as a check of its own, so it
+// asks one at a time.
+func (r Runner) CheckRequire(req Request) (Verdict, error) {
+	return r.withDefaults().checkRequire(req)
+}

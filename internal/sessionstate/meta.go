@@ -85,12 +85,6 @@ const (
 	// turns, a branch switch, a file dirty when the session began) from one it
 	// made.
 	MetaCitedCycle = "cited_cycle"
-
-	// MetaCitedUnknown is the files a permitted call changed with resolved
-	// citations but a result not computable ahead of time, as a JSON object of
-	// path to true — so a refusal at Stop can say why the citations did not
-	// count.
-	MetaCitedUnknown = "cited_unknown"
 )
 
 // Meta reads a session fact.

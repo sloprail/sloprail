@@ -328,28 +328,6 @@ func TestCycleMarksSurviveConcurrentUpdates(t *testing.T) {
 	assert.Equal(t, "open", c.State)
 }
 
-// A cited change that lands clears the earlier "could not be computed" note
-// for its file, and every Stop clears the set.
-func TestCitedUnknownClears(t *testing.T) {
-	root := t.TempDir()
-	store := openTestStore(t)
-	unknown := filemod.FileEvent{Path: "a.md"}.Event(filemod.KindPreCreate)
-	unknown.Fields[grounding.FieldCitations] = grounding.ToWire(userCite)
-	require.NoError(t, markCitedUnknown(store, []event.Event{unknown}))
-	require.NotEmpty(t, citedUnknownNote(store, "a.md"))
-
-	abs := filepath.Join(root, "a.md")
-	require.NoError(t, os.WriteFile(abs, []byte("cited"), 0o644))
-	require.NoError(t, recordPending(store, []pendingChange{{Path: "a.md", Abs: abs,
-		Point: historyPoint{Cites: userCite, After: putState(store, true, "cited"), Whole: true, At: 1}}}))
-	require.NoError(t, settleCitedChanges(store))
-	assert.Empty(t, citedUnknownNote(store, "a.md"), "a computed cited write left the note standing")
-
-	require.NoError(t, markCitedUnknown(store, []event.Event{unknown}))
-	require.NoError(t, clearCitedUnknown(store))
-	assert.Empty(t, citedUnknownNote(store, "a.md"), "the Stop did not clear the set")
-}
-
 // Only files a citation rule selects are snapshotted, and a content nothing
 // names any more is deleted.
 func TestSnapshotsOnlyWhatACitationRuleSelects(t *testing.T) {

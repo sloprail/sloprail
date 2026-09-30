@@ -198,13 +198,3 @@ func isPreFileEvent(kind string) bool {
 	}
 	return false
 }
-
-// isPostFileEvent reports whether a kind is a POST file event a guard's
-// after-check fires on.
-func isPostFileEvent(kind string) bool {
-	switch kind {
-	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
-		return true
-	}
-	return false
-}

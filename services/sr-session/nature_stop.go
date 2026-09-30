@@ -119,10 +119,6 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		}
 	}
 
-	if err := clearCitedUnknown(store); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-	}
-
 	// 2. context enters on the Post file events AND the tag events, populating
 	//    context[] before gates read it. Never blocks.
 	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
