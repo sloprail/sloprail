@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -98,4 +99,17 @@ func recordStopSeen(cmd *cobra.Command, store sessionstate.Store, files map[stri
 	if err := store.SetMeta(sessionstate.MetaStopSeenRecord, recordEnd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: this Stop's read position not recorded as seen:", err)
 	}
+}
+
+// resolve turns an event's path into one the filesystem will accept.
+//
+// Paths on file events are the project's own — relative to where the session
+// runs. Joining is what makes the fingerprint read the file the hook would
+// read, rather than whatever sits at the same relative path from the process's
+// working directory. An absolute path is already an answer and is left alone.
+func resolve(cwd, path string) string {
+	if filepath.IsAbs(path) || cwd == "" {
+		return path
+	}
+	return filepath.Join(cwd, path)
 }

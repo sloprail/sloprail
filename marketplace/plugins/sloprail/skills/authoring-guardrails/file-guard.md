@@ -1,9 +1,11 @@
 # File-guard
 
-A file-guard judges **one file's settled state**: what a file holds after a
-change, at the end of the turn. Its whole job is to answer "is this file OK?", and
-to keep re-firing until it is. It never acts before a write lands — refusing a
-write or a delete *before* it happens is a **gate's** job (below).
+A file-guard judges a **changeset**: the net change between two commits — what
+the agent committed since the rule last passed. Its whole job is to answer "is
+this change OK?". It judges **commits**, never the working tree, so a half-finished
+edit is never judged; it is post-factum only, and it keeps refusing (replaying its
+verdict) until the change is fixed. It never acts before a write lands — refusing
+a write or a delete *before* it happens is a **gate's** job (below).
 
 ```
 .sloprail/file-guard/<name>/file-guard.yaml
@@ -30,22 +32,75 @@ refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
 judge ([judge-checks.md](judge-checks.md)). `deletions` is the one
 nature-specific knob, below; it is optional.
 
-A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
-`context` — not `event.path`. It reasons about a settled file, so `markers` is
-the one set of markers that file carries; test them with a quantifier,
+A file-guard's match sees a file's own facts **bare**: `path`, `status` (`A`, `M`,
+`D` or `R` in the changeset), `markers`, `oldMarkers`, `trailers` and `context` —
+not `event.path`. `markers` is the set of markers the file carries at the end of
+the range (a deleted file's are the ones it carried); test them with a quantifier,
 `any(markers, .kind == "invariant")`. `oldMarkers` is the set it carried before
-this change, for a rule that must also see a marker removed:
+the range, for a rule that must also see a marker removed:
 `any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")`.
+`trailers` maps each commit-message trailer key to its values across the range's
+commits: `"move-only" in (trailers["Sloprail-Refactor"] ?? [])`.
 
-## When it fires: at Stop, on the settled file
+## When it fires: at Stop, over the commits since it last passed
 
-A file-guard fires at the **end of a turn**, on the file's **settled** state,
-established by diffing the tree against the baseline taken at session start —
-never by trusting what any action announced. The change is already on disk, so
-refusing does not undo it; it tells the agent the cycle is not finished and it must
-fix what it did. That makes a file-guard right for a rule about the **result** of a
-turn ("every new file under `memories/` has frontmatter"). Its events are `Post*`
-kinds only; it is never handed a `Pre*` event.
+A file-guard is evaluated **once per rule at Stop**, over its range of commits:
+from its base to `HEAD`, as one squashed net diff (`git diff -M base head`). The
+base is the first of these that exists and is still an ancestor of `HEAD`:
+**the rule's watermark** (the last head it passed, at its current definition),
+**the last commit that touched the rule's folder** (a rule in this repository),
+**the HEAD recorded when the session began** (a plugin's rule, or one not
+committed yet). Every base is a SHA, checked with `git merge-base --is-ancestor`
+on every run, so an amend, rebase or branch switch drops a base that no longer
+exists instead of silently shrinking the diff. `sr-session changeset --rule
+<name>` prints the range and the payload without running anything
+([changeset.md](changeset.md)).
+
+**Commit required.** Work that is not committed cannot be judged, so at Stop an
+uncommitted change to a path some file-guard's `match` selects refuses the Stop:
+"commit these". It is always on, never commits for the agent, applies only to an
+agent that owns the tree (a sub-agent working in the session's own tree is not
+gated, one in a worktree of its own is), and lets go after `stop_hook_block_cap`
+refusals of the same uncommitted set. Put the user's words in the commit message
+as a trailer where the change is grounded (below).
+
+The change is already committed, so refusing does not undo it; it tells the agent
+the cycle is not finished and it must fix what it did — by committing a fix, which
+is judged together with the commits it fixes. The net result is what is judged:
+if a later commit fully restores what an earlier one removed, the range passes.
+That makes a file-guard right for a rule about the **result** of a piece of work
+("every new file under `memories/` has frontmatter"). It is never handed a `Pre*`
+event, and its checks read the commits, never the working tree.
+
+## What a check receives: the Changeset payload
+
+A script gets the payload on stdin; a judge's template renders it. `event` is
+always `{"kind": "Changeset"}`:
+
+```json
+{"event": {"kind": "Changeset"},
+ "changeset": {
+   "base": "…", "head": "…",
+   "commits": [{"sha": "…", "subject": "…", "body": "…",
+                "trailers": {"Sloprail-Cites-User": ["…"]}}],
+   "files": [{"path": "…", "status": "M", "oldPath": "", "oldContent": "…",
+              "newContent": "…", "oldMarkers": [], "newMarkers": [], "diff": "…"}],
+   "others": [{"path": "README.md", "status": "M"}],
+   "citations": [{"quote": "…", "sourceTypes": ["user"], "path": "…", "line": 3, "message": "…"}]},
+ "subject": {"id": "changeset", "files": ["…"]},
+ "transcriptPath": "…", "context": {}}
+```
+
+`files` is what `match` selected, in full; `others` is the rest of the range as
+names only. A script loops over `.changeset.files[]` (a rule about one file at a
+time — size, frontmatter — is that loop). It also gets `SR_TREE`, a **read-only
+snapshot of `head`** to read whatever else it needs (a sibling spec, a test file)
+as committed, and `SR_BASE` and `SR_HEAD`. A judge's template renders
+`{{ changeset }}`, `{{ subject }}`, and `{{ change }}` — the combined diff of the
+selected files.
+
+Do not write into your own rule folder from a check (a ledger, a cache): the rule's
+hash covers the whole folder, and a changed hash starts the rule again from its floor.
 
 ## Preventing a write is a gate, not a file-guard
 
@@ -192,42 +247,41 @@ fails, and none is deleted. The gate's `match` reads the kind's own fields
 (`event.path`, `event.oldMarkers`); a marker-scoped delete rule is
 `any(event.oldMarkers, .kind == "invariant")` on the `PreFileDelete` trigger.
 
-## Re-fire and revalidation
+## What replaces re-firing and `seen`
 
-A refused after-check does not advance the cycle's read mark. The engine
-re-judges the same span on the next Stop — deliberately, so the agent can fix
-what was refused and a rule that stays unsatisfied stays reported rather than
-scrolling away.
+Every evaluation is recorded (`sr-checks status`, `sr-checks sql`), and three
+rules follow from it:
 
-**Revalidation** keeps this from re-judging content that has not changed: a file
-already judged against the same content fingerprint is skipped. This is why a
-rewrite that produces **byte-identical** content fires **no event at all** —
-worth remembering when a cross-cycle rule records what it saw
-([state-management.md](state-management.md)).
+- **A passed range is never re-delivered.** When every check passes, the rule's
+  watermark moves to that head; the next Stop judges only commits made after it. A
+  Stop with no new commits runs no check.
+- **Unchanged input is never re-judged.** A judge's verdict is stored under a
+  fingerprint of the rule's whole folder, the model and everything the judge was
+  given (never commit SHAs, so a rebase that changes SHAs but not content is a hit),
+  and replayed — a **fail included** — until the input changes. A script is cheap
+  and deterministic and always re-runs. Editing anything in the rule's folder, or
+  changing its `model`, starts the verdicts over.
+- **Changed input re-judges the whole squashed range, on purpose.** A range that
+  was refused does not advance, so a fix commit is judged together with the
+  commits it fixes. A stored failure whose input has left the range is cleared as
+  stale, not left standing.
 
-## The settled bytes
+`seen` no longer exists for a file-guard: there is no per-file Post event to
+re-send. It remains on the Post events a **context** binds.
 
-A file-guard reads the file as it settled. A **create** carries the body in
-`newContent`; an **update** carries the baseline's bytes in `oldContent` and the
-settled bytes in `newContent`; a **delete** carries `oldContent` and `oldMarkers`
-— the bytes that were lost — but no `newContent` or `newMarkers`. A delete reaches
-only a guard whose `deletions:` is `include` or `only` (above). ([events.md](events.md)
-has the exact field set each kind carries.)
+## Reading the change
 
-The `Post` kinds carry the settled bytes in `newContent`, read by the engine the
-one safe way (a regular file, capped). When it could not read them —
-`newContentKnown` false: a link to a FIFO or a device, or a file past the cap —
-`newContent` is `""`, and a rule that treats that as an empty file has seen
-nothing. Check `newContentKnown` first, and fail closed when it is false:
+A file-guard reads the committed change from `changeset.files[]`. A **created**
+file has `status` `A` and its body in `newContent`; a **modified** one has `M`, the
+range's first bytes in `oldContent`, the last in `newContent`; a **renamed** one
+has `R` and `oldPath` (a rename is not a deletion); a **deleted** one has `D`, its
+`oldContent` and `oldMarkers`, and no `newContent` — and reaches the rule only when
+`deletions:` is `include` or `only` (above), in which case it is in `files`; under
+the default `skip` it is listed in `others`. `diff` is that file's part of the
+squashed diff.
 
-```bash
-known="$(printf '%s' "$event" | jq -r '.event.newContentKnown // false')"
-[ "$known" = "true" ] || { echo "could not read $path" >&2; exit 1; }   # fail closed
-body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')"
-```
-
-Reading the file from disk yourself (`cat "$SR_WORKSPACE/$path"`) is the same
-bytes when it works, and blocks the hook on a FIFO when it does not.
+Read the file from `SR_TREE` (`cat "$SR_TREE/$path"`), never from
+`$SR_WORKSPACE`: the working tree may hold work that was never committed.
 
 ### The resultKnown discipline
 
@@ -256,7 +310,7 @@ false — and `not event.resultKnown` selects the underivable cases deliberately
 `newContent`, but `PreFileCreate` carries `resultKnown` too (a notebook create can
 be false), so check it on both kinds.
 
-A file-guard needs none of this: it reads settled bytes (above), never a
+A file-guard needs none of this: it reads committed bytes (above), never a
 prediction.
 
 ## Markers

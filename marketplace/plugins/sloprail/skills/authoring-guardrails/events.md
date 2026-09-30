@@ -256,10 +256,27 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 - on a **tag**, `seen: true` = only in text an earlier Stop read;
 - on a **Post file event**, `seen: true` = same content an earlier Stop was handed.
 
+`seen` on a Post file event is delivered to **contexts** (and anything else still
+bound to `PostFile*`). A **file-guard** does not receive Post file events: it
+judges commits. What replaces `seen` for it is the watermark — a passed range is
+never re-delivered — and the verdict cache — unchanged input is never re-judged; see
+[file-guard.md](file-guard.md#what-replaces-re-firing-and-seen).
+
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
 any Stop, records nothing — what it covered is delivered unseen again, so it is
 re-judged rather than skipped.
+
+### `Changeset` — what a file-guard's checks receive
+
+Not a kind a gate or a context binds to: a file-guard binds to no event, and its
+checks are handed one `Changeset` per rule per range, with `event: {"kind":
+"Changeset"}` and the change under `changeset` (`base`, `head`, `commits`, `files`,
+`others`, `citations`), the unit judged under `subject`, and `transcriptPath` and
+`context` as everywhere. The `.event.path`, `.event.newContent` and
+`.event.oldContent` of a file event do not exist for a file-guard: loop over
+`.changeset.files[]`. Full shape, and how the range is chosen:
+[file-guard.md](file-guard.md#what-a-check-receives-the-changeset-payload).
 
 ### `Stop` — a work cycle ended
 

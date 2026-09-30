@@ -4,40 +4,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
-	"github.com/sloprail/sloprail/internal/natures"
 )
-
-// A marker-scoped guard must be able to see a marker LEAVE. `markers` reads an
-// update that stripped the file's last marker as marker-less, so the guard never
-// selects the write that removed what it guards; `oldMarkers` does.
-func TestRunFileGuardsPost_OldMarkersSelectsAMarkerRemoval(t *testing.T) {
-	was := []any{marker("invariant", "x", 1)}
-	stripped := event.Event{Kind: declaration.KindPostFileUpdate, Fields: map[string]any{
-		filemod.FieldPath:       "src/pinned.go",
-		filemod.FieldOldContent: "// sr:invariant x\ncode\n",
-		filemod.FieldNewContent: "code\n",
-		filemod.FieldOldMarkers: was,
-		filemod.FieldNewMarkers: []any{},
-	}}
-
-	byMarkers, _ := refusingGuard(t, "")
-	byMarkers.Match = `any(markers, .kind == "invariant")`
-	results := runFileGuardsPost(discard(), []declaration.FileGuard{byMarkers}, []event.Event{stripped},
-		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
-	assert.Empty(t, results, "markers alone does not see the marker that left — the reason oldMarkers exists")
-
-	byOld, ledger := refusingGuard(t, "")
-	byOld.Match = `any(oldMarkers, .kind == "invariant")`
-	results = runFileGuardsPost(discard(), []declaration.FileGuard{byOld}, []event.Event{stripped},
-		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
-	require.Len(t, results, 1, "oldMarkers selects the update that removed the marker")
-	assert.Equal(t, []string{declaration.KindPostFileUpdate}, ledgerLines(t, ledger))
-}
 
 // oldMarkers is what the file held before: none on a create, the carried
 // markers on an update or a delete, and always a list.

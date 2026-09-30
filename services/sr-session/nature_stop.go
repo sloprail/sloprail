@@ -23,9 +23,10 @@ import (
 //
 // # The order, and why it is load-bearing
 //
-//	1. file-guard AFTER-checks on the cycle's Post file events
-//	     — records each verdict into revalidation, so a not-fine file RE-FIRES
-//	       next cycle; refusals block the turn.
+//	1. file-guards: each rule evaluated over its changeset of commits
+//	     — every run recorded in the check results, a failing judge replayed
+//	       until its input changes; refusals block the turn. (Before it, commit
+//	       required: uncommitted work on a guarded path is refused first.)
 //	2. context ENTERS on the cycle's Post events
 //	     — a context that recognises itself only from settled content
 //	       (a goal.yaml whose active:true exists once the write landed) enters
@@ -148,26 +149,17 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	return joinRefusals(refusals)
 }
 
-// natureStopBoundKinds is every file event kind the Stop dispatch needs extracted
-// — the Post file events (for file-guard after-checks and context Post enters)
-// and PostTagWrite (a context may enter on a tag). The Pre kinds and Stop are not
-// extracted here; the Stop event is synthesised by cyclemod, not by a module.
+// natureStopBoundKinds is every event kind the Stop dispatch needs extracted:
+// the kinds a context binds to (its Post file kinds and PostTagWrite). The Pre
+// kinds and Stop are not extracted here; the Stop event is synthesised by
+// cyclemod, not by a module.
 //
-// File-guards bind to a file's STATE rather than an event, so all three Post file
-// kinds are bound whenever any file-guard exists — the delete even when no guard
-// includes deletions, because a PostFileDelete is also how the after-check learns
-// a file it refused is gone and settles that refusal (settleIfGone). Which guard
-// is actually run on which kind is FileGuard.Covers'. Contexts contribute their own
-// Post `on` kinds. Gates bound to Stop need no extraction (the Stop event is
-// synthesised), so they add nothing here.
+// File-guards contribute nothing. They judge commits, not per-file Post events:
+// their changesets are read from git (changeset_eval.go), so a project with only
+// file-guards computes no tree difference at Stop. Gates bound to Stop need no
+// extraction either.
 func natureStopBoundKinds(loaded declaration.Loaded) []string {
 	var bound []string
-	if len(loaded.FileGuards) > 0 {
-		bound = append(bound,
-			declaration.KindPostFileCreate,
-			declaration.KindPostFileUpdate,
-			declaration.KindPostFileDelete)
-	}
 	for _, c := range loaded.Contexts {
 		for _, trig := range c.On {
 			kinds, _ := declaration.ExpandContextEvent(trig.Event)
