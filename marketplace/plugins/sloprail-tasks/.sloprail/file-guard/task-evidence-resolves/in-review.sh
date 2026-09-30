@@ -38,7 +38,13 @@ status_of() {
 }
 
 [ "$(field '.event.kind // ""')" = "Changeset" ] || exit 0
-n="$(field '.changeset.files | length')" || exit 0
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || exit 0
+[ "${changeset_lib_loaded:-}" = 1 ] || exit 0
+n="$(cs_count "$payload")" || exit 0
 case "$n" in '' | *[!0-9]*) exit 0 ;; esac
 
 i=0
@@ -52,12 +58,14 @@ while [ "$i" -lt "$n" ]; do
   # A delete claims nothing.
   [ "$status" = "D" ] && continue
 
-  content="$(f '.newContent // ""')" || exit 0
+  # A field the status should carry and lacks is undecidable, not empty: apply.
+  content="$(cs_text "$payload" "$idx" newContent)" || exit 0
   [ "$(status_of "$content")" = "in_review" ] || continue
 
   old_status=""
   if [ "$status" != "A" ]; then
-    old_status="$(status_of "$(f '.oldContent // ""')")"
+    old_content="$(cs_text "$payload" "$idx" oldContent)" || exit 0
+    old_status="$(status_of "$old_content")"
   fi
   if [ "${1:-}" = "--entering" ] && [ "$old_status" = "in_review" ]; then
     continue

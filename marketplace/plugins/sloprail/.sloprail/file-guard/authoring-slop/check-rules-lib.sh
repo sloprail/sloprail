@@ -137,26 +137,17 @@ fi
 # survives both spellings — rather than the old literal `fields.newContent`,
 # which a new-format script never contains and which would let exactly this slop
 # through untouched.
-# Two kinds of script never see a Pre event and are held to their own flag, so this
-# rule stands down for them, provided they name no Pre kind:
-#   - a Post-only script reads settled bytes, which carry newContentKnown rather than
-#     resultKnown; rule 2b holds it to that;
-#   - a file-guard script reads a Changeset (`.changeset.files[].newContent`):
-#     committed blobs, always known, with no resultKnown or newContentKnown to consult.
-# The exemption is gated by LOCATION first: a script under .sloprail/gate/ reads the
-# PENDING write whatever its text names, so it is never exempt — a gate script that
-# mentions newContentKnown or `.changeset` in a string must still name resultKnown.
+# A script under .sloprail/file-guard/ never sees a Pre event: it reads a Changeset
+# (`.changeset.files[].newContent`, committed blobs, always known, with no resultKnown
+# to consult) or settled Post bytes (rule 2b holds those to newContentKnown). The
+# exemption is by LOCATION ONLY. What a script's text says never exempts it: a gate
+# script (or one anywhere else) whose comment or string mentions `.changeset` or
+# newContentKnown must still name resultKnown.
 # (A lib a gate sources from the file-guard folder reads no event; the gate's own entry
 # script, under gate/, is what is held to this rule.)
 exempt=0
 case "$path" in
-  *.sloprail/gate/*) ;;
-  *)
-    if { printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null ||
-         printf '%s' "$body" | grep -q '[.]changeset' 2>/dev/null; } &&
-       ! printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qE 'PreFile|Pre[*]' 2>/dev/null; then
-      exempt=1
-    fi ;;
+  *.sloprail/file-guard/*) exempt=1 ;;
 esac
 if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null &&

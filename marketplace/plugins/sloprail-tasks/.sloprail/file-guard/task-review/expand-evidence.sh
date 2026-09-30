@@ -118,7 +118,13 @@ clip() {
 # not one to review). A changeset with none is SKIPPED: this judge is a SEPARATE
 # check and would otherwise still run (a passing check does not end the chain,
 # only a refusal does). `{"skip": true}` makes it ABSTAIN: no model call, no verdict.
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || {
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || exit 1
+[ "${changeset_lib_loaded:-}" = 1 ] || exit 1
+n="$(cs_count "$event")" || {
   echo "task-review: the changeset's files could not be read" >&2
   exit 1
 }
@@ -129,8 +135,8 @@ review_bodies=()
 review_docs=()
 i=0
 while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || exit 1
-  body="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" || exit 1
+  path="$(cs_get "$event" "$i" .path)" || exit 1
+  body="$(cs_text "$event" "$i" newContent)" || exit 1
   i=$((i + 1))
   doc="$(printf '%s' "$body" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
   status="$(printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null)"

@@ -53,12 +53,14 @@ has_user_citation "$payload" || exit 0
 
 # The changeset's scanners as the changes to record, each {op, path, new}: a
 # rename is the old scanner deleted and the new one created.
+# A written file with no string newContent is unreadable, not empty: refuse.
 changes="$(printf '%s' "$payload" | jq -c '
+  def need(k): if (.[k] | type) == "string" then .[k] else error("missing " + k) end;
   [ .changeset.files[]
     | if .status == "R" then
-        ({op: "delete", path: .oldPath, new: ""}, {op: "write", path: .path, new: .newContent})
+        ({op: "delete", path: .oldPath, new: ""}, {op: "write", path: .path, new: need("newContent")})
       elif .status == "D" then {op: "delete", path: .path, new: ""}
-      else {op: "write", path: .path, new: .newContent} end ]')" \
+      else {op: "write", path: .path, new: need("newContent")} end ]')" \
   || refuse "The changeset could not be read to record its changes, so it was not let through."
 n="$(printf '%s' "$changes" | jq 'length')" || refuse "The changeset could not be read to record its changes, so it was not let through."
 

@@ -47,7 +47,7 @@ The plain **file-guard** (`file-guard/preserves-unasked-content`) is the
 after-check, and it holds the **judge**. It judges **commits**: at Stop, uncommitted
 changes to a `memories/` file refuse the turn with "commit these", and the rule then
 runs over the range from where it last passed to `HEAD`, as one squashed diff of every
-file it touched (so a removal a later commit put back still shows), with the same
+file it touched (the net diff is judged: a removal a later commit put back is not a removal), with the same
 `deletions: include` and `require`: it asks whether the removal is clean and asked
 for. The user's words come from the commits' `Sloprail-Cites-User: <quote>` trailers.
 It sees what the gate cannot — a removal made by a script the engine did not see as a

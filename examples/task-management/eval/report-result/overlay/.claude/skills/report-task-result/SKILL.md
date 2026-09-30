@@ -20,6 +20,15 @@ ASK
 The quote must match exactly one of the user's messages; check it first with
 `sr-session trajectory cite '<quote>'`.
 
+The write is judged before it lands (that is what `--cite:user` is for), and the
+commit that carries it is judged again at Stop: commit ASK.md with the same words
+as a trailer, never inside the file, or the turn is refused:
+
+```bash
+git add memories/tasks/<category>/<short-name>/ASK.md
+git commit -m 'Record the ask' -m 'Sloprail-Cites-User: <the same exact quote>'
+```
+
 Once the work is done, write
 `memories/tasks/<category>/<short-name>/RESULT.md` describing what was
 done.

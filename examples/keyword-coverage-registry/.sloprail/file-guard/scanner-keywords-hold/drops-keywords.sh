@@ -32,13 +32,16 @@ payload="$(cat)"
 
 # The changeset's scanners as the changes to judge, each {op, path, old, new}: a
 # rename is the old scanner deleted and the new one created.
+# A content field a status must carry and does not (absent or not a string) is
+# undecidable, not empty: jq errors, and the requirement applies.
 changes="$(printf '%s' "$payload" | jq -c '
+  def need(k): if (.[k] | type) == "string" then .[k] else error("missing " + k) end;
   [ .changeset.files[]
     | if .status == "R" then
-        ({op: "delete", path: .oldPath, old: .oldContent, new: ""}, {op: "create", path: .path, old: "", new: .newContent})
-      elif .status == "D" then {op: "delete", path: .path, old: .oldContent, new: ""}
-      elif .status == "A" then {op: "create", path: .path, old: "", new: .newContent}
-      else {op: "update", path: .path, old: .oldContent, new: .newContent} end ]' 2>/dev/null)" || exit 0
+        ({op: "delete", path: .oldPath, old: need("oldContent"), new: ""}, {op: "create", path: .path, old: "", new: need("newContent")})
+      elif .status == "D" then {op: "delete", path: .path, old: need("oldContent"), new: ""}
+      elif .status == "A" then {op: "create", path: .path, old: "", new: need("newContent")}
+      else {op: "update", path: .path, old: need("oldContent"), new: need("newContent")} end ]' 2>/dev/null)" || exit 0
 n="$(printf '%s' "$changes" | jq 'length' 2>/dev/null)" || exit 0
 case "$n" in '' | *[!0-9]*) exit 0 ;; esac
 
@@ -57,4 +60,4 @@ while [ "$i" -lt "$n" ]; do
     lib_check
   fi
 done
-exit 1
+lib_waive

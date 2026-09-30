@@ -90,14 +90,20 @@ IFS= read -r -d '' evidence_tail <<'EOF' || true
 An ARTIFACT is <repo-relative-file>:<ranges> in the frontmatter, pointing at the produced files in the tree. The status stays in_review; add the evidence and write the task again.
 EOF
 
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || true
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || refuse "task-review: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be reviewed"
+[ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-review: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be reviewed"
+n="$(cs_count "$event")" || true
 case "$n" in '' | *[!0-9]*) refuse "task-review: the changeset's files could not be read, so nothing could be reviewed" ;; esac
 
 i=0
 while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" ||
+  path="$(cs_get "$event" "$i" .path)" ||
     refuse "task-review: could not read file $i of the changeset"
-  content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" ||
+  content="$(cs_text "$event" "$i" newContent)" ||
     refuse "task-review: could not read $path from the changeset"
   i=$((i + 1))
   [ -n "$content" ] || continue

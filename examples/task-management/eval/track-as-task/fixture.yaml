@@ -5,8 +5,8 @@ description: >
   agent is steered into this project's task-management convention (not its
   own task tool) and writes ASK.md: with sr-file,
   citing the user's exact words (--cite:user), which the ask-is-human-authored
-  gate requires and a judge checks against the whole
-  cited message. This is the fixture that exercises grounding.
+  gate requires, and committing it with a Sloprail-Cites-User trailer, which the
+  same-named file-guard's judge checks against the whole cited message. This is the fixture that exercises grounding.
 
   Scored on TRAJECTORY HEALTH (plan-2026-09-24): a refused uncited ASK.md
   write, then the agent writing it with sr-file within a cycle or two, is the

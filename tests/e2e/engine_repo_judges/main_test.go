@@ -95,7 +95,34 @@ func installGuardrail(t *testing.T, projDir, nature, name string) string {
 	src := filepath.Join(repoRoot(t), ".sloprail", nature, name)
 	dst := filepath.Join(projDir, ".sloprail", nature, name)
 	copyTree(t, src, dst)
+	installSizeCapLib(t, projDir, name)
 	return dst
+}
+
+// installSizeCapLib places the one size-cap-lib.sh (rule-quality's, which skill-quality
+// sources too) beside an installed rule-quality or skill-quality, where the rule's
+// scripts look for it (../rule-quality/ from the file-guard, ../../file-guard/rule-quality/
+// from the gate).
+func installSizeCapLib(t *testing.T, projDir, name string) {
+	t.Helper()
+	if name != "rule-quality" && name != "skill-quality" {
+		return
+	}
+	rel := filepath.Join(".sloprail", "file-guard", "rule-quality", "size-cap-lib.sh")
+	dst := filepath.Join(projDir, rel)
+	if _, err := os.Stat(dst); err == nil {
+		return
+	}
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+	if err != nil {
+		t.Fatalf("installSizeCapLib: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatalf("installSizeCapLib: %v", err)
+	}
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		t.Fatalf("installSizeCapLib: %v", err)
+	}
 }
 
 func copyTree(t *testing.T, src, dst string) {

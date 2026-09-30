@@ -30,8 +30,14 @@ while [ "$i" -lt "$n" ]; do
   # A deletion is the largest removal there is — it always applies. (An added file
   # has nothing before it, so it removes nothing.)
   [ "$status" = "A" ] && continue
-  old="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].oldContent // ""')" || exit 0
-  new="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].newContent // ""')" || exit 0
+  # A status that carries content and has none (the field absent or not a string)
+  # is undecidable, not empty: apply.
+  old="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].oldContent | if type == "string" then . else error("missing oldContent") end' 2>/dev/null)" || exit 0
+  if [ "$status" = "D" ]; then
+    new=""
+  else
+    new="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end' 2>/dev/null)" || exit 0
+  fi
   lib_count
   # A deletion applies whatever it held (even an empty file is a file lost).
   [ "$status" = "D" ] && lib_apply "${removed:-0}"

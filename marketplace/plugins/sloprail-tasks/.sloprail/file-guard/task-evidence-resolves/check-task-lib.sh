@@ -61,8 +61,11 @@ lib_init() {
     refuse "task-evidence-resolves: the event named no path, so there is nothing to check"
   fi
 
-  # The tree artifacts resolve against: the project for the gate.
-  root="${SR_WORKSPACE:-.}"
+  # The tree artifacts resolve against: the project's working tree, which is right
+  # for the gate ONLY. A file-guard entry never calls lib_init: it sets root to
+  # SR_TREE, the committed snapshot. No "." fallback.
+  root="${SR_WORKSPACE:-}"
+  [ -n "$root" ] || refuse "task-evidence-resolves: SR_WORKSPACE is not set, so the project's tree could not be read"
 }
 
 lib_check() {

@@ -37,8 +37,11 @@ lib_init() {
     refuse "task-dependencies-resolve: the event named no path, so there is nothing to check"
   fi
 
-  # The tree the tasks are read from: the project for the gate.
-  root="${SR_WORKSPACE:-.}"
+  # The tree the tasks are read from: the project's working tree, which is right for
+  # the gate ONLY (it judges the pending write). A file-guard entry never calls
+  # lib_init: it sets root to SR_TREE, the committed snapshot. No "." fallback.
+  root="${SR_WORKSPACE:-}"
+  [ -n "$root" ] || refuse "task-dependencies-resolve: SR_WORKSPACE is not set, so the project's tasks could not be read"
 
   kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
   [ -n "$kind" ] || { echo "task-dependencies-resolve: could not read the event's kind, so it could not be checked" >&2; exit 2; }
@@ -88,6 +91,8 @@ EOF
 # this pending write's own edges (self_id -> deps) so a cycle this very write
 # would CREATE is caught before it lands, not just a pre-existing one.
 graph_file="$(mktemp)"
+# Every exit path (a refuse included) removes it, not only the normal one.
+trap 'rm -f "$graph_file"' EXIT
 
 if [ -d "$root/memories/tasks" ]; then
   while IFS= read -r -d '' f; do

@@ -26,16 +26,22 @@ skip() { printf '{"skip": true}\n'; exit 0; }
 [ -n "$root" ] || fail "task-gates-hold: SR_TREE is not set, so the committed tasks could not be read"
 [ -f "$schema" ] || skip
 
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || fail "task-gates-hold: the changeset's files could not be read"
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || fail "task-gates-hold: the changeset library (lib/changeset.sh) could not be loaded"
+[ "${changeset_lib_loaded:-}" = 1 ] || fail "task-gates-hold: the changeset library (lib/changeset.sh) could not be loaded"
+n="$(cs_count "$event")" || fail "task-gates-hold: the changeset's files could not be read"
 case "$n" in '' | *[!0-9]*) fail "task-gates-hold: the changeset's files could not be read" ;; esac
 
 tasks='[]'
 i=0
 while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || fail "task-gates-hold: could not read file $i of the changeset"
-  status="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].status')" || fail "task-gates-hold: could not read $path from the changeset"
-  new_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" || fail "task-gates-hold: could not read $path from the changeset"
-  old_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].oldContent')" || fail "task-gates-hold: could not read the earlier $path from the changeset"
+  path="$(cs_get "$event" "$i" .path)" || fail "task-gates-hold: could not read file $i of the changeset"
+  status="$(cs_get "$event" "$i" .status)" || fail "task-gates-hold: could not read $path from the changeset"
+  new_content="$(cs_text "$event" "$i" newContent)" || fail "task-gates-hold: could not read $path from the changeset"
+  old_content="$(cs_text "$event" "$i" oldContent)" || fail "task-gates-hold: could not read the earlier $path from the changeset"
   i=$((i + 1))
   [ -n "$new_content" ] || continue
 

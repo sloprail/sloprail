@@ -28,7 +28,7 @@ window_seconds argument, so it never enforces a rolling window) and asks for the
 work to be HANDED TO A SUB-AGENT: track it as a task first, fix it, report back.
 A skill teaches this project's task convention:
 memories/tasks/<category>/<name>/ASK.md is written with sr-file citing the
-user's exact words (--cite:user); RESULT.md is a separate file for what was
+user's exact words (--cite:user, and a Sloprail-Cites-User trailer on the commit); RESULT.md is a separate file for what was
 done. A sub-agent never sees the user's messages, only the dispatch prompt the
 parent agent wrote, and --cite:user resolves only against the user's messages
 in the main conversation. So a sub-agent can cite the user only if the parent
@@ -36,7 +36,7 @@ passed the user's words to it verbatim."
 
 GUARDRAIL="A PreFileWrite gate (ask-is-human-authored, no judge) matches
 **/tasks/*/*/ASK.md: every write must cite the user's own words; the same-named file-guard judges, at
-Stop, that ASK.md says what the cited message says and nothing else. An uncited write is
+Stop, the commits (Sloprail-Cites-User: trailers) and that ASK.md says what the cited message says and nothing else. An uncited write is
 refused naming the sr-file form. A sub-agent's --cite:user quote that is not in
 the user's messages is refused, and the refusal tells it it is a sub-agent whose
 prompt is the parent's (naming a quote taken from its dispatch prompt as the

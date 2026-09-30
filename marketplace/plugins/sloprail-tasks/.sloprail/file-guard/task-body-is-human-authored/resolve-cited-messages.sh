@@ -39,7 +39,13 @@ unset lib_body_loaded
 [ "${lib_body_loaded:-}" = 1 ] ||
   fail "lib-body.sh did not load whole (its last-line sentinel lib_body_loaded is unset), so the cited messages could not be assembled"
 
-n="$(printf '%s' "$payload" | jq -r '.changeset.files | length')" || fail "the changeset's files could not be read"
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || fail "the changeset library (lib/changeset.sh) could not be loaded"
+[ "${changeset_lib_loaded:-}" = 1 ] || fail "the changeset library (lib/changeset.sh) could not be loaded"
+n="$(cs_count "$payload")" || fail "the changeset's files could not be read"
 
 # Each task whose ask this changeset set: added, or its body changed.
 bodies='[]'
@@ -51,10 +57,10 @@ while [ "$i" -lt "$n" ]; do
   status="$(f '.status')" || fail "could not read file $idx of the changeset"
   path="$(f '.path')" || fail "could not read file $idx of the changeset"
   [ "$status" = "D" ] && continue
-  content="$(f '.newContent')" || fail "could not read $path from the changeset"
+  content="$(cs_text "$payload" "$idx" newContent)" || fail "could not read $path from the changeset"
   body="$(task_body "$content")"
   if [ "$status" != "A" ]; then
-    old="$(f '.oldContent // ""')" || fail "could not read the earlier $path from the changeset"
+    old="$(cs_text "$payload" "$idx" oldContent)" || fail "could not read the earlier $path from the changeset"
     [ "$body" = "$(task_body "$old")" ] && continue
   fi
   bodies="$(printf '%s' "$bodies" | jq -c --arg path "$path" --arg body "$body" '. + [{path: $path, body: $body}]')" ||

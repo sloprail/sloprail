@@ -43,12 +43,11 @@ case "$kind" in
     if [ "$(field 'if .event | has("oldContentKnown") then .event.oldContentKnown else true end')" != "true" ] && [ -z "$owed" ]; then
       exit 0
     fi
-    lib_check_delete
-    exit $?
+    lib_check_delete || lib_waive
     ;;
   *)
     # A kind this script does not know: undecidable, so apply (fail-closed).
     exit 0
     ;;
 esac
-lib_check
+lib_check || lib_waive
