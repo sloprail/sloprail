@@ -56,6 +56,9 @@ func TestCommitSetup_SeedThenRulesAlone(t *testing.T) {
 	if st := gitOut(t, project, "status", "--porcelain"); st != "" {
 		t.Errorf("the tree must be clean, got %q", st)
 	}
+	if w.rulesCommit != gitOut(t, project, "rev-parse", "HEAD") || w.seedCommit != gitOut(t, project, "rev-parse", "HEAD~1") {
+		t.Errorf("the setup commits' shas must be recorded for the scorer: seed %q rules %q", w.seedCommit, w.rulesCommit)
+	}
 }
 
 // A fixture that is only rules still has a seed commit to be the rules' parent.

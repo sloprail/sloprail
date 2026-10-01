@@ -44,6 +44,9 @@ import (
 //	                      so a scorer can run `sr-session query` against the
 //	                      transcript without guessing where those binaries are
 //	SR_EVAL_AGENT_HOME    the isolated HOME the agent ran in
+//	SR_EVAL_SEED_COMMIT   sha of the commit sr-eval made of the seed and overlay
+//	SR_EVAL_RULES_COMMIT  sha of the commit sr-eval made of .sloprail alone
+//	                      (empty when the run had no rules)
 //	SR_EVAL_VERDICT_OUT   a path the scorer may write a verdict JSON to — see
 //	                      verdict.go for the shape
 //
@@ -82,7 +85,8 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 		"SR_EVAL_BIN_DIR="+binDir,
 		"SR_EVAL_VERDICT_OUT="+verdictPath,
 	)
-	cmd.Env = append(cmd.Env, "SR_EVAL_AGENT_HOME="+agentHome)
+	cmd.Env = append(cmd.Env, "SR_EVAL_AGENT_HOME="+agentHome,
+		"SR_EVAL_SEED_COMMIT="+ws.seedCommit, "SR_EVAL_RULES_COMMIT="+ws.rulesCommit)
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

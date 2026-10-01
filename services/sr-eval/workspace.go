@@ -29,6 +29,12 @@ const (
 type workspace struct {
 	root    string // temp dir: root/project is the agent's cwd
 	project string
+
+	// seedCommit and rulesCommit are the shas of the two setup commits
+	// commitSetup made (rulesCommit empty when there were no rules). Recorded
+	// here, and handed to the scorer, rather than found later by message: the
+	// agent can write a commit with any message.
+	seedCommit, rulesCommit string
 }
 
 // newWorkspace creates an isolated workspace and populates project/ from the
@@ -231,6 +237,10 @@ func (w *workspace) commitSetup() error {
 	if err := w.commitPaths("sr-eval: seed and overlay (project files, .claude/settings.json)", true, ".", ":(exclude).sloprail"); err != nil {
 		return err
 	}
+	var err error
+	if w.seedCommit, err = w.head(); err != nil {
+		return err
+	}
 	status := exec.Command("git", "-C", w.project, "status", "--porcelain", "--", ".sloprail")
 	out, err := status.CombinedOutput()
 	if err != nil {
@@ -239,7 +249,19 @@ func (w *workspace) commitSetup() error {
 	if strings.TrimSpace(string(out)) == "" {
 		return nil
 	}
-	return w.commitPaths("sr-eval: install the rules (.sloprail)", false, ".sloprail")
+	if err := w.commitPaths("sr-eval: install the rules (.sloprail)", false, ".sloprail"); err != nil {
+		return err
+	}
+	w.rulesCommit, err = w.head()
+	return err
+}
+
+func (w *workspace) head() (string, error) {
+	out, err := exec.Command("git", "-C", w.project, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // commitPaths stages every change under the pathspecs and commits it.
