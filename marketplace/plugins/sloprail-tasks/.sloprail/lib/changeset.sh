@@ -9,6 +9,16 @@
 # cs_count EVENT  ->  how many files the changeset holds.
 cs_count() { printf '%s' "$1" | jq -r '.changeset.files | length'; }
 
+# cs_indexes EVENT  ->  one index per line: the files of `.subject.files` (the unit a
+# `when` is asked about: one file for a requirement, every selected file for a check),
+# as indexes into `.changeset.files`. The rest of the changeset is context. Fails when
+# the subject is not a list of paths, which is undecidable.
+cs_indexes() {
+  printf '%s' "$1" | jq -r '
+    (.subject.files | if type == "array" then . else error("no subject") end) as $subj
+    | [.changeset.files | to_entries[] | select(.value.path as $p | any($subj[]; . == $p)) | .key] | .[]'
+}
+
 # cs_get EVENT I EXPR  ->  EXPR applied to file I (for example `.path`, `.status`).
 cs_get() { printf '%s' "$1" | jq -r --argjson i "$2" ".changeset.files[\$i]$3"; }
 

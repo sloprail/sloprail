@@ -21,8 +21,13 @@ payload="$(cat)"
 [ -n "${SR_TREE:-}" ] && [ -n "${SR_BASE:-}" ] || exit 0
 lib_tree "$SR_TREE" "$SR_BASE"
 
-n="$(printf '%s' "$payload" | jq -r '.changeset.files | length' 2>/dev/null)" || exit 0
-case "$n" in '' | *[!0-9]*) exit 0 ;; esac
+# The files this call decides: `.subject.files` (one file for the requirement, every
+# selected file for a check), as indexes into .changeset.files. The rest of the
+# changeset is context this script does not judge. A subject that is not a list of
+# paths is undecidable: apply.
+idxs="$(printf '%s' "$payload" | jq -r '
+  (.subject.files | if type == "array" then . else error("no subject") end) as $subj
+  | [.changeset.files | to_entries[] | select(.value.path as $p | any($subj[]; . == $p)) | .key] | .[]' 2>/dev/null)" || exit 0
 
 # One jq read per field, and any failure is undecidable: apply.
 fld() { printf '%s' "$payload" | jq -r --argjson i "$1" ".changeset.files[\$i]$2" 2>/dev/null; }
@@ -31,8 +36,7 @@ mk() { printf '%s' "$payload" | jq -r --argjson i "$1" "[(.changeset.files[\$i].
 # A committed change has a known result, and "before" is the range's base: a created
 # file had nothing there, and a rename is the old path deleted and the new one created.
 new_known=1 emptied="" applied=""
-i=0
-while [ "$i" -lt "$n" ]; do
+for i in $idxs; do
   status="$(fld "$i" '.status')" || exit 0
   path="$(fld "$i" '.path')" || exit 0
   oldpath="$(fld "$i" '.oldPath // ""')" || exit 0
@@ -40,7 +44,6 @@ while [ "$i" -lt "$n" ]; do
   newc="$(fld "$i" '.newContent // ""')" || exit 0
   old_f="$(mk "$i" oldMarkers)" || exit 0
   new_f="$(mk "$i" newMarkers)" || exit 0
-  i=$((i + 1))
   [ -n "$path" ] || exit 0
 
   # Each file is judged on its own, so a refusal names every file the change moves

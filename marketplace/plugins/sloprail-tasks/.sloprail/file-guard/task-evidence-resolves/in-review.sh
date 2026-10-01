@@ -15,6 +15,8 @@
 #                            is the claim). A create has no prior status, so
 #                            creating a task directly in in_review enters it.
 #
+# Its subject is `.subject.files` (one task for a requirement, so the citation is asked
+# only of the tasks that are in review).
 # This copy serves the file-guards (task-evidence-resolves, task-review) and reads
 # a Changeset: each file's newContent is its status at head, its oldContent its
 # status at the range's base. The PreFileWrite gate of the same name carries the
@@ -44,13 +46,11 @@ cs_lib="$(dirname "$0")/../../lib/changeset.sh"
 unset changeset_lib_loaded
 . "$cs_lib" 2>/dev/null || exit 0
 [ "${changeset_lib_loaded:-}" = 1 ] || exit 0
-n="$(cs_count "$payload")" || exit 0
-case "$n" in '' | *[!0-9]*) exit 0 ;; esac
+# Only the subject's files are decided (one task for a requirement); the rest of the
+# changeset is context.
+idxs="$(cs_indexes "$payload")" || exit 0
 
-i=0
-while [ "$i" -lt "$n" ]; do
-  idx="$i"
-  i=$((i + 1))
+for idx in $idxs; do
   f() { field ".changeset.files[$idx]$1"; }
   status="$(f '.status')" || exit 0
   path="$(f '.path')" || exit 0

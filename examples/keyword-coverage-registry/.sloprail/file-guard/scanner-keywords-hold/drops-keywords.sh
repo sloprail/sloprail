@@ -30,13 +30,16 @@ lib_setup
 payload="$(cat)"
 [ "$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] || exit 0
 
-# The changeset's scanners as the changes to judge, each {op, path, old, new}: a
+# The subject's scanners — `.subject.files`, one file for a requirement — as the
+# changes to judge (the rest of the changeset is context this script does not read;
+# a check handed the whole changeset has every file in its subject), each {op, path, old, new}: a
 # rename is the old scanner deleted and the new one created.
 # A content field a status must carry and does not (absent or not a string) is
 # undecidable, not empty: jq errors, and the requirement applies.
 changes="$(printf '%s' "$payload" | jq -c '
   def need(k): if (.[k] | type) == "string" then .[k] else error("missing " + k) end;
-  [ .changeset.files[]
+  (.subject.files | if type == "array" then . else error("no subject") end) as $subj
+  | [ .changeset.files[] | select(.path as $p | any($subj[]; . == $p))
     | if .status == "R" then
         ({op: "delete", path: .oldPath, old: need("oldContent"), new: ""}, {op: "create", path: .path, old: "", new: need("newContent")})
       elif .status == "D" then {op: "delete", path: .path, old: need("oldContent"), new: ""}

@@ -26,15 +26,11 @@ cs_lib="$(dirname "$0")/../../lib/changeset.sh"
 unset changeset_lib_loaded
 . "$cs_lib" 2>/dev/null || exit 0
 [ "${changeset_lib_loaded:-}" = 1 ] || exit 0
-n="$(cs_count "$payload")" || exit 0
-case "$n" in '' | *[!0-9]*) exit 0 ;; esac
+idxs="$(cs_indexes "$payload")" || exit 0
 
-# Every file is asked. One that sets an ask applies the requirement (lib_check exits
+# Every file of the subject (one task for the requirement) is asked. One that sets an ask applies the requirement (lib_check exits
 # 0 with its hint); only when none does is the citation waived.
-i=0
-while [ "$i" -lt "$n" ]; do
-  idx="$i"
-  i=$((i + 1))
+for idx in $idxs; do
   f() { field ".changeset.files[$idx]$1"; }
   status="$(f '.status')" || exit 0
   path="$(f '.path')" || exit 0

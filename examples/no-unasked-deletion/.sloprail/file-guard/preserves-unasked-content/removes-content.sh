@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # `when` for the user citation a removal needs — the file-guard's entry, over the
 # committed Changeset (the gate's entry reads the Pre* events before the write): does
-# this changeset remove content?
+# this subject — `.subject.files`, one file for a requirement, the whole changeset
+# only as context — remove content?
 # Exit 0 — it does (a line present at the range's base is gone at head, or a file is
 # deleted), so the commits must cite the user's words asking for it. Exit 1 — it only
 # adds, so no ask is needed.
@@ -18,14 +19,14 @@ lib_setup
 
 input="$(cat)"
 [ "$(printf '%s' "$input" | jq -r '.event.kind // empty')" = "Changeset" ] || exit 0
-n="$(printf '%s' "$input" | jq -r '.changeset.files | length')" || exit 0
-case "$n" in '' | *[!0-9]*) exit 0 ;; esac
+# The subject's files, as indexes into .changeset.files. A subject that is not a list
+# of paths is undecidable: apply.
+idxs="$(printf '%s' "$input" | jq -r '
+  (.subject.files | if type == "array" then . else error("no subject") end) as $subj
+  | [.changeset.files | to_entries[] | select(.value.path as $p | any($subj[]; . == $p)) | .key] | .[]' 2>/dev/null)" || exit 0
 
 total=0
-i=0
-while [ "$i" -lt "$n" ]; do
-  idx="$i"
-  i=$((i + 1))
+for idx in $idxs; do
   status="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].status')" || exit 0
   # A deletion is the largest removal there is — it always applies. (An added file
   # has nothing before it, so it removes nothing.)
