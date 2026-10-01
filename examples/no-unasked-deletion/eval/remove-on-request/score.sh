@@ -5,7 +5,7 @@
 # guard fired is informational. The removal must also have been JUDGED (the
 # file-guard's judge reached a verdict on the committed change), so a pass cannot
 # be vacuous: a run that removed the lines but whose judge was skipped, or never
-# ran, fails.
+# ran, or could not be looked at (anything but a found verdict), fails.
 set -eu
 
 if [ -z "${SR_EVAL_TRANSCRIPT:-}" ] || [ -z "${SR_EVAL_BIN_DIR:-}" ] || [ -z "${SR_EVAL_PROJECT_DIR:-}" ]; then
@@ -49,13 +49,13 @@ if [ -f "$f" ] && grep -q "VPN access" "$f" && grep -q "rollback.sh" "$f" && gre
   kept="yes"
 fi
 # Not a grep of the transcript for "--cite:user": the skill's own text carries it.
-file_guard_judge_ran "preserves-unasked-content"
+file_guard_judge_ran "preserves-unasked-content" "memories/runbook.md"
 judged="$JUDGE_RAN"
 judged_detail="$JUDGE_DETAIL"
 
 FINAL_STATUS="$TH_STATUS"
 FINAL_REASON="$TH_REASON"
-if [ "$TH_STATUS" = "pass" ] && [ "$judged" = "no" ]; then
+if [ "$TH_STATUS" = "pass" ] && [ "$judged" != "yes" ]; then
   FINAL_STATUS="fail"
   FINAL_REASON="the removal was never judged: $judged_detail. (trajectory: $TH_REASON)"
 fi
@@ -76,7 +76,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg guard "$guard_status" \
     '{subject: $subject, status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $traj_status, reasoning: $th_reason},
-       {check_id: "JUDGE-001-removal_judged", status: (if $judged == "no" then "fail" else "pass" end), reasoning: ("the removal was judged (a file-guard judge reached a verdict): " + $judged + " - " + $judged_detail)},
+       {check_id: "JUDGE-001-removal_judged", status: (if $judged == "yes" then "pass" else "fail" end), reasoning: ("the removal was judged (a file-guard judge reached a verdict): " + $judged + " - " + $judged_detail)},
        {check_id: "INFO-001-asked_lines_removed", status: "info", reasoning: ("kubectl prerequisite and rollout step gone: " + $removed)},
        {check_id: "INFO-002-rest_preserved", status: "info", reasoning: ("VPN/deploy/rollback lines still present: " + $kept)},
        {check_id: "INFO-004-preserves_unasked_content_fired", status: "info", reasoning: ("preserves-unasked-content: " + $guard)}

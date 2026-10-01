@@ -447,30 +447,54 @@ guardrail_fired_check() {
   fi
 }
 
-# file_guard_judge_ran: did the named file-guard's judge actually reach a verdict
-# on the run's committed changes? A file-guard's results are rows in the run's
-# checks.db (internal/checkstore), beside the session's state under the data
-# home; a judge that was skipped (its prepare script found nothing to judge) is
-# recorded as `skip`, which is NOT a judgement, so a run whose rule never judged
-# anything cannot pass on that rule's behalf.
+# file_guard_judge_ran: did the named file-guard's judge reach a verdict on THIS
+# run's change to <file>? A file-guard's results are rows in the run's checks.db
+# (internal/checkstore), beside the session's state under the data home. A judge
+# that was skipped (its prepare script found nothing to judge) is recorded as
+# `skip`, which is NOT a judgement, so a run whose rule never judged anything
+# cannot pass on that rule's behalf.
 #
-# The database is found by the project's directory, the way the engine keys its
-# state (symlinks resolved, every non-alphanumeric character becomes `-`). The
-# data home is the one the agent ran with: $XDG_DATA_HOME, else Library/
+# Scoped to the run, not to any verdict in any database:
+#   - the database is the project's own: sessions/<project dir encoded the way the
+#     engine keys it (symlinks resolved, every non-alphanumeric character `-`)>/
+#     <session>/checks.db, and a run counts only when its session_id is that
+#     session's directory;
+#   - the run is COMPLETE and judged a range whose head is a commit of the
+#     project's own history (git rev-list HEAD), so a verdict about some other
+#     range does not count;
+#   - the same run holds a check whose subject is <file>: the file was in the
+#     range the rule judged (a file-guard records one `require:` row per file);
+#   - the judge's check (kind `check[N]:judge:...`) came back pass or fail.
+#
+# The data home is the one the agent ran with: $XDG_DATA_HOME, else Library/
 # Application Support (macOS) or .local/share under SR_EVAL_AGENT_HOME, else the
 # same under the scorer's own HOME (a sandbox links ~/Library in).
 #
-# Usage: file_guard_judge_ran '<name>' ; # sets JUDGE_RAN (yes/no/unknown), JUDGE_DETAIL
-# unknown: no sqlite3, or no checks.db found at all (nothing to say either way).
+# Usage: file_guard_judge_ran '<name>' '<file>' ; # sets JUDGE_RAN, JUDGE_DETAIL
+# JUDGE_RAN is yes only on a verdict found by the above; no when the run's rows
+# were found and hold none; unknown when they could not be looked at (no sqlite3,
+# no git, no project, no database). A scorer that needs the judgement fails on
+# anything but yes.
 file_guard_judge_ran() {
   fg_name="$1"
+  fg_file="$2"
   JUDGE_RAN="unknown"
   JUDGE_DETAIL="no check-results database found for this run"
   command -v sqlite3 >/dev/null 2>&1 || { JUDGE_DETAIL="sqlite3 is not installed"; return 0; }
   fg_proj="${SR_EVAL_PROJECT_DIR:-}"
-  [ -n "$fg_proj" ] || return 0
-  fg_real="$(cd "$fg_proj" 2>/dev/null && pwd -P || printf '%s' "$fg_proj")"
+  if [ -z "$fg_proj" ] || ! [ -d "$fg_proj" ]; then
+    JUDGE_DETAIL="the project directory is not there"
+    return 0
+  fi
+  fg_heads="$(git -C "$fg_proj" rev-list HEAD 2>/dev/null | sed "s/.*/'&'/" | paste -sd, -)"
+  if [ -z "$fg_heads" ]; then
+    JUDGE_DETAIL="the project has no commit history to match a judged range against"
+    return 0
+  fi
+  fg_real="$(cd "$fg_proj" && pwd -P)"
   fg_enc="$(printf '%s' "$fg_real" | sed 's/[^a-zA-Z0-9]/-/g')"
+  fg_safe_name="$(printf '%s' "$fg_name" | sed "s/'/''/g")"
+  fg_safe_file="$(printf '%s' "$fg_file" | sed "s/'/''/g")"
   fg_n=0
   fg_skipped=0
   fg_found="no"
@@ -484,7 +508,14 @@ file_guard_judge_ran() {
     for fg_db in "$fg_root/sloprail/sessions/$fg_enc"/*/checks.db; do
       [ -f "$fg_db" ] || continue
       fg_found="yes"
-      fg_q="from check_runs r join checks c on c.run_id = r.id where (r.check_id = '$fg_name' or r.check_id like '%/$fg_name') and c.kind like '%judge%'"
+      fg_session="$(basename "$(dirname "$fg_db")")"
+      fg_q="from check_runs r join checks c on c.run_id = r.id
+        where (r.check_id = '$fg_safe_name' or r.check_id like '%/$fg_safe_name')
+          and r.session_id = '$fg_session'
+          and json_extract(r.metadata, '\$.state') = 'complete'
+          and r.head_ref in ($fg_heads)
+          and exists (select 1 from checks f where f.run_id = r.id and f.subject = '$fg_safe_file')
+          and c.kind like 'check[%]:judge:%'"
       n="$(sqlite3 "$fg_db" "select count(*) $fg_q and c.status in ('pass','fail')" 2>/dev/null || echo 0)"
       s="$(sqlite3 "$fg_db" "select count(*) $fg_q and c.status = 'skip'" 2>/dev/null || echo 0)"
       fg_n=$((fg_n + n))
@@ -495,9 +526,9 @@ file_guard_judge_ran() {
   [ "$fg_found" = "yes" ] || return 0
   if [ "$fg_n" -gt 0 ]; then
     JUDGE_RAN="yes"
-    JUDGE_DETAIL="$fg_name's judge reached a verdict $fg_n time(s)"
+    JUDGE_DETAIL="$fg_name's judge reached a verdict on $fg_file $fg_n time(s)"
   else
     JUDGE_RAN="no"
-    JUDGE_DETAIL="$fg_name's judge never reached a verdict (skipped $fg_skipped time(s))"
+    JUDGE_DETAIL="$fg_name's judge never reached a verdict on $fg_file (skipped $fg_skipped time(s))"
   fi
 }

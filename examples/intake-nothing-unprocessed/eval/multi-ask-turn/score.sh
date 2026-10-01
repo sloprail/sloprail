@@ -64,21 +64,17 @@ if grep -qF '#skip' "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
   skip_used="yes"
 fi
 
-# The genuine ask: the user entry that is the prompt. The gate refers to a message
-# as <transcript path>:<line>-<line>, so a task references it as `(...:L-L)`.
-prompt_head="$(head -c 40 "${SR_EVAL_FIXTURE_DIR:-$(dirname "$0")}/prompt.md" 2>/dev/null | tr '\n' ' ')"
-ask_line="$(sr-session trajectory normalize --path "$SR_EVAL_TRANSCRIPT" </dev/null 2>/dev/null \
-  | jq -r --arg head "$prompt_head" '[.[] | select(.type == "user" and (.isMeta // false) == false)
-      | select((.message.content | if type == "string" then . else tostring end) | gsub("\n"; " ") | startswith($head))
-      | .line] | first // empty')"
+# The genuine ask: the user entry that is the prompt, found and checked by
+# ../ask-tasked.sh (the gate refers to a message as <transcript>:<line>-<line>,
+# so a task references it as `(...:L-L)`).
+ask="$(sr-session trajectory normalize --path "$SR_EVAL_TRANSCRIPT" </dev/null 2>/dev/null \
+  | "$(dirname "$0")/../ask-tasked.sh" "$SR_EVAL_TRANSCRIPT" "${SR_EVAL_FIXTURE_DIR:-$(dirname "$0")}/prompt.md" "$SR_EVAL_PROJECT_DIR" 2>/dev/null \
+  || echo '{"line":null,"tasked":false,"skipped":false}')"
+ask_line="$(printf '%s' "$ask" | jq -r '.line // empty')"
 ask_tasked="no"
-if [ -n "$ask_line" ] && grep -rqE ":$ask_line-$ask_line\)" "$SR_EVAL_PROJECT_DIR/tasks" 2>/dev/null; then
-  ask_tasked="yes"
-fi
+[ "$(printf '%s' "$ask" | jq -r '.tasked')" = "true" ] && ask_tasked="yes"
 ask_skipped="no"
-if [ -n "$ask_line" ] && grep -qE "#skip +$ask_line([^0-9]|\$)" "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
-  ask_skipped="yes"
-fi
+[ "$(printf '%s' "$ask" | jq -r '.skipped')" = "true" ] && ask_skipped="yes"
 FINAL_STATUS="$TH_STATUS"
 FINAL_REASON="$TH_REASON"
 if [ "$TH_STATUS" = "pass" ] && [ "$ask_tasked" != "yes" ]; then
