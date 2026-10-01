@@ -70,8 +70,13 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //
 //  1. watermark — the last head the rule passed (when non-empty), at any
 //     definition of the rule: work up to it was approved;
-//  2. otherwise the EARLIER, in ancestry, of the two below (so nothing made in this
-//     session is skipped, and history from before both stays grandfathered):
+//  2. otherwise, for a rule whose folder is NOT in the session-start commit's tree
+//     (added during the session), the floor (a) alone: the rule applies from the
+//     commit that added or last changed it, earlier history is grandfathered. For a
+//     rule that existed at session start (or when the start is unknown or unborn,
+//     which fails closed to "existed"), the EARLIER, in ancestry, of the two below
+//     (so nothing made in this session is skipped, which closes touching .sloprail
+//     to skip judging earlier bad work):
 //     a. the PARENT of the last commit touching folder — the rule's definition, for
 //     a rule whose folder is in this repository (folder is "" for one that is not,
 //     such as a plugin's; a folder no commit has touched yet, an uncommitted rule,
@@ -95,14 +100,16 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //     folder floor alone would not do, because a later commit touching the rule's
 //     folder puts it AFTER in-session commits, which would then never be judged.
 //
-// head is HEAD, as a SHA. folder is relative to dir, or repository-relative.
+// head is HEAD, as a SHA. folder is relative to dir, or repository-relative. rule is
+// the rule's OWN folder (`.sloprail/file-guard/<name>`, same form), whose presence in
+// the session-start tree decides whether the rule is new; "" falls back to folder.
 //
 // Any failure of git is returned as an error and produces no Range: it is never
 // read as "nothing changed". A candidate git does not have (gc'd after a rebase)
 // counts as unreachable; one git could not be asked about is an error. With no watermark,
 // no committed definition and no session start recorded the result is
 // ErrNoSessionStart, never a guess.
-func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
+func ResolveRange(dir, folder, rule, watermark, sessionStart string) (Range, error) {
 	head, err := headSHA(dir)
 	if err != nil {
 		return Range{}, err
@@ -152,6 +159,13 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 			}
 		}
 	}
+	if floor != "" && !existedAt(dir, sessionStart, firstNonEmpty(rule, folder)) {
+		// A rule that did not exist when the session began applies from the commit
+		// that added (or last changed) it: what came before it is grandfathered, so
+		// adding a rule mid-session does not judge the whole session.
+		r.Base, r.Origin = floor, FromFloor
+		return r, nil
+	}
 	if floor == "" && sessionStart == "" {
 		return Range{}, ErrNoSessionStart
 	}
@@ -186,6 +200,29 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 		}
 	}
 	return r, nil
+}
+
+// firstNonEmpty is a unless it is blank, else b.
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+// existedAt reports whether the rule's folder is in the tree of the session-start
+// commit. Fail closed: an unknown or unborn start (empty, or the empty tree), or a
+// commit git cannot be asked about, counts as "existed", which keeps the stricter
+// earlier-of range.
+func existedAt(dir, sessionStart, folder string) bool {
+	if sessionStart == "" || sessionStart == EmptyTree {
+		return true
+	}
+	out, err := run(dir, "ls-tree", "--name-only", sessionStart, "--", folder)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(out) != ""
 }
 
 // earlier is whichever of two commits (or the empty tree) comes first in ancestry;

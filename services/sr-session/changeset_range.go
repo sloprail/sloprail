@@ -17,10 +17,11 @@ import (
 // base is the rule's watermark — derived from the check results as the newest
 // FINISHED run that passed, at ANY definition of the rule (the work up to it was
 // approved, even under an older rule), and whose head is still an ancestor of
-// HEAD. Without one, it is the EARLIER of the parent of the last commit touching
-// the rule's whole .sloprail root (a rule in this repository) and the HEAD
-// recorded when the session began: nothing made in this session is skipped, and
-// history from before the session and the rule stays grandfathered. results and state may be nil (nothing
+// HEAD. Without one, for a rule that was absent from the session-start tree it is the
+// parent of the last commit touching the rule's whole .sloprail root alone (the
+// rule applies from the commit that added or changed it); for a rule that existed
+// at session start it is the EARLIER of that parent and the HEAD recorded when the
+// session began, so nothing made in this session is skipped. results and state may be nil (nothing
 // recorded yet); any failure of either, or of git, is an error and no range.
 //
 // A watermark that had to be passed over — an amend or a rebase orphaned the
@@ -130,7 +131,7 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 			sessionStart = ""
 		}
 	}
-	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Root()), watermark, sessionStart)
+	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Root()), repoRelative(root, g.Dir), watermark, sessionStart)
 	if err != nil {
 		return gitrepo.Range{}, err
 	}

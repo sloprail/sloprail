@@ -29,7 +29,7 @@ func TestResolveRange_FloorIsTheParentOfTheLastCommitTouchingTheRuleFolder(t *te
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "match: '*.go'")
 	head := commit(t, dir, "new.go", "y")
 
-	r, err := ResolveRange(dir, ruleDir, "", "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, before, r.Base)
 	assert.Equal(t, head, r.Head)
@@ -44,7 +44,7 @@ func TestResolveRange_TheFloorMovesWhenTheRuleIsEdited(t *testing.T) {
 	beforeEdit := commit(t, dir, "a.go", "x")
 	commitIn(t, dir, ruleDir+"/check.sh", "v2")
 
-	r, err := ResolveRange(dir, ruleDir, "", "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, beforeEdit, r.Base)
 	assert.False(t, r.Empty(), "the commit that edited the rule is itself in the range")
@@ -56,7 +56,7 @@ func TestResolveRange_ARuleAddedInTheRootCommitIsJudgedFromTheEmptyTree(t *testi
 	dir := initRepo(t)
 	root := commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 
-	r, err := ResolveRange(dir, ruleDir, "", "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, EmptyTree, r.Base)
 	assert.Equal(t, root, r.Head)
@@ -83,7 +83,7 @@ func TestResolveRange_ReachableWatermarkWinsOverTheFloor(t *testing.T) {
 	passed := commit(t, dir, "a.go", "x")
 	head := commit(t, dir, "b.go", "y")
 
-	r, err := ResolveRange(dir, ruleDir, passed, "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, passed, "")
 	require.NoError(t, err)
 	assert.Equal(t, passed, r.Base)
 	assert.Equal(t, head, r.Head)
@@ -96,7 +96,7 @@ func TestResolveRange_WatermarkAtHeadIsAnEmptyRange(t *testing.T) {
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 	head := commit(t, dir, "a.go", "x")
 
-	r, err := ResolveRange(dir, ruleDir, head, "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, head, "")
 	require.NoError(t, err)
 	assert.True(t, r.Empty())
 }
@@ -112,7 +112,7 @@ func TestResolveRange_AmendedAwayWatermarkIsReanchoredAtItsMergeBase(t *testing.
 	passed := commit(t, dir, "b.go", "y")
 	git(t, dir, "commit", "--amend", "-m", "amended")
 
-	r, err := ResolveRange(dir, ruleDir, passed, "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, passed, "")
 	require.NoError(t, err)
 	assert.Equal(t, before, r.Base, "the amended-away head's merge base with HEAD: the amended commit is inside the range")
 	assert.Equal(t, FromWatermark, r.Origin)
@@ -128,7 +128,7 @@ func TestResolveRange_ASoftResetWatermarkIsReanchoredAtItsMergeBase(t *testing.T
 	git(t, dir, "reset", "--soft", before)
 	git(t, dir, "commit", "-m", "squashed b and c")
 
-	r, err := ResolveRange(dir, ruleDir, passed, "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, passed, "")
 	require.NoError(t, err)
 	assert.Equal(t, before, r.Base)
 	assert.Equal(t, passed, r.DroppedWatermark)
@@ -136,7 +136,7 @@ func TestResolveRange_ASoftResetWatermarkIsReanchoredAtItsMergeBase(t *testing.T
 
 func TestResolveRange_RebasedAwayWatermarkIsReanchoredAtItsMergeBase(t *testing.T) {
 	dir := initRepo(t)
-	fork := commit(t, dir, "base.txt", "0")
+	fork := commitIn(t, dir, ".sloprail/lib/seed.sh", "s") // the rule root exists at session start
 	git(t, dir, "checkout", "-b", "feature")
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 	passed := commit(t, dir, "a.go", "x")
@@ -146,7 +146,7 @@ func TestResolveRange_RebasedAwayWatermarkIsReanchoredAtItsMergeBase(t *testing.
 	git(t, dir, "rebase", "main")
 	require.NotEqual(t, passed, git(t, dir, "rev-parse", "HEAD"))
 
-	r, err := ResolveRange(dir, ruleDir, passed, "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, passed, "")
 	require.NoError(t, err)
 	assert.Equal(t, fork, r.Base, "the point the old line and the rebased one still share: main's new commit and the rebased commits are inside the range")
 	assert.Equal(t, FromWatermark, r.Origin)
@@ -157,14 +157,14 @@ func TestResolveRange_GarbageCollectedWatermarkIsUnreachableNotAnError(t *testin
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 	commit(t, dir, "a.go", "x")
 
-	r, err := ResolveRange(dir, ruleDir, "0123456789012345678901234567890123456789", "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "0123456789012345678901234567890123456789", "")
 	require.NoError(t, err)
 	assert.Equal(t, FromFloor, r.Origin)
 }
 
 func TestResolveRange_NoCommitsIsItsOwnOutcome(t *testing.T) {
 	dir := initRepo(t)
-	_, err := ResolveRange(dir, ruleDir, "", "")
+	_, err := ResolveRange(dir, ruleDir, ruleDir, "", "")
 	assert.ErrorIs(t, err, ErrNoCommits)
 }
 
@@ -174,7 +174,7 @@ func TestResolveRange_AGitErrorFailsClosed(t *testing.T) {
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("garbage\n"), 0o644))
 
-	r, err := ResolveRange(dir, ruleDir, "", "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", "")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrNoCommits)
 	assert.NotErrorIs(t, err, ErrNoSessionStart)
@@ -182,7 +182,7 @@ func TestResolveRange_AGitErrorFailsClosed(t *testing.T) {
 }
 
 func TestResolveRange_ANonRepositoryIsAnError(t *testing.T) {
-	_, err := ResolveRange(t.TempDir(), ruleDir, "", "")
+	_, err := ResolveRange(t.TempDir(), ruleDir, ruleDir, "", "")
 	assert.ErrorIs(t, err, ErrNotARepository)
 }
 
@@ -191,7 +191,7 @@ func TestResolveRange_UncommittedRuleFallsToTheSessionStart(t *testing.T) {
 	start := commit(t, dir, "a.go", "x")
 	head := commit(t, dir, "b.go", "y")
 
-	r, err := ResolveRange(dir, ruleDir, "", start)
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", start)
 	require.NoError(t, err)
 	assert.Equal(t, start, r.Base)
 	assert.Equal(t, head, r.Head)
@@ -204,36 +204,79 @@ func TestResolveRange_ARuleOutsideTheRepoHasNoFolderAndUsesTheSessionStart(t *te
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "unrelated")
 	start := commit(t, dir, "a.go", "x")
 
-	r, err := ResolveRange(dir, "", "", start)
+	r, err := ResolveRange(dir, "", "", "", start)
 	require.NoError(t, err)
 	assert.Equal(t, start, r.Base)
 	assert.Equal(t, FromSessionStart, r.Origin)
 }
 
-// Without a watermark the base is the EARLIER of the floor and the session start:
-// a rule added mid-session judges the session's work from its start, and a rule
-// that predates the session judges from its own floor, never from before it.
-func TestResolveRange_TheEarlierOfTheFloorAndTheSessionStartWins(t *testing.T) {
+// Without a watermark, a rule that existed at session start judges from the EARLIER
+// of its floor and the session start; one that did not exist then judges from its
+// floor alone (history before the commit that added it is grandfathered).
+func TestResolveRange_ARuleAddedMidSessionUsesItsFloorOnly(t *testing.T) {
 	dir := initRepo(t)
 	start := commit(t, dir, "a.go", "x")
-	mid := commit(t, dir, "mid.go", "m")
+	commit(t, dir, "bad1.go", "m")
+	commit(t, dir, "bad2.go", "m")
+	before := commit(t, dir, "bad3.go", "m")
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
-	commit(t, dir, "b.go", "y")
+	head := commit(t, dir, "b.go", "y")
 
-	r, err := ResolveRange(dir, ruleDir, "", start)
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", start)
 	require.NoError(t, err)
-	assert.Equal(t, start, r.Base, "a rule added mid-session: the session's own work is judged")
+	assert.Equal(t, before, r.Base, "the parent of the add commit: earlier violations are grandfathered")
+	assert.Equal(t, FromFloor, r.Origin)
+	assert.Equal(t, head, r.Head)
+
+	// Edited later in the session: the floor is the later commit's parent.
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v2")
+	commit(t, dir, "c.go", "z")
+	r, err = ResolveRange(dir, ruleDir, ruleDir, "", start)
+	require.NoError(t, err)
+	assert.Equal(t, head, r.Base)
+}
+
+func TestResolveRange_ARuleThatExistedAtSessionStartKeepsTheEarlierOfFloorAndStart(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	start := commit(t, dir, "a.go", "x")
+	commit(t, dir, "violation.go", "bad")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v2")
+
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", start)
+	require.NoError(t, err)
+	assert.Equal(t, start, r.Base, "touching the rule must not skip the violation")
 	assert.Equal(t, FromSessionStart, r.Origin)
 
-	r, err = ResolveRange(dir, ruleDir, "", mid)
-	require.NoError(t, err)
-	assert.Equal(t, mid, r.Base)
-
+	// A session that began after the rule's last edit: the floor is earlier.
 	late := commit(t, dir, "c.go", "z")
-	r, err = ResolveRange(dir, ruleDir, "", late)
+	r, err = ResolveRange(dir, ruleDir, ruleDir, "", late)
 	require.NoError(t, err)
-	assert.Equal(t, mid, r.Base, "a rule older than the session: its floor, history before it stays grandfathered")
 	assert.Equal(t, FromFloor, r.Origin)
+}
+
+func TestResolveRange_ARuleDeletedAndReAddedInTheSessionStaysStrict(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	start := commit(t, dir, "a.go", "x")
+	commit(t, dir, "violation.go", "bad")
+	git(t, dir, "rm", "-rq", ruleDir)
+	git(t, dir, "commit", "-m", "delete the rule")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", start)
+	require.NoError(t, err)
+	assert.Equal(t, start, r.Base)
+	assert.Equal(t, FromSessionStart, r.Origin)
+}
+
+func TestResolveRange_AnUnbornSessionStartFailsClosedToTheStrictRange(t *testing.T) {
+	dir := initRepo(t)
+	commit(t, dir, "a.go", "x")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", EmptyTree)
+	require.NoError(t, err)
+	assert.Equal(t, EmptyTree, r.Base)
 }
 
 func TestResolveRange_ARuleEditedAfterTheSessionBeganDoesNotSkipTheWorkBeforeTheEdit(t *testing.T) {
@@ -243,7 +286,7 @@ func TestResolveRange_ARuleEditedAfterTheSessionBeganDoesNotSkipTheWorkBeforeThe
 	commit(t, dir, "violation.go", "bad")
 	commitIn(t, dir, ".sloprail/lib/shared.sh", "edit")
 
-	r, err := ResolveRange(dir, ".sloprail", "", start)
+	r, err := ResolveRange(dir, ".sloprail", ".sloprail", "", start)
 	require.NoError(t, err)
 	assert.Equal(t, start, r.Base, "the violation sits inside the range")
 }
@@ -260,7 +303,7 @@ func TestResolveRange_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testin
 		commitIn(t, dir, ".sloprail/lib/shared.sh", "touched") // the floor moves past the violation
 		floorBase := git(t, dir, "rev-parse", "HEAD~1")
 
-		r, err := ResolveRange(dir, ".sloprail", "", start)
+		r, err := ResolveRange(dir, ".sloprail", ".sloprail", "", start)
 		require.NoError(t, err)
 		require.NotEqual(t, floorBase, want, "premise: the floor is after the violation")
 		assert.Equal(t, want, r.Base, "the base is before the rewritten session's work, so the violation is judged")
@@ -269,14 +312,14 @@ func TestResolveRange_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testin
 
 	t.Run("amend", func(t *testing.T) {
 		dir := initRepo(t)
-		before := commit(t, dir, "a.go", "x")
+		before := commitIn(t, dir, ".sloprail/lib/seed.sh", "s") // the rule root exists at session start
 		start := commit(t, dir, "b.go", "y")
 		git(t, dir, "commit", "--amend", "-m", "amended")
 		violationInRange(t, dir, start, before)
 	})
 	t.Run("soft reset", func(t *testing.T) {
 		dir := initRepo(t)
-		before := commit(t, dir, "a.go", "x")
+		before := commitIn(t, dir, ".sloprail/lib/seed.sh", "s") // the rule root exists at session start
 		commit(t, dir, "b.go", "y")
 		start := commit(t, dir, "c.go", "z")
 		git(t, dir, "reset", "--soft", before)
@@ -285,7 +328,7 @@ func TestResolveRange_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testin
 	})
 	t.Run("rebase", func(t *testing.T) {
 		dir := initRepo(t)
-		fork := commit(t, dir, "base.txt", "0")
+		fork := commitIn(t, dir, ".sloprail/lib/seed.sh", "s") // the rule root exists at session start
 		git(t, dir, "checkout", "-b", "feature")
 		start := commit(t, dir, "b.go", "y")
 		git(t, dir, "checkout", "main")
@@ -304,7 +347,7 @@ func TestResolveRange_ASessionStartGitHasNoMergeBaseForFallsToTheEmptyTree(t *te
 	commit(t, dir, "a.go", "x")
 	commit(t, dir, "b.go", "y")
 
-	r, err := ResolveRange(dir, ".sloprail", "", "0123456789012345678901234567890123456789")
+	r, err := ResolveRange(dir, ".sloprail", ".sloprail", "", "0123456789012345678901234567890123456789")
 	require.NoError(t, err)
 	assert.Equal(t, EmptyTree, r.Base)
 	assert.Equal(t, FromSessionStart, r.Origin)
@@ -314,7 +357,7 @@ func TestResolveRange_ASessionStartGitHasNoMergeBaseForFallsToTheEmptyTree(t *te
 	git(t, dir, "rm", "-rfq", ".")
 	other := commit(t, dir, "o.txt", "o")
 	git(t, dir, "checkout", "-q", "main")
-	r, err = ResolveRange(dir, ".sloprail", "", other)
+	r, err = ResolveRange(dir, ".sloprail", ".sloprail", "", other)
 	require.NoError(t, err)
 	assert.Equal(t, EmptyTree, r.Base)
 }
@@ -329,7 +372,7 @@ func TestResolveRange_AnAmendedRootCommitIsJudgedFromTheEmptyTree(t *testing.T) 
 	git(t, dir, "add", "violation.go")
 	git(t, dir, "commit", "--amend", "--no-edit")
 
-	r, err := ResolveRange(dir, "", "", start)
+	r, err := ResolveRange(dir, "", "", "", start)
 	require.NoError(t, err)
 	assert.Equal(t, EmptyTree, r.Base)
 	assert.False(t, r.Empty())
@@ -342,7 +385,7 @@ func TestResolveRange_TheWatermarkOutranksBoth(t *testing.T) {
 	passed := commit(t, dir, "b.go", "y")
 	commit(t, dir, "c.go", "z")
 
-	r, err := ResolveRange(dir, ruleDir, passed, start)
+	r, err := ResolveRange(dir, ruleDir, ruleDir, passed, start)
 	require.NoError(t, err)
 	assert.Equal(t, passed, r.Base)
 }
@@ -353,7 +396,7 @@ func TestResolveRange_AnAmendedAwayWatermarkFallsThroughToTheSessionStartWhenThe
 	passed := commit(t, dir, "b.go", "y")
 	git(t, dir, "commit", "--amend", "-m", "amended")
 
-	r, err := ResolveRange(dir, "", passed, start)
+	r, err := ResolveRange(dir, "", "", passed, start)
 	require.NoError(t, err)
 	assert.Equal(t, start, r.Base)
 	assert.Equal(t, passed, r.DroppedWatermark)
@@ -362,7 +405,7 @@ func TestResolveRange_AnAmendedAwayWatermarkFallsThroughToTheSessionStartWhenThe
 func TestResolveRange_NoFloorAndNoSessionStartFailsClosed(t *testing.T) {
 	dir := initRepo(t)
 	commit(t, dir, "a.go", "x")
-	r, err := ResolveRange(dir, ruleDir, "", "")
+	r, err := ResolveRange(dir, ruleDir, ruleDir, "", "")
 	assert.ErrorIs(t, err, ErrNoSessionStart)
 	assert.Equal(t, Range{}, r)
 }
@@ -384,4 +427,20 @@ func TestRootCommit_NoCommitsAndNotARepository(t *testing.T) {
 	assert.Error(t, err)
 	_, err = RootCommit(t.TempDir())
 	assert.Error(t, err)
+}
+
+// "New" is the rule's OWN folder being absent at session start, not the shared
+// .sloprail root: another rule or a lib already there does not make this rule old.
+func TestResolveRange_ARuleAddedBesideExistingSloprailFilesIsStillNew(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, ".sloprail/lib/seed.sh", "s")
+	start := commit(t, dir, "a.go", "x")
+	commit(t, dir, "early-violation.go", "bad")
+	before := commit(t, dir, "b.go", "y")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+
+	r, err := ResolveRange(dir, ".sloprail", ruleDir, "", start)
+	require.NoError(t, err)
+	assert.Equal(t, before, r.Base)
+	assert.Equal(t, FromFloor, r.Origin)
 }

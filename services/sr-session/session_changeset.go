@@ -42,15 +42,19 @@ A file-guard judges commits. Its range runs from a base to HEAD, and the base is
   watermark      the latest head the rule passed, at ANY definition of the rule,
                  while it is still an ancestor of HEAD (else its merge base with HEAD): work up
                  to it was approved
-  otherwise the EARLIER, in ancestry, of
+  otherwise
     root floor     the PARENT of the last commit that touched the rule's whole
                    .sloprail root (a rule that lives in this repository): the
                    commit that adds or changes a rule, a schema or a shared lib is
                    judged by it. A root commit's base is git's empty tree
-    session start  the HEAD recorded when this session began (and the only
-                   candidate for a plugin's rule, whose root is outside this
-                   repository, or one not committed yet)
-  so nothing made in this session is skipped, and older history stays grandfathered.
+    session start  the HEAD recorded when this session began (the only candidate
+                   for a plugin's rule, whose root is outside this repository, or
+                   one not committed yet)
+  A rule that did NOT exist at session start (its folder is absent from that
+  commit's tree) uses the root floor alone: it applies from the commit that added
+  or changed it, and earlier history is grandfathered. A rule that existed then
+  (also one deleted and re-added; also when the start is unknown or unborn) uses the
+  EARLIER, in ancestry, of the two, so nothing made in this session is skipped.
 
 The watermark is not stored on its own: it is the newest run of the rule that
 passed and whose head is still an ancestor of HEAD, read from the session's check
