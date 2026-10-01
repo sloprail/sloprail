@@ -60,11 +60,10 @@ func TestT006_01_JudgesRunConcurrentlyAndEveryRefusalSurfaces(t *testing.T) {
 	}
 }
 
-// T006_02: a script refusal is returned without waiting on any judge: the cheap
-// checks of every rule run first, and the judges are not started. The judges are
-// not lost — once the script passes, the next Stop asks them and their refusals
-// surface.
-func TestT006_02_AScriptRefusalSurfacesWithoutRunningJudges(t *testing.T) {
+// T006_02: a script refusal in one rule does not hide the other rules' judges: the
+// judges of the rules whose cheap checks passed still run in the same Stop, and
+// their refusals surface beside the script's.
+func TestT006_02_AScriptRefusalDoesNotHideOtherRulesJudges(t *testing.T) {
 	e, proj := project(t, "s", "j1", "j2")
 	e.FileGuard(proj, "script", "match: \"s/**\"\nchecks:\n  - script: ./check.sh\n", map[string]string{
 		"check.sh": "#!/bin/sh\npayload=\"$(cat)\"\nif printf '%s' \"$payload\" | grep -q FORBIDDEN; then\n  echo '{\"reason\":\"SCRIPT-SAYS-NO\"}'\n  exit 1\nfi\nexit 0\n",
@@ -80,27 +79,16 @@ func TestT006_02_AScriptRefusalSurfacesWithoutRunningJudges(t *testing.T) {
 		harness.CommitFile("c2", "j2/x.md", "x", "add j2"),
 		harness.CommitFile("c3", "s/x.md", "FORBIDDEN", "add s"),
 	))
-	first := e.BlockingErrorsFrom(proj, "s-006-02", "Stop")
-	if !strings.Contains(strings.Join(first, "\n"), "SCRIPT-SAYS-NO") {
-		t.Fatalf("the script refusal did not surface:\n%s", strings.Join(first, "\n"))
-	}
-	if got := judged(t, log); len(got) != 0 {
-		t.Fatalf("judges ran (%v) although a script check had already refused", got)
-	}
-	if strings.Contains(strings.Join(first, "\n"), "JUDGE-NO") {
-		t.Fatalf("a judge refusal surfaced before any judge could have run:\n%s", strings.Join(first, "\n"))
-	}
-
-	// Fix the script's input: the judges are now reached, and both refuse.
-	e.Run(proj, "s-006-02", "fix", Turns("fixed", harness.CommitFile("c4", "s/x.md", "clean", "fix s")))
-	later := strings.Join(e.BlockingErrorsFrom(proj, "s-006-02", "Stop"), "\n")
-	for _, want := range []string{"JUDGE-NO-j1", "JUDGE-NO-j2"} {
-		if !strings.Contains(later, want) {
-			t.Fatalf("the deferred judge refusal %q was lost:\n%s", want, later)
+	first := strings.Join(e.BlockingErrorsFrom(proj, "s-006-02", "Stop"), "\n")
+	for _, want := range []string{"SCRIPT-SAYS-NO", "JUDGE-NO-j1", "JUDGE-NO-j2"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("%q did not surface in the same Stop:\n%s", want, first)
 		}
 	}
-	if asked := judged(t, log); !slices.Equal(asked, []string{"j1", "j2"}) {
-		t.Fatalf("judges asked after the fix = %v, want j1 and j2", asked)
+	got := judged(t, log)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"j1", "j2"}) {
+		t.Fatalf("judges asked = %v, want j1 and j2 once each", got)
 	}
 }
 
