@@ -98,4 +98,3 @@ func pushGate(cmd *cobra.Command, p HookPayload, mods *module.Registry, store se
 	}
 	return "this would push commits a file-guard refuses; fix them (and commit) first, then push again:\n  - " + strings.Join(reasons, "\n  - ")
 }
-
