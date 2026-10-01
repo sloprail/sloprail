@@ -267,7 +267,10 @@ test-e2e: mock
 # expanded, so CI runs it as a matrix: several jobs, each -p 1 (disk stays low),
 # each a disjoint slice of ./tests/... . SHARD names the slice; the union of the
 # slices below is exactly `go list ./tests/...`, so nothing is dropped. Keep this
-# list and the workflow matrix in lockstep — a package matching no slice would
+# examples/examples2/examples3 split ./tests/e2e/examples/... by
+# scripts/examples-shard.sh, which DISCOVERS the packages with `go list` (so a
+# new example is never dropped) and balances them by greedy bin packing.
+# Keep this list and the workflow matrix in lockstep — a package matching no slice would
 # silently never run in CI.
 #
 #   make test-e2e-shard SHARD=session
@@ -280,7 +283,9 @@ test-e2e-shard: mock
 	              ./tests/e2e/session/029_trajectory_cite/... \
 	              ./tests/e2e/session/031_trajectory_normalize/... ;; \
 	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/pre_tool/... ;; \
-	  examples) go test -p 1 -count=1 -timeout 30m ./tests/e2e/examples/... ;; \
+	  examples)  go test -p 1 -count=1 -timeout 30m $$(scripts/examples-shard.sh 1 3) ;; \
+	  examples2) go test -p 1 -count=1 -timeout 30m $$(scripts/examples-shard.sh 2 3) ;; \
+	  examples3) go test -p 1 -count=1 -timeout 30m $$(scripts/examples-shard.sh 3 3) ;; \
 	  rest)     go test -p 1 -count=1 -timeout 30m \
 	              ./tests/e2e/subagent/... \
 	              ./tests/e2e/gate/... \
@@ -296,7 +301,7 @@ test-e2e-shard: mock
 	              ./tests/e2e/authoring/... \
 	              ./tests/e2e/harness/... ;; \
 	  plugins)  $(MAKE) test-plugins-e2e ;; \
-	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|rest|plugins)" >&2; exit 2 ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|examples2|examples3|rest|plugins)" >&2; exit 2 ;; \
 	esac
 
 # Plugin-local e2e modules. Each marketplace plugin that ships its own tests/ Go

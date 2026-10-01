@@ -3,6 +3,7 @@ package repo
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -26,6 +27,10 @@ func TestEveryTestPackageIsInACIShard(t *testing.T) {
 	if len(covered) < 10 {
 		t.Fatalf("found only %d ./tests/ paths in the Makefile — the parse is wrong", len(covered))
 	}
+	// The examples shards are not listed in the Makefile: scripts/examples-shard.sh
+	// discovers them. Run it for every shard the Makefile invokes, require the
+	// slices to be disjoint and complete, and count what it prints as covered.
+	covered = append(covered, exampleShardPackages(t, root, makefile)...)
 
 	var missing []string
 	err := filepath.WalkDir(filepath.Join(root, "tests"), func(path string, d fs.DirEntry, err error) error {
@@ -57,6 +62,67 @@ func TestEveryTestPackageIsInACIShard(t *testing.T) {
 	for _, pkg := range missing {
 		t.Errorf("%s is in no CI shard: add it to a test-e2e-shard case in the Makefile (or to test-unit)", pkg)
 	}
+}
+
+// exampleShardPackages runs scripts/examples-shard.sh for each `INDEX COUNT`
+// the Makefile calls it with and returns the packages (as ./tests/... paths) the
+// shards cover. It fails if the indices are not exactly 1..COUNT, if two shards
+// share a package, or if the union is not every package `go list` finds under
+// tests/e2e/examples — so an example in no shard fails here.
+func exampleShardPackages(t *testing.T, root, makefile string) []string {
+	t.Helper()
+	calls := regexp.MustCompile(`scripts/examples-shard\.sh (\d+) (\d+)`).FindAllStringSubmatch(makefile, -1)
+	if len(calls) == 0 {
+		t.Fatal("the Makefile never calls scripts/examples-shard.sh — the examples are in no shard")
+	}
+	count := calls[0][2]
+	seenIdx := map[string]bool{}
+	for _, c := range calls {
+		if c[2] != count {
+			t.Fatalf("the Makefile calls examples-shard.sh with different shard counts (%s and %s)", count, c[2])
+		}
+		seenIdx[c[1]] = true
+	}
+	if len(seenIdx) != len(calls) || len(calls) != atoiOrFail(t, count) {
+		t.Fatalf("the Makefile calls examples-shard.sh %d times for %d distinct indices; want one call per index 1..%s", len(calls), len(seenIdx), count)
+	}
+
+	list := func(args ...string) []string {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return strings.Fields(string(out))
+	}
+	all := list("go", "list", "./tests/e2e/examples/...")
+	owner := map[string]string{}
+	var covered []string
+	for _, c := range calls {
+		for _, p := range list("scripts/examples-shard.sh", c[1], c[2]) {
+			if prev, dup := owner[p]; dup {
+				t.Errorf("%s is in example shards %s and %s", p, prev, c[1])
+			}
+			owner[p] = c[1]
+			covered = append(covered, "./"+strings.TrimPrefix(p, "github.com/sloprail/sloprail/"))
+		}
+	}
+	for _, p := range all {
+		if _, ok := owner[p]; !ok {
+			t.Errorf("%s is in no example shard (scripts/examples-shard.sh)", p)
+		}
+	}
+	return covered
+}
+
+func atoiOrFail(t *testing.T, s string) int {
+	t.Helper()
+	n := 0
+	for _, r := range s {
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 // inShardPath reports whether the go package pkg is named by the shard path p
