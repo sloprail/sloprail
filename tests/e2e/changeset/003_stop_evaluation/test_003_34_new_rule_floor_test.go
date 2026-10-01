@@ -144,3 +144,38 @@ func TestT003_37_ARuleOlderThanTheSessionJudgesOnlyTheSessionsOwnCommits(t *test
 		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
 	}
 }
+
+// T003_38: a rule added mid-session in commit A, violating commits B and C after it, then a
+// commit D touching another .sloprail file. The base is the parent of the commit that FIRST
+// added the rule, not of D's predecessor: B and C are refused, then fixed, then pass.
+func TestT003_38_ALaterSloprailTouchDoesNotHideViolationsAfterTheRuleWasAdded(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.WriteFile(proj, "docs/seed.md", "seed\n")
+	e.CommitAll(proj, "the project before the rule")
+	const sess = "s-003-38"
+	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
+
+	led := filepath.Join(t.TempDir(), "ledger.jsonl")
+	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)})
+	e.CommitAll(proj, "A: add the rule")
+	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words\n")
+	e.CommitAll(proj, "B: violation")
+	e.WriteFile(proj, "docs/c.md", "FORBIDDEN words\n")
+	e.CommitAll(proj, "C: violation")
+	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
+	e.CommitAll(proj, "D: touch another .sloprail file")
+
+	r := e.StopNow(proj, sess, false)
+	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/b.md") || !strings.Contains(r.Output, "docs/c.md") {
+		t.Fatalf("violations after the rule was added escaped a later .sloprail touch:\n%s", r.Output)
+	}
+
+	e.WriteFile(proj, "docs/b.md", "clean words\n")
+	e.WriteFile(proj, "docs/c.md", "clean words\n")
+	e.CommitAll(proj, "fix B and C")
+	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
+	}
+}

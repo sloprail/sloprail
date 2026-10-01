@@ -51,8 +51,8 @@ A file-guard judges commits. Its range runs from a base to HEAD, and the base is
                    for a plugin's rule, whose root is outside this repository, or
                    one not committed yet)
   A rule that did NOT exist at session start (its folder is absent from that
-  commit's tree) uses the root floor alone: it applies from the commit that added
-  it, and earlier history is grandfathered. A rule that existed then (also one
+  commit's tree) applies from the commit that FIRST added its folder (never later than the root floor):
+  earlier history is grandfathered. A rule that existed then (also one
   deleted and re-added; also when the start is unknown or unborn) uses the session
   start, extended back only over ranges an earlier session of this worktree was
   refused for and never fixed (from its check results): a rule changed long before the

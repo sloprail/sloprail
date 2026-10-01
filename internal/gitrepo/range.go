@@ -71,11 +71,14 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //  1. watermark — the last head the rule passed (when non-empty), at any
 //     definition of the rule: work up to it was approved;
 //  2. otherwise, for a rule that did NOT exist at session start (its folder is absent
-//     from the session-start commit's tree: added during the session), the floor: the
-//     PARENT of the last commit touching folder (the commit that added or last changed
-//     the rule; a root commit's parent is the empty tree). The rule applies from that
-//     commit, and earlier history is grandfathered. The parent, not the commit, so the
-//     commit that adds the rule is itself judged by it. For a rule that existed at
+//     from the session-start commit's tree: added during the session), the PARENT of
+//     the commit that FIRST added the rule's own folder since the session began (a root
+//     commit's parent is the empty tree), never later than the floor (the parent of the
+//     last commit touching folder). The rule applies from that commit, and earlier
+//     history is grandfathered. The parent, not the commit, so the commit that adds the
+//     rule is itself judged by it; and not the last touch of the .sloprail root, which
+//     would let a later touch move the base past violations committed after the rule
+//     was added. For a rule that existed at
 //     session start (also when the start is unknown or unborn, which fails closed to
 //     "existed"), sessionStart: the HEAD recorded when the session began, never later, and
 //     earlier only by refusedBases: the bases of ranges an EARLIER session of the same
@@ -161,9 +164,26 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 	}
 	if floor != "" && !existedAt(dir, sessionStart, firstNonEmpty(rule, folder)) {
 		// A rule that did not exist when the session began applies from the commit
-		// that added (or last changed) it: what came before it is grandfathered, so
-		// adding a rule mid-session does not judge the whole session.
-		r.Base, r.Origin = floor, FromFloor
+		// that FIRST added its own folder since the session began: what came before
+		// it is grandfathered, so adding a rule mid-session does not judge the whole
+		// session. Not the last commit touching the .sloprail root (the floor): a later
+		// touch of the root would move the base past violations committed after the rule
+		// was added. Never later than the floor.
+		base := floor
+		added, err := firstAddCommit(dir, sessionStart, firstNonEmpty(rule, folder))
+		if err != nil {
+			return Range{}, err
+		}
+		if added != "" {
+			parent, err := parentOrEmptyTree(dir, added)
+			if err != nil {
+				return Range{}, err
+			}
+			if base, err = earlier(dir, parent, floor); err != nil {
+				return Range{}, err
+			}
+		}
+		r.Base, r.Origin = base, FromFloor
 		return r, nil
 	}
 	if floor == "" && sessionStart == "" {
@@ -213,6 +233,24 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 		r.Base, r.Origin = floor, FromFloor
 	}
 	return r, nil
+}
+
+// firstAddCommit is the OLDEST commit in sessionStart..HEAD that added a file under
+// folder, or "" when there is none.
+func firstAddCommit(dir, sessionStart, folder string) (string, error) {
+	out, err := run(dir, "log", "--reverse", "--diff-filter=A", "--format=%H", sessionStart+"..HEAD", "--", folder)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
+			if !isObjectName(sha) {
+				return "", fmt.Errorf("gitrepo: add commit for %q resolved to %q, not an object name", folder, sha)
+			}
+			return sha, nil
+		}
+	}
+	return "", nil
 }
 
 // firstNonEmpty is a unless it is blank, else b.

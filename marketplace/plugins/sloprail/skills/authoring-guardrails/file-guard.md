@@ -50,7 +50,7 @@ in this repository: the commit that adds or changes a rule, a schema or a shared
 script is judged by the rule; a root commit has no parent, so its base is git's
 empty tree). A rule that did **not exist at session start**
 (its folder is absent from the session-start commit's tree) applies **from the
-commit that added it**: the floor alone, earlier history grandfathered, so adding a
+commit that first added its folder**: the parent of that commit (never later than the floor, so a later touch of `.sloprail` cannot hide what followed the add), earlier history grandfathered, so adding a
 rule mid-session does not judge the whole session. A rule that **existed at session
 start** (including one deleted and re-added in the session) takes **the HEAD recorded
 when the session began**, never later and earlier only as below: a rule last changed

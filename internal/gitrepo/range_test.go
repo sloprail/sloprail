@@ -228,12 +228,12 @@ func TestResolveRange_ARuleAddedMidSessionUsesItsFloorOnly(t *testing.T) {
 	assert.Equal(t, FromFloor, r.Origin)
 	assert.Equal(t, head, r.Head)
 
-	// Edited later in the session: the floor is the later commit's parent.
+	// Edited later in the session: the base stays at the parent of the FIRST add commit.
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v2")
 	commit(t, dir, "c.go", "z")
 	r, err = ResolveRange(dir, ruleDir, ruleDir, "", start)
 	require.NoError(t, err)
-	assert.Equal(t, head, r.Base)
+	assert.Equal(t, before, r.Base)
 }
 
 func TestResolveRange_ARuleThatExistedAtSessionStartJudgesFromTheSessionStartNeverEarlier(t *testing.T) {
@@ -440,6 +440,24 @@ func TestResolveRange_ARuleAddedBesideExistingSloprailFilesIsStillNew(t *testing
 	commit(t, dir, "early-violation.go", "bad")
 	before := commit(t, dir, "b.go", "y")
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+
+	r, err := ResolveRange(dir, ".sloprail", ruleDir, "", start)
+	require.NoError(t, err)
+	assert.Equal(t, before, r.Base)
+	assert.Equal(t, FromFloor, r.Origin)
+}
+
+// A rule added mid-session: the base is the parent of the commit that FIRST added its
+// folder, not of the last commit touching the .sloprail root: a later touch must not
+// move it past violations committed after the rule arrived.
+func TestResolveRange_ALaterSloprailTouchDoesNotMoveANewRulesBasePastItsViolations(t *testing.T) {
+	dir := initRepo(t)
+	start := commit(t, dir, "a.go", "x")
+	before := commit(t, dir, "early.go", "old")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	commit(t, dir, "b.go", "bad")
+	commit(t, dir, "c.go", "bad")
+	commitIn(t, dir, ".sloprail/lib/shared.sh", "touched")
 
 	r, err := ResolveRange(dir, ".sloprail", ruleDir, "", start)
 	require.NoError(t, err)
