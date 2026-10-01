@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	// The database is this package's resource, so the driver is its import.
 	_ "modernc.org/sqlite"
@@ -90,6 +91,9 @@ type Store interface {
 type store struct {
 	db   *sql.DB
 	path string
+	// family, when set, scopes every read to the runs of one session family (temp views named
+	// like the tables, see scopeToFamily) and stamps every run written; "" is an unscoped store.
+	family string
 }
 
 // Open opens the check-results database at path read-write, creating it, its
@@ -143,10 +147,99 @@ func open(path string) (*store, error) {
 		db.Close()
 		return nil, err
 	}
+
 	return &store{db: db, path: path}, nil
 }
 
 func (s *store) Path() string { return s.path }
+
+// OpenFamily opens the repository's check-results database read-write, scoped to one session
+// family: every read sees only that family's runs and every run written carries it. The
+// database is shared by every session of the repository, so this scope is what keeps one
+// session's open refusals and owed work its own (the one thing that is not shared is a pass on
+// exactly the same input, see CachedCheck).
+func OpenFamily(path, family string) (Store, error) {
+	if family == "" {
+		return nil, fmt.Errorf("checkstore: a family store needs a family")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("checkstore: mkdir %s: %w", filepath.Dir(path), err)
+	}
+	st, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureSharedColumns(st.db); err != nil {
+		st.db.Close()
+		return nil, err
+	}
+	if err := scopeToFamily(st.db, family); err != nil {
+		st.db.Close()
+		return nil, err
+	}
+	st.family = family
+	return st, nil
+}
+
+// OpenFamilyReadOnly is OpenFamily for a reader: it never creates the file and cannot write.
+// ErrNoStore when there is no database.
+func OpenFamilyReadOnly(path, family string) (Store, error) {
+	if family == "" {
+		return nil, fmt.Errorf("checkstore: a family store needs a family")
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNoStore
+		}
+		return nil, fmt.Errorf("checkstore: %w", err)
+	}
+	dsn := "file:" + url.PathEscape(path) + "?mode=ro&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("checkstore: open %s: %w", path, err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("checkstore: open %s: %w", path, err)
+	}
+	if err := scopeToFamily(db, family); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Views are made while the connection can still write its temp schema; from here it cannot.
+	if _, err := db.Exec(`PRAGMA query_only = ON`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &store{db: db, path: path, family: family}, nil
+}
+
+// scopeToFamily makes the three tables read as one family's: temp views of the same names
+// shadow the main tables on the store's single connection, so every query written against
+// check_runs / checks / check_items (the package's own, and a reader's `sr-checks sql`)
+// sees exactly what a database of its own would hold. Writers name main.<table>.
+// The columns each view exposes: exactly the unshared database's, so what a reader sees (and
+// `select *` returns) does not change with where the rows are kept.
+const (
+	runCols   = "id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id, base_ref, head_ref, exit_code, error, metadata, created_at"
+	checkCols = "id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at"
+	itemCols  = "id, check_id, key, passed, metadata, checked_at"
+)
+
+func scopeToFamily(db *sql.DB, family string) error {
+	lit := "'" + strings.ReplaceAll(family, "'", "''") + "'"
+	for _, stmt := range []string{
+		`CREATE TEMP VIEW check_runs AS SELECT ` + runCols + ` FROM main.check_runs WHERE family = ` + lit,
+		`CREATE TEMP VIEW checks AS SELECT ` + checkCols + ` FROM main.checks WHERE run_id IN (SELECT id FROM main.check_runs WHERE family = ` + lit + `)`,
+		`CREATE TEMP VIEW check_items AS SELECT ` + itemCols + ` FROM main.check_items WHERE check_id IN (SELECT id FROM main.checks WHERE run_id IN (SELECT id FROM main.check_runs WHERE family = ` + lit + `))`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("checkstore: scope to family: %w", err)
+		}
+	}
+	return nil
+}
 
 func (s *store) Close() error {
 	if s.db == nil {
@@ -279,4 +372,155 @@ func Import(dst Store, src, agentID string) (int, error) {
 	var after int
 	_ = conn.QueryRowContext(context.Background(), `SELECT count(*) FROM main.check_runs`).Scan(&after)
 	return after - before, nil
+}
+
+// ensureSharedColumns adds what a database shared by every session of a repository needs on
+// each run: check_runs.family (the root session of the session family) and check_runs.folder
+// (the working tree). Idempotent.
+func ensureSharedColumns(db *sql.DB) error {
+	have := map[string]bool{}
+	rows, err := db.Query(`PRAGMA table_info(check_runs)`)
+	if err != nil {
+		return fmt.Errorf("checkstore: read check_runs columns: %w", err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("checkstore: read check_runs columns: %w", err)
+		}
+		have[name] = true
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, col := range []string{"family", "folder"} {
+		if have[col] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE check_runs ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("checkstore: add check_runs.%s: %w", col, err)
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_check_runs_family ON check_runs(family, check_id, run_at)`); err != nil {
+		return fmt.Errorf("checkstore: index family: %w", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS legacy_imports (path TEXT PRIMARY KEY, sig TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("checkstore: legacy_imports: %w", err)
+	}
+	return nil
+}
+
+// Legacy is a check-results database an older engine kept per session, to be brought into the
+// repository's.
+type Legacy struct {
+	// Path is the old database file.
+	Path string
+	// Family is the root session its runs belong to; Agent tags runs that say none (a sub-agent's
+	// own old database); Folder is the working tree they were judged in.
+	Family, Agent, Folder string
+}
+
+// ImportLegacy copies each old database into the family store's file, once per change of the
+// old file (its size and mtime are remembered in the store, so a file that is written to again
+// is read again), leaving it where it is. Rows keep their ids and are ignored when already
+// present, so it is safe to repeat and safe when two sessions do it at the same moment. A
+// database that cannot be read is skipped and reported in the returned error; the rest are done.
+func ImportLegacy(dst Store, sources []Legacy) error {
+	s, ok := dst.(*store)
+	if !ok || s.family == "" {
+		return fmt.Errorf("checkstore: ImportLegacy needs a store opened by OpenFamily")
+	}
+	var errs []string
+	for _, src := range sources {
+		info, err := os.Stat(src.Path)
+		if err != nil {
+			continue
+		}
+		sig := fmt.Sprintf("%d-%d", info.Size(), info.ModTime().UnixNano())
+		if wal, err := os.Stat(src.Path + "-wal"); err == nil {
+			// Writes sit in the write-ahead log until a checkpoint: the main file alone can
+			// look unchanged after new rows.
+			sig += fmt.Sprintf("-%d-%d", wal.Size(), wal.ModTime().UnixNano())
+		}
+		var have string
+		if err := s.db.QueryRow(`SELECT sig FROM main.legacy_imports WHERE path = ?`, src.Path).Scan(&have); err == nil && have == sig {
+			continue
+		}
+		if err := s.importLegacy(src); err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		if _, err := s.db.Exec(`INSERT INTO main.legacy_imports (path, sig) VALUES (?, ?)
+			ON CONFLICT(path) DO UPDATE SET sig = excluded.sig`, src.Path, sig); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("checkstore: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func (s *store) importLegacy(src Legacy) error {
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	attach := "ATTACH DATABASE ? AS src"
+	if _, err := conn.ExecContext(ctx, attach, "file:"+url.PathEscape(src.Path)+"?mode=ro"); err != nil {
+		if _, err2 := conn.ExecContext(ctx, attach, src.Path); err2 != nil {
+			return fmt.Errorf("attach %s: %w", src.Path, err)
+		}
+	}
+	defer conn.ExecContext(ctx, "DETACH DATABASE src")
+	hasAgent := false
+	rows, err := conn.QueryContext(ctx, `PRAGMA src.table_info(check_runs)`)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", src.Path, err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err == nil && name == "agent_id" {
+			hasAgent = true
+		}
+	}
+	rows.Close()
+	agentExpr := "?"
+	if hasAgent {
+		agentExpr = "CASE WHEN agent_id = '' THEN ? ELSE agent_id END"
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT OR IGNORE INTO main.check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
+			family, folder, base_ref, head_ref, exit_code, error, metadata, created_at)
+			SELECT id, run_batch_id, run_at, check_id, repo_id, branch, session_id, ` + agentExpr + `,
+			?, ?, base_ref, head_ref, exit_code, error, metadata, created_at FROM src.check_runs`, []any{src.Agent, src.Family, src.Folder}},
+		{`INSERT OR IGNORE INTO main.checks (id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at)
+			SELECT id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at FROM src.checks`, nil},
+		{`INSERT OR IGNORE INTO main.check_items (id, check_id, key, passed, metadata, checked_at)
+			SELECT id, check_id, key, passed, metadata, checked_at FROM src.check_items`, nil},
+	} {
+		if _, err := tx.ExecContext(ctx, q.sql, q.args...); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("import %s: %w", src.Path, err)
+		}
+	}
+	return tx.Commit()
 }

@@ -30,6 +30,13 @@ type RunIdentity struct {
 	SessionID string
 	// AgentID is the sub-agent that ran it, "" for the root session itself.
 	AgentID string
+	// Family is the root session of the session family the run belongs to: what a store opened
+	// for a family (OpenFamily) reads, and what keeps one session's open refusals and owed work
+	// its own in a database every session of the repository writes. A store opened for a family
+	// fills it itself.
+	Family string
+	// Folder is the working tree the run judged in (its git root).
+	Folder string
 }
 
 // CheckRun is one rule evaluated once, over one commit range.
@@ -148,12 +155,21 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 		runErr = r.Error
 	}
 	id := newID("run")
-	_, err = db.Exec(`
-		INSERT INTO check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
+	if s.family != "" {
+		_, err = db.Exec(`
+		INSERT INTO main.check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
+		                        family, folder, base_ref, head_ref, exit_code, error, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, r.BatchID, stamp(), r.CheckID, r.RepoID, r.Branch, r.SessionID, r.AgentID,
+			s.family, r.Folder, r.BaseRef, r.HeadRef, r.ExitCode, runErr, meta)
+	} else {
+		_, err = db.Exec(`
+		INSERT INTO main.check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
 		                        base_ref, head_ref, exit_code, error, metadata)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.BatchID, stamp(), r.CheckID, r.RepoID, r.Branch, r.SessionID, r.AgentID,
-		r.BaseRef, r.HeadRef, r.ExitCode, runErr, meta)
+			id, r.BatchID, stamp(), r.CheckID, r.RepoID, r.Branch, r.SessionID, r.AgentID,
+			r.BaseRef, r.HeadRef, r.ExitCode, runErr, meta)
+	}
 	if err != nil {
 		return "", fmt.Errorf("checkstore: record run of %q: %w", r.CheckID, err)
 	}
@@ -172,7 +188,7 @@ func (s *store) FinishRun(runID string) error {
 	if err != nil {
 		return err
 	}
-	res, err := db.Exec(`UPDATE check_runs SET metadata = json_set(metadata, '$.state', ?) WHERE id = ?`, runComplete, runID)
+	res, err := db.Exec(`UPDATE main.check_runs SET metadata = json_set(metadata, '$.state', ?) WHERE id = ?`, runComplete, runID)
 	if err != nil {
 		return fmt.Errorf("checkstore: finish run: %w", err)
 	}
@@ -205,7 +221,7 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 	defer tx.Rollback()
 	id := newID("chk")
 	if _, err := tx.Exec(`
-		INSERT INTO checks (id, run_id, subject, kind, status, fingerprint, metadata, checked_at)
+		INSERT INTO main.checks (id, run_id, subject, kind, status, fingerprint, metadata, checked_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (run_id, subject, kind) DO UPDATE SET
 			status = excluded.status, fingerprint = excluded.fingerprint,
@@ -218,7 +234,7 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 		runID, c.Subject, c.Kind).Scan(&id); err != nil {
 		return "", err
 	}
-	if _, err := tx.Exec(`DELETE FROM check_items WHERE check_id = ?`, id); err != nil {
+	if _, err := tx.Exec(`DELETE FROM main.check_items WHERE check_id = ?`, id); err != nil {
 		return "", err
 	}
 	for _, it := range c.Items {
@@ -231,7 +247,7 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 			key = it.Key
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO check_items (id, check_id, key, passed, metadata, checked_at)
+			INSERT INTO main.check_items (id, check_id, key, passed, metadata, checked_at)
 			VALUES (?, ?, ?, ?, ?, ?)`, newID("itm"), id, key, it.Passed, imeta, stamp()); err != nil {
 			return "", fmt.Errorf("checkstore: record item of %q: %w", c.Kind, err)
 		}
@@ -263,7 +279,17 @@ func (s *store) CachedCheck(subject, kind, fingerprint string) (CachedCheck, boo
 	err = db.QueryRow(`
 		SELECT status, metadata FROM checks
 		WHERE subject = ? AND kind = ? AND fingerprint = ? AND status IN ('pass', 'fail')
-		ORDER BY checked_at DESC, rowid DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
+		ORDER BY checked_at DESC, id DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
+	if errors.Is(err, sql.ErrNoRows) && s.family != "" {
+		// Another session of this repository judged exactly this input (the fingerprint is the
+		// rule's whole folder, the model and the exact input) and passed it: a pass is a fact
+		// about that content, so it stands here too. Only a PASS crosses: a refusal stays the
+		// family that was refused.
+		err = db.QueryRow(`
+			SELECT status, metadata FROM main.checks
+			WHERE subject = ? AND kind = ? AND fingerprint = ? AND status = 'pass'
+			ORDER BY checked_at DESC, rowid DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return CachedCheck{}, false, nil
 	}
@@ -291,7 +317,7 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 		return 0, err
 	}
 	res, err := db.Exec(`
-		UPDATE checks
+		UPDATE main.checks
 		SET status = 'skip',
 		    metadata = json_set(metadata, '$.reason', 'stale: its input is no longer in the range', '$.staleFrom', 'fail'),
 		    checked_at = ?
@@ -330,13 +356,32 @@ type RunRefs struct {
 }
 
 func (s *store) RunRefs(rule string) (RunRefs, error) {
+	return s.runRefs(rule, "check_runs", "checks", "", nil)
+}
+
+// SiblingRunRefs is RunRefs over the OTHER session families of the repository that judged in
+// the same working tree: what an earlier or concurrent session of this worktree was refused
+// for, or passed. Only a store opened for a family has siblings.
+func (s *store) SiblingRunRefs(rule, folder string) (RunRefs, error) {
+	if s.family == "" || folder == "" {
+		return RunRefs{}, nil
+	}
+	return s.runRefs(rule, "main.check_runs", "main.checks", " AND cr.family <> ? AND cr.folder = ?", []any{s.family, folder})
+}
+
+// SiblingRefs is implemented by a store opened for a family.
+type SiblingRefs interface {
+	SiblingRunRefs(rule, folder string) (RunRefs, error)
+}
+
+func (s *store) runRefs(rule, runs, checks, where string, extra []any) (RunRefs, error) {
 	db, err := s.conn()
 	if err != nil {
 		return RunRefs{}, err
 	}
 	var out RunRefs
 	collect := func(query string, into *[]RunRef) error {
-		rows, err := db.Query(query, rule)
+		rows, err := db.Query(query, append([]any{rule}, extra...)...)
 		if err != nil {
 			return fmt.Errorf("checkstore: run refs for %q: %w", rule, err)
 		}
@@ -351,20 +396,20 @@ func (s *store) RunRefs(rule string) (RunRefs, error) {
 		return rows.Err()
 	}
 	if err := collect(`
-		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM check_runs cr
-		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''
+		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM `+runs+` cr
+		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''`+where+`
 		  AND (cr.error IS NOT NULL OR cr.exit_code <> 0
-		       OR EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
+		       OR EXISTS (SELECT 1 FROM `+checks+` c WHERE c.run_id = cr.id
 		                  AND c.status IN ('fail', 'error', 'interrupted')))
 		ORDER BY cr.run_at`, &out.Failed); err != nil {
 		return RunRefs{}, err
 	}
 	if err := collect(`
-		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM check_runs cr
-		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''
+		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM `+runs+` cr
+		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''`+where+`
 		  AND cr.exit_code = 0 AND cr.error IS NULL
 		  AND json_extract(cr.metadata, '$.state') = 'complete'
-		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
+		  AND NOT EXISTS (SELECT 1 FROM `+checks+` c WHERE c.run_id = cr.id
 		                  AND (c.status IN ('fail', 'error', 'interrupted')
 		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
 		ORDER BY cr.run_at`, &out.Passed); err != nil {
@@ -391,7 +436,7 @@ func (s *store) PassedHeads(rule string) ([]string, error) {
 		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
 		                  AND (c.status IN ('fail', 'error', 'interrupted')
 		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
-		ORDER BY cr.run_at DESC, cr.rowid DESC`, rule)
+		ORDER BY cr.run_at DESC, cr.id DESC`, rule)
 	if err != nil {
 		return nil, fmt.Errorf("checkstore: passed heads for %q: %w", rule, err)
 	}
@@ -423,7 +468,7 @@ func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, er
 		FROM check_runs cr
 		LEFT JOIN checks c ON c.run_id = cr.id
 		WHERE cr.id = (SELECT l.id FROM check_runs l WHERE l.check_id = cr.check_id
-		               ORDER BY l.run_at DESC, l.rowid DESC LIMIT 1)
+		               ORDER BY l.run_at DESC, l.id DESC LIMIT 1)
 		  AND (? = '' OR cr.check_id = ? OR cr.check_id LIKE '%/' || ?)
 		ORDER BY cr.check_id, c.subject, c.kind`, rule, rule, rule)
 	if err != nil {
