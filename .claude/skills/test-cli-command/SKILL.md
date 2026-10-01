@@ -135,17 +135,11 @@ func TestT001_01_EmptyRepoBuildSucceeds(t *testing.T) {
 }
 ```
 
-## Available Helpers (from main_test.go)
+## Helpers
 
-```go
-run(t, args...)                      // invoke binary, return (output, exitCode)
-runWithEnv(t, env, args...)          // same, with extra env vars
-initTestRepo(t)                      // git init + empty commit in t.TempDir(), return path
-writeFile(t, repo, path, content)    // write file relative to repo
-gitCommitAll(t, repo, msg)           // stage all + commit
-isolatedIndexDir(t)                  // returns (dir, []string{"A10N_INDEX_DIR=..."})
-headCommit(t, repo)                  // returns current HEAD SHA
-```
+Use the helpers the group's `main_test.go` shim re-exports (`run`, `initTestRepo`,
+`writeFile`, `gitCommitAll`, …) rather than writing your own. Every test calls
+`isolatedIndexDir`: without it, tests share the real `~/.local/share/a10n/index`.
 
 ## Golden Files
 
@@ -187,14 +181,3 @@ harness builds every spawned process's env from `harness.HostEnv()`, which strip
 session's CLAUDECODE / CLAUDE_CODE_* / CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT / CLAUDE_CONFIG_DIR
 and any SLOPRAIL_* / SR_* the test did not set. A helper of your own that spawns a process must
 start from `harness.HostEnv()`, never a bare `os.Environ()`.
-
-## Common Mistakes
-
-| Mistake | Fix |
-|---|---|
-| Put test directly in feature folder | Use numbered group subfolder |
-| Missing shim in group dir | Each group dir needs its own `main_test.go` shim |
-| Assert on stdout for data | Use `--json` + goldie for structured output |
-| Recreate helpers in test file | They're re-exported by the shim — use directly |
-| Share state between tests | Each test calls `initTestRepo` + `isolatedIndexDir` — fully isolated |
-| Forget `isolatedIndexDir` | Without it tests share the real `~/.local/share/a10n/index` |

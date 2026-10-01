@@ -39,7 +39,10 @@ done
 
 k=0
 while [ "$k" -lt "${#paths[@]}" ]; do
-  sr-session state set "endpoint:${fqns[$k]:-${paths[$k]}}" "${paths[$k]}" >/dev/null 2>&1 || true
+  if ! sr-session state set "endpoint:${fqns[$k]:-${paths[$k]}}" "${paths[$k]}" >/dev/null 2>&1; then
+    echo "endpoint-conforms: could not record ${paths[$k]} in the session registry, so the endpoint was not registered" >&2
+    exit 1
+  fi
   k=$((k + 1))
 done
 
