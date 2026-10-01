@@ -90,7 +90,7 @@ func citableResults(entries []LinedEntry) map[string]bool {
 	calls := recordCalls(entries)
 	citable := map[string]bool{}
 	for id, c := range calls {
-		citable[id] = !delegationTools[c.Name] && !taskReaders[c.Name] && !readsTranscript(c)
+		citable[id] = !delegationTools[c.Name] && !taskReaders[c.Name] && !readsTranscript(c) && !echoesRecord(c)
 	}
 	return citable
 }
@@ -121,6 +121,35 @@ func citableFor(path string, entries []LinedEntry) map[string]bool {
 	citable := citableResults(entries)
 	citableCache.Store(path, citableEntry{size: fi.Size(), mod: fi.ModTime(), citable: citable})
 	return citable
+}
+
+// CommandEchoes decides whether a shell command prints the agent's own text back (git
+// log, sloprail's own tools, ...). It is a hook because the decision is made on the
+// parsed command line, and the package that parses it (commandmod) imports this one;
+// commandmod registers it at init, and every binary that resolves a citation links
+// commandmod. FAILS CLOSED: unset, every Bash result is an echo and so not citable.
+//
+// Known holes (an echo the parser does not see, so its output stays citable): echo or
+// Read of a file the agent wrote itself; Read of a file under .git/ (only commands are
+// parsed); git aliases that print messages; paths built by $(...) or variables;
+// interpreters (python -c, node -e) that read the history; and `git branch -v`, which
+// prints subjects.
+var CommandEchoes func(command string) bool
+
+// echoesRecord reports whether a call's output is the agent's own text read back:
+// a Bash command CommandEchoes recognises. The agent's commit message carries the quote it
+// cites, so `git log` prints it, and so does `sr-session trajectory cite`; a quote
+// that matches an echo of itself would never be one match, and would be no source
+// either. The genuine source, a result that is not an echo, stays citable.
+func echoesRecord(c recordCall) bool {
+	if c.Name != "Bash" {
+		return false
+	}
+	var in struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal(c.Input, &in)
+	return CommandEchoes == nil || CommandEchoes(in.Command)
 }
 
 // readsTranscript reports whether a call's target is an agent's transcript: a
@@ -428,6 +457,8 @@ func whyExcluded(body string, calls map[string]recordCall, id string) string {
 		return "Those words are what " + call.Name + " returned — a background task's output, which may be an agent's model-written reply — so they are not citable as tool output; cite what that task's own tools printed"
 	case readsTranscript(call) || looksLikeTranscript(body):
 		return "Those words were read out of an agent transcript (the file is an agent's record — its text is model-written), which is not tool output; cite what the tools in that record printed — sub-agents' records are searched too"
+	case echoesRecord(call):
+		return "Those words are in the output of a command that prints the agent's own text back (git log/show, sr-session): the commit message and the citation itself, not a source; cite the output of the command that produced the evidence"
 	case len(extractAnswers(body)) > 0:
 		return "Those words are an AskUserQuestion answer — the user's own words, not a tool's output; cite them with --cite:user"
 	}
