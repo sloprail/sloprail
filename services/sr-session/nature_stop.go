@@ -61,7 +61,13 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
-		return ""
+		// The root declares nothing, but a repository the agent worked in outside it may:
+		// each is judged under its own rules.
+		var out []string
+		for _, r := range evaluateAdHocFolders(cmd, p, scope, reg, map[string]natures.ContextState{}, store) {
+			out = append(out, r.Reason+" (file-guard "+r.Attribution+")")
+		}
+		return joinRefusals(out)
 	}
 
 	// The state maps, loaded once and shared across all four steps.
