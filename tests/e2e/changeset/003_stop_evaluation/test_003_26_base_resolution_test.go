@@ -153,9 +153,9 @@ func TestT003_27_ARuleEditedAfterAPassJudgesOnlyWhatComesAfter(t *testing.T) {
 	}
 }
 
-// T003_28: a rule added mid-session judges from the EARLIER of its floor and the
-// session's start: the work the session did before the rule existed is judged too.
-func TestT003_28_ARuleAddedMidSessionJudgesTheSessionsEarlierWork(t *testing.T) {
+// T003_28: a rule added mid-session applies from its own add commit: the work the
+// session did before the rule existed is grandfathered (see T003_34 for the refusal side).
+func TestT003_28_ARuleAddedMidSessionDoesNotJudgeTheSessionsEarlierWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -170,8 +170,8 @@ func TestT003_28_ARuleAddedMidSessionJudgesTheSessionsEarlierWork(t *testing.T) 
 	e.CommitAll(proj, "add the rule")
 
 	r := e.StopNow(proj, "s-003-28", false)
-	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
-		t.Fatalf("work made earlier in the session was skipped by a rule added after it:\n%s", r.Output)
+	if harness.Blocked(r) {
+		t.Fatalf("work made before the rule existed was judged by it:\n%s", r.Output)
 	}
 }
 

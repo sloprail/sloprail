@@ -66,6 +66,11 @@ type Store interface {
 	// rule hash, that passed: no engine error and no failing check. The
 	// caller picks the first still reachable — that is the rule's watermark.
 	PassedHeads(rule string) ([]string, error)
+	// RunRefs lists, for one rule, the runs that were refused and the runs that
+	// passed, each with the commit range it judged and when it ran. See RunRefs.
+	RunRefs(rule string) (RunRefs, error)
+	// Path is the database file this store was opened on.
+	Path() string
 	// CheckStatus lists each rule's latest run and its checks. failingOnly keeps
 	// only what is failing: a failed engine run, or a fail/error/interrupted check.
 	// A non-empty rule keeps only that rule.
@@ -77,7 +82,8 @@ type Store interface {
 }
 
 type store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // Open opens the check-results database at path read-write, creating it, its
@@ -110,7 +116,7 @@ func OpenReadOnly(path string) (Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("checkstore: open %s: %w", path, err)
 	}
-	return &store{db: db}, nil
+	return &store{db: db, path: path}, nil
 }
 
 // open is Open without the directory, which is also what the tests use against
@@ -127,8 +133,10 @@ func open(path string) (*store, error) {
 		db.Close()
 		return nil, fmt.Errorf("checkstore: apply schema: %w", err)
 	}
-	return &store{db: db}, nil
+	return &store{db: db, path: path}, nil
 }
+
+func (s *store) Path() string { return s.path }
 
 func (s *store) Close() error {
 	if s.db == nil {

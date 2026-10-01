@@ -70,18 +70,27 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //
 //  1. watermark — the last head the rule passed (when non-empty), at any
 //     definition of the rule: work up to it was approved;
-//  2. otherwise the EARLIER, in ancestry, of the two below (so nothing made in this
-//     session is skipped, and history from before both stays grandfathered):
-//     a. the PARENT of the last commit touching folder — the rule's definition, for
-//     a rule whose folder is in this repository (folder is "" for one that is not,
-//     such as a plugin's; a folder no commit has touched yet, an uncommitted rule,
-//     has no such commit and falls through). The parent, not the commit: everything
-//     else in the commit that adds or changes a rule is judged by the rule, so
-//     touching the rule's folder is not a way to get work past it. A root commit
-//     has no parent, and its base is the empty tree, so the whole of it is judged;
-//     b. sessionStart — the HEAD recorded when the session began. Rules apply going
-//     forward, and for a rule with no committed definition "forward" starts where
-//     this session did.
+//  2. otherwise, for a rule that did NOT exist at session start (its folder is absent
+//     from the session-start commit's tree: added during the session), the PARENT of
+//     the commit that FIRST added the rule's own folder since the session began (a root
+//     commit's parent is the empty tree), never later than the floor (the parent of the
+//     last commit touching folder). The rule applies from that commit, and earlier
+//     history is grandfathered. The parent, not the commit, so the commit that adds the
+//     rule is itself judged by it; and not the last touch of the .sloprail root, which
+//     would let a later touch move the base past violations committed after the rule
+//     was added. For a rule that existed at
+//     session start (also when the start is unknown or unborn, which fails closed to
+//     "existed"), sessionStart: the HEAD recorded when the session began, never later, and
+//     earlier only by refusedBases: the bases of ranges an EARLIER session of the same
+//     worktree was refused for and never fixed (the caller reads them from the sibling
+//     sessions' check stores), so a refusal does not vanish when a second session
+//     starts. History that passed or was never checked stays grandfathered. The floor
+//     does not matter for it: a rule last changed long before
+//     the session must not re-judge every commit merged since, and touching .sloprail
+//     mid-session cannot move the base past the session's own work. With no session
+//     start recorded the floor is used, and with neither the result is ErrNoSessionStart.
+//     (folder is "" for a rule that is not in this repository, such as a plugin's; it has
+//     no floor and uses the session start.)
 //
 // Every anchor is tested with `git merge-base --is-ancestor <anchor> HEAD` on every
 // run, and one that an amend, a rebase or a reset left is RE-ANCHORED at its merge base
@@ -95,14 +104,16 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //     folder floor alone would not do, because a later commit touching the rule's
 //     folder puts it AFTER in-session commits, which would then never be judged.
 //
-// head is HEAD, as a SHA. folder is relative to dir, or repository-relative.
+// head is HEAD, as a SHA. folder is relative to dir, or repository-relative. rule is
+// the rule's OWN folder (`.sloprail/file-guard/<name>`, same form), whose presence in
+// the session-start tree decides whether the rule is new; "" falls back to folder.
 //
 // Any failure of git is returned as an error and produces no Range: it is never
 // read as "nothing changed". A candidate git does not have (gc'd after a rebase)
 // counts as unreachable; one git could not be asked about is an error. With no watermark,
 // no committed definition and no session start recorded the result is
 // ErrNoSessionStart, never a guess.
-func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
+func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBases ...string) (Range, error) {
 	head, err := headSHA(dir)
 	if err != nil {
 		return Range{}, err
@@ -127,9 +138,8 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 			return r, nil
 		}
 	}
-	// No watermark: the EARLIER of the folder floor and the session start, so nothing
-	// made in this session is skipped, while history from before both stays
-	// grandfathered.
+	// No watermark: a rule added during the session judges from its floor; a rule
+	// that existed at session start judges from the session start.
 	var floor string
 	if strings.TrimSpace(folder) != "" {
 		last, err := folderFloor(dir, folder)
@@ -152,6 +162,30 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 			}
 		}
 	}
+	if floor != "" && !existedAt(dir, sessionStart, firstNonEmpty(rule, folder)) {
+		// A rule that did not exist when the session began applies from the commit
+		// that FIRST added its own folder since the session began: what came before
+		// it is grandfathered, so adding a rule mid-session does not judge the whole
+		// session. Not the last commit touching the .sloprail root (the floor): a later
+		// touch of the root would move the base past violations committed after the rule
+		// was added. Never later than the floor.
+		base := floor
+		added, err := firstAddCommit(dir, sessionStart, firstNonEmpty(rule, folder))
+		if err != nil {
+			return Range{}, err
+		}
+		if added != "" {
+			parent, err := parentOrEmptyTree(dir, added)
+			if err != nil {
+				return Range{}, err
+			}
+			if base, err = earlier(dir, parent, floor); err != nil {
+				return Range{}, err
+			}
+		}
+		r.Base, r.Origin = base, FromFloor
+		return r, nil
+	}
 	if floor == "" && sessionStart == "" {
 		return Range{}, ErrNoSessionStart
 	}
@@ -170,22 +204,92 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 			return Range{}, err
 		}
 	}
-	switch {
-	case floor == "":
+	if start != "" {
 		r.Base, r.Origin = start, FromSessionStart
-	case start == "":
+		// Extended backwards over every range an earlier session of this worktree was
+		// refused for and never fixed: nothing it refused may fall out of sight.
+		for _, rb := range refusedBases {
+			if rb != "" && rb != EmptyTree {
+				ok, err := Contains(dir, rb)
+				if err != nil {
+					return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", rb, err)
+				}
+				if !ok {
+					if rb, err = reanchorSessionStart(dir, rb, head); err != nil {
+						return Range{}, err
+					}
+				}
+			}
+			if rb == "" {
+				continue
+			}
+			early, err := earlier(dir, r.Base, rb)
+			if err != nil {
+				return Range{}, err
+			}
+			r.Base = early
+		}
+	} else {
 		r.Base, r.Origin = floor, FromFloor
-	default:
-		early, err := earlier(dir, floor, start)
-		if err != nil {
-			return Range{}, err
-		}
-		r.Base, r.Origin = early, FromFloor
-		if early == start {
-			r.Origin = FromSessionStart
-		}
 	}
 	return r, nil
+}
+
+// firstAddCommit is the OLDEST commit in sessionStart..HEAD that added a file under
+// folder, or "" when there is none.
+func firstAddCommit(dir, sessionStart, folder string) (string, error) {
+	out, err := run(dir, "log", "--reverse", "--diff-filter=A", "--format=%H", sessionStart+"..HEAD", "--", folder)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
+			if !isObjectName(sha) {
+				return "", fmt.Errorf("gitrepo: add commit for %q resolved to %q, not an object name", folder, sha)
+			}
+			return sha, nil
+		}
+	}
+	return "", nil
+}
+
+// firstNonEmpty is a unless it is blank, else b.
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+// existedAt reports whether the rule's folder is in the tree of the session-start
+// commit. Fail closed: an unknown or unborn start (empty, or the empty tree), or a
+// commit git cannot be asked about, counts as "existed", which keeps the stricter
+// earlier-of range.
+func existedAt(dir, sessionStart, folder string) bool {
+	if sessionStart == "" || sessionStart == EmptyTree {
+		return true
+	}
+	out, err := run(dir, "ls-tree", "--name-only", sessionStart, "--", folder)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(out) != ""
+}
+
+// IsAncestor reports whether a is an ancestor of b (or b itself). A commit git does
+// not have is "not an ancestor"; any other git failure is an error.
+func IsAncestor(dir, a, b string) (bool, error) {
+	_, err := run(dir, "merge-base", "--is-ancestor", a, b)
+	if err == nil {
+		return true, nil
+	}
+	if exitCode(err) == 1 {
+		return false, nil
+	}
+	if _, verr := run(dir, "rev-parse", "--verify", "-q", a+"^{commit}"); verr != nil && exitCode(verr) == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 // earlier is whichever of two commits (or the empty tree) comes first in ancestry;

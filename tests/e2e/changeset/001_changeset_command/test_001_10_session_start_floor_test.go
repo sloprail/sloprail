@@ -81,7 +81,8 @@ func TestT001_11_PluginRuleUsesTheSessionStart(t *testing.T) {
 // commit is amended away (no longer an ancestor of HEAD) and the rule has no folder commit
 // yet. The session began on the repository's root commit, so the rewritten one shares no
 // history with the old start and the range falls to the root commit. Committing the rule
-// gives it a floor AFTER that, and the base stays the earlier one.
+// makes it a rule added mid-session: it applies from its own add commit, so the base is
+// that commit's parent (its floor), not the earlier session start.
 func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) {
 	e, proj, _ := startedSession(t, "s-001-12")
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
@@ -93,9 +94,10 @@ func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) 
 		t.Fatalf("exit %d, range %s %s: want session-start at the root commit %s:\n%s", res.Code, got.Origin, got.Base, root, res.Output)
 	}
 
+	beforeRule := e.Git(proj, "rev-parse", "HEAD")
 	e.CommitAll(proj, "add the rule")
 	got, res = show(t, e, proj, e.SessionEnv("s-001-12"), "size")
-	if res.Code != 0 || got.Base != root {
-		t.Fatalf("with the rule committed after it: exit %d base %q, want %s:\n%s", res.Code, got.Base, root, res.Output)
+	if res.Code != 0 || got.Base != beforeRule || got.Origin != "floor" {
+		t.Fatalf("with the rule committed after it: exit %d range %s %s, want floor at %s:\n%s", res.Code, got.Origin, got.Base, beforeRule, res.Output)
 	}
 }

@@ -84,15 +84,15 @@ func TestT003_18_ARuleRemovedOrDisabledStopsFiring(t *testing.T) {
 	}
 }
 
-// T003_19: a rule added mid-session judges from the EARLIER of its own commit's parent
-// and the session's start, so the session's work committed before the rule existed (a
-// forbidden doc) is judged too, and history from before the session is not.
+// T003_19: a rule added mid-session judges from its own add commit (its floor, the
+// commit's parent), not from the session's start: the session's work committed before
+// the rule existed (a forbidden doc) is grandfathered, the work after it is judged.
 func TestT003_19_ARuleAddedMidSessionJudgesFromItsOwnCommit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
-	sessionStart := e.CommitAll(proj, "the project")
+	e.CommitAll(proj, "the project")
 
 	// The rule is prepared outside the tree and arrives in a commit of its own.
 	led := t.TempDir() + "/ledger.jsonl"
@@ -107,6 +107,7 @@ func TestT003_19_ARuleAddedMidSessionJudgesFromItsOwnCommit(t *testing.T) {
 		t.Fatalf("premise: a session with no rule was refused (%d blocks)", n)
 	}
 
+	beforeRule := e.Git(proj, "rev-parse", "HEAD")
 	e.Run(proj, sess, "add the rule, then a doc", Turns("done",
 		Bash("r1", "mkdir -p .sloprail/file-guard && cp -R '"+stage+"/.sloprail/file-guard/docs' .sloprail/file-guard/"),
 		harness.Commit("r2", "add the docs rule"),
@@ -116,21 +117,21 @@ func TestT003_19_ARuleAddedMidSessionJudgesFromItsOwnCommit(t *testing.T) {
 		t.Fatalf("the rule did not judge the work committed after it arrived: %q", e.BlockingErrors(proj, sess))
 	}
 	for _, r := range ledger(t, led) {
-		if r.Base != sessionStart {
-			t.Fatalf("the rule was judged from %s, want the session's start %s (earlier than its own commit's parent)", r.Base, sessionStart)
+		if r.Base != beforeRule {
+			t.Fatalf("the rule was judged from %s, want its own commit's parent %s", r.Base, beforeRule)
 		}
-		if !reflect.DeepEqual(paths(r.Files), []string{"docs/new.md", "docs/old.md"}) && !reflect.DeepEqual(paths(r.Files), []string{"docs/old.md", "docs/new.md"}) {
-			t.Fatalf("the rule judged %v; the session's work before the rule and after it are both its business, and the seed is neither", paths(r.Files))
+		if !reflect.DeepEqual(paths(r.Files), []string{"docs/new.md"}) {
+			t.Fatalf("the rule judged %v; only the work after the rule arrived is its business", paths(r.Files))
 		}
 	}
 	if len(ledger(t, led)) == 0 {
 		t.Fatal("the check never ran")
 	}
 
-	// Both docs are the rule's business now; fixed, the range passes.
+	// The doc after the rule is its business; fixed, the range passes.
 	seen := stopBlocks(e, proj, sess)
 	e.Run(proj, sess, "fix it", Turns("done",
-		Bash("f1", "printf 'clean words' > docs/old.md && printf 'clean words' > docs/new.md && git add -A && git commit -q -m 'fix both'"),
+		Bash("f1", "printf 'clean words' > docs/new.md && git add -A && git commit -q -m 'fix new'"),
 	))
 	if n := stopBlocks(e, proj, sess); n != seen {
 		t.Fatalf("the fixed work was still refused:\n%s", newBlocks(e, proj, sess, seen))

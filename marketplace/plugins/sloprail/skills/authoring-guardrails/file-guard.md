@@ -44,16 +44,26 @@ base is, in order:
 **the rule's watermark** — the latest head the rule passed, *at any definition of
 the rule*, if it is still an ancestor of `HEAD` (work up to it was approved, even
 under an older rule, and is not judged again; editing the rule changes its hash,
-so verdicts are not replayed, but the watermark stays); otherwise **the earlier, in
-ancestry, of** the parent of the last commit that touched the rule's whole
-`.sloprail` root (a rule in this repository: the commit that adds or changes a
-rule, a schema or a shared script is judged by the rule; a root commit has no
-parent, so its base is git's empty tree) **and the HEAD recorded when the session
-began**. So nothing made in this session is skipped — a violating commit followed
-by a commit under `.sloprail` is still judged, and a rule added mid-session judges
-the session's earlier work — while history from before both stays grandfathered.
-For a plugin's rule, whose `.sloprail` root is in the plugin cache, the base is the
-session start. Every base is a SHA, checked with
+so verdicts are not replayed, but the watermark stays); otherwise **the floor**: the
+parent of the last commit that touched the rule's whole `.sloprail` root (a rule
+in this repository: the commit that adds or changes a rule, a schema or a shared
+script is judged by the rule; a root commit has no parent, so its base is git's
+empty tree). A rule that did **not exist at session start**
+(its folder is absent from the session-start commit's tree) applies **from the
+commit that first added its folder**: the parent of that commit (never later than the floor, so a later touch of `.sloprail` cannot hide what followed the add), earlier history grandfathered, so adding a
+rule mid-session does not judge the whole session. A rule that **existed at session
+start** (including one deleted and re-added in the session) takes **the HEAD recorded
+when the session began**, never later and earlier only as below: a rule last changed
+long before the session does not re-judge every commit merged since, and a violating
+commit followed by a commit under `.sloprail` is still judged. The base is **extended
+backwards over any range an earlier session of the same worktree was refused for and
+never fixed** (read, read-only, from that worktree's other sessions' check stores: a
+refusal with no later pass at a descendant of its head, whose head is still an ancestor
+of `HEAD`), so a refusal does not vanish when a second session starts; what passed or
+was never checked stays grandfathered, and a store that cannot be read fails the range. When the session start is
+unknown or unborn the rule counts as existing (unborn: the whole history). For a
+plugin's rule, whose `.sloprail` root is in the plugin cache, the base is the session
+start. Every base is a SHA, checked with
 `git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
 drops a base that no longer exists instead of silently shrinking the diff. The session
 start is the HEAD the session FIRST began at, kept even when the tree later leaves its
