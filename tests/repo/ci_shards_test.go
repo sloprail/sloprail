@@ -7,122 +7,326 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// Every package under tests/ that holds a test runs in CI. The e2e suite is split
-// into shards (the Makefile's test-e2e-shard cases, one matrix leg each in
+// Every test the repo has runs in CI. The e2e suite is split into shards (the
+// Makefile's test-e2e-shard cases, one matrix leg each in
 // .github/workflows/test.yml); a test package named in no shard — or a shard the
 // workflow does not run — is dropped from CI silently, which is how
-// tests/e2e/changeset and tests/e2e/checks went unrun for a while. This fails
-// the moment a tests/ package is in no shard, or the Makefile and the workflow
-// disagree on the shard names.
+// tests/e2e/changeset and tests/e2e/checks went unrun for a while. These tests
+// fail the moment
+//
+//   - a tests/ package is in no shard (a new folder under tests/e2e/**, a new
+//     example package),
+//   - a test of a package that scripts/examples-shard.sh slices with -run is in
+//     no slice,
+//   - a nested Go module (a plugin's tests/ module) is not one that
+//     `make test-plugins-e2e` discovers, or
+//   - the workflow matrix and the Makefile's shard cases differ.
+//
+// The checks are functions over file contents so the negative tests below can
+// prove each one fires on a fake tree.
+
 func TestEveryTestPackageIsInACIShard(t *testing.T) {
 	root := repoRoot(t)
 	makefile := readRepoFile(t, root, "Makefile")
 
-	// The paths a shard (or test-unit) hands to `go test`.
-	covered := regexp.MustCompile(`\./tests/[A-Za-z0-9_./-]*`).FindAllString(makefile, -1)
-	if len(covered) < 10 {
-		t.Fatalf("found only %d ./tests/ paths in the Makefile — the parse is wrong", len(covered))
+	if n := len(shardPaths(makefile)); n < 10 {
+		t.Fatalf("found only %d ./tests/ paths in the Makefile — the parse is wrong", n)
 	}
-	// The examples shards are not listed in the Makefile: scripts/examples-shard.sh
-	// discovers them. Run it for every shard the Makefile invokes, require the
-	// slices to be disjoint and complete, and count what it prints as covered.
-	covered = append(covered, exampleShardPackages(t, root, makefile)...)
+	extra, problems := exampleShardCoverage(t, root, makefile)
+	problems = append(problems, coverageProblems(t, root, makefile, extra)...)
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
 
-	var missing []string
-	err := filepath.WalkDir(filepath.Join(root, "tests"), func(path string, d fs.DirEntry, err error) error {
+// The workflow runs exactly the shards the Makefile defines, and exposes the
+// one aggregate check branch protection can require.
+func TestWorkflowMatrixMatchesMakefileShards(t *testing.T) {
+	root := repoRoot(t)
+	for _, p := range matrixProblems(readRepoFile(t, root, "Makefile"), readRepoFile(t, root, ".github/workflows/test.yml")) {
+		t.Error(p)
+	}
+}
+
+// --- negative tests: the guard fires ---
+
+func TestGuardFiresOnAnUnshardedPackage(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	makefile := "test-plugins-e2e:\n\tfind marketplace/plugins -mindepth 2 -maxdepth 2 -type d -name tests\ntest-e2e-shard:\n\t  rest) go test ./tests/e2e/covered/... ;; \\\n"
+	write("tests/e2e/covered/a_test.go", "package a\n")
+	write("tests/e2e/new_folder/b_test.go", "package b\n")
+	write("marketplace/plugins/p/tests/go.mod", "module p\n")
+	write("marketplace/plugins/p/tests/x_test.go", "package p\n")
+	write("elsewhere/tests/go.mod", "module e\n")
+
+	got := strings.Join(coverageProblems(t, root, makefile, nil), "\n")
+	if !strings.Contains(got, "./tests/e2e/new_folder is in no CI shard") {
+		t.Errorf("an unsharded package was not reported:\n%s", got)
+	}
+	if strings.Contains(got, "e2e/covered") {
+		t.Errorf("a covered package was reported:\n%s", got)
+	}
+	if !strings.Contains(got, "elsewhere/tests") {
+		t.Errorf("a nested module outside marketplace/plugins/*/tests was not reported:\n%s", got)
+	}
+	if strings.Contains(got, "marketplace/plugins/p/tests") {
+		t.Errorf("a discovered plugin module was reported:\n%s", got)
+	}
+}
+
+func TestGuardFiresOnAMatrixMakefileMismatch(t *testing.T) {
+	makefile := "test-e2e-shard: mock\n\t@case \"$(SHARD)\" in \\\n\t  a) x ;; \\\n\t  b) y ;; \\\n\t  *) exit 2 ;; \\\n\tesac\n"
+	wf := func(shards string) string {
+		return "strategy:\n  matrix:\n    shard: [" + shards + "]\n  name: e2e (all)\n"
+	}
+	if got := matrixProblems(makefile, wf("a, b")); len(got) != 0 {
+		t.Errorf("matching lists reported: %v", got)
+	}
+	if got := matrixProblems(makefile, wf("a")); len(got) == 0 {
+		t.Error("a Makefile shard missing from the matrix was not reported")
+	}
+	if got := matrixProblems(makefile, wf("a, b, c")); len(got) == 0 {
+		t.Error("a matrix shard missing from the Makefile was not reported")
+	}
+	if got := matrixProblems(makefile, "shard: [a, b]\n"); len(got) == 0 {
+		t.Error("a missing aggregate `e2e (all)` job was not reported")
+	}
+}
+
+func TestGuardFiresOnATestInNoSlice(t *testing.T) {
+	tests := []string{"TestA", "TestB", "TestC"}
+	if got := sliceProblems("pkg", tests, []string{"^(TestA|TestB)$", "^(TestC)$"}); len(got) != 0 {
+		t.Errorf("a full cover was reported: %v", got)
+	}
+	if got := sliceProblems("pkg", tests, []string{"^(TestA)$", "^(TestC)$"}); len(got) != 1 || !strings.Contains(got[0], "TestB") {
+		t.Errorf("a test in no slice was not reported: %v", got)
+	}
+	if got := sliceProblems("pkg", tests, []string{"^(TestA|TestB)$", "^(TestB|TestC)$"}); len(got) != 1 || !strings.Contains(got[0], "TestB") {
+		t.Errorf("a test in two slices was not reported: %v", got)
+	}
+}
+
+// --- the checks ---
+
+var shardPathRE = regexp.MustCompile(`\./tests/[A-Za-z0-9_./-]*`)
+
+func shardPaths(makefile string) []string { return shardPathRE.FindAllString(makefile, -1) }
+
+// coverageProblems reports every package under root/tests holding a test that no
+// path in the Makefile (or in extra) covers, and every nested Go module that
+// `make test-plugins-e2e` would not discover.
+func coverageProblems(t *testing.T, root, makefile string, extra []string) []string {
+	t.Helper()
+	covered := append(shardPaths(makefile), extra...)
+	pluginModule := regexp.MustCompile(`^marketplace/plugins/[^/]+/tests$`)
+	var problems []string
+	seen := map[string]bool{}
+	skip := func(rel string) bool {
+		return rel == ".git" || strings.HasPrefix(rel, ".claude") || strings.Contains(rel, "node_modules") || strings.Contains(rel, "testdata")
+	}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), "_test.go") {
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if skip(rel) {
+				return fs.SkipDir
+			}
 			return nil
 		}
-		rel, err := filepath.Rel(root, filepath.Dir(path))
-		if err != nil {
-			return err
-		}
-		pkg := "./" + filepath.ToSlash(rel)
-		for _, c := range covered {
-			if inShardPath(pkg, c) {
+		switch {
+		case d.Name() == "go.mod" && rel != "go.mod":
+			dir := filepath.ToSlash(filepath.Dir(rel))
+			if !pluginModule.MatchString(dir) && !seen["mod:"+dir] {
+				seen["mod:"+dir] = true
+				problems = append(problems, "nested Go module "+dir+" is run by no shard: only marketplace/plugins/*/tests modules are discovered by `make test-plugins-e2e`")
+			}
+		case strings.HasPrefix(rel, "tests/") && strings.HasSuffix(d.Name(), "_test.go"):
+			pkg := "./" + filepath.ToSlash(filepath.Dir(rel))
+			if seen[pkg] {
 				return nil
 			}
-		}
-		if !slicesContains(missing, pkg) {
-			missing = append(missing, pkg)
+			seen[pkg] = true
+			for _, c := range covered {
+				if inShardPath(pkg, c) {
+					return nil
+				}
+			}
+			problems = append(problems, pkg+" is in no CI shard: add it to a test-e2e-shard case in the Makefile (or to test-unit)")
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(missing)
-	for _, pkg := range missing {
-		t.Errorf("%s is in no CI shard: add it to a test-e2e-shard case in the Makefile (or to test-unit)", pkg)
+	// The plugin shard must really discover modules, or the exemption above lies.
+	if !strings.Contains(makefile, "marketplace/plugins -mindepth 2 -maxdepth 2 -type d -name tests") {
+		problems = append(problems, "`make test-plugins-e2e` no longer discovers marketplace/plugins/*/tests modules")
 	}
+	sort.Strings(problems)
+	return problems
 }
 
-// exampleShardPackages runs scripts/examples-shard.sh for each `INDEX COUNT`
-// the Makefile calls it with and returns the packages (as ./tests/... paths) the
-// shards cover. It fails if the indices are not exactly 1..COUNT, if two shards
-// share a package, or if the union is not every package `go list` finds under
-// tests/e2e/examples — so an example in no shard fails here.
-func exampleShardPackages(t *testing.T, root, makefile string) []string {
+// exampleShardCoverage runs scripts/examples-shard.sh for each `INDEX COUNT`
+// the Makefile calls it with. It returns the ./tests/... paths those shards
+// cover, plus problems: indices not exactly 1..COUNT, a package in two shards,
+// a package in none, a test of a sliced package in no slice.
+func exampleShardCoverage(t *testing.T, root, makefile string) (covered, problems []string) {
 	t.Helper()
 	calls := regexp.MustCompile(`scripts/examples-shard\.sh (\d+) (\d+)`).FindAllStringSubmatch(makefile, -1)
 	if len(calls) == 0 {
-		t.Fatal("the Makefile never calls scripts/examples-shard.sh — the examples are in no shard")
+		return nil, []string{"the Makefile never calls scripts/examples-shard.sh — the examples are in no shard"}
 	}
-	count := calls[0][2]
-	seenIdx := map[string]bool{}
+	count, _ := strconv.Atoi(calls[0][2])
+	idx := map[int]bool{}
 	for _, c := range calls {
-		if c[2] != count {
-			t.Fatalf("the Makefile calls examples-shard.sh with different shard counts (%s and %s)", count, c[2])
+		if c[2] != calls[0][2] {
+			return nil, []string{"the Makefile calls examples-shard.sh with different shard counts"}
 		}
-		seenIdx[c[1]] = true
+		i, _ := strconv.Atoi(c[1])
+		idx[i] = true
 	}
-	if len(seenIdx) != len(calls) || len(calls) != atoiOrFail(t, count) {
-		t.Fatalf("the Makefile calls examples-shard.sh %d times for %d distinct indices; want one call per index 1..%s", len(calls), len(seenIdx), count)
+	for i := 1; i <= count; i++ {
+		if !idx[i] {
+			problems = append(problems, "no Makefile case runs examples-shard.sh shard "+strconv.Itoa(i)+" of "+calls[0][2])
+		}
 	}
 
-	list := func(args ...string) []string {
+	run := func(args ...string) []string {
 		cmd := exec.Command(args[0], args[1:]...)
 		cmd.Dir = root
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
-		return strings.Fields(string(out))
+		return strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	}
-	all := list("go", "list", "./tests/e2e/examples/...")
-	owner := map[string]string{}
-	var covered []string
-	for _, c := range calls {
-		for _, p := range list("scripts/examples-shard.sh", c[1], c[2]) {
-			if prev, dup := owner[p]; dup {
-				t.Errorf("%s is in example shards %s and %s", p, prev, c[1])
+	// The module path, so import paths can become ./tests/... paths.
+	modPath := strings.TrimSpace(run("go", "list", "-m")[0]) + "/"
+	owner := map[string]int{}
+	regexes := map[string][]string{}
+	for i := 1; i <= count; i++ {
+		for _, line := range run("scripts/examples-shard.sh", strconv.Itoa(i), calls[0][2]) {
+			if line == "" {
+				continue
 			}
-			owner[p] = c[1]
-			covered = append(covered, "./"+strings.TrimPrefix(p, "github.com/sloprail/sloprail/"))
+			pkg, re, sliced := strings.Cut(line, "\t")
+			if sliced {
+				regexes[pkg] = append(regexes[pkg], re)
+			} else if prev, dup := owner[pkg]; dup {
+				problems = append(problems, pkg+" is in example shards "+strconv.Itoa(prev)+" and "+strconv.Itoa(i))
+			}
+			owner[pkg] = i
+			covered = append(covered, "./"+strings.TrimPrefix(pkg, modPath))
 		}
 	}
-	for _, p := range all {
-		if _, ok := owner[p]; !ok {
-			t.Errorf("%s is in no example shard (scripts/examples-shard.sh)", p)
+	for _, pkg := range run("go", "list", "./tests/e2e/examples/...") {
+		if _, ok := owner[pkg]; !ok {
+			problems = append(problems, pkg+" is in no example shard (scripts/examples-shard.sh)")
 		}
 	}
-	return covered
+	for pkg, res := range regexes {
+		dir := filepath.Join(root, strings.TrimPrefix(pkg, modPath))
+		problems = append(problems, sliceProblems(pkg, topLevelTests(t, dir), res)...)
+	}
+	return covered, problems
 }
 
-func atoiOrFail(t *testing.T, s string) int {
+var testFuncRE = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\(`)
+
+// topLevelTests lists the Test functions of the package in dir (TestMain is not one).
+func topLevelTests(t *testing.T, dir string) []string {
 	t.Helper()
-	n := 0
-	for _, r := range s {
-		n = n*10 + int(r-'0')
+	files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	var names []string
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range testFuncRE.FindAllStringSubmatch(string(b), -1) {
+			if m[1] != "TestMain" {
+				names = append(names, m[1])
+			}
+		}
 	}
-	return n
+	return names
+}
+
+// sliceProblems reports each test matched by none, or by more than one, of the
+// -run regexes a sliced package is run with.
+func sliceProblems(pkg string, tests, regexes []string) []string {
+	var res []*regexp.Regexp
+	for _, r := range regexes {
+		res = append(res, regexp.MustCompile(r))
+	}
+	var problems []string
+	for _, name := range tests {
+		n := 0
+		for _, re := range res {
+			if re.MatchString(name) {
+				n++
+			}
+		}
+		switch {
+		case n == 0:
+			problems = append(problems, pkg+": "+name+" is in no shard slice")
+		case n > 1:
+			problems = append(problems, pkg+": "+name+" is in "+strconv.Itoa(n)+" shard slices")
+		}
+	}
+	return problems
+}
+
+// matrixProblems compares the workflow matrix with the Makefile's
+// test-e2e-shard cases and requires the aggregate job.
+func matrixProblems(makefile, workflow string) []string {
+	m := regexp.MustCompile(`shard:\s*\[([^\]]*)\]`).FindStringSubmatch(workflow)
+	if m == nil {
+		return []string{"no `shard: [...]` matrix in .github/workflows/test.yml"}
+	}
+	var matrix []string
+	for _, s := range strings.Split(m[1], ",") {
+		matrix = append(matrix, strings.TrimSpace(s))
+	}
+	start := strings.Index(makefile, "test-e2e-shard:")
+	if start < 0 {
+		return []string{"test-e2e-shard not found in the Makefile"}
+	}
+	end := strings.Index(makefile[start:], "esac")
+	if end < 0 {
+		return []string{"test-e2e-shard has no esac in the Makefile"}
+	}
+	var cases []string
+	for _, c := range regexp.MustCompile(`(?m)^\t  ([a-z0-9_]+)\)`).FindAllStringSubmatch(makefile[start:start+end], -1) {
+		cases = append(cases, c[1])
+	}
+	var problems []string
+	sort.Strings(matrix)
+	sort.Strings(cases)
+	if strings.Join(matrix, ",") != strings.Join(cases, ",") {
+		problems = append(problems, "the workflow matrix runs shards "+strings.Join(matrix, ",")+" but the Makefile defines "+strings.Join(cases, ","))
+	}
+	if !strings.Contains(workflow, "name: e2e (all)") {
+		problems = append(problems, "the workflow has no aggregate `e2e (all)` job")
+	}
+	return problems
 }
 
 // inShardPath reports whether the go package pkg is named by the shard path p
@@ -134,39 +338,6 @@ func inShardPath(pkg, p string) bool {
 	return pkg == strings.TrimSuffix(p, "/")
 }
 
-// The workflow runs exactly the shards the Makefile defines.
-func TestWorkflowMatrixMatchesMakefileShards(t *testing.T) {
-	root := repoRoot(t)
-	makefile := readRepoFile(t, root, "Makefile")
-	workflow := readRepoFile(t, root, ".github/workflows/test.yml")
-
-	m := regexp.MustCompile(`shard:\s*\[([^\]]*)\]`).FindStringSubmatch(workflow)
-	if m == nil {
-		t.Fatal("no `shard: [...]` matrix in .github/workflows/test.yml")
-	}
-	var matrix []string
-	for _, s := range strings.Split(m[1], ",") {
-		matrix = append(matrix, strings.TrimSpace(s))
-	}
-
-	// Cases of test-e2e-shard: lines like `  session)  go test ...` up to its esac.
-	start := strings.Index(makefile, "test-e2e-shard: mock")
-	end := strings.Index(makefile[start:], "esac")
-	if start < 0 || end < 0 {
-		t.Fatal("test-e2e-shard not found in the Makefile")
-	}
-	var cases []string
-	for _, c := range regexp.MustCompile(`(?m)^\t  ([a-z0-9_]+)\)`).FindAllStringSubmatch(makefile[start:start+end], -1) {
-		cases = append(cases, c[1])
-	}
-
-	sort.Strings(matrix)
-	sort.Strings(cases)
-	if strings.Join(matrix, ",") != strings.Join(cases, ",") {
-		t.Errorf("the workflow matrix runs shards %v but the Makefile defines %v", matrix, cases)
-	}
-}
-
 func readRepoFile(t *testing.T, root, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(root, rel))
@@ -174,13 +345,4 @@ func readRepoFile(t *testing.T, root, rel string) string {
 		t.Fatal(err)
 	}
 	return string(b)
-}
-
-func slicesContains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
