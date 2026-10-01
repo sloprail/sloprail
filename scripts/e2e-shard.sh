@@ -90,13 +90,23 @@ if [ "$mode" != run ]; then
   exit 0
 fi
 
+# go test -v, for the per-test timings (`--- PASS: TestX (1.2s)`) that
+# e2e-shard-weights.txt is measured from. Its full output is held back and
+# printed only when the package fails: streaming it live made a test that logs
+# a 650KB payload take minutes in CI, and a green run needs the timings, not
+# the chatter.
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
 rc=0
 while IFS="$(printf '\t')" read -r ip re; do
   [ -n "$ip" ] || continue
-  if [ -n "$re" ]; then
-    go test -v -p 1 -count=1 -timeout 30m -run "$re" "$ip" || rc=1
+  args=(-v -p 1 -count=1 -timeout 30m)
+  [ -z "$re" ] || args+=(-run "$re")
+  if go test "${args[@]}" "$ip" >"$tmp" 2>&1; then
+    grep -E '^(--- |ok  |PASS$)' "$tmp" || true
   else
-    go test -v -p 1 -count=1 -timeout 30m "$ip" || rc=1
+    cat "$tmp"
+    rc=1
   fi
 done <<<"$mine"
 exit "$rc"
