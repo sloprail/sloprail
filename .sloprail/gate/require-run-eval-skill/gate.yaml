@@ -1,0 +1,13 @@
+# Running sr-eval is refused until the run-eval skill was loaded this session.
+# The skill holds what a correct run needs: the fixture format, the
+# trajectory-health scoring, inspecting the workspace with --keep, and the archive.
+# A run without it is easy to misread (a PASS can hide a guardrail that never
+# reached the workspace). Matches the binary by basename (sr-eval, bin/sr-eval)
+# and the proxy form `sr eval`.
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, .bin == "sr-eval" or
+        (.bin == "sr" and any(.argv, # == "eval")))
+require:
+  - skill: run-eval
