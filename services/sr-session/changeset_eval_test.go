@@ -327,7 +327,8 @@ func TestRunRequirement_CitationPerFile(t *testing.T) {
 		assert.Contains(t, v.Reason, "git revert", "undoing is a revert")
 		assert.Contains(t, v.Reason, "an empty commit carrying only the trailer does not count")
 		assert.Contains(t, v.Reason, followUp(file), "the recommended fix is a follow-up commit")
-		assert.Contains(t, v.Reason, "sr-file write", "no change needed: restate the content through a cited write")
+		assert.NotContains(t, v.Reason, "sr-file write", "no restating the content through a cited write")
+		assert.Contains(t, v.Reason, "Never wash a change", "a citation is never carried by a whitespace-only or restated commit")
 		return v.Reason
 	}
 	amend := "git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"

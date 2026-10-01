@@ -98,9 +98,9 @@ own call.
   whose `when` applies. A refusal names every file that is not grounded and says how to
   ground them, in order. (1) **Recommended:** a follow-up commit that changes each file
   and carries the trailer (`git add <files> && git commit -m '<what changed>' -m
-  'Sloprail-Cites-User: <exact quote>'`); when no change is needed, restate the file's
-  content through a cited `sr-file write <file> --cite:user '<exact quote>'`, or touch
-  it minimally so the commit changes it. (2) An amend (`git commit --amend --no-edit
+  'Sloprail-Cites-User: <exact quote>'`); never wash a change through a whitespace-only
+  or restated-content commit just to carry a citation (amend your own unpushed commit,
+  or revert). (2) An amend (`git commit --amend --no-edit
   --trailer 'Sloprail-Cites-User: <exact quote>'`) is offered ONLY when every such
   file's last commit is HEAD, HEAD is unpushed (no remote branch contains it) and the
   tree is clean. `git reset --soft` is never suggested. When the session already recorded
@@ -134,7 +134,7 @@ own call.
   the agent's cycles by comparing each file with how the agent left it at its
   last Stop. A change made by something else WHILE the agent is working (an
   editor saving the file mid-turn) cannot be told from the agent's own and is
-  charged; restate the file with a cited `sr-file write` to settle it.
+  charged; amend your own unpushed commit with the trailer, or revert it.
 - Work the agent starts that can outlive the call that started it can land
   after its Stop, and a change that lands then is charged to the agent (the
   refusal says the file changed after its last Stop, and names the work),

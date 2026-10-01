@@ -639,14 +639,10 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 	for i, f := range files {
 		quoted[i] = "'" + f + "'"
 	}
-	pool := "user"
-	if trailer == changeset.TrailerCitesTool {
-		pool = "tool_result"
-	}
-	fmt.Fprintf(&b, "\nRecommended: ground them with a FOLLOW-UP commit that changes each file and carries the trailer. "+
-		"If no change is needed, restate the file's content through a cited `sr-file write <file> --cite:%s '<exact quote>'`, "+
-		"or touch it minimally so the commit changes it. Then:\n"+
-		"  git add %s && git commit -m '<what changed>' -m %s", pool, strings.Join(quoted, " "), shellQuote(line))
+	fmt.Fprintf(&b, "\nRecommended: ground them with a FOLLOW-UP commit that makes a REAL change to each file and carries the trailer. "+
+		"Never wash a change through a whitespace-only or restated-content commit just to carry a citation: "+
+		"if no real change is needed, amend your own unpushed commit with the trailer (below) or revert. Then:\n"+
+		"  git add %s && git commit -m '<what changed>' -m %s", strings.Join(quoted, " "), shellQuote(line))
 	if allHead && amendSafe {
 		fmt.Fprintf(&b, "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:\n"+
 			"  git commit --amend --no-edit --trailer %s", shellQuote(line))

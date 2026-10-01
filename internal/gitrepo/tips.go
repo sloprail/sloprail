@@ -301,9 +301,47 @@ func LandedUpstream(dir, tip string) bool {
 		}
 		a, ok1 := blob(up, path)
 		b, ok2 := blob(tip, path)
-		if !ok1 || !ok2 || a != b {
+		if !ok1 || !ok2 {
+			return false
+		}
+		if a == b {
+			continue // the fast path: upstream holds exactly the tip's version
+		}
+		// Upstream has changed the path since: landed when the tip's version appeared in
+		// upstream's history of it (or, for a deletion, upstream deleted it at some point).
+		if !inPathHistory(dir, up, path, b) {
 			return false
 		}
 	}
 	return true
+}
+
+// maxPathHistory bounds how many of upstream's commits touching one path are searched.
+const maxPathHistory = 500
+
+// inPathHistory reports whether upstream's history of path (its newest maxPathHistory
+// commits touching it) ever had the version tipBlob ("" = absent at the tip: upstream
+// deleted the path at some point). Anything uncertain is false.
+func inPathHistory(dir, up, path, tipBlob string) bool {
+	out, err := run(dir, "log", "--raw", "--no-abbrev", "--no-renames", "--format=", "-n", strconv.Itoa(maxPathHistory), up, "--", path)
+	if err != nil {
+		return false
+	}
+	const zero = "0000000000000000000000000000000000000000"
+	for _, line := range strings.Split(out, "\n") {
+		// ":<old mode> <new mode> <old blob> <new blob> <status>\t<path>"
+		meta, _, ok := strings.Cut(line, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) < 5 {
+			continue
+		}
+		if tipBlob == "" {
+			if f[3] == zero {
+				return true
+			}
+		} else if f[3] == tipBlob {
+			return true
+		}
+	}
+	return false
 }
