@@ -222,9 +222,9 @@ func OpenFamilyReadOnly(path, family string) (Store, error) {
 // The columns each view exposes: exactly the unshared database's, so what a reader sees (and
 // `select *` returns) does not change with where the rows are kept.
 const (
-	runCols   = "id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id, base_ref, head_ref, exit_code, error, metadata, created_at"
-	checkCols = "id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at"
-	itemCols  = "id, check_id, key, passed, metadata, checked_at"
+	runCols   = "id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id, base_ref, head_ref, exit_code, error, metadata, created_at, rowid AS rowid"
+	checkCols = "id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at, rowid AS rowid"
+	itemCols  = "id, check_id, key, passed, metadata, checked_at, rowid AS rowid"
 )
 
 func scopeToFamily(db *sql.DB, family string) error {

@@ -81,6 +81,20 @@ func TestFamilyStores_ReuseAPassOnExactInputOnly(t *testing.T) {
 	assert.False(t, ok, "a refusal stays with the session that was refused")
 }
 
+func TestFamilyStores_TheTablesKeepTheirRowidForARuleThatOrdersByIt(t *testing.T) {
+	a, err := OpenFamily(filepath.Join(t.TempDir(), "checks.db"), "sess-a")
+	require.NoError(t, err)
+	defer a.Close()
+	passRun(t, a, "h1", "fp1")
+	passRun(t, a, "h2", "fp2")
+	// The shape of the merge gate's own query: a later run of the same rule, by rowid.
+	rows, err := a.Query(`select r1.head_ref from check_runs r1 where exists
+		(select 1 from check_runs r2 where r2.check_id = r1.check_id and r2.rowid > r1.rowid)`)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "h1", rows[0]["head_ref"])
+}
+
 func TestSiblingRunRefs_AreOtherFamiliesOfTheSameFolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "checks.db")
 	a, err := OpenFamily(path, "sess-a")

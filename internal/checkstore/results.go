@@ -279,7 +279,7 @@ func (s *store) CachedCheck(subject, kind, fingerprint string) (CachedCheck, boo
 	err = db.QueryRow(`
 		SELECT status, metadata FROM checks
 		WHERE subject = ? AND kind = ? AND fingerprint = ? AND status IN ('pass', 'fail')
-		ORDER BY checked_at DESC, id DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
+		ORDER BY checked_at DESC, rowid DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
 	if errors.Is(err, sql.ErrNoRows) && s.family != "" {
 		// Another session of this repository judged exactly this input (the fingerprint is the
 		// rule's whole folder, the model and the exact input) and passed it: a pass is a fact
@@ -436,7 +436,7 @@ func (s *store) PassedHeads(rule string) ([]string, error) {
 		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
 		                  AND (c.status IN ('fail', 'error', 'interrupted')
 		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
-		ORDER BY cr.run_at DESC, cr.id DESC`, rule)
+		ORDER BY cr.run_at DESC, cr.rowid DESC`, rule)
 	if err != nil {
 		return nil, fmt.Errorf("checkstore: passed heads for %q: %w", rule, err)
 	}
@@ -468,7 +468,7 @@ func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, er
 		FROM check_runs cr
 		LEFT JOIN checks c ON c.run_id = cr.id
 		WHERE cr.id = (SELECT l.id FROM check_runs l WHERE l.check_id = cr.check_id
-		               ORDER BY l.run_at DESC, l.id DESC LIMIT 1)
+		               ORDER BY l.run_at DESC, l.rowid DESC LIMIT 1)
 		  AND (? = '' OR cr.check_id = ? OR cr.check_id LIKE '%/' || ?)
 		ORDER BY cr.check_id, c.subject, c.kind`, rule, rule, rule)
 	if err != nil {
