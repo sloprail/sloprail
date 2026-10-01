@@ -343,8 +343,17 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		// `match` selected nothing in a range that WAS computed: a pass, and the
 		// watermark advances to this head.
 		run.Complete = true
-		if _, err := ev.record(run); err != nil {
+		runID, err := ev.record(run)
+		if err != nil {
 			return ev.fail(g, run, err)
+		}
+		if ev.results != nil && runID != "" {
+			// Every file an earlier failure judged has left the range: nothing is
+			// outstanding, so those failures are stale (and are judged again if the
+			// same input returns), exactly as when a run with checks finishes.
+			if _, err := ev.results.ResolveStale(rule, hash, runID); err != nil {
+				fmt.Fprintln(ev.log(g), "sloprail:", err)
+			}
 		}
 		return nil, fileGuardResult{}, false
 	}

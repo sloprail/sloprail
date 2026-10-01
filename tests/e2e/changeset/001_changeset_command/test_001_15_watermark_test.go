@@ -36,7 +36,7 @@ func watermarkRepo(t *testing.T) (e *Env, proj, rule, hash, c1 string) {
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	c1 = e.CommitAll(proj, "first edit")
 	first, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
-	if res.Code != 0 || first.Origin != "floor" {
+	if res.Code != 0 || first.Origin != "session-start" {
 		t.Fatalf("before any run: exit %d origin %q\n%s", res.Code, first.Origin, res.Output)
 	}
 	return e, proj, first.Rule, first.RuleHash, c1
@@ -58,7 +58,7 @@ func TestT001_15_TheWatermarkIsTheNewestPassedRun(t *testing.T) {
 	e.RecordCheckRun(proj, wmSession, broken)
 
 	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
-	if res.Code != 0 || got.Origin != "floor" {
+	if res.Code != 0 || got.Origin != "session-start" {
 		t.Fatalf("a failed run moved the base: exit %d origin %q\n%s", res.Code, got.Origin, res.Output)
 	}
 
@@ -122,7 +122,7 @@ func TestT001_18_APassIsPerRule(t *testing.T) {
 	e.RecordCheckRun(proj, wmSession, passRun("file-guard/other", c1, hash))
 
 	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
-	if res.Code != 0 || got.Origin != "floor" {
+	if res.Code != 0 || got.Origin != "session-start" {
 		t.Fatalf("exit %d origin %q:\n%s", res.Code, got.Origin, res.Output)
 	}
 }

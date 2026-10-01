@@ -13,8 +13,8 @@ import (
 // alone.
 func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 	e, proj, led := project(t, docsRule)
-	// The floor is the PARENT of the rule's commit: the rule's own commit is judged too.
-	floor := e.Git(proj, "rev-parse", "HEAD~1")
+	// The rule existed at session start: the base is the session start (the rule's commit).
+	floor := e.Git(proj, "rev-parse", "HEAD")
 
 	// Refusal: a commit the rule objects to.
 	e.Run(proj, "s-003-01", "write the doc", Turns("done",
@@ -45,8 +45,8 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 	))
 	runs = ledger(t, led)
 	last := runs[len(runs)-1]
-	if last.Base != floor || len(last.Commits) != 3 {
-		t.Fatalf("after the fix the range was %+v; want the rule's commit and both commits from the floor", last)
+	if last.Base != floor || len(last.Commits) != 2 {
+		t.Fatalf("after the fix the range was %+v; want both commits from the session start (the rule predates it)", last)
 	}
 	if len(runs) == refusedRuns {
 		t.Fatal("the fix was not judged")

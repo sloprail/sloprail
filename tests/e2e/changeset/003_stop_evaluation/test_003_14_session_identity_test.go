@@ -15,10 +15,11 @@ import (
 // T003_14: an unrelated conversation inherits no verdict. The first session passes
 // and its watermark holds (a Stop with nothing new runs no check); a second,
 // unrelated session in the same tree has no watermark, so its first Stop judges the
-// range from the rule's floor again.
+// range from its own session start again.
 func TestT003_14_AnUnrelatedSessionInheritsNoVerdicts(t *testing.T) {
 	e, proj, led := project(t, docsRule)
-	floor := e.Git(proj, "rev-parse", "HEAD~1")
+	floor := e.Git(proj, "rev-parse", "HEAD") // the rule's commit: both sessions start here
+	e.Run(proj, "s-003-14-second", "look around", Turns("done", Bash("b0", "true")))
 
 	e.Run(proj, "s-003-14-first", "write the doc", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "clean words", "add a"),
@@ -36,14 +37,14 @@ func TestT003_14_AnUnrelatedSessionInheritsNoVerdicts(t *testing.T) {
 		t.Fatalf("the passing session's own watermark did not hold: %d more run(s)", n-passed)
 	}
 
-	e.Run(proj, "s-003-14-second", "look around", Turns("done", Bash("b1", "true")))
+	e.Run(proj, "s-003-14-second", "now look again", Turns("done", Bash("b1", "true")))
 	runs := ledger(t, led)
 	if len(runs) == passed {
 		t.Fatal("an unrelated session took the first session's pass: the check did not run for it")
 	}
 	got := runs[len(runs)-1]
 	if got.Base != floor || !reflect.DeepEqual(paths(got.Files), []string{"docs/a.md"}) {
-		t.Fatalf("the unrelated session was judged over %+v; want the whole range from the floor %s", got, floor)
+		t.Fatalf("the unrelated session was judged over %+v; want the whole range from the session start %s", got, floor)
 	}
 }
 
@@ -54,7 +55,8 @@ func TestT003_14_AnUnrelatedSessionInheritsNoVerdicts(t *testing.T) {
 // and is refused on its own evaluation, not by replaying session two's verdict.
 func TestT003_15_TwoConversationsKeepVerdictsAndWatermarksApart(t *testing.T) {
 	e, proj, led := project(t, docsRule)
-	floor := e.Git(proj, "rev-parse", "HEAD~1")
+	floor := e.Git(proj, "rev-parse", "HEAD") // the rule's commit: both sessions start here
+	e.Run(proj, "s-003-15-two", "look around", Turns("done", Bash("b0", "true")))
 
 	e.Run(proj, "s-003-15-one", "write the doc", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "clean words", "add a"),
