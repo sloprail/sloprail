@@ -38,6 +38,9 @@ import (
 type stopTip struct {
 	Sha string
 	Ref string
+	// Start is where the ref was created (its oldest reflog entry), or "": a floor for
+	// the range so upstream commits merged before the branch was cut are not judged.
+	Start string
 }
 
 // describe is what a refusal for this tip says first: which branch, in which folder,
@@ -149,7 +152,8 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 		} else if ok || tip == head.Commit {
 			continue // HEAD's own judgment covers it
 		}
-		cands = append(cands, stopTip{Sha: tip, Ref: r.Name})
+		start, _ := gitrepo.RefCreation(root, r.Name)
+		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start})
 	}
 	shas := make([]string, len(cands))
 	for i, c := range cands {

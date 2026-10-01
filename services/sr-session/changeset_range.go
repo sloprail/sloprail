@@ -65,13 +65,13 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 // being judged over everything its PARENT session's start predates. With no folder
 // (nil) the agent's own recorded start is used, as before.
 func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store, folder *sessionstate.Folder) (gitrepo.Range, error) {
-	return resolveRuleRangeAt(root, "", g, results, state, folder)
+	return resolveRuleRangeAt(root, "", "", g, results, state, folder)
 }
 
 // resolveRuleRangeAt is resolveRuleRangeIn for the line of history ending at tip (a
 // commit SHA), or at HEAD when tip is "": the watermark must be reachable from the tip,
 // else the start or floor applies, exactly as for HEAD.
-func resolveRuleRangeAt(root, tip string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store, folder *sessionstate.Folder) (gitrepo.Range, error) {
+func resolveRuleRangeAt(root, tip, tipStart string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store, folder *sessionstate.Folder) (gitrepo.Range, error) {
 	var watermark, dropped, sessionStart string
 	if results != nil {
 		heads, err := results.PassedHeads(g.Qualified())
@@ -141,6 +141,30 @@ func resolveRuleRangeAt(root, tip string, g declaration.FileGuard, results check
 			// (A session recorded as begun before the first commit keeps its empty-tree
 			// start: that is where the work began, wherever the Stop first looked.)
 			sessionStart = ""
+		}
+	}
+	// A branch the working tree left, with no watermark: the start is where the ref was
+	// created when that lies between the computed start (its merge base with the tip) and
+	// the tip, so upstream commits merged before the branch was cut are not judged.
+	// Otherwise the stricter computed start stands.
+	// A watermark (HEAD's pass, say) older than the creation point is raised to it too.
+	if tip != "" && tipStart != "" {
+		from := sessionStart
+		if watermark != "" {
+			from = watermark
+		}
+		if from != "" && from != tipStart {
+			if mb, found, err := gitrepo.ReanchorWatermarkAt(root, tip, from); err == nil && found {
+				okA, errA := gitrepo.IsAncestor(root, mb, tipStart)
+				okB, errB := gitrepo.IsAncestor(root, tipStart, tip)
+				if errA == nil && errB == nil && okA && okB {
+					if watermark != "" {
+						watermark = tipStart
+					} else {
+						sessionStart = tipStart
+					}
+				}
+			}
 		}
 	}
 	var refused []string

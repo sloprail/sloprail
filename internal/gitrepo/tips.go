@@ -201,3 +201,17 @@ func ReflogTips(dir string, since time.Time) ([]Tip, error) {
 	}
 	return tips, nil
 }
+
+// RefCreation is the commit a branch was created at: the oldest entry of the ref own
+// reflog ("branch: Created from ..."). Empty when the ref has no reflog.
+func RefCreation(dir, ref string) (string, error) {
+	out, err := run(dir, "reflog", "show", "--format=%H", ref)
+	if err != nil {
+		return "", nil
+	}
+	lines := strings.Fields(out)
+	if len(lines) == 0 || !isObjectName(lines[len(lines)-1]) {
+		return "", nil
+	}
+	return lines[len(lines)-1], nil
+}
