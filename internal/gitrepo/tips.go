@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -112,7 +113,19 @@ var hexName = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 // madeCommit is the reflog subject of an entry that put a NEW commit at HEAD (as opposed
 // to a checkout, a reset or a clone, which only move HEAD to something that exists).
+// A fast-forward ("merge X: Fast-forward", "pull: Fast-forward") and a rebase's start
+// and finish only move HEAD onto commits somebody else made (a sub-agent's branch, the
+// upstream), so they are not the folder's work: claiming them made a coordinator that
+// fast-forwarded to a sub-agent's branch answer for that branch.
 func madeCommit(subject string) bool {
+	if strings.HasSuffix(subject, ": Fast-forward") || strings.HasSuffix(subject, ": Already up to date.") {
+		return false
+	}
+	for _, p := range []string{"rebase (start)", "rebase (finish)", "rebase (abort)", "rebase -i (start)", "rebase -i (finish)", "rebase -i (abort)"} {
+		if strings.HasPrefix(subject, p) {
+			return false
+		}
+	}
 	for _, p := range []string{"commit", "cherry-pick", "revert", "merge", "pull", "rebase", "am"} {
 		if subject == p || strings.HasPrefix(subject, p+":") || strings.HasPrefix(subject, p+" (") {
 			return true
@@ -374,4 +387,35 @@ func MadeByHead(dir, sha string) bool {
 		}
 	}
 	return false
+}
+
+// CheckedOutAt returns the path of the OTHER worktree of dir's repository that has the
+// full ref (refs/heads/x) checked out, or "" when none has it (dir's own checkout is not
+// "other").
+func CheckedOutAt(dir, ref string) string {
+	out, err := run(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return ""
+	}
+	self, _ := run(dir, "rev-parse", "--show-toplevel")
+	self = realPath(strings.TrimSpace(self))
+	var path string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "branch "):
+			if strings.TrimPrefix(line, "branch ") == ref && realPath(path) != self {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
 }

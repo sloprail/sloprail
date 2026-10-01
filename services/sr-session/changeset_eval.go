@@ -367,6 +367,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		Dir:            g.Dir,
 		GuardName:      g.Name,
 		Workspace:      ev.scope.Workspace,
+		ProjectRoot:    tree.Path,
 		SessionID:      ev.scope.SessionID,
 		LaunchedBy:     appendLaunchedBy(os.Getenv, g.Name),
 		Changeset:      &payload,

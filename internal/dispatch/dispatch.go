@@ -129,6 +129,13 @@ type Request struct {
 	// it. Empty leaves SR_WORKSPACE unset.
 	Workspace string
 
+	// ProjectRoot is the tree a JUDGE reads as the project, when it differs from
+	// Workspace: a changeset's read-only snapshot of the tip being judged (SR_TREE).
+	// A file-guard judges commits, so the judge must see the committed tree of that
+	// tip, never the folder's checked-out working tree (another branch, or
+	// uncommitted edits). Empty falls back to Workspace.
+	ProjectRoot string
+
 	// SessionID is the conversation's identity, passed as SR_SESSION_ID so a
 	// check's own `sr-session state` lands in this session's keyspace. Empty leaves
 	// it unset (diagnosable). Not load-bearing for the verdict.
