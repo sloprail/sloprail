@@ -78,8 +78,10 @@ func TestT001_11_PluginRuleUsesTheSessionStart(t *testing.T) {
 
 // T001_12: when even the last floor cannot be used the command fails closed. The
 // session's start commit is amended away, so it is no longer an ancestor of HEAD;
-// the rule has no folder commit either. Committing the rule gives it a floor of
-// its own, and the same command then succeeds.
+// the rule has no folder commit either. Committing the rule gives it a floor, but a
+// floor alone is not a stand-in for a rewritten start (it can sit after in-session
+// commits), so the command still refuses; with a remote branch to anchor on it
+// succeeds, from the earlier of the two.
 func TestT001_12_AnUnreachableSessionStartFailsClosed(t *testing.T) {
 	e, proj, _ := startedSession(t, "s-001-12")
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
@@ -94,8 +96,15 @@ func TestT001_12_AnUnreachableSessionStartFailsClosed(t *testing.T) {
 	}
 
 	e.CommitAll(proj, "add the rule")
+	_, res = show(t, e, proj, e.SessionEnv("s-001-12"), "size")
+	if res.Code == 0 || !strings.Contains(res.Output, "can't tell which commits are new") {
+		t.Fatalf("a floor alone stood in for a rewritten session start:\n%s", res.Output)
+	}
+
+	root := e.Git(proj, "rev-list", "--max-parents=0", "HEAD")
+	e.Git(proj, "update-ref", "refs/remotes/origin/main", root)
 	got, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
-	if res.Code != 0 || got.Origin != "floor" {
-		t.Fatalf("with the rule committed: exit %d origin %q:\n%s", res.Code, got.Origin, res.Output)
+	if res.Code != 0 || got.Base != root {
+		t.Fatalf("with a remote branch to anchor on: exit %d base %q, want %s:\n%s", res.Code, got.Base, root, res.Output)
 	}
 }

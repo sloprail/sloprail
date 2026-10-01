@@ -50,8 +50,8 @@ func TestT046_30_AnUncitedEditOfMarkedCodeBesideACitedSpecChangePasses(t *testin
 }
 
 // T046_31: an uncited SPEC.md change is still refused, naming SPEC.md and not the source
-// file edited beside it, and the refusal's own command (the range squashed into one
-// commit carrying the quote) grounds it.
+// file edited beside it, and the refusal's own command (a follow-up commit that changes SPEC.md and
+// carries the quote) grounds it.
 func TestT046_31_AnUncitedSpecChangeIsRefusedNamingOnlyTheSpec(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
@@ -75,8 +75,12 @@ func TestT046_31_AnUncitedSpecChangeIsRefusedNamingOnlyTheSpec(t *testing.T) {
 
 	// What is left to refuse is pinned-invariant (the marker's pinned text changed with the
 	// spec), a different rule: pinned-spec-holds is grounded.
+	if strings.Contains(refusal, "reset --soft") {
+		t.Fatalf("the refusal suggests squashing the range:\n%s", refusal)
+	}
 	e.Run(proj, sess, "go on", Turns("done",
-		harness.RefusalCommand(t, "fix", refusal, "git reset --soft", changeRuleAsk),
+		Bash("touch", `printf '\n' >> SPEC.md`),
+		harness.RefusalCommand(t, "fix", refusal, "git add", changeRuleAsk),
 	))
 	refusals = e.AllBlockingErrorsFrom(proj, sess, "Stop")
 	if latest := refusals[len(refusals)-1]; strings.Contains(latest, `file-guard "pinned-spec-holds"`) {

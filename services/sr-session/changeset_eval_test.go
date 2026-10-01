@@ -303,28 +303,53 @@ func TestRunRequirement_CitationPerFile(t *testing.T) {
 		assert.Contains(t, v.Reason, "an empty commit carrying only the trailer does not count")
 	})
 
-	t.Run("when every uncited file was last changed by HEAD the fix is one amend", func(t *testing.T) {
-		cs := changeset.Changeset{Base: "b0", Head: "c2",
+	followUp := func(file string) string {
+		return "git add '" + file + "' && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'"
+	}
+	headCs := func() changeset.Changeset {
+		return changeset.Changeset{Base: "b0", Head: "c2",
 			Commits:   []changeset.Commit{{SHA: "c1", Subject: "first"}, {SHA: "c2", Subject: "second"}},
 			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
 			Citations: []changeset.Citation{cite("c1")},
 		}
+	}
+	refuse := func(t *testing.T, cs changeset.Changeset, file string) string {
+		t.Helper()
 		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
 		require.NoError(t, err)
-		assert.Contains(t, v.Reason, "git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'")
-		assert.NotContains(t, v.Reason, "reset --soft")
+		require.True(t, v.Refused)
+		assert.NotContains(t, v.Reason, "reset --soft", "the squash is never suggested")
+		assert.Contains(t, v.Reason, "an empty commit carrying only the trailer does not count")
+		assert.Contains(t, v.Reason, followUp(file), "the recommended fix is a follow-up commit")
+		assert.Contains(t, v.Reason, "sr-file write", "no change needed: restate the content through a cited write")
+		return v.Reason
+	}
+	amend := "git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
+
+	t.Run("HEAD last changed the file, is unpushed and the tree is clean: a follow-up commit is recommended and the amend offered", func(t *testing.T) {
+		reason := refuse(t, headCs(), "b.md")
+		assert.Contains(t, reason, amend)
+		assert.Less(t, strings.Index(reason, followUp("b.md")), strings.Index(reason, amend), "the follow-up commit comes first")
 	})
 
-	t.Run("an uncited file last changed earlier is fixed by squashing the range", func(t *testing.T) {
-		cs := changeset.Changeset{Base: "b0", Head: "c2",
-			Commits:   []changeset.Commit{{SHA: "c1", Subject: "first"}, {SHA: "c2", Subject: "second"}},
-			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
-			Citations: []changeset.Citation{cite("c2")},
-		}
-		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
-		require.NoError(t, err)
-		assert.Contains(t, v.Reason, "git reset --soft b0 && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'")
-		assert.NotContains(t, v.Reason, "--amend")
+	t.Run("an uncited file last changed earlier gets the follow-up commit and no amend", func(t *testing.T) {
+		cs := headCs()
+		cs.Citations = []changeset.Citation{cite("c2")}
+		cs.Files = []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}}
+		reason := refuse(t, cs, "a.md")
+		assert.NotContains(t, reason, "--amend")
+	})
+
+	t.Run("HEAD is pushed: no amend is suggested", func(t *testing.T) {
+		runGit(t, f.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+		t.Cleanup(func() { runGit(t, f.repo, "update-ref", "-d", "refs/remotes/origin/main") })
+		assert.NotContains(t, refuse(t, headCs(), "b.md"), "--amend")
+	})
+
+	t.Run("the tree is dirty: no amend is suggested", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(filepath.Join(f.repo, "dirty.txt"), []byte("x"), 0o644))
+		t.Cleanup(func() { _ = os.Remove(filepath.Join(f.repo, "dirty.txt")) })
+		assert.NotContains(t, refuse(t, headCs(), "b.md"), "--amend")
 	})
 
 	t.Run("an uncited change on top of a cited one is uncited", func(t *testing.T) {

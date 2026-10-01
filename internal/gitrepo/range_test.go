@@ -233,14 +233,38 @@ func TestResolveRange_ARuleEditedAfterTheSessionBeganDoesNotSkipTheWorkBeforeThe
 	assert.Equal(t, start, r.Base, "the violation sits inside the range")
 }
 
-func TestResolveRange_AnUnreachableSessionStartIsNotNeededWhenThereIsAFloor(t *testing.T) {
+// A floor is NOT a stand-in for a rewritten session start: a later commit touching
+// the rule's folder would put the floor after in-session commits, which would then
+// never be judged. With no remote branch to anchor on, refuse.
+func TestResolveRange_ARewrittenSessionStartWithAFloorButNoRemoteFailsClosed(t *testing.T) {
 	dir := initRepo(t)
-	before := commit(t, dir, "a.go", "x")
+	commit(t, dir, "a.go", "x")
+	start := commit(t, dir, "b.go", "y")
+	git(t, dir, "commit", "--amend", "-m", "amended")
+	commit(t, dir, "violation.go", "bad")
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
-	r, err := ResolveRange(dir, ruleDir, "", "0123456789012345678901234567890123456789")
+
+	r, err := ResolveRange(dir, ruleDir, "", start)
+	assert.ErrorIs(t, err, ErrSessionStartUnreachable)
+	assert.Contains(t, err.Error(), "can't tell which commits are new")
+	assert.Equal(t, Range{}, r)
+}
+
+// With a remote branch the stand-in is the merge base of HEAD and it; the earlier
+// of that and the floor is the base, so the amended-away commit and the violation
+// after it are both inside the range even though the floor is after them.
+func TestResolveRange_ARewrittenSessionStartAnchorsOnTheRemoteMergeBase(t *testing.T) {
+	dir := initRepo(t)
+	pushed := commit(t, dir, "a.go", "x")
+	git(t, dir, "update-ref", "refs/remotes/origin/main", pushed)
+	start := commit(t, dir, "b.go", "y")
+	git(t, dir, "commit", "--amend", "-m", "amended")
+	commit(t, dir, "violation.go", "bad")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+
+	r, err := ResolveRange(dir, ruleDir, "", start)
 	require.NoError(t, err)
-	assert.Equal(t, before, r.Base)
-	assert.Equal(t, FromFloor, r.Origin)
+	assert.Equal(t, pushed, r.Base, "the floor is after the in-session commits; the remote merge base is not")
 }
 
 func TestResolveRange_TheWatermarkOutranksBoth(t *testing.T) {

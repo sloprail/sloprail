@@ -37,6 +37,42 @@ func TestT003_26_TouchingSloprailAfterAViolationDoesNotSkipIt(t *testing.T) {
 	}
 }
 
+// T003_28: the session-start commit is rewritten (an amend), then a violating commit X
+// and a commit Y touching .sloprail land. The floor (Y's parent) is after X and the
+// session start is gone, so neither can anchor the range. The merge base of HEAD with
+// the remote's branch does: X is still judged and refused. With no remote branch to
+// anchor on, the Stop refuses rather than guess which commits are new.
+func TestT003_28_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testing.T) {
+	e, proj, led := project(t, docsRule)
+	preSession := e.Git(proj, "rev-parse", "HEAD~1")
+	e.Run(proj, "s-003-28", "hello", Turns("done", Bash("b1", "true")))
+	e.RemoveCheckResults(proj, "s-003-28")
+
+	e.Git(proj, "commit", "-q", "--amend", "--allow-empty", "-m", "the rule, rewritten")
+	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
+	e.CommitAll(proj, "X: the violation")
+	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
+	e.CommitAll(proj, "Y: touch .sloprail")
+
+	r := e.StopNow(proj, "s-003-28", false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "can't tell which commits are new") {
+		t.Fatalf("with the session start rewritten and no remote branch the Stop did not fail closed:\n%s", r.Output)
+	}
+
+	e.Git(proj, "update-ref", "refs/remotes/origin/main", preSession)
+	r = e.StopNow(proj, "s-003-28", false)
+	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
+		t.Fatalf("a violation after a rewritten session start and a .sloprail touch was not refused:\n%s", r.Output)
+	}
+	var judged []string
+	for _, run := range ledger(t, led) {
+		judged = append(judged, paths(run.Files)...)
+	}
+	if !strings.Contains(strings.Join(judged, " "), "docs/bad.md") {
+		t.Fatalf("X's file was never handed to the rule: %v", judged)
+	}
+}
+
 // T003_27: a rule edited after a pass keeps its watermark: only the commits after the
 // pass are judged (by the new rule), not what was approved before it.
 func TestT003_27_ARuleEditedAfterAPassJudgesOnlyWhatComesAfter(t *testing.T) {

@@ -14,8 +14,8 @@ import (
 
 // T049_26: an uncited deletion in notes.md and a cited addition in ideas.md, in one
 // range, is refused naming ONLY notes.md — and so is it with an uncited addition in
-// todo.md beside them, which removes nothing and so needs no citation. Following the refusal's own command (the
-// range is squashed into one commit carrying the quote) then passes.
+// todo.md beside them, which removes nothing and so needs no citation. Following the refusal's own command (a
+// follow-up commit that restates the deleted file and carries the quote) then passes.
 func TestT049_26_OnlyTheFileThatRemovedContentNeedsTheCitation(t *testing.T) {
 	e := newEnv(t)
 	proj := nudProject(t, e)
@@ -49,10 +49,15 @@ func TestT049_26_OnlyTheFileThatRemovedContentNeedsTheCitation(t *testing.T) {
 	}
 	refused := len(e.StopContinuations(proj, sess))
 
-	// The deletion's commit is not HEAD (the cited addition is), so the refusal's one
-	// command is the squash: the range as one commit carrying the quote.
+	// The deletion's commit is not HEAD (the todo is), so the recommended fix is a
+	// follow-up commit that changes the file and carries the quote: the agent restates
+	// the file's content (the deletion is undone), then runs the refusal's own commit.
+	if strings.Contains(refusal, "--amend") || strings.Contains(refusal, "reset --soft") {
+		t.Errorf("the refusal suggests a history rewrite for a file last changed earlier:\n%s", refusal)
+	}
 	e.Run(proj, sess, "go on", Turns("done",
-		harness.RefusalCommand(t, "fix", refusal, "git reset --soft", ask),
+		Write("w1", "memories/notes.md", "a fact worth keeping\n"),
+		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
 	))
 	if got := len(e.StopContinuations(proj, sess)); got != refused {
 		t.Fatalf("the refusal's own command did not ground the deletion (%d refusals, had %d):\n%s",

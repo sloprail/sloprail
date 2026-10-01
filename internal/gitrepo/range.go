@@ -145,14 +145,24 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 		if err != nil {
 			return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
 		}
-		switch {
-		case ok:
+		if ok {
 			start = sessionStart
-		case floor == "":
-			return Range{}, fmt.Errorf("%w: %s", ErrSessionStartUnreachable, sessionStart)
+		} else {
+			// The session start was rewritten (amend, rebase, reset). The floor alone
+			// is NOT a safe stand-in: a later commit touching the rule's folder puts it
+			// after in-session commits, which would then never be judged. The stand-in
+			// is the merge base of HEAD with the remote's upstream/default branch: work
+			// not yet on the remote is what is new. With no remote branch to anchor on
+			// there is no way to tell which commits are new, so refuse.
+			anchor, err := remoteAnchor(dir, head)
+			if err != nil {
+				return Range{}, err
+			}
+			if anchor == "" {
+				return Range{}, fmt.Errorf("%w: %s (session start was rewritten; can't tell which commits are new)", ErrSessionStartUnreachable, sessionStart)
+			}
+			start = anchor
 		}
-		// With a floor, a session start the tree has left is not needed: the floor
-		// is a usable base, and is at worst later than the session began.
 	}
 	switch {
 	case floor == "":
@@ -259,4 +269,57 @@ func parentOrEmptyTree(dir, commit string) (string, error) {
 		return "", fmt.Errorf("gitrepo: parent of %s resolved to %q, not an object name", short(commit), sha)
 	}
 	return sha, nil
+}
+
+// remoteAnchor is the merge base of head with the first remote branch that
+// exists, in order: HEAD's upstream, origin/HEAD, origin/main, origin/master. ""
+// when there is none. Remote refs only: a local default branch that HEAD sits on
+// would make the merge base HEAD itself, an empty range.
+func remoteAnchor(dir, head string) (string, error) {
+	var candidates []string
+	if out, err := run(dir, "rev-parse", "--verify", "-q", "--symbolic-full-name", "@{upstream}"); err == nil {
+		if name := strings.TrimSpace(out); name != "" {
+			candidates = append(candidates, name)
+		}
+	} else if exitCode(err) != 1 && exitCode(err) != 128 {
+		return "", err
+	}
+	candidates = append(candidates, "refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master")
+	for _, ref := range candidates {
+		out, err := run(dir, "rev-parse", "--verify", "-q", ref+"^{commit}")
+		if err != nil {
+			if exitCode(err) == 1 || exitCode(err) == 128 {
+				continue
+			}
+			return "", err
+		}
+		tip := strings.TrimSpace(out)
+		if !isObjectName(tip) {
+			return "", fmt.Errorf("gitrepo: %s resolved to %q, not an object name", ref, tip)
+		}
+		mb, err := run(dir, "merge-base", head, tip)
+		if err != nil {
+			if exitCode(err) == 1 { // unrelated histories
+				continue
+			}
+			return "", fmt.Errorf("gitrepo: merge base of HEAD and %s: %w", ref, err)
+		}
+		base := strings.TrimSpace(mb)
+		if !isObjectName(base) {
+			return "", fmt.Errorf("gitrepo: merge base resolved to %q, not an object name", base)
+		}
+		return base, nil
+	}
+	return "", nil
+}
+
+// HeadPushed reports whether any remote-tracking branch contains HEAD: whether
+// HEAD (or a commit built on it) has been pushed, so that rewriting HEAD would
+// diverge from what others have.
+func HeadPushed(dir string) (bool, error) {
+	out, err := run(dir, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", "HEAD", "refs/remotes")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
 }

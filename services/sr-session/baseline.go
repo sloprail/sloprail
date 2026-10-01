@@ -247,6 +247,15 @@ func ensureBaselineRecorded(store sessionstate.Store, dir string) (baselineOutco
 // other way round, a stale commit would sit under a current branch and be
 // believed.
 func writeBaseline(store sessionstate.Store, pos gitrepo.Position) error {
+	// The session's first start is kept for a file-guard's range and never moved;
+	// see sessionstate.MetaSessionStart.
+	if _, had, err := store.Meta(sessionstate.MetaSessionStart); err != nil {
+		return err
+	} else if !had {
+		if err := store.SetMeta(sessionstate.MetaSessionStart, pos.Commit); err != nil {
+			return err
+		}
+	}
 	if err := store.SetMeta(sessionstate.MetaBaselineCommit, pos.Commit); err != nil {
 		return err
 	}

@@ -41,8 +41,17 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 	}
 	if state != nil {
 		var err error
-		if sessionStart, _, err = state.Meta(sessionstate.MetaBaselineCommit); err != nil {
+		// The FIRST start, never the re-taken baseline: an amend that rewrites it
+		// would otherwise move the start past the work already done.
+		var ok bool
+		if sessionStart, ok, err = state.Meta(sessionstate.MetaSessionStart); err != nil {
 			return gitrepo.Range{}, err
+		}
+		if !ok {
+			// A session recorded before the first start was kept separately.
+			if sessionStart, _, err = state.Meta(sessionstate.MetaBaselineCommit); err != nil {
+				return gitrepo.Range{}, err
+			}
 		}
 		// A baseline first taken at a sub-agent's own Stop is where its work ENDED, not
 		// where it began: not a floor. Without another, the range fails closed.

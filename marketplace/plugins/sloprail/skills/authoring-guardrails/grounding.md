@@ -95,15 +95,17 @@ own call.
   an uncited one grounds the file as it now stands. Its `when` runs once per
   subject, on a payload whose `subject.files` is that file (the whole `Changeset`
   stays in the payload as context), and the requirement applies only to the files
-  whose `when` applies. A refusal names every file that is not grounded, and says
-  the one command that grounds them: when each such file was last changed by HEAD,
-  `git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'`;
-  when one was changed by an earlier commit, squash the range into one commit
-  carrying the quote(s) (`git reset --soft <base> && git commit -m '<what changed>'
-  -m 'Sloprail-Cites-User: <exact quote>'`; repeat the trailer for each quote, the
-  earlier commits' messages are replaced). An empty commit carrying only the trailer
-  does not count: the trailer grounds the commit it is in, and that commit must be the
-  one that changed the file. Several quotes on one commit are fine.
+  whose `when` applies. A refusal names every file that is not grounded and says how to
+  ground them, in order. (1) **Recommended:** a follow-up commit that changes each file
+  and carries the trailer (`git add <files> && git commit -m '<what changed>' -m
+  'Sloprail-Cites-User: <exact quote>'`); when no change is needed, restate the file's
+  content through a cited `sr-file write <file> --cite:user '<exact quote>'`, or touch
+  it minimally so the commit changes it. (2) An amend (`git commit --amend --no-edit
+  --trailer 'Sloprail-Cites-User: <exact quote>'`) is offered ONLY when every such
+  file's last commit is HEAD, HEAD is unpushed (no remote branch contains it) and the
+  tree is clean. `git reset --soft` is never suggested. An empty commit carrying only
+  the trailer does not count: the trailer grounds the commit it is in, and that commit
+  must be the one that changed the file. Several quotes on one commit are fine.
 - A cited call that failed, was denied, or
   never ran grounds nothing. A citation grounds only the change it rode on, and
   only for a requirement whose pools it resolved in (a `--cite:tool_result`
