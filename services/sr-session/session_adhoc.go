@@ -34,13 +34,13 @@ var historyMoving = map[string]bool{
 // gitTarget is the directory a git invocation runs in and its subcommand: where the
 // line started, moved by `cd` ahead of it and by `-C` flags. ok is false when the
 // directory cannot be known from the line.
-func gitTarget(inv commandmod.Invocation, base string) (dir, sub string, ok bool) {
+func gitTarget(inv commandmod.Invocation, base string) (dir, sub string, rest []string, ok bool) {
 	if inv.Bin != "git" || len(inv.Argv) < 2 {
-		return "", "", false
+		return "", "", nil, false
 	}
 	dir = base
 	if inv.Cwd == "" {
-		return "", "", false
+		return "", "", nil, false
 	}
 	if inv.Cwd != "." {
 		dir = joinDir(dir, inv.Cwd)
@@ -58,10 +58,10 @@ func gitTarget(inv commandmod.Invocation, base string) (dir, sub string, ok bool
 			dir = joinDir(dir, strings.TrimPrefix(a, "--work-tree="))
 		case strings.HasPrefix(a, "-"):
 		default:
-			return dir, a, true
+			return dir, a, argv[i+1:], true
 		}
 	}
-	return "", "", false
+	return "", "", nil, false
 }
 
 func joinDir(base, d string) string {
@@ -85,7 +85,7 @@ func commandFolders(p HookPayload) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, inv := range commandmod.ExtractCommand(in.Command).Invocations {
-		dir, sub, ok := gitTarget(inv, p.Cwd)
+		dir, sub, _, ok := gitTarget(inv, p.Cwd)
 		if !ok || !historyMoving[sub] || seen[dir] {
 			continue
 		}
@@ -95,12 +95,122 @@ func commandFolders(p HookPayload) []string {
 	return out
 }
 
+// worktreeAdds is the directories a Bash call's `git worktree add` will create.
+func worktreeAdds(p HookPayload) []string {
+	if p.ToolName != "Bash" {
+		return nil
+	}
+	var in struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(p.ToolInput, &in) != nil || in.Command == "" {
+		return nil
+	}
+	var out []string
+	for _, inv := range commandmod.ExtractCommand(in.Command).Invocations {
+		dir, sub, rest, ok := gitTarget(inv, p.Cwd)
+		if !ok || sub != "worktree" || len(rest) < 2 || rest[0] != "add" {
+			continue
+		}
+		args := rest[1:]
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			switch {
+			case a == "-b" || a == "-B" || a == "--reason":
+				i++
+			case strings.HasPrefix(a, "-"):
+			default:
+				out = append(out, joinDir(dir, a))
+				i = len(args)
+			}
+		}
+	}
+	return out
+}
+
+const pendingWorktreesKey = "pending_worktrees"
+
+// notePendingWorktrees remembers the worktrees a command is about to create, so the next
+// hook registers them once they exist.
+func notePendingWorktrees(reg sessionstate.Store, p HookPayload) {
+	add := worktreeAdds(p)
+	if len(add) == 0 {
+		return
+	}
+	var pending map[string]string
+	if v, had, err := reg.Meta(pendingWorktreesKey); err == nil && had {
+		_ = json.Unmarshal([]byte(v), &pending)
+	}
+	if pending == nil {
+		pending = map[string]string{}
+	}
+	for _, d := range add {
+		pending[filepath.Clean(d)] = p.AgentID
+	}
+	if b, err := json.Marshal(pending); err == nil {
+		_ = reg.SetMeta(pendingWorktreesKey, string(b))
+	}
+}
+
+// registerPendingWorktrees registers the worktrees earlier calls created, as ad-hoc
+// folders of the agent that made them, started where each was created (its own HEAD
+// reflog's oldest entry), so a commit made in the same call it was created in is judged.
+func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent string) {
+	v, had, err := reg.Meta(pendingWorktreesKey)
+	if err != nil || !had {
+		return
+	}
+	var pending map[string]string
+	if json.Unmarshal([]byte(v), &pending) != nil {
+		return
+	}
+	for dir, owner := range pending {
+		if owner != agent {
+			continue
+		}
+		tree, err := gitrepo.Root(dir)
+		if err != nil || tree == "" {
+			continue // not created (yet)
+		}
+		tree = filepath.Clean(tree)
+		delete(pending, dir)
+		if _, found, err := reg.Folder(rs.ID, tree); err != nil || found {
+			continue
+		}
+		f := sessionstate.Folder{SessionID: rs.ID, Path: tree, Role: sessionstate.FolderAdHoc, GitRoot: tree, AgentID: agent, BaseRef: sessionstate.FolderBaseUnborn}
+		if pos, herr := gitrepo.Head(tree); herr == nil {
+			f.Branch, f.HeadRef = pos.Branch, pos.Commit
+			f.BaseRef = pos.Commit
+		}
+		if created, _ := gitrepo.RefCreation(tree, "HEAD"); created != "" {
+			f.BaseRef = created
+		}
+		if id, err := gitrepo.RootCommit(tree); err == nil {
+			f.RepoID = id
+		}
+		if _, err := reg.RegisterFolder(f); err != nil {
+			continue
+		}
+		if tips, terr := gitrepo.RefTips(tree); terr == nil {
+			if b, merr := json.Marshal(tips); merr == nil {
+				_ = reg.SetMeta(refsAtStartKey(tree), string(b))
+			}
+		}
+		_ = observeRefs(reg, rs.ID, tree, tree, agent)
+	}
+	if b, err := json.Marshal(pending); err == nil {
+		_ = reg.SetMeta(pendingWorktreesKey, string(b))
+	}
+}
+
 // refsAtStartKey is the per-folder baseline of branch tips an ad-hoc folder started with.
 func refsAtStartKey(folder string) string { return "refs_at_start:" + filepath.Clean(folder) }
 
 // registerCommandFolders registers each repository outside the agent's own tree that
 // this Bash call is about to move history in, and observes its refs.
 func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+	registerPendingWorktrees(reg, rs, p.AgentID)
+	notePendingWorktrees(reg, p)
 	rootTree, err := gitrepo.Root(rs.Cwd)
 	if err != nil || rootTree == "" {
 		return nil

@@ -139,7 +139,7 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if !ok {
 		// Not a folder this agent starts in, but a command it runs may still move
 		// history in another repository.
-		if len(commandFolders(p)) == 0 {
+		if _, err := os.Stat(rs.Path); err != nil {
 			return nil
 		}
 		reg, err := sessionstate.Open(rs.Path)
