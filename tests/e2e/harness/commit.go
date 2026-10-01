@@ -175,3 +175,36 @@ func CommitFile(id, path, content, subject string, trailers ...string) Turn {
 	return Bash(id, "mkdir -p \"$(dirname "+shQuote(path)+")\" && printf '%s' "+shQuote(content)+" > "+shQuote(path)+
 		" && "+commitCmd(stageArgs(), subject, trailers...))
 }
+
+// RefusalCommand is the turn where the agent runs, literally, the command a refusal
+// gave it: the first line of the refusal that starts (after its indentation) with
+// prefix, with the placeholders the refusal leaves for the agent to fill replaced —
+// `<exact quote>` by quote, `<what changed>` by a commit subject. It fails the test
+// when the refusal carries no such line, which is the point: a refusal an agent
+// cannot act on is a broken refusal.
+func RefusalCommand(t testing.TB, id, refusal, prefix, quote string) Turn {
+	t.Helper()
+	for _, line := range strings.Split(refusal, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, prefix) {
+			line = strings.ReplaceAll(line, "<exact quote>", quote)
+			return Bash(id, strings.ReplaceAll(line, "<what changed>", "the change"))
+		}
+	}
+	t.Fatalf("harness: the refusal gives no command starting %q:\n%s", prefix, refusal)
+	return Turn{}
+}
+
+// UngroundedFiles is the files a citation refusal names as not grounded, as the refusal
+// writes them (comma-separated): "" when it names none.
+func UngroundedFiles(refusal string) string {
+	const lead = "in the commit that last changed it: "
+	i := strings.Index(refusal, lead)
+	if i < 0 {
+		return ""
+	}
+	rest := refusal[i+len(lead):]
+	if end := strings.Index(rest, ".\n"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}

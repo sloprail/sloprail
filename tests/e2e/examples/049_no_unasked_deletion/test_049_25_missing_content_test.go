@@ -31,7 +31,8 @@ func TestT049_25_AMissingContentFieldIsNotAPureAddition(t *testing.T) {
 		return "", -1
 	}
 	file := func(fields string) string {
-		return `{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"M","path":"memories/x.md",` + fields + `}]}}`
+		return `{"event":{"kind":"Changeset"},"subject":{"id":"memories/x.md","files":["memories/x.md"]},` +
+			`"changeset":{"files":[{"status":"M","path":"memories/x.md",` + fields + `}]}}`
 	}
 	const oldc = `"oldContent":"a\nb\n"`
 	const newc = `"newContent":"a\nb\nc\n"`
@@ -41,6 +42,17 @@ func TestT049_25_AMissingContentFieldIsNotAPureAddition(t *testing.T) {
 	}
 	if out, _ := run("skip-pure-addition.sh", file(oldc+","+newc)); !strings.Contains(out, `"skip": true`) {
 		t.Fatalf("control: a pure addition was not skipped: %s", out)
+	}
+	// No subject says nothing about which file to decide: undecidable, so it applies.
+	noSubject := `{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"M","path":"memories/x.md",` + oldc + "," + newc + `}]}}`
+	if out, code := run("removes-content.sh", noSubject); code != 0 {
+		t.Errorf("removes-content.sh with no subject exited %d (%s), want 0 (applies)", code, out)
+	}
+	// A file outside the subject is context, not the subject's change: it is not decided here.
+	elsewhere := `{"event":{"kind":"Changeset"},"subject":{"id":"memories/y.md","files":["memories/y.md"]},` +
+		`"changeset":{"files":[{"status":"D","path":"memories/x.md",` + oldc + `},{"status":"M","path":"memories/y.md",` + oldc + "," + newc + `}]}}`
+	if out, code := run("removes-content.sh", elsewhere); code != 1 {
+		t.Errorf("a deletion of another file decided the subject: exited %d (%s), want 1 (waived)", code, out)
 	}
 	for _, missing := range []string{oldc, newc} {
 		if out, code := run("removes-content.sh", file(missing)); code != 0 {

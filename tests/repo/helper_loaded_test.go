@@ -218,13 +218,13 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 			"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-body-is-human-authored",
 			"body-changed.sh", "lib-body.sh",
 			"task_body() { printf 'same body\\n'; }\n", "lib_body_loaded=1\n",
-			`{"event":{"kind":"Changeset"},"changeset":{"files":[{"path":"memories/tasks/a/b/TASK.md","status":"M","oldContent":"---\nstatus: open\n---\nsame body\n","newContent":"---\nstatus: open\n---\nsame body\n"}]}}`,
+			`{"event":{"kind":"Changeset"},"subject":{"id":"memories/tasks/a/b/TASK.md","files":["memories/tasks/a/b/TASK.md"]},"changeset":{"files":[{"path":"memories/tasks/a/b/TASK.md","status":"M","oldContent":"---\nstatus: open\n---\nsame body\n","newContent":"---\nstatus: open\n---\nsame body\n"}]}}`,
 		},
 		{
 			"marketplace/plugins/sloprail-content/.sloprail/file-guard/unit-publish-approved",
 			"enters-published.sh", "publish-claim.sh",
 			"publish_claim_norm() { printf '%s' \"$1\"; }\npublish_claim() { claim=no claim_status=drafting claim_why=; }\n", "publish_claim_loaded=1\n",
-			`{"event":{"kind":"Changeset"},"changeset":{"files":[{"path":"memories/topics/t/units/01/UNIT.md","status":"M","oldContent":"---\nstatus: drafting\n---\n","newContent":"---\nstatus: drafting\n---\nedited\n"}]}}`,
+			`{"event":{"kind":"Changeset"},"subject":{"id":"memories/topics/t/units/01/UNIT.md","files":["memories/topics/t/units/01/UNIT.md"]},"changeset":{"files":[{"path":"memories/topics/t/units/01/UNIT.md","status":"M","oldContent":"---\nstatus: drafting\n---\n","newContent":"---\nstatus: drafting\n---\nedited\n"}]}}`,
 		},
 	} {
 		t.Run(tc.script, func(t *testing.T) {

@@ -88,7 +88,7 @@ func TestT046_23_PredicateOutsideARepoApplies(t *testing.T) {
 			t.Fatalf("git %v: %v %s", args, err, o)
 		}
 	}
-	csPayload := `{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"M","path":"SPEC.md",` +
+	csPayload := `{"event":{"kind":"Changeset"},"subject":{"id":"SPEC.md","files":["SPEC.md"]},"changeset":{"files":[{"status":"M","path":"SPEC.md",` +
 		`"oldContent":"a\nb\n","newContent":"a\nc\n","oldMarkers":[],"newMarkers":[]}]}}`
 	g := guardDir(t, "pinned-spec-holds")
 	out, code = runRuleScriptEnv(t, g, "changes-pinned-lines.sh", repo, csPayload, "SR_TREE="+repo, "SR_BASE=0000000000000000000000000000000000000001")

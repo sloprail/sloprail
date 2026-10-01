@@ -34,13 +34,25 @@ func TestT038_45_AMissingContentFieldIsNotADecidedNoDrop(t *testing.T) {
 		return "", -1
 	}
 	file := func(fields string) string {
-		return `{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"M","path":"scanners/mine/scanner.yaml",` + fields + `}]}}`
+		return `{"event":{"kind":"Changeset"},"subject":{"id":"scanners/mine/scanner.yaml","files":["scanners/mine/scanner.yaml"]},` +
+			`"changeset":{"files":[{"status":"M","path":"scanners/mine/scanner.yaml",` + fields + `}]}}`
 	}
 	const oldc = `"oldContent":"active: true\nkeywords:\n  - agent\n"`
 	const newc = `"newContent":"active: true\nkeywords:\n  - agent\n  - cli\n"`
 
 	if _, code := run(file(oldc + "," + newc)); code != 1 {
 		t.Fatalf("control: an add-only change exited %d, want 1 (waived)", code)
+	}
+	// No subject says nothing about which scanner to decide: undecidable, so it applies.
+	if out, code := run(`{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"M","path":"scanners/mine/scanner.yaml",` + oldc + "," + newc + `}]}}`); code != 0 {
+		t.Errorf("a payload with no subject exited %d (%s), want 0 (applies)", code, out)
+	}
+	// Only the subject's scanner is decided: another scanner dropping a keyword is context.
+	elsewhere := `{"event":{"kind":"Changeset"},"subject":{"id":"scanners/mine/scanner.yaml","files":["scanners/mine/scanner.yaml"]},"changeset":{"files":[` +
+		`{"status":"M","path":"scanners/other/scanner.yaml","oldContent":"active: true\nkeywords:\n  - agent\n  - cli\n","newContent":"active: true\nkeywords:\n  - agent\n"},` +
+		`{"status":"M","path":"scanners/mine/scanner.yaml",` + oldc + "," + newc + `}]}}`
+	if out, code := run(elsewhere); code != 1 {
+		t.Errorf("another scanner's dropped keyword decided the subject: exited %d (%s), want 1 (waived)", code, out)
 	}
 	if out, code := run(file(newc)); code != 0 {
 		t.Errorf("an update with no oldContent exited %d (%s), want 0 (applies)", code, out)
