@@ -19,8 +19,14 @@ fi
 
 # Every GENUINE user message this turn as /abs/path:line-line — absolute path,
 # not a bare id, since a session can span multiple jsonl files. A genuine user
-# message is an entry with .type == "user" and isMeta NOT true; .line is its
-# 1-based jsonl position.
+# message is an entry with .type == "user", isMeta NOT true, and no tool_result
+# content block; .line is its 1-based jsonl position.
+#
+# A tool_result block rides in a `type: "user"` entry too: a tool's output, and
+# also an AskUserQuestion answer envelope ("The user answered: ..."), re-enter
+# the transcript that way. Neither is something the person typed as a request,
+# so neither can be residue the agent owes a task or a #skip for; counting them
+# made the gate demand tasks for tool output.
 #
 # isMeta excludes a real, previously-hit failure mode: Claude Code records a
 # Stop hook's OWN refusal text ("Stop hook feedback: These user messages are
@@ -43,7 +49,7 @@ if [ "$normalize_status" -ne 0 ]; then
 fi
 
 all_message_refs="$(printf '%s' "$normalized" \
-  | jq -r --arg t "$transcript_path" '.[] | select(.type == "user" and (.isMeta // false) == false) | "\($t):\(.line)-\(.line)"')"
+  | jq -r --arg t "$transcript_path" '.[] | select(.type == "user" and (.isMeta // false) == false and (((.message.content? // "") | if type == "array" then any(.[]; type == "object" and .type == "tool_result") else false end) | not)) | "\($t):\(.line)-\(.line)"')"
 jq_status=$?
 if [ "$jq_status" -ne 0 ]; then
   echo "verify-no-residue: could not extract user messages from the normalized transcript (jq exit $jq_status); refusing because a residue check that could not parse the transcript must not be read as approval" >&2

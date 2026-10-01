@@ -6,7 +6,14 @@
 # commit last touched it (see the README); an invariant-pinned file may not
 # quietly disappear as a silent escape from a stale pin. A deleted file's pins are
 # checked (its oldMarkers); the judge, which reads code, skips it.
-match: any(markers, .kind == "invariant")
+#
+# Not under .claude/: a skill's SKILL.md documents the marker with a placeholder
+# (`// sr:invariant "<the rule>"`), and the scanner reads a marker anywhere in a
+# file's text, so that example would pose as a real pin. These rules are about
+# code; agent configuration is not code. Narrowing by path loosens nothing in real
+# code, where skipping `<...>` fqns would also skip a genuine pin whose text opens
+# with "<" (a rule like "<5 days").
+match: any(markers, .kind == "invariant") and not (path startsWith ".claude/")
 deletions: include
 checks:
   - script: ./pin-still-matches-head.sh

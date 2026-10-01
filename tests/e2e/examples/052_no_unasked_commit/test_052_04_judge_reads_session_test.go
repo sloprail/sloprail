@@ -53,6 +53,15 @@ func TestT052_11_JudgePromptPointsAtTheSessionRecord(t *testing.T) {
 		"What this command will commit",
 		"git status --porcelain",
 		"swept in by `git add -A`",
+		// The staged-files test: every file in the commit must have been reported in
+		// the reply the user's "commit it" answered, and git runs bare (a `cd … &&`
+		// or `git -C` call is blocked in the judge's sandbox).
+		"The staged-files test",
+		"git diff --cached --name-only",
+		"EACH of those files",
+		"reply the user's \"commit it\" answered",
+		"Run git BARE",
+		"`git -C <dir> ...`",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the judge prompt lacks %q:\n%s", want, got)

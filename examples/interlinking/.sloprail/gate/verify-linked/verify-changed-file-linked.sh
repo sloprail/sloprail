@@ -38,7 +38,7 @@ while IFS= read -r row; do
 done < <(printf '%s' "$entries" | jq -s -c '.[]')
 
 if [ -n "$failures" ]; then
-  echo "Interlinking check failed for:$failures" >&2
+  echo "Interlinking check failed for:$failures. Fix: (unlinked) add a file under updates/ or decisions/ whose text contains the person's file stem (people/priya-patel.md -> priya-patel) — the name or link must contain the stem, e.g. [Priya Patel](../people/priya-patel.md); the display name alone (\"Priya Patel\") does not match. (still-referenced) remove every updates/ or decisions/ reference containing that stem." >&2
   exit 1
 fi
 
