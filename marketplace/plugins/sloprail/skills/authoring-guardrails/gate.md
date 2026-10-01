@@ -197,13 +197,17 @@ flattened list.
 
 The plugin's `sloprail/gate/no-merge-over-refusals` is a command gate with all its
 policy in YAML and one script. It matches `gh pr merge` (any flags, `--admin` too),
-and its `require: citation` carries a `when` script that applies the requirement
-only when the branch being merged has open refusals in this session's check results,
-judged at that branch's tip (it reads them with `sr-checks sql`). A merge with none is
-untouched; one with open refusals is refused until the fix is committed and judged,
-or until the user's own words are cited (`sr-session trajectory cite '<their words>' &&
-gh pr merge ...`). It is on by default and switched off like any shipped rule, under
-`disabled:` in `.sloprail/config.yaml`.
+and a single `checks:` script refuses it on facts only: the branch being merged has open
+refusals in this session's check results (read with `sr-checks sql`), or commits no rule
+has judged yet, or the target cannot be told. A merge with none is untouched; one with
+open refusals is refused until the fix is committed and judged. No user citation lifts
+it: a gate that guards irreversible work must not be unlockable by a quote (an agent
+can wash an old, generic instruction into one). Engine failures (a run that errored
+without refusing anything) are not listed as refusals; the unjudged tip they leave is
+judged at the next Stop. `no-destroying-owed-work` is built the same way for branch
+deletion, `worktree remove`, hard resets and prunes; dropping owed work stays the user's
+through `sr-session refs abandon --cite-user`. Both are on by default and switched off
+like any shipped rule, under `disabled:` in `.sloprail/config.yaml`.
 
 ### The resolution floor
 
