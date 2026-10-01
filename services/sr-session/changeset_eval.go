@@ -194,7 +194,11 @@ func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p 
 	for _, o := range out {
 		if o != nil && o.settled && o.refused {
 			r := o.result
-			r.Reason = tip.describe(root) + r.Reason
+			head, remedy := tip.describe(root)
+			r.Reason = head + r.Reason
+			if remedy != "" {
+				r.Reason += "\n" + remedy
+			}
 			refusals = append(refusals, r)
 		}
 	}
@@ -220,7 +224,7 @@ func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p 
 // branch, and the session. Best effort — an unreadable one is left empty rather
 // than costing the evaluation.
 func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
-	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID}
+	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID, AgentID: ev.p.AgentID}
 	if root, err := gitrepo.RootCommit(ev.root); err == nil {
 		id.RepoID = root
 	}
@@ -892,7 +896,12 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 	if scope.SessionID == "" {
 		return nil
 	}
+	// One database per session family: the root's, written by every agent of it.
 	path, err := sessionpath.ChecksDB(p.stateCwd(), scope.SessionID)
+	rs, rsErr := resolveRootSession(p)
+	if p.IsSubagent() && rsErr == nil {
+		path, err = familyChecksPath(rs), nil
+	}
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
 		return nil
@@ -902,7 +911,10 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
 		return nil
 	}
-	return store
+	if !p.IsSubagent() && rsErr == nil {
+		importFamily(cmd, store, p, rs)
+	}
+	return newFamilyResults(store)
 }
 
 // log is where a rule's diagnostics go: its own buffer during a concurrent

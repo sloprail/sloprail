@@ -25,9 +25,9 @@ EXAMPLES:
   sr-checks sql "select subject, kind, status from checks where status = 'fail'"
   sr-checks sql "select json_extract(metadata, '$.reasoning') as why from checks where status = 'fail'"
 
---family runs the SELECT over every store of the session family — the root session's
-and those of its sub-agents, which keep their own stores under their own worktrees —
-and concatenates the rows, each with a "_store" field naming its database. A merge gate
+--family runs the SELECT over the session family's store — the root session's checks.db,
+which the root and its sub-agents all write (each run has an agent_id) — and returns the
+rows, each with a "_store" field naming its database. A merge gate
 asks this: a refusal a sub-agent's Stop recorded is the coordinator's to respect. A store
 of the family that cannot be read is an error, never an empty answer.
 
@@ -56,6 +56,6 @@ Unlike ` + "`status`" + `, nothing recorded yet IS an error here: there are no t
 			return enc.Encode(rows)
 		},
 	}
-	cmd.Flags().BoolVar(&family, "family", false, "Run over every store of the session family (root and sub-agents)")
+	cmd.Flags().BoolVar(&family, "family", false, "Run over the session family's store (the root's, written by every agent)")
 	return cmd
 }

@@ -23,6 +23,8 @@ func TestT034_02_EverySpellingThatRunsALifecycleCommandIsRefused(t *testing.T) {
 		`./bin/sr-session start`,
 		`sr session start`,
 		`sr session subagent-stop`,
+		`sr-session worktree-remove < /dev/null`,
+		`sr session worktree-remove`,
 		`(sr-session pre-tool)`,
 		`true && sr-session stop`,
 		`false || sr-session start`,

@@ -123,9 +123,16 @@ func resolveRuleRangeAt(root, tip, tipStart string, g declaration.FileGuard, res
 		if err != nil {
 			return gitrepo.Range{}, err
 		}
+		graph := gitrepo.LoadGraph(root, heads...)
+		line := tip
+		if line == "" {
+			if h, herr := gitrepo.Head(root); herr == nil {
+				line = h.Commit
+			}
+		}
 		if watermark, dropped, err = changeset.PickWatermark(heads, func(sha string) (bool, error) {
-			if tip != "" {
-				return gitrepo.IsAncestor(root, sha, tip)
+			if line != "" {
+				return gitrepo.IsAncestorFast(root, graph, sha, line)
 			}
 			return gitrepo.Contains(root, sha)
 		}); err != nil {

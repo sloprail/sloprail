@@ -35,48 +35,6 @@ import (
 //   - `sr-session refs add`, for a ref the engine has not seen (or to patch a session
 //     that began before this existed).
 
-// stopTip is one line of history judged at Stop. The zero value is HEAD.
-type stopTip struct {
-	Sha string
-	Ref string
-	// Start is where the ref was created (its oldest reflog entry), or "": a floor for
-	// the range so upstream commits merged before the branch was cut are not judged.
-	Start string
-	// Landed is true when the tip's changes are already upstream (squash-merged) yet it is
-	// still owed a judgement: only what still stands upstream is judged (see prepare).
-	Landed bool
-}
-
-// describe is what a refusal for this tip says first: which branch, in which folder,
-// and how to fix it. Empty for HEAD.
-func (t stopTip) describe(folder string) string {
-	if t.Sha == "" {
-		return ""
-	}
-	name := strings.TrimPrefix(strings.TrimPrefix(t.Ref, "refs/heads/"), "refs/remotes/")
-	drop := fmt.Sprintf("If the USER wants this branch dropped, ask them, then run `sr-session refs abandon --ref %s --folder %s "+
-		"--cite-user '<their exact words>'` citing what they said. ", shellQuote(name), shellQuote(folder))
-	// Never tell the agent to switch this folder's checkout: it is the coordination
-	// worktree, and the ref is judged on its own tree wherever it lives.
-	if strings.HasPrefix(t.Ref, "detached/") {
-		return fmt.Sprintf("On commits made on a detached HEAD and left (%s, in %s), which are not checked out: "+
-			"they are judged on their own tree. Give them a branch and a worktree of their own "+
-			"(`git -C %s branch <name> %s`, then `git -C %s worktree add <path> <name>`), fix there, commit, and stop again; "+
-			"do not switch this folder's checkout. %s",
-			short(t.Sha), folder, shellQuote(folder), short(t.Sha), shellQuote(folder), drop)
-	}
-	if other := gitrepo.CheckedOutAt(folder, t.Ref); other != "" {
-		return fmt.Sprintf("On branch %s, which is checked out in another worktree (%s): this session committed on it, "+
-			"so its commits are judged too, on that branch's own tree. Fix it in that worktree (`cd %s`), commit, and stop again; "+
-			"do not switch this folder (%s) to it. %s",
-			name, other, shellQuote(other), folder, drop)
-	}
-	return fmt.Sprintf("On branch %s (in %s), which is not checked out: this session committed on it, "+
-		"so its commits are judged too, on that branch's own tree. Fix it in a new worktree "+
-		"(`git -C %s worktree add <path> %s`), commit there, and stop again; do not switch this folder's checkout. %s",
-		name, folder, shellQuote(folder), shellQuote(name), drop)
-}
-
 // evaluateChangesets judges every file-guard over HEAD and then over every other tip the
 // session recorded in this folder. A commit shared between tips is judged once per rule:
 // a tip a later tip contains is dropped, and a rule's watermark (a pass reachable from
@@ -86,6 +44,7 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	if len(guards) == 0 {
 		return nil
 	}
+	primeGraph(root, guards, results)
 	out := evaluateChangesetsAt(cmd, guards, p, scope, root, stopTip{}, contextMap, state, results)
 	tips, err := stopTips(cmd, p, root, guards, results)
 	if err != nil {
@@ -135,7 +94,6 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 	if err := observeRefs(reg, rs.ID, folder, root, p.AgentID); err != nil {
 		return nil, warn(err)
 	}
-	adoptRemovedFolders(reg, rs.ID, folder, p.AgentID)
 	// What every branch held when the session began: not the session's work.
 	var atStart []string
 	if v, had, err := reg.Meta(sessionstate.MetaRefsAtStart); err == nil && had {
@@ -210,12 +168,13 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 				}
 			}
 		}
-		// A tip a rule has passed is settled and needs no pin; any other is held until it is.
+		// A tip every rule has passed (by any agent of the family) is
+		// settled: nothing to judge, and no pin to keep. Any other is held until it is.
 		if judgedByEvery(root, tip, guards, results) {
 			unpinTip(root, rs.ID, folder, r.Name)
-		} else {
-			pinTip(root, rs.ID, folder, r.Name, tip)
+			continue
 		}
+		pinTip(root, rs.ID, folder, r.Name, tip)
 		if r.Abandoned != "" {
 			// The user had this ref dropped, at that tip. Still that tip, and not pushed or
 			// merged since: not judged. Anything else un-abandons it.
@@ -232,11 +191,13 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 			continue // HEAD's own judgment covers it
 		}
 		landed := gitrepo.LandedUpstream(root, tip)
+		gone := strings.HasPrefix(r.Name, "refs/") && goneRef(root, r.Name)
 		if landed && judgedByEvery(root, tip, guards, results) {
 			continue // squash-merged AFTER a rule passed it: everything it changed is upstream, and was judged
 		}
 		start := refStart(reg, root, folder, r.Name, tip)
-		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start, Landed: landed})
+		origin, _, _ := reg.Meta(orphanOriginKey(folder, r.Name))
+		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start, Landed: landed, Gone: gone, Origin: origin})
 	}
 	shas := make([]string, len(cands))
 	for i, c := range cands {
@@ -267,19 +228,13 @@ func judgedByEvery(root, tip string, guards []declaration.FileGuard, results che
 	if results == nil {
 		return false
 	}
+	graph := gitrepo.LoadGraph(root)
 	for _, g := range guards {
 		heads, err := results.PassedHeads(g.Qualified())
 		if err != nil {
 			return false
 		}
-		covered := false
-		for _, h := range heads {
-			if ok, err := gitrepo.IsAncestor(root, tip, h); err == nil && ok {
-				covered = true
-				break
-			}
-		}
-		if !covered {
+		if covered, _ := gitrepo.AnyDescendant(root, graph, tip, heads); !covered {
 			return false
 		}
 	}
@@ -324,7 +279,7 @@ agent left is still judged and its pull request cannot merge unchecked.
 The engine records them itself from the folder's reflog; ` + "`refs add`" + ` writes one by hand,
 for a ref the engine has not seen or a session begun before it did.`,
 	}
-	cmd.AddCommand(newSessionRefsAddCmd(), newSessionRefsListCmd(), newSessionRefsAbandonCmd())
+	cmd.AddCommand(newSessionRefsAddCmd(), newSessionRefsListCmd(), newSessionRefsAbandonCmd(), newSessionRefsSettledCmd())
 	return cmd
 }
 
@@ -437,4 +392,19 @@ func newSessionRefsListCmd() *cobra.Command {
 	}
 	t.flags(cmd)
 	return cmd
+}
+
+// primeGraph loads the repository's commit graph once, with every head any rule passed, so
+// the questions of this Stop (which tip a rule already passed, where a range starts) are
+// answered in memory instead of one git process per pair.
+func primeGraph(root string, guards []declaration.FileGuard, results checkstore.Store) {
+	var extra []string
+	if results != nil {
+		for _, g := range guards {
+			if heads, err := results.PassedHeads(g.Qualified()); err == nil {
+				extra = append(extra, heads...)
+			}
+		}
+	}
+	gitrepo.LoadGraph(root, extra...)
 }

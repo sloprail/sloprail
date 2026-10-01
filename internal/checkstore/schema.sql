@@ -20,8 +20,10 @@
 -- check_items  one row per finding inside a check (a file a judge named, a
 --              prerequisite of `require:`).
 --
--- The identity columns (repo_id, branch, session_id) are filled although this
--- database is per session today (checks.db beside the session's state.db), so the rows can move to one global store
+-- The identity columns (repo_id, branch, session_id, agent_id) say whose run it is. This
+-- database is one per session FAMILY (the root session's checks.db beside its state.db,
+-- written by the root and by every sub-agent it dispatches), so what a rule passed or refused
+-- on a commit range is read once, whichever agent ran it, and the rows could move to one global store
 -- without a change of shape.
 --
 -- Not carried over from a10n: check_contexts (sloprail's contexts live in the
@@ -36,6 +38,10 @@ CREATE TABLE IF NOT EXISTS check_runs (
     repo_id      TEXT NOT NULL,
     branch       TEXT NOT NULL,
     session_id   TEXT NOT NULL,
+    -- The sub-agent that ran it, '' for the root session itself. One database serves the whole
+    -- session family (the root's, written by the root and every sub-agent), so this is what
+    -- says whose run it is.
+    agent_id     TEXT NOT NULL DEFAULT '',
     base_ref     TEXT NOT NULL DEFAULT '',
     head_ref     TEXT NOT NULL DEFAULT '',
     exit_code    INTEGER NOT NULL DEFAULT 0,

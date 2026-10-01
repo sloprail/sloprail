@@ -1,5 +1,5 @@
 # The engine's lifecycle entry points are for the harness's hooks, never for the agent.
-# `sr-session start`, `stop`, `pre-tool` and `subagent-stop` are what Claude Code's hooks
+# `sr-session start`, `stop`, `pre-tool`, `subagent-stop` and `worktree-remove` are what Claude Code's hooks
 # run (hooks/hooks.json), outside any agent command, with the real session on stdin. An
 # agent that runs them itself invents a session (sub-agents were seen running `start` and
 # `stop` 23 times with made-up session ids) to record verdicts or get a judgement of its own:
@@ -20,8 +20,8 @@ on:
     match: >-
       any(event.invocations,
         (.bin == "sr-session" and len(.argv) > 1 and
-          (.argv[1] == "start" or .argv[1] == "stop" or .argv[1] == "pre-tool" or .argv[1] == "subagent-stop")) or
+          (.argv[1] == "start" or .argv[1] == "stop" or .argv[1] == "pre-tool" or .argv[1] == "subagent-stop" or .argv[1] == "worktree-remove")) or
         (.bin == "sr" and len(.argv) > 2 and .argv[1] == "session" and
-          (.argv[2] == "start" or .argv[2] == "stop" or .argv[2] == "pre-tool" or .argv[2] == "subagent-stop")))
+          (.argv[2] == "start" or .argv[2] == "stop" or .argv[2] == "pre-tool" or .argv[2] == "subagent-stop" or .argv[2] == "worktree-remove")))
 checks:
   - script: ./refuse.sh

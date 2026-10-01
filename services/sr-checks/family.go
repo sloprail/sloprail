@@ -3,31 +3,22 @@ package main
 import (
 	"errors"
 	"os"
-	"path/filepath"
-	"sort"
 
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/sessionpath"
-	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 var errNoSession = errors.New("sr-checks: no session to read — run this inside a session (with " + transcript.SessionIDEnv + " set) whose transcript exists")
 
-// familyCheckStores lists the check-result databases of the whole session family: the root
-// session's own and those of every agent that worked for it.
+// familyCheckStores lists the check-result databases of the whole session family. There is
+// ONE: the root session's checks.db, written by the root and by every sub-agent it
+// dispatches (each run carries its agent_id; an older sub-agent's own database is imported
+// into it by the root's first hook, see services/sr-session/results_family.go). So the
+// family is that single store, whichever agent asks about it.
 //
-// A sub-agent is a session of its own (see sessionpath.StateDB), keyed under its own
-// worktree when it was dispatched into one, so its Stop's verdicts live in a store the
-// coordinator's own `sql` never reads. The family is therefore every `checks.db` under
-//
-//   - the root session's workspace directory (the root, its shared-tree sub-agents, and
-//     the earlier sessions of the same tree), and
-//   - the workspace directory of every folder the root's registry holds for the session
-//     (each sub-agent's own worktree).
-//
-// Read-only: nothing here creates or changes a store. A store that cannot be listed is
-// an error; one that is simply absent is not.
+// Read-only: nothing here creates or changes a store. A store that is simply absent is not
+// an error.
 func familyCheckStores() ([]string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -41,39 +32,17 @@ func familyCheckStores() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	state, err := sessionpath.StateDB(cwd, id.ID)
+	path, err := sessionpath.ChecksDB(cwd, id.ID)
 	if err != nil {
 		return nil, err
 	}
-	sessions := filepath.Dir(filepath.Dir(state)) // .../sessions/<workspace>
-	dirs := map[string]bool{sessions: true}
-	if _, serr := os.Stat(state); serr == nil {
-		reg, err := sessionstate.Open(state)
-		if err != nil {
-			return nil, err
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
 		}
-		folders, ferr := reg.Folders(id.ID)
-		reg.Close()
-		if ferr != nil {
-			return nil, ferr
-		}
-		for _, f := range folders {
-			dirs[filepath.Join(filepath.Dir(sessions), sessionpath.EncodeWorkspace(f.Path))] = true
-		}
-	} else if !errors.Is(serr, os.ErrNotExist) {
-		return nil, serr
+		return nil, err
 	}
-
-	var out []string
-	for d := range dirs {
-		found, err := filepath.Glob(filepath.Join(d, "*", "checks.db"))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, found...)
-	}
-	sort.Strings(out)
-	return out, nil
+	return []string{path}, nil
 }
 
 // queryFamily runs one SELECT over every store of the family and returns all the rows,
