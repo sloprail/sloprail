@@ -131,9 +131,11 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 	defer reg.Close()
 	folder := filepath.Clean(root)
 
+	migrateRefs(reg, rs.ID)
 	if err := observeRefs(reg, rs.ID, folder, root, p.AgentID); err != nil {
 		return nil, warn(err)
 	}
+	adoptRemovedFolders(reg, rs.ID, folder, p.AgentID)
 	// What every branch held when the session began: not the session's work.
 	var atStart []string
 	if v, had, err := reg.Meta(sessionstate.MetaRefsAtStart); err == nil && had {
@@ -160,10 +162,14 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 					tip = cur
 				}
 			}
-			if err := reg.RecordRef(sessionstate.Ref{SessionID: rs.ID, Folder: folder, Name: t.Ref, Tip: tip, AgentID: p.AgentID}); err != nil {
+			if err := recordKept(reg, root, sessionstate.Ref{SessionID: rs.ID, Folder: folder, Name: t.Ref, Tip: tip, AgentID: p.AgentID}); err != nil {
 				return nil, warn(err)
 			}
 		}
+	}
+	retireMovedRows(reg, root, rs.ID, folder, p.AgentID)
+	if err := resurrectRetired(reg, root, rs.ID, folder, p.AgentID, guards, results); err != nil {
+		warn(err)
 	}
 
 	// Judge: every recorded ref of this agent.
@@ -190,8 +196,9 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 				cur = r.Tip
 			}
 			if cur != "" && cur != r.Tip {
+				// The ref moved (what it left behind was retired above, see retireMovedRows).
 				tip = cur
-				_ = reg.RecordRef(sessionstate.Ref{SessionID: rs.ID, Folder: folder, Name: r.Name, Tip: cur, AgentID: r.AgentID})
+				_ = recordKept(reg, root, sessionstate.Ref{SessionID: rs.ID, Folder: folder, Name: r.Name, Tip: cur, AgentID: r.AgentID})
 			} else if cur == "" {
 				// The ref is gone: its commits are judged only while something still holds them,
 				// or while they are owed a judgement (a branch squash-merged and deleted before
@@ -202,6 +209,12 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 					}
 				}
 			}
+		}
+		// A tip a rule has passed is settled and needs no pin; any other is held until it is.
+		if judgedByEvery(root, tip, guards, results) {
+			unpinTip(root, rs.ID, folder, r.Name)
+		} else {
+			pinTip(root, rs.ID, folder, r.Name, tip)
 		}
 		if r.Abandoned != "" {
 			// The user had this ref dropped, at that tip. Still that tip, and not pushed or
@@ -222,7 +235,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 		if landed && judgedByEvery(root, tip, guards, results) {
 			continue // squash-merged AFTER a rule passed it: everything it changed is upstream, and was judged
 		}
-		start, _ := gitrepo.RefCreation(root, r.Name)
+		start := refStart(reg, root, folder, r.Name, tip)
 		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start, Landed: landed})
 	}
 	shas := make([]string, len(cands))
