@@ -74,6 +74,12 @@ import (
 // of guardrails the set the user's harness is actually running.
 var SettingsFiles = []string{"settings.json", "settings.local.json"}
 
+// IsolationSettings is the `--settings` JSON sr-agent always gives a launched
+// Claude Code, so it carries none of the caller's session wiring. One definition,
+// shared by sr-agent and the tests that assert it reached the harness.
+// `disableAllHooks` is what actually stops hooks (see sr-agent's claudeCodeSpec).
+const IsolationSettings = `{"hooks":{},"mcpServers":{},"enabledPlugins":{},"disableAllHooks":true}`
+
 // settings is the fragment of a Claude Code settings file this package reads.
 //
 // Deliberately a narrow struct rather than a map: everything else in these

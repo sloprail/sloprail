@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -551,6 +552,42 @@ exit 0
 `
 	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write capturing judge claude shim: %v", err)
+	}
+}
+
+// InstallJudgeClaudeSlow is a judge shim that takes delaySeconds to answer, like a
+// model does, and decides its verdict from the prompt: a prompt containing
+// VERDICT-FAIL is refused with reasoning `JUDGE-NO-<rule>` (<rule> is the word
+// after `RULE=` in the prompt), anything else passes. Every call appends
+// "<rule> <unix seconds>" to logFile when it STARTS, so a test can count the judges
+// that ran and see when each began: judges that overlap all begin before the first
+// has finished.
+func (e *Env) InstallJudgeClaudeSlow(logFile string, delaySeconds int) {
+	e.t.Helper()
+	script := `#!/bin/sh
+out=""
+prompt=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
+      prompt="$arg"
+      ;;
+  esac
+done
+[ -n "$out" ] || exit 0
+rule="$(printf '%s' "$prompt" | sed -n 's/.*RULE=\([A-Za-z0-9_-]*\).*/\1/p' | head -1)"
+printf '%s %s\n' "$rule" "$(date +%s)" >> ` + shellQuote(logFile) + `
+sleep ` + strconv.Itoa(delaySeconds) + `
+if printf '%s' "$prompt" | grep -q 'VERDICT-FAIL'; then
+  printf '{"pass": false, "reasoning": "JUDGE-NO-%s: the change is wrong"}\n' "$rule" > "$out"
+else
+  printf '{"pass": true, "reasoning": "fine"}\n' > "$out"
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write slow judge claude shim: %v", err)
 	}
 }
 

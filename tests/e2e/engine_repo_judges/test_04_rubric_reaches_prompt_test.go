@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	sragent "github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
@@ -140,7 +141,7 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 		t.Errorf("the answer file was not granted by a scoped Edit rule first in --allowed-tools; argv:\n%s", string(argv))
 	}
 	// The isolation --settings the old script hand-rolled is now sr-agent's baseArgs.
-	if !hasAdjacent(lines, "--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`) {
+	if !hasAdjacent(lines, "--settings", sragent.IsolationSettings) {
 		t.Errorf("the isolation --settings did not reach the harness; argv:\n%s", string(argv))
 	}
 }
