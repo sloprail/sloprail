@@ -193,6 +193,18 @@ the command and watch it fire before trusting one) — are set out in full in
 [events.md](events.md). The gate-specific point is only that you match against the
 flattened list.
 
+### Example: a shipped command gate
+
+The plugin's `sloprail/gate/no-merge-over-refusals` is a command gate with all its
+policy in YAML and one script. It matches `gh pr merge` (any flags, `--admin` too),
+and its `require: citation` carries a `when` script that applies the requirement
+only when the branch being merged has open refusals in this session's check results,
+judged at that branch's tip (it reads them with `sr-checks sql`). A merge with none is
+untouched; one with open refusals is refused until the fix is committed and judged,
+or until the user's own words are cited (`sr-session trajectory cite '<their words>' &&
+gh pr merge ...`). It is on by default and switched off like any shipped rule, under
+`disabled:` in `.sloprail/config.yaml`.
+
 ### The resolution floor
 
 A program named by a variable, a payload decoded and piped to a shell, splitting
