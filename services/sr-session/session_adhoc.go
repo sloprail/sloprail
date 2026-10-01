@@ -192,6 +192,7 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 		if _, err := reg.RegisterFolder(f); err != nil {
 			continue
 		}
+		noteFolderHome(reg, tree)
 		if tips, terr := gitrepo.RefTips(tree); terr == nil {
 			if b, merr := json.Marshal(tips); merr == nil {
 				_ = reg.SetMeta(refsAtStartKey(tree), string(b))
@@ -210,8 +211,10 @@ func refsAtStartKey(folder string) string { return "refs_at_start:" + filepath.C
 // registerCommandFolders registers each repository outside the agent's own tree that
 // this Bash call is about to move history in, and observes its refs.
 func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+	migrateRefs(reg, rs.ID)
 	registerPendingWorktrees(reg, rs, p.AgentID)
 	notePendingWorktrees(reg, p)
+	observeAdHocFolders(reg, rs.ID, p.AgentID)
 	rootTree, err := gitrepo.Root(rs.Cwd)
 	if err != nil || rootTree == "" {
 		return nil
@@ -247,6 +250,7 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 			if _, err := reg.RegisterFolder(f); err != nil {
 				return err
 			}
+			noteFolderHome(reg, tree)
 			if tips, terr := gitrepo.RefTips(tree); terr == nil {
 				if b, merr := json.Marshal(tips); merr == nil {
 					_ = reg.SetMeta(refsAtStartKey(tree), string(b))

@@ -8,9 +8,14 @@
 // contexts are about events and leave no rows; the session's own memory
 // (baseline, guardrail state) stays in sessionstate.
 //
-// One database per session today, checks.db beside the session's state.db. The
-// identity columns on every run (repo, branch, session) are what let the same
-// rows move to one machine-wide database later without a change of shape.
+// One database per session FAMILY, the root session's checks.db beside its state.db, written
+// by the root and by every sub-agent it dispatches (each run carries the agent_id that ran it).
+// A check result is keyed by the rule's version and a commit range, a statement about the
+// bytes and not about any one agent's working tree, so it is shared across the family; the
+// per-agent state.db is not (sessionpath.StateDB says why). The identity columns on every run
+// (repo, branch, session, agent) are what let the same rows move to one machine-wide database
+// later without a change of shape. Import brings in the rows an older engine kept in a
+// sub-agent's own database.
 //
 // This is the only package that opens the file. The writer (the Stop
 // evaluation) opens it read-write; a reader (`sr-checks`, `sr-session
@@ -19,6 +24,7 @@
 package checkstore
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"errors"
@@ -133,6 +139,10 @@ func open(path string) (*store, error) {
 		db.Close()
 		return nil, fmt.Errorf("checkstore: apply schema: %w", err)
 	}
+	if err := ensureAgentColumn(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &store{db: db, path: path}, nil
 }
 
@@ -152,4 +162,121 @@ func (s *store) conn() (*sql.DB, error) {
 		return nil, ErrClosed
 	}
 	return s.db, nil
+}
+
+// ensureAgentColumn adds check_runs.agent_id to a database an older engine created without it.
+// Idempotent: a database that has the column is left as it is.
+func ensureAgentColumn(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(check_runs)`)
+	if err != nil {
+		return fmt.Errorf("checkstore: read check_runs columns: %w", err)
+	}
+	has := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("checkstore: read check_runs columns: %w", err)
+		}
+		has = has || name == "agent_id"
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE check_runs ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("checkstore: add check_runs.agent_id: %w", err)
+	}
+	return nil
+}
+
+// Import copies every run, check and item of the check-results database at src into dst,
+// tagging each run with agentID when the source says none: the rows an older engine kept in a
+// sub-agent's own database, brought into the family's. Idempotent (rows keep their ids and
+// are ignored when they are already there), and src is only read: it is left in place,
+// untouched. Returns how many runs were new to dst. dst must be a store opened by this package.
+func Import(dst Store, src, agentID string) (int, error) {
+	s, ok := dst.(*store)
+	if !ok {
+		return 0, fmt.Errorf("checkstore: Import needs a store opened by this package")
+	}
+	db, err := s.conn()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := os.Stat(src); err != nil {
+		return 0, err
+	}
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	attach := "ATTACH DATABASE ? AS src"
+	if _, err := conn.ExecContext(context.Background(), attach, "file:"+url.PathEscape(src)+"?mode=ro"); err != nil {
+		if _, err2 := conn.ExecContext(context.Background(), attach, src); err2 != nil {
+			return 0, fmt.Errorf("checkstore: attach %s: %w", src, err)
+		}
+	}
+	defer conn.ExecContext(context.Background(), "DETACH DATABASE src")
+
+	hasAgent := false
+	rows, err := conn.QueryContext(context.Background(), `PRAGMA src.table_info(check_runs)`)
+	if err != nil {
+		return 0, fmt.Errorf("checkstore: read %s: %w", src, err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err == nil && name == "agent_id" {
+			hasAgent = true
+		}
+	}
+	rows.Close()
+
+	agentExpr := "?"
+	args := []any{agentID}
+	if hasAgent {
+		agentExpr = "CASE WHEN agent_id = '' THEN ? ELSE agent_id END"
+	}
+	var before int
+	_ = conn.QueryRowContext(context.Background(), `SELECT count(*) FROM main.check_runs`).Scan(&before)
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
+		return 0, err
+	}
+	stmts := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT OR IGNORE INTO main.check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
+			base_ref, head_ref, exit_code, error, metadata, created_at)
+			SELECT id, run_batch_id, run_at, check_id, repo_id, branch, session_id, ` + agentExpr + `,
+			base_ref, head_ref, exit_code, error, metadata, created_at FROM src.check_runs`, args},
+		{`INSERT OR IGNORE INTO main.checks (id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at)
+			SELECT id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at FROM src.checks`, nil},
+		{`INSERT OR IGNORE INTO main.check_items (id, check_id, key, passed, metadata, checked_at)
+			SELECT id, check_id, key, passed, metadata, checked_at FROM src.check_items`, nil},
+	}
+	for _, st := range stmts {
+		if _, err := tx.ExecContext(context.Background(), st.sql, st.args...); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("checkstore: import %s: %w", src, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	var after int
+	_ = conn.QueryRowContext(context.Background(), `SELECT count(*) FROM main.check_runs`).Scan(&after)
+	return after - before, nil
 }

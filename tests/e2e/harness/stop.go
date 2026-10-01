@@ -3,6 +3,8 @@ package harness
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -44,6 +46,29 @@ func (e *Env) StopNow(projDir, sessionID string, active bool) Result {
 		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
 	})
 	return e.CLIDirectStdinEnv(projDir, string(payload), e.hookEnv(""), "sr-session", "stop")
+}
+
+// StopCmd is the command StopNow would run, built and not started, for a test that must
+// interrupt a Stop part-way (it owns the process: start it, kill it, wait for it).
+func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
+	e.t.Helper()
+	payload, _ := json.Marshal(map[string]any{
+		"session_id": sessionID, "transcript_path": e.TranscriptPath(projDir, sessionID),
+		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
+	})
+	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "stop")
+	cmd.Dir = projDir
+	cmd.Stdin = strings.NewReader(string(payload))
+	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(cmd.Env, e.hookEnv("")...)
+	return cmd
+}
+
+// ChecksDBs lists every check-results database the engine wrote under the harness's data home,
+// one per session family (the root's), never one per sub-agent.
+func (e *Env) ChecksDBs() []string {
+	paths, _ := filepath.Glob(filepath.Join(dataHome(e.home), "sloprail", "sessions", "*", "*", "checks.db"))
+	return paths
 }
 
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the

@@ -195,6 +195,14 @@ func WorkspaceAnchor(dir string) string {
 // risks exempting a file nothing judged, which loses a violation for good. Where
 // one error is recoverable and the other is not, the recoverable one is the one
 // to take.
+//
+// What the parent MAY read across is only what is content-addressed, so that it is a
+// statement about the very same bytes whichever folder ran it: a sub-agent's FINISHED,
+// PASSING run of a rule that matches exactly (the rule's qualified name, the rule's
+// definition hash, the judged head commit and, where it matters, the base). The root asks it
+// so as not to judge again a commit a sub-agent already passed (services/sr-session
+// results_family.go, ForeignPass). Writes stay per agent, nothing is pooled, and anything that
+// does not match exactly (another rule version, another head, a refusal) is not shared.
 func StateDB(cwd, sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("sloprail: no session id")

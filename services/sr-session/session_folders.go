@@ -210,6 +210,9 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if err != nil {
 		return err
 	}
+	if wrote {
+		noteFolderHome(reg, path)
+	}
 	if wrote && role == sessionstate.FolderRoot {
 		// What every branch held when the session began: not the session's work.
 		if tips, terr := gitrepo.RefTips(path); terr == nil {

@@ -79,7 +79,7 @@ func observeRefs(reg sessionstate.Store, sessionID, folder, dir, agent string) e
 		return err == nil && !held
 	}
 	record := func(name, sha string) error {
-		return reg.RecordRef(sessionstate.Ref{SessionID: sessionID, Folder: filepath.Clean(folder), Name: name, Tip: sha, AgentID: agent})
+		return recordKept(reg, dir, sessionstate.Ref{SessionID: sessionID, Folder: filepath.Clean(folder), Name: name, Tip: sha, AgentID: agent})
 	}
 	for ref := range watch {
 		cur, err := gitrepo.RefTip(dir, ref)

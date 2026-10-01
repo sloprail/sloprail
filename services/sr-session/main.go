@@ -52,6 +52,7 @@ about to happen.
   sr-session pre-tool       a tool is about to run — the refusable moment
   sr-session stop           a turn has ended
   sr-session subagent-stop  a subagent's turn has ended
+  sr-session worktree-remove  a worktree is being removed (never blocks it)
 
   sr-session id | query | state   what a hook asks about the session so far
   sr-session trajectory ...        read a trajectory — describe it, cite into it
@@ -73,6 +74,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 	root.AddCommand(
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStopCmd(),
+		newSessionWorktreeRemoveCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(),
 		newSessionTrajectoryCmd(), newSessionChangesetCmd(), newSessionRefsCmd(), newSessionJudgeCmd(),
 	)

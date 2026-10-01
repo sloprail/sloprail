@@ -42,6 +42,11 @@ const (
 	// judged as one the session committed on.
 	MetaRefsAtStart = "refs_at_start"
 
+	// MetaRefsSchema is the version of what the recorded refs keep beside their rows (the
+	// pin of each owed tip, each ref's start, each worktree folder's home). A store written
+	// before it was kept has rows and none of that; the first hook that opens it migrates it.
+	MetaRefsSchema = "refs_schema"
+
 	// MetaTranscriptOffered is how far the record had been read out to something
 	// that could judge it, before any cycle confirmed having judged it.
 	//

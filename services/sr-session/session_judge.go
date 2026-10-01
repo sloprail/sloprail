@@ -53,6 +53,7 @@ exit status is 1.`,
 				return err
 			}
 			scope := natureHookScope(cmd, p)
+			adoptOrphans(cmd, p)
 			loaded := newNatureDeclarations(cmd, tree, reg)
 			if len(loaded.FileGuards) == 0 {
 				return nil

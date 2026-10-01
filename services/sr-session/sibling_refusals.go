@@ -54,25 +54,41 @@ func outstandingRefusalBases(root, rule string, own checkstore.Store) ([]string,
 	}
 
 	var bases []string
+	var every []string
 	for _, f := range failed {
-		reach, err := gitrepo.Contains(root, f.Head)
+		every = append(every, f.Head)
+	}
+	for _, p := range passed {
+		every = append(every, p.Head)
+	}
+	graph := gitrepo.LoadGraph(root, every...)
+	headSha := ""
+	if h, herr := gitrepo.Head(root); herr == nil {
+		headSha = h.Commit
+	}
+	for _, f := range failed {
+		var reach bool
+		var err error
+		if headSha != "" {
+			reach, err = gitrepo.IsAncestorFast(root, graph, f.Head, headSha)
+		} else {
+			reach, err = gitrepo.Contains(root, f.Head)
+		}
 		if err != nil {
 			return nil, err
 		}
 		if !reach {
 			continue // rewritten away: not something this tree still holds
 		}
-		fixed := false
+		var later []string
 		for _, p := range passed {
-			if p.RunAt <= f.RunAt {
-				continue
+			if p.RunAt > f.RunAt {
+				later = append(later, p.Head)
 			}
-			if fixed, err = gitrepo.IsAncestor(root, f.Head, p.Head); err != nil {
-				return nil, err
-			}
-			if fixed {
-				break
-			}
+		}
+		fixed, err := gitrepo.AnyDescendant(root, graph, f.Head, later)
+		if err != nil {
+			return nil, err
 		}
 		if !fixed {
 			bases = append(bases, f.Base)

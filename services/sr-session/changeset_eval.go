@@ -194,7 +194,11 @@ func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p 
 	for _, o := range out {
 		if o != nil && o.settled && o.refused {
 			r := o.result
-			r.Reason = tip.describe(root) + r.Reason
+			head, remedy := tip.describe(root)
+			r.Reason = head + r.Reason
+			if remedy != "" {
+				r.Reason += "\n" + remedy
+			}
 			refusals = append(refusals, r)
 		}
 	}
@@ -220,7 +224,7 @@ func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p 
 // branch, and the session. Best effort — an unreadable one is left empty rather
 // than costing the evaluation.
 func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
-	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID}
+	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID, AgentID: ev.p.AgentID}
 	if root, err := gitrepo.RootCommit(ev.root); err == nil {
 		id.RepoID = root
 	}
@@ -331,15 +335,26 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 
 	// Two scopes of a recorded tip besides its range (the same for every tip):
 	//  - RULE AGE: a rule whose folder was never part of the tip's line of history (the tip
-	//    predates the rule) has nothing to judge there.
+	//    was cut before the rule) is in force on that line from the moment it was added:
+	//    commits made before that are not its debt, commits made after it are, judged
+	//    with the rule from the session's rule set. Only an empty range is "not in force".
 	//  - WHAT STILL STANDS: a tip already landed upstream is judged only on the paths whose
 	//    content upstream still holds as the tip left it; paths changed upstream since were
 	//    superseded by later commits, judged where they were made.
 	selector := changesetSelector(match, ev.context)
 	superseded, notInForce := 0, false
 	if ev.tip.Sha != "" {
-		notInForce = gitrepo.RuleAbsentFromLine(ev.root, ev.tip.Sha, repoRelative(ev.root, g.Dir))
-		if ev.tip.Landed && !notInForce {
+		folder := repoRelative(ev.root, g.Dir)
+		if gitrepo.RuleAbsentFromLine(ev.root, ev.tip.Sha, folder) {
+			notInForce = true
+			if since := gitrepo.RuleAddedAt(ev.root, folder); !since.IsZero() {
+				if r, err = gitrepo.RaiseBaseToTime(ev.root, r, since); err != nil {
+					return ev.fail(g, run, fmt.Errorf("its range is not computable: %w", err))
+				}
+				run.BaseRef = r.Base
+			}
+		}
+		if ev.tip.Landed {
 			up, inner := gitrepo.UpstreamRef(ev.root), selector
 			selector = func(s changeset.Scope) (bool, error) {
 				ok, err := inner(s)
@@ -354,16 +369,13 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 			}
 		}
 	}
-	cs := changeset.Changeset{}
-	if !notInForce {
-		cs, err = changeset.Build(ev.root, r, changeset.Options{
-			Deletions: changeset.DeletionMode(g.Deletions),
-			Scan:      changesetMarkers,
-			Select:    selector,
-		})
-		if err != nil {
-			return ev.fail(g, run, err)
-		}
+	cs, err := changeset.Build(ev.root, r, changeset.Options{
+		Deletions: changeset.DeletionMode(g.Deletions),
+		Scan:      changesetMarkers,
+		Select:    selector,
+	})
+	if err != nil {
+		return ev.fail(g, run, err)
 	}
 	if len(cs.Files) == 0 {
 		// Settled, and said why when it was not simply that nothing matched.
@@ -884,7 +896,12 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 	if scope.SessionID == "" {
 		return nil
 	}
+	// One database per session family: the root's, written by every agent of it.
 	path, err := sessionpath.ChecksDB(p.stateCwd(), scope.SessionID)
+	rs, rsErr := resolveRootSession(p)
+	if p.IsSubagent() && rsErr == nil {
+		path, err = familyChecksPath(rs), nil
+	}
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
 		return nil
@@ -894,7 +911,10 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
 		return nil
 	}
-	return store
+	if !p.IsSubagent() && rsErr == nil {
+		importFamily(cmd, store, p, rs)
+	}
+	return newFamilyResults(store)
 }
 
 // log is where a rule's diagnostics go: its own buffer during a concurrent

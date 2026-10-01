@@ -52,6 +52,9 @@ type HookPayload struct {
 	// must not run for one: see sessionRecord.
 	Source string `json:"source"`
 
+	// WorktreePath is the worktree a WorktreeRemove hook reports as being removed.
+	WorktreePath string `json:"worktree_path"`
+
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`

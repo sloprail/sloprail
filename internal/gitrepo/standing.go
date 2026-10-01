@@ -71,6 +71,26 @@ func RuleAbsentFromLine(dir, tip, folder string) bool {
 	return err == nil && strings.TrimSpace(out) != ""
 }
 
+// RuleAddedAt is when the commit that first brought a rule's folder (repository-relative)
+// into HEAD's history was committed, or the zero time when HEAD's history has none. It is
+// the instant a rule absent from an older line of history came into force: work committed
+// on that line after it is the rule's to judge (RaiseBaseToTime), work before it is not.
+func RuleAddedAt(dir, folder string) time.Time {
+	if strings.TrimSpace(folder) == "" {
+		return time.Time{}
+	}
+	out, err := run(dir, "log", "--reverse", "--format=%ct", "HEAD", "--", folder)
+	if err != nil {
+		return time.Time{}
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	n, err := strconv.ParseInt(strings.TrimSpace(first), 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(n, 0)
+}
+
 // UpstreamRef is the remote branch work lands on (origin/HEAD's target, else
 // origin/main), or "" when none is known.
 func UpstreamRef(dir string) string { return upstreamRef(dir) }

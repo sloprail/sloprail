@@ -115,6 +115,41 @@ a branch is not an abandon, its recorded tip is still judged.
 Uncommitted work is a `commit-required` matter and
 stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
 
+**A tip stays owed until a rule passes it, however the branch goes away.** Every recorded tip
+is pinned under `refs/sloprail/pins/` (a hidden ref, outside `refs/heads`, `refs/remotes`
+and `refs/tags`), so deleting its branch, removing its worktree or running
+`git gc --prune=now` does not lose the commits; the pin is dropped once every rule has passed
+the tip. Where a ref was cut is remembered the first time it is seen, because a deleted branch
+loses its reflog. A ref moved off a recorded tip by something that is not a fast-forward
+(`branch -f`, `checkout -B`, `update-ref`, `reset`) keeps that tip: a branch that holds it later
+(a copy made before, one recreated from the reflog) is recorded and judged. A rule that was
+added to the project after an older branch was cut (so its folder is absent from that
+branch's history) judges that branch's commits made after the rule was added, not the ones
+before. A store written by an older engine is migrated by the first hook that opens it.
+
+**Work whose folder is gone passes to the root.** Each agent judges its own folders, so when
+a sub-agent's worktree is removed (the harness fires `WorktreeRemove`, which the plugin's hook
+`sr-session worktree-remove` answers, never blocking the removal, by pinning what the folder
+held and marking it removed; or the path simply no longer exists), or rows are recorded under a
+folder that is not a folder of the session at all, the **root agent's next Stop judges them**:
+each tip on its own tree, in the repository it belongs to, with that repository's rules. A
+live sub-agent's folder is never claimed. The refusal opens by saying
+so plainly (you now own this: the sub-agent is gone and its work at that commit was never
+judged). For work that already
+landed on the default branch (its branch deleted or not) it says which commit carries it, that
+the place to fix it is a **new branch from the default branch** (it gives the exact worktree
+command to create one), and that a finding that is only a missing
+citation is for the user to decide NOW with `AskUserQuestion` ("keep it" / "revert it"), never
+parked; once the default branch no longer holds the refused content the work is settled as
+`superseded`. For work on a branch that is gone and did not land it names the command that
+restores the branch from the pinned tip.
+
+**One check-results database serves the whole session family** (the root's `checks.db`,
+written by the root and every sub-agent; each run carries its `agent_id`), so a sub-agent's
+pass on a commit is the root's too and a sub-agent's refusal is visible to the root's merge
+gate. The per-agent `state.db` stays per agent. A sub-agent's own database from an older
+engine is imported into the family's once, and left in place.
+
 A rule's identity is its whole `.sloprail` root — its own folder, every other rule,
 schemas and shared scripts, whichever of the project's or its plugin's it lives in.
 The rule hash covers all of it, so editing any file there changes the hash and

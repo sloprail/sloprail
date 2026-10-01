@@ -61,6 +61,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	if store == nil {
 		return dispatchNatureStopStoreless(cmd, p, reg, scope)
 	}
+	adoptOrphans(cmd, p)
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	recordRulesSeen(cmd, store, loaded.FileGuards)

@@ -28,6 +28,8 @@ type RunIdentity struct {
 	RepoID    string
 	Branch    string
 	SessionID string
+	// AgentID is the sub-agent that ran it, "" for the root session itself.
+	AgentID string
 }
 
 // CheckRun is one rule evaluated once, over one commit range.
@@ -147,10 +149,10 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 	}
 	id := newID("run")
 	_, err = db.Exec(`
-		INSERT INTO check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id,
+		INSERT INTO check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
 		                        base_ref, head_ref, exit_code, error, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.BatchID, stamp(), r.CheckID, r.RepoID, r.Branch, r.SessionID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, r.BatchID, stamp(), r.CheckID, r.RepoID, r.Branch, r.SessionID, r.AgentID,
 		r.BaseRef, r.HeadRef, r.ExitCode, runErr, meta)
 	if err != nil {
 		return "", fmt.Errorf("checkstore: record run of %q: %w", r.CheckID, err)
