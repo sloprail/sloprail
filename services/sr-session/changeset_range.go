@@ -38,6 +38,12 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 		}); err != nil {
 			return gitrepo.Range{}, err
 		}
+		// The newest pass was rewritten (an amend, a rebase, a reset): ResolveRange
+		// re-anchors it at its merge base with HEAD, which is never earlier than an older
+		// pass that survives and keeps what was approved and still exists approved.
+		if dropped != "" {
+			watermark = dropped
+		}
 	}
 	if state != nil {
 		var err error

@@ -259,11 +259,15 @@ write; in the changeset the deleted file's `oldMarkers` come from the base commi
 and the dropped pin is refused. (The engine filling oldMarkers from HEAD for an
 unread delete would close this before the write.)
 
-**Rewriting history.** The range starts at a commit SHA the rule passed at (or at
-the commit that last touched the rule's folder), checked with
-`git merge-base --is-ancestor` on every run. A spec line rewritten by a script and
-then folded into an earlier commit with `git commit --amend` orphans that base; the
-engine drops it and falls back to the next one, so the rewritten line is still
-inside the range the rule judges.
+**Rewriting history.** The range starts at the commit SHA the rule last passed at
+(its watermark) when that is still an ancestor of `HEAD`; otherwise at the earlier of
+the parent of the commit that last touched the rule's `.sloprail` folder and the
+commit the session started at, each checked with `git merge-base --is-ancestor` on
+every run. A spec line rewritten by a script and then folded into an earlier commit
+with `git commit --amend` orphans the watermark; the engine drops it and falls back to
+that earlier base, so the rewritten line is still inside the range the rule judges. If
+the session-start commit itself is rewritten, the base is the earlier of the folder
+floor and the merge base of `HEAD` with the remote branch; with no remote branch the
+rule refuses rather than guess which commits are new.
 
 Markers inside a git submodule are not seen (`git grep` does not enter one).

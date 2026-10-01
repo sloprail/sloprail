@@ -49,6 +49,8 @@ unset changeset_lib_loaded
 # Only the subject's files are decided (one task for a requirement); the rest of the
 # changeset is context.
 idxs="$(cs_indexes "$payload")" || exit 0
+# A subject that matches no file of the changeset decided nothing: apply, never waive.
+[ -n "$idxs" ] || exit 0
 
 for idx in $idxs; do
   f() { field ".changeset.files[$idx]$1"; }

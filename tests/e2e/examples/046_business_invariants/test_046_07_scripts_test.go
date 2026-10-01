@@ -126,6 +126,55 @@ func TestT046_23_PredicateOutsideARepoApplies(t *testing.T) {
 	}
 }
 
+// T046_62: a Changeset file that lacks a field its status needs (oldContent, newContent,
+// or the markers) is undecidable, not empty: the predicate APPLIES the citation (exit 0)
+// instead of waiving it, and so does a subject that matches no changed file. The control,
+// the same change with every field present, still waives.
+func TestT046_62_AMissingFieldOrSubjectAppliesTheCitation(t *testing.T) {
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"}} {
+		if o, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, o)
+		}
+	}
+	g := guardDir(t, "pinned-spec-holds")
+	run := func(files, subject string) (string, int) {
+		payload := `{"event":{"kind":"Changeset"},"subject":{"id":"` + subject + `","files":["` + subject + `"]},"changeset":{"files":[` + files + `]}}`
+		return runRuleScriptEnv(t, g, "changes-pinned-lines.sh", repo, payload, "SR_TREE="+repo, "SR_BASE=HEAD")
+	}
+	const (
+		oldc = `"oldContent":"a\nb\n"`
+		newc = `"newContent":"a\nc\n"`
+		oldm = `"oldMarkers":[]`
+		newm = `"newMarkers":[]`
+	)
+	file := func(fields ...string) string {
+		return `{"status":"M","path":"SPEC.md",` + strings.Join(fields, ",") + `}`
+	}
+	if out, code := run(file(oldc, newc, oldm, newm), "SPEC.md"); code != 1 || !strings.Contains(out, `"waived"`) {
+		t.Fatalf("control: nothing pinned changed, exit %d (%s); it must waive, or the cases below prove nothing", code, out)
+	}
+	for name, fields := range map[string][]string{
+		"no oldContent": {newc, oldm, newm}, "no newContent": {oldc, oldm, newm},
+		"no oldMarkers": {oldc, newc, newm}, "no newMarkers": {oldc, newc, oldm},
+		"null newContent": {oldc, `"newContent":null`, oldm, newm},
+	} {
+		if out, code := run(file(fields...), "SPEC.md"); code != 0 || strings.Contains(out, `"waived"`) {
+			t.Errorf("%s: exited %d (%s), want 0 (applies)", name, code, out)
+		}
+	}
+	if out, code := run(file(oldc, newc, oldm, newm), "OTHER.md"); code != 0 || strings.Contains(out, `"waived"`) {
+		t.Errorf("a subject matching no changed file exited %d (%s), want 0 (applies)", code, out)
+	}
+	// A created file needs only the new side; a deleted one only the old side.
+	if out, code := run(`{"status":"A","path":"SPEC.md",`+newc+`,`+newm+`}`, "SPEC.md"); code != 1 || !strings.Contains(out, `"waived"`) {
+		t.Errorf("an added file with its new side present exited %d (%s), want 1 (waived)", code, out)
+	}
+	if out, code := run(`{"status":"A","path":"SPEC.md",`+newm+`}`, "SPEC.md"); code != 0 {
+		t.Errorf("an added file with no newContent exited %d (%s), want 0 (applies)", code, out)
+	}
+}
+
 // T046_24: the prepare skips the judge only when the predicate DECIDED the write
 // touches nothing pinned (exit 1) — the same line the engine's `when` draws. A
 // predicate that crashed (here exit 2) leaves the citation demanded, so skipping

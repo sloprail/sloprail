@@ -1551,12 +1551,15 @@ func (e *Env) DisableFileGuard(projDir string, names ...string) {
 	} else if !os.IsNotExist(err) {
 		e.t.Fatalf("harness: read config: %v", err)
 	}
-	if !strings.Contains(body, "disabled:") {
-		body += "disabled:\n"
+	qualified := make([]string, len(names))
+	for i, n := range names {
+		qualified[i] = "file-guard/" + n
 	}
-	for _, name := range names {
-		body += "  - file-guard/" + name + "\n"
+	merged, err := mergeDisabled(body, qualified)
+	if err != nil {
+		e.t.Fatalf("harness: merge disabled rules into %s: %v", path, err)
 	}
+	body = merged
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: write config: %v", err)
 	}
@@ -1586,12 +1589,11 @@ func (e *Env) DisablePluginGuardrail(projDir string, qualified ...string) {
 	} else if !os.IsNotExist(err) {
 		e.t.Fatalf("harness: read config: %v", err)
 	}
-	if !strings.Contains(body, "disabled:") {
-		body += "disabled:\n"
+	merged, err := mergeDisabled(body, qualified)
+	if err != nil {
+		e.t.Fatalf("harness: merge disabled rules into %s: %v", path, err)
 	}
-	for _, name := range qualified {
-		body += "  - " + name + "\n"
-	}
+	body = merged
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: write config: %v", err)
 	}

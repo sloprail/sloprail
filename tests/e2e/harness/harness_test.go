@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/transcript"
+	"gopkg.in/yaml.v3"
 )
 
 // Refused reads the real refusal tool_result, not the presence of a word.
@@ -143,5 +144,61 @@ func TestStopContinuations(t *testing.T) {
 		if got := len(stopContinuationsIn(tc.record)); got != tc.want {
 			t.Errorf("%s: %d continuations, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+// DisablePluginGuardrail's config merge: parsed and rewritten, never appended to as
+// text. Appending "  - name" at the end of the file breaks when `disabled:` is not the
+// last key (the entry lands under the key that follows) or the file has no trailing
+// newline (the entry is glued onto the last line).
+func TestMergeDisabled(t *testing.T) {
+	read := func(t *testing.T, body string) map[string]any {
+		t.Helper()
+		var m map[string]any
+		if err := yaml.Unmarshal([]byte(body), &m); err != nil {
+			t.Fatalf("the merged config is not valid YAML: %v\n%s", err, body)
+		}
+		return m
+	}
+	disabled := func(t *testing.T, m map[string]any) []string {
+		t.Helper()
+		var out []string
+		list, _ := m["disabled"].([]any)
+		for _, v := range list {
+			out = append(out, v.(string))
+		}
+		return out
+	}
+	cases := []struct {
+		name, body string
+		want       []string
+		keep       map[string]any
+	}{
+		{"empty file", "", []string{"p/gate/x"}, nil},
+		{"disabled is not the last key", "disabled:\n  - p/gate/old\nstop_hook_block_cap: 3\n", []string{"p/gate/old", "p/gate/x"}, map[string]any{"stop_hook_block_cap": 3}},
+		{"no trailing newline", "stop_hook_block_cap: 3", []string{"p/gate/x"}, map[string]any{"stop_hook_block_cap": 3}},
+		{"no trailing newline after disabled", "disabled:\n  - p/gate/old", []string{"p/gate/old", "p/gate/x"}, nil},
+		{"disabled with nothing after it", "disabled:\nstop_hook_block_cap: 3\n", []string{"p/gate/x"}, map[string]any{"stop_hook_block_cap": 3}},
+		{"an entry already there is not repeated", "disabled: [p/gate/x]\n", []string{"p/gate/x"}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := mergeDisabled(c.body, []string{"p/gate/x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := read(t, got)
+			if d := disabled(t, m); strings.Join(d, ",") != strings.Join(c.want, ",") {
+				t.Fatalf("disabled = %v, want %v\n%s", d, c.want, got)
+			}
+			for k, v := range c.keep {
+				if m[k] != v {
+					t.Errorf("key %s = %v, want %v (it must survive the merge)\n%s", k, m[k], v, got)
+				}
+			}
+		})
+	}
+	if _, err := mergeDisabled("disabled: nope\n", []string{"x"}); err == nil {
+		t.Error("a `disabled:` that is not a list was merged into")
 	}
 }

@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -266,4 +268,73 @@ func TestT041_10_UnderivableInPlaceEditIsRefused(t *testing.T) {
 func readFile(proj, rel string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(proj, rel))
 	return string(b), err
+}
+
+// T041_11: the file-guard's reconcile refusal NAMES the file it is about, for every way
+// it can refuse (the bytes differ; the origin is not in this checkout; the file's content
+// or markers are missing from the changeset), so an agent never has to guess which of its
+// files or commits a reason is about. The control, a faithful move, is permitted.
+func TestT041_11_TheFileGuardRefusalNamesTheFile(t *testing.T) {
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "origin.go"), []byte("func Beta() int {\n\treturn 1\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "origin"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	sha, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fqn := "origin.go@" + strings.TrimSpace(string(sha)) + ":1-3"
+	marker := `[{"kind":"moved-from","fqn":"` + fqn + `"}]`
+	script := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail", "file-guard", "moved-content-reconciles", "reconciles-against-origin.sh")
+
+	run := func(file string) (string, int) {
+		cmd := exec.Command("bash", script)
+		cmd.Dir = repo
+		cmd.Stdin = strings.NewReader(`{"event":{"kind":"Changeset"},"changeset":{"files":[` + file + `]}}`)
+		out, err := cmd.Output()
+		if err == nil {
+			return string(out), 0
+		}
+		if ee, ok := err.(*exec.ExitError); ok {
+			return string(out), ee.ExitCode()
+		}
+		t.Fatalf("run: %v", err)
+		return "", -1
+	}
+	file := func(path, fields string) string {
+		return `{"status":"A","path":"` + path + `",` + fields + `}`
+	}
+
+	if out, code := run(file("dest.go", `"newContent":"func Beta() int {\n\treturn 1\n}\n","newMarkers":`+marker)); code != 0 {
+		t.Fatalf("control: a faithful move was refused (exit %d): %s", code, out)
+	}
+	for name, c := range map[string]string{
+		"the bytes differ":            file("dest.go", `"newContent":"func Beta() int {\n\treturn 999\n}\n","newMarkers":`+marker),
+		"the origin is not here":      file("dest.go", `"newContent":"x","newMarkers":[{"kind":"moved-from","fqn":"origin.go@0123456789012345678901234567890123456789:1-3"}]`),
+		"the content is missing":      file("dest.go", `"newMarkers":`+marker),
+		"the markers are missing":     file("dest.go", `"newContent":"func Beta() int {\n\treturn 1\n}\n"`),
+		"a second file is the guilty": file("ok.go", `"newContent":"y","newMarkers":[]`) + "," + file("dest.go", `"newContent":"func Beta() int {\n\treturn 999\n}\n","newMarkers":`+marker),
+	} {
+		out, code := run(c)
+		if code == 0 {
+			t.Errorf("%s: the guard permitted it", name)
+			continue
+		}
+		if !strings.Contains(out, "dest.go") {
+			t.Errorf("%s: the refusal does not name the file it is about:\n%s", name, out)
+		}
+		if name == "a second file is the guilty" && strings.Contains(out, "ok.go") {
+			t.Errorf("%s: the refusal blames the file that is fine:\n%s", name, out)
+		}
+	}
 }

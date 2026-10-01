@@ -47,6 +47,8 @@ changes="$(printf '%s' "$payload" | jq -c '
       else {op: "update", path: .path, old: need("oldContent"), new: need("newContent")} end ]' 2>/dev/null)" || exit 0
 n="$(printf '%s' "$changes" | jq 'length' 2>/dev/null)" || exit 0
 case "$n" in '' | *[!0-9]*) exit 0 ;; esac
+# A subject that matches no file of the changeset decided nothing: apply, never waive.
+[ "$n" -gt 0 ] || exit 0
 
 i=0
 while [ "$i" -lt "$n" ]; do

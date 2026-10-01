@@ -76,35 +76,26 @@ func TestT001_11_PluginRuleUsesTheSessionStart(t *testing.T) {
 	}
 }
 
-// T001_12: when even the last floor cannot be used the command fails closed. The
-// session's start commit is amended away, so it is no longer an ancestor of HEAD;
-// the rule has no folder commit either. Committing the rule gives it a floor, but a
-// floor alone is not a stand-in for a rewritten start (it can sit after in-session
-// commits), so the command still refuses; with a remote branch to anchor on it
-// succeeds, from the earlier of the two.
-func TestT001_12_AnUnreachableSessionStartFailsClosed(t *testing.T) {
+// T001_12: a session start the tree left is re-anchored at its merge base with HEAD, so the
+// command still gives a range that holds everything the session did. The session's start
+// commit is amended away (no longer an ancestor of HEAD) and the rule has no folder commit
+// yet. The session began on the repository's root commit, so the rewritten one shares no
+// history with the old start and the range falls to the root commit. Committing the rule
+// gives it a floor AFTER that, and the base stays the earlier one.
+func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) {
 	e, proj, _ := startedSession(t, "s-001-12")
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
 	e.Git(proj, "commit", "--amend", "--allow-empty", "-m", "the start commit, rewritten")
 
-	_, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
-	if res.Code == 0 {
-		t.Fatalf("an unreachable session start produced a range:\n%s", res.Output)
-	}
-	if !strings.Contains(res.Output, "not an ancestor") {
-		t.Fatalf("the error should say the session start is unreachable:\n%s", res.Output)
+	root := e.Git(proj, "rev-list", "--max-parents=0", "HEAD")
+	got, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
+	if res.Code != 0 || got.Base != root || got.Origin != "session-start" {
+		t.Fatalf("exit %d, range %s %s: want session-start at the root commit %s:\n%s", res.Code, got.Origin, got.Base, root, res.Output)
 	}
 
 	e.CommitAll(proj, "add the rule")
-	_, res = show(t, e, proj, e.SessionEnv("s-001-12"), "size")
-	if res.Code == 0 || !strings.Contains(res.Output, "can't tell which commits are new") {
-		t.Fatalf("a floor alone stood in for a rewritten session start:\n%s", res.Output)
-	}
-
-	root := e.Git(proj, "rev-list", "--max-parents=0", "HEAD")
-	e.Git(proj, "update-ref", "refs/remotes/origin/main", root)
-	got, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
+	got, res = show(t, e, proj, e.SessionEnv("s-001-12"), "size")
 	if res.Code != 0 || got.Base != root {
-		t.Fatalf("with a remote branch to anchor on: exit %d base %q, want %s:\n%s", res.Code, got.Base, root, res.Output)
+		t.Fatalf("with the rule committed after it: exit %d base %q, want %s:\n%s", res.Code, got.Base, root, res.Output)
 	}
 }

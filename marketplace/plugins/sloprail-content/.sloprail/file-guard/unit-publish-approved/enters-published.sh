@@ -29,6 +29,8 @@ payload="$(cat)"
 idxs="$(printf '%s' "$payload" | jq -r '
   (.subject.files | if type == "array" then . else error("no subject") end) as $subj
   | [.changeset.files | to_entries[] | select(.value.path as $p | any($subj[]; . == $p)) | .key] | .[]' 2>/dev/null)" || exit 0
+# A subject that matches no file of the changeset decided nothing: apply, never waive.
+[ -n "$idxs" ] || exit 0
 
 # Every file of the subject is asked. One that enters published applies the requirement (lib_check
 # exits 0 with its hint); only when every file is a decided "not a publish" is the
@@ -41,12 +43,14 @@ for idx in $idxs; do
   # Deleting a unit publishes nothing.
   [ "$status" = "D" ] && continue
 
-  new_content="$(f '.newContent // ""')" || exit 0
+  # A content field the status carries and the payload lacks (absent or not a string) is
+  # undecidable, not empty: apply.
+  new_content="$(f '.newContent | if type == "string" then . else error("missing newContent") end')" || exit 0
   if [ "$status" = "A" ]; then
     kind=Create old_content=""
   else
     kind=Update
-    old_content="$(f '.oldContent // ""')" || exit 0
+    old_content="$(f '.oldContent | if type == "string" then . else error("missing oldContent") end')" || exit 0
   fi
   lib_check
 done

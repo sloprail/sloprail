@@ -355,7 +355,9 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 //  2. An amend of HEAD, offered ONLY when it is safe to rewrite: every file's last
 //     commit is HEAD, HEAD is on no remote branch, and the working tree is clean.
 //
-// `git reset --soft` is never suggested: it rewrites the whole range.
+// `git reset --soft` is never suggested (it rewrites the whole range, and a range that
+// starts before the first commit has no commit to reset to). Undoing is `git revert`,
+// never `git reset --hard`.
 // Several quotes on one commit are fine.
 func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool) string {
 	var b strings.Builder
@@ -388,6 +390,7 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 		fmt.Fprintf(&b, "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:\n"+
 			"  git commit --amend --no-edit --trailer '%s'", line)
 	}
+	b.WriteString("\nTo undo the change instead, use `git revert <commit>`; never `git reset --hard`, which destroys work.")
 	return b.String()
 }
 

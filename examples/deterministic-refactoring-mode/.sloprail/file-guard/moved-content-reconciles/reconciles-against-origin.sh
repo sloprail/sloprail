@@ -26,8 +26,14 @@ esac
 
 i=0
 while [ "$i" -lt "$n" ]; do
-  new="$(printf '%s' "$input" | jq -r --argjson i "$i" '.changeset.files[$i].newContent // ""')" || exit 1
-  markers="$(printf '%s' "$input" | jq -c --argjson i "$i" '.changeset.files[$i].newMarkers // []')" || exit 1
+  path="$(printf '%s' "$input" | jq -r --argjson i "$i" '.changeset.files[$i].path // ""')" || exit 1
+  # A file whose committed content or markers are missing from the payload was not
+  # reconciled: refuse, naming it, rather than read the gap as "no moved-from marker".
+  new="$(printf '%s' "$input" | jq -r --argjson i "$i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing") end' 2>/dev/null)" &&
+  markers="$(printf '%s' "$input" | jq -c --argjson i "$i" '.changeset.files[$i].newMarkers | if type == "array" then . else error("missing") end' 2>/dev/null)" || {
+    jq -n --arg path "$path" '{reason: ($path + ": its committed content or markers are missing from the changeset, so it could not be reconciled against its origin.")}'
+    exit 1
+  }
   i=$((i + 1))
   lib_reconcile
 done
