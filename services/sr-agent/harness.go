@@ -90,6 +90,16 @@ type harnessSpec struct {
 	// otherwise recurse. nil when the harness needs none.
 	baseArgs []string
 
+	// stdinPromptAbove is the prompt size, in bytes, above which the prompt goes
+	// to the harness on its STDIN instead of as a command-line argument. An argv
+	// is bounded (the OS's ARG_MAX covers argv AND environment together, about
+	// 1 MB on macOS, and Linux caps one argument at 128 KiB): a ~550 KB rendered
+	// judge prompt failed with "Argument list too long". `claude -p` reads its
+	// prompt from stdin when none is given as an argument. 0 means the harness is
+	// never handed one that way. Below the bound the prompt stays positional, as
+	// every harness takes it.
+	stdinPromptAbove int
+
 	// grant returns the arguments that give the agent exactly the file access a
 	// run needs: each added directory in its mode — writable or readonly — (the
 	// caller's `--add-dir[:<mode>]`s, and the --verify answer file's folder, which
@@ -124,6 +134,8 @@ type harnessSpec struct {
 var claudeCodeSpec = harnessSpec{
 	name:   ClaudeCode,
 	binary: "claude",
+
+	stdinPromptAbove: 64 << 10,
 	detect: func(getenv func(string) string) bool {
 		// CLAUDECODE is what Claude Code sets on every session; the entrypoint
 		// variable is checked too so that a session which sets only one of them

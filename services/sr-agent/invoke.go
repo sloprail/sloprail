@@ -405,8 +405,12 @@ type Invocation struct {
 	// Binary is the harness executable.
 	Binary string
 
-	// Args is its full argument list, prompt included.
+	// Args is its full argument list, prompt included unless Stdin carries it.
 	Args []string
+
+	// Stdin, when non-empty, is the prompt, fed on the harness's standard input
+	// because it is too large to be an argument (see harnessSpec.stdinPromptAbove).
+	Stdin string
 }
 
 // String renders the invocation for diagnostics. Arguments containing spaces
@@ -432,7 +436,11 @@ func (inv Invocation) String() string {
 		}
 		parts = append(parts, arg)
 	}
-	return strings.Join(parts, " ")
+	line := strings.Join(parts, " ")
+	if inv.Stdin != "" {
+		line += fmt.Sprintf("   # prompt (%d bytes) on stdin", len(inv.Stdin))
+	}
+	return line
 }
 
 // BuildInvocation assembles the harness command line.
@@ -475,6 +483,9 @@ func BuildInvocation(spec harnessSpec, model string, harnessArgs []string, promp
 	args = append(args, "-p", "--model", model)
 	args = append(args, spec.baseArgs...)
 	args = append(args, harnessArgs...)
+	if spec.stdinPromptAbove > 0 && len(prompt) > spec.stdinPromptAbove {
+		return Invocation{Binary: resolveBinary(spec, getenv), Args: args, Stdin: prompt}
+	}
 	args = append(args, "--", prompt)
 	return Invocation{Binary: resolveBinary(spec, getenv), Args: args}
 }

@@ -221,11 +221,11 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// sr-agent spawns the harness, which spawns the model, exactly the child tree
 	// the process-group kill exists for.
 	//
-	// --verify names our verify script; --prompt reads the whole rendered prompt
-	// from an environment variable rather than the argv, so a prompt of any size or
-	// shape (a leading dash, embedded quotes, a huge rubric) cannot break the
-	// command line. `--prompt "$VAR"` expands to exactly one argument under `sh -c`,
-	// which is what makes carrying the prompt this way safe.
+	// --verify names our verify script; --prompt-stdin reads the whole rendered
+	// prompt from the shell's stdin rather than the argv or the environment — both
+	// bounded together by the OS (ARG_MAX, ~1 MB on macOS), so a ~550 KB rubric
+	// failed with "Argument list too long" — and a prompt of any shape (a leading
+	// dash, embedded quotes) cannot break the command line either.
 	// The signal return is discarded here: a judge that dies by signal still lands
 	// on the non-zero refusal below (judgeRefusalReason), whose "no readable
 	// reasoning" fallback already covers a killed substrate. The killed-by-signal
@@ -234,8 +234,8 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	stdout, stderr, code, expired, _, startErr := runShell(
 		j.Dir,
 		judgeCommand(verifier, j.model(), j.AllowedTools, j.DisallowedTools, j.Workspace),
-		nil,
-		judgeEnv(j, prompt),
+		[]byte(prompt),
+		judgeEnv(j),
 		j.Timeout,
 	)
 	if startErr != nil {
@@ -260,10 +260,9 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 
 // judgeCommand is the shell line that runs sr-agent for a judge.
 //
-// The prompt is read from an environment variable rather than the argv, so a
-// prompt of any size or shape (a leading dash, embedded quotes) cannot break the
-// command line — `--prompt "$VAR"` is one argument to sr-agent whatever the value
-// holds. The verifier path, the model, the allowed-tools and the workspace are
+// The prompt is read from stdin (`--prompt-stdin`), not passed in the argv or the
+// environment, so a prompt of any size or shape (a leading dash, embedded quotes)
+// cannot break the command line or overflow ARG_MAX. The verifier path, the model, the allowed-tools and the workspace are
 // single-quoted as their own arguments — each is author- or project-supplied (a
 // rule's `model`, `allowed_tools`, a project path with a space in it), so quoting
 // keeps a stray character in one from breaking the command line, the same
@@ -300,8 +299,7 @@ func judgeCommand(verifier, model string, allowedTools, disallowedTools []string
 	if workspace != "" {
 		cmd += " --add-dir:readonly " + shSingleQuote(workspace)
 	}
-	cmd += fmt.Sprintf(` --prompt "$%s"`, judgePromptEnv)
-	return cmd
+	return cmd + " --prompt-stdin"
 }
 
 // workspaceNote tells the judge where the project it is judging lives, when the
@@ -329,13 +327,9 @@ func (j judgeCall) model() string {
 	return defaultJudgeModel
 }
 
-// judgePromptEnv carries the rendered prompt into the sr-agent invocation off the
-// argv.
-const judgePromptEnv = "SLOPRAIL_JUDGE_PROMPT"
-
 // judgeEnv is the environment the judge's sr-agent runs in: the parent's, plus
-// the guard name (so anything it spawns can key its own state), the re-entry
-// provenance, and the prompt.
+// the guard name (so anything it spawns can key its own state) and the re-entry
+// provenance. The prompt is not here: it rides on stdin.
 //
 // SLOPRAIL_LAUNCHED_BY is the load-bearing one here. sr-agent's own first Write
 // fires PreToolUse, which re-runs this guard's dispatch; carrying the launched-by
@@ -344,7 +338,7 @@ const judgePromptEnv = "SLOPRAIL_JUDGE_PROMPT"
 // The value is the caller's appendLaunchedBy result, threaded through as
 // j.LaunchedBy. Appended AFTER os.Environ() so the engine's own answer wins over
 // any stale outer value — the same ordering scriptCall.env and hookScope.env use.
-func judgeEnv(j judgeCall, prompt string) []string {
+func judgeEnv(j judgeCall) []string {
 	env := os.Environ()
 	if j.GuardName != "" {
 		env = append(env, "SR_GUARDRAIL="+j.GuardName)
@@ -352,7 +346,6 @@ func judgeEnv(j judgeCall, prompt string) []string {
 	if j.LaunchedBy != "" {
 		env = append(env, launchedByEnv+"="+j.LaunchedBy)
 	}
-	env = append(env, judgePromptEnv+"="+prompt)
 	return append(env, j.Env...)
 }
 
