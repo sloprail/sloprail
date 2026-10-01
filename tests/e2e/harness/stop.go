@@ -75,6 +75,10 @@ func (r Result) AnySubagentStopBlocked() bool {
 	return strings.Contains(r.Output, "SubagentStop blocked (")
 }
 
+// shippedGates are the plugin's gates that would refuse a package's own setup: the
+// config.yaml a package writes to retire a rule is itself a guarded write.
+var shippedGates = []string{"sloprail/gate/grounded-rule-changes"}
+
 // shippedFileGuards are the file-guards the sloprail plugin ships for authoring
 // guardrails: they judge rule folders and skill reads, which the rule's own files
 // (in the range, since the commit that adds a rule is judged) are not about.

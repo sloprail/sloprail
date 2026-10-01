@@ -235,11 +235,40 @@ payload its checks will get without running anything
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.
 
+## Changing or removing a rule needs a ground
+
+An agent stuck behind a refusal has a cheap way out: change the rule instead of the
+work. Edit its script, add it to `disabled:` in `.sloprail/config.yaml`, `rm -rf` its
+folder. The plugin's `grounded-rule-changes` rule closes that. A change to what
+**already stands** in the project's `.sloprail/` (an edit, a deletion, a rename, any
+write to `config.yaml`) must trace to one of two things:
+
+- **the user asked for it**: cite their exact words (`Sloprail-Cites-User:` trailer on
+  the commit, or `sr-file --cite:user`), or
+- **a bug actually happened**: cite the tool output that shows the rule misfiring on
+  work that was correct (`Sloprail-Cites-Tool:`, or `--cite:tool_result`).
+
+A judge checks that the cited words ask for, or the cited output justifies, THIS
+change. The rule's own refusal of your bad work does not count (it shows the rule
+working), nor does a generic "please continue", nor a misfire of a different rule.
+A refusal never justifies loosening the rule that gave it: ask the user, or fix your
+work.
+
+Setting rules up needs none of this. A rule or structure **added** in the session
+weakens nothing, so a rules-first session passes without a citation. The one
+exception is `.sloprail/config.yaml`, where even a new file can switch rules off.
+`config.yaml` writes are also refused before they land, since a file-guard at Stop
+reads a config the change has already rewritten. Cite the write with `sr-file`
+(grounding.md). Fixing a rule you wrote earlier in the session, after it passed, is a
+change to what stands: cite the output that showed it misfiring.
+
 ## Turning one off
 
 Keep the folder; the YAML body and the sibling prose hold the reasoning that
 produced the rule, which is exactly what someone needs when deciding whether to
-switch it back on.
+switch it back on. Turning a rule off is a change to the project's rules, so it
+needs the user's request or a cited misfire (above); never switch a rule off to get
+past its refusal.
 
 For a rule in **your own** `.sloprail/`, disable it at its source — see each
 nature's doc for the exact key. For a rule that **arrived inside an installed

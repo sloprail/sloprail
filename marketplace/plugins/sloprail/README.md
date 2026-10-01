@@ -117,3 +117,26 @@ disables a shipped rule from their own side, in `.sloprail/config.yaml`:
 The name is qualified by the plugin AND the nature (`<plugin>/<nature>/<name>`),
 so disabling a shipped rule cannot also disable a project rule that happens to
 share its name — nor a differently-natured rule of the same name.
+
+## Changes to a project's rules must be grounded
+
+`sloprail/file-guard/grounded-rule-changes` (and a `PreFileWrite` gate of the same name
+on `.sloprail/config.yaml`) refuse a change to what already stands in the project's
+`.sloprail/` unless it is grounded. Measured in the evals: an agent stuck behind a
+refusal edited the rule's script, wrote a `disabled:` entry, or ran `rm -rf` on the rule's
+folder. The ground is either the user's words asking for it, or a tool output showing the
+rule misfiring on correct work (`Sloprail-Cites-User:` / `Sloprail-Cites-Tool:` trailers
+on the commit). The rule's own refusal is no ground, and the refusal says so: ask the
+user, or cite the misfire, and never disable or weaken a rule to get past it.
+
+Adding a rule or a structure needs no citation, so a rules-first session is unaffected;
+`.sloprail/config.yaml` is the exception, since even a new one can switch rules off.
+Working on sloprail's own repo, amend the commit with the trailer:
+`git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'`.
+The rule's folder has the full argument. A user who wants it off says so in the same
+place as any other shipped rule (and the config write that does it needs the same
+ground):
+
+    disabled:
+      - sloprail/file-guard/grounded-rule-changes
+      - sloprail/gate/grounded-rule-changes

@@ -220,6 +220,12 @@ file-guard's after-check still refuses a change that reached the tree without a
 citation (one `when` does not waive).
 `when` works on any prerequisite, on every nature.
 
+A change to the project's own rules is one that must be grounded. The plugin ships
+that as `sloprail/file-guard/grounded-rule-changes` (a `PreFileWrite` gate on
+`.sloprail/config.yaml` beside it): [SKILL.md](SKILL.md#changing-or-removing-a-rule-needs-a-ground)
+and its README there are a worked example of `require: citation` on a file-guard with a
+`when` and a judge.
+
 ## Judging it
 
 A judge decides whether the cited words support **this** change — the change,
@@ -253,6 +259,10 @@ the whole entry it was taken from, so weigh the quote in its context.
 </citation>
 {% endfor %}</citations>{% else %}**This change cites nothing.**{% endif %}
 ~~~
+
+`call` exists only on a `tool_result` citation, and an `{% if c.call %}` on a key
+that is absent is a render error that refuses the judge, so print it bare as above (an
+absent key renders empty).
 
 Every value a template renders is escaped by the engine: `</` becomes `<\/`, so
 a quote or message cannot close its tag and pose as prompt structure, and nothing

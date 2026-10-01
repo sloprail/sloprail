@@ -1038,6 +1038,7 @@ func (e *Env) GitInit(dir string) {
 	e.excludeMockFiles(dir)
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
+		e.DisablePluginGuardrail(dir, shippedGates...)
 	}
 	if e.onlyShipped != "" {
 		var others []string
