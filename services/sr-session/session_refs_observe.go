@@ -101,13 +101,13 @@ func observeRefs(reg sessionstate.Store, sessionID, folder, dir, agent string) e
 		if !seen && !haveBaseline {
 			continue // cannot tell what was already there; the reflog backfill decides
 		}
-		if fresh(cur) {
+		if fresh(cur) && gitrepo.MadeByHead(dir, cur) {
 			if err := record(ref, cur); err != nil {
 				return err
 			}
 		}
 	}
-	if next.Detached != "" && next.Detached != prev.Detached && fresh(next.Detached) {
+	if next.Detached != "" && next.Detached != prev.Detached && fresh(next.Detached) && gitrepo.MadeByHead(dir, next.Detached) {
 		if err := record(gitrepo.DetachedRef(next.Detached), next.Detached); err != nil {
 			return err
 		}

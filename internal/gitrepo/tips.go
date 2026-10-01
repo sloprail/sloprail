@@ -188,6 +188,9 @@ func ReflogTips(dir string, since time.Time) ([]Tip, error) {
 		if inHead {
 			continue
 		}
+		if !made[sha] {
+			continue // only checked out (an existing commit): never the session's work
+		}
 		name, err := BranchNameFor(dir, sha)
 		if err != nil {
 			return nil, err
@@ -354,4 +357,21 @@ func OnRemote(dir, commit string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(out) != "", nil
+}
+
+// MadeByHead reports whether the HEAD reflog shows sha being PRODUCED by a commit-type
+// action (commit, amend, merge, cherry-pick, revert, rebase, pull), as opposed to only
+// being checked out. A commit that was merely checked out is never the session's work.
+func MadeByHead(dir, sha string) bool {
+	out, err := run(dir, "reflog", "show", "HEAD", "--format=%H%x09%gs")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.SplitN(line, "\t", 2)
+		if len(f) == 2 && f[0] == sha && madeCommit(f[1]) {
+			return true
+		}
+	}
+	return false
 }
