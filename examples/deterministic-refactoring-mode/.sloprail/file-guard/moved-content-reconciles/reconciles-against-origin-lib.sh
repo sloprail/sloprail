@@ -17,8 +17,9 @@ lib_reconcile
 }
 
 # Drop imports and normalize whitespace on both sides, so a legitimate import
-# rewrite is not read as a rewrite of the moved code.
-normalize() { grep -vE '^\s*(import|from)\b' | sed 's/[[:space:]]\+/ /g;s/^ //;s/ $//'; }
+# rewrite is not read as a rewrite of the moved code. Blank lines are dropped too
+# (a PEP8 file has them around every def); every non-blank line must still match.
+normalize() { grep -vE '^\s*(import|from)\b' | sed 's/[[:space:]][[:space:]]*/ /g;s/^ //;s/ $//' | grep -v '^$'; }
 
 # lib_reconcile checks EVERY moved-from marker against its own origin range. A
 # file may carry several markers (one per moved block); each marker owns the lines
@@ -60,9 +61,11 @@ EOF
   origin_body="$(printf '%s' "$origin" | normalize)"
 
   if [ "$moved_body" != "$origin_body" ]; then
-    cat <<EOF
-{"reason":"$file: content marked moved-from '$fqn' does not reconcile against its origin — after dropping imports and whitespace, the bytes differ. A move must carry the origin's bytes, not regenerated ones."}
-EOF
+    # The first normalized line that differs (or is missing on one side), so the agent
+    # can see WHAT differs rather than guess.
+    o_line="$(diff <(printf '%s\n' "$origin_body") <(printf '%s\n' "$moved_body") | sed -n 's/^< //p' | head -1)"
+    n_line="$(diff <(printf '%s\n' "$origin_body") <(printf '%s\n' "$moved_body") | sed -n 's/^> //p' | head -1)"
+    jq -n --arg file "$file" --arg fqn "$fqn" --arg o "$o_line" --arg n "$n_line" '{reason: ($file + ": content marked moved-from \u0027" + $fqn + "\u0027 does not reconcile against its origin — after dropping imports, blank lines and whitespace, the bytes differ. First differing line: origin: \u0027" + $o + "\u0027 / new: \u0027" + $n + "\u0027 (empty means that side has no such line). A move must carry the origin\u0027s bytes, not regenerated ones.")}'
     exit 1
   fi
 done
