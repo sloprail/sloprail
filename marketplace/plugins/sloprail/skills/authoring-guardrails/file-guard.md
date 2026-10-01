@@ -93,7 +93,10 @@ commits are named `detached/<sha>` and need a branch (`git switch -c <name> <sha
 branch that existed before the session and was not committed on is never judged. A ref
 the engine did not see can be recorded by hand:
 `sr-session refs add --session <id> --workspace <dir> --folder <git root> --ref <branch> --tip <sha>`
-(`sr-session refs list` shows the rows). Uncommitted work is a `commit-required` matter and
+(`sr-session refs list` shows the rows; without `--agent` the row belongs to the root session,
+with it to that sub-agent). A tip starts at its ref's creation point (the oldest reflog entry),
+so upstream commits merged before a branch was cut are not blamed on the agent, and a tip
+already inside a branch's history when the session began is not the session's work. Uncommitted work is a `commit-required` matter and
 stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
 
 A rule's identity is its whole `.sloprail` root — its own folder, every other rule,

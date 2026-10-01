@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,7 +105,19 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 		if err != nil {
 			warn(err)
 		}
+		var atStart []string
+		if v, had, err := reg.Meta(sessionstate.MetaRefsAtStart); err == nil && had {
+			var m map[string]string
+			if json.Unmarshal([]byte(v), &m) == nil {
+				for _, sha := range m {
+					atStart = append(atStart, sha)
+				}
+			}
+		}
 		for _, t := range derived {
+			if held, err := gitrepo.InHistoryOf(root, t.Sha, atStart); err == nil && held {
+				continue // already on a branch when the session began
+			}
 			tip := t.Sha
 			if strings.HasPrefix(t.Ref, "refs/") {
 				if cur, err := gitrepo.RefTip(root, t.Ref); err == nil && cur != "" {

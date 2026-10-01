@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -195,8 +196,19 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if id, err := gitrepo.RootCommit(p.Cwd); err == nil {
 		f.RepoID = id
 	}
-	_, err = reg.RegisterFolder(f)
-	return err
+	wrote, err := reg.RegisterFolder(f)
+	if err != nil {
+		return err
+	}
+	if wrote && role == sessionstate.FolderRoot {
+		// What every branch held when the session began: not the session's work.
+		if tips, terr := gitrepo.RefTips(path); terr == nil {
+			if b, merr := json.Marshal(tips); merr == nil {
+				_ = reg.SetMeta(sessionstate.MetaRefsAtStart, string(b))
+			}
+		}
+	}
+	return nil
 }
 
 // sessionFolderFor is the registered folder a hook's tree is, or nil when it is not

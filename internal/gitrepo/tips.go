@@ -215,3 +215,32 @@ func RefCreation(dir, ref string) (string, error) {
 	}
 	return lines[len(lines)-1], nil
 }
+
+// RefTips is every local and remote-tracking branch tip, as full ref name to commit.
+func RefTips(dir string) (map[string]string, error) {
+	out, err := run(dir, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/remotes")
+	if err != nil {
+		return nil, err
+	}
+	tips := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		sha, ref, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if ok && isObjectName(sha) {
+			tips[ref] = sha
+		}
+	}
+	return tips, nil
+}
+
+// InHistoryOf reports whether commit is one of tips or an ancestor of one.
+func InHistoryOf(dir, commit string, tips []string) (bool, error) {
+	if len(tips) == 0 {
+		return false, nil
+	}
+	args := append([]string{"rev-list", "--count", commit, "--not"}, tips...)
+	out, err := run(dir, args...)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "0", nil
+}
