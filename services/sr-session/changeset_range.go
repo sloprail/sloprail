@@ -35,6 +35,15 @@ var errSessionStartNotKept = errors.New("this session did not keep the commit it
 	"so which commits are new cannot be told; start a new session")
 
 func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
+	return resolveRuleRangeIn(root, g, results, state, nil)
+}
+
+// resolveRuleRangeIn is resolveRuleRange for a tree that is a registered session
+// folder: the folder's BaseRef, the HEAD its own work began at, is the session
+// start. That is what keeps a sub-agent dispatched into a worktree of its own from
+// being judged over everything its PARENT session's start predates. With no folder
+// (nil) the agent's own recorded start is used, as before.
+func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store, folder *sessionstate.Folder) (gitrepo.Range, error) {
 	var watermark, dropped, sessionStart string
 	if results != nil {
 		heads, err := results.PassedHeads(g.Qualified())
@@ -63,7 +72,16 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 			}
 		}
 	}
-	if state != nil {
+	// Only a sub-agent's folders supply the start (its worktree, or a repository it
+	// stood in). The session's own (root) folder records the same HEAD its own start
+	// does, and the root's range is unchanged: it keeps reading its recorded start, so
+	// a session that lost it still fails closed.
+	if folder != nil && (folder.Role == sessionstate.FolderSubagentWorktree || folder.Role == sessionstate.FolderAdHoc) && folder.BaseRef != "" {
+		sessionStart = folder.BaseRef
+		if sessionStart == sessionstate.FolderBaseUnborn {
+			sessionStart = gitrepo.EmptyTree // began before the first commit
+		}
+	} else if state != nil {
 		var err error
 		// The FIRST start, never the re-taken baseline: an amend that rewrites it
 		// would otherwise move the start past the work already done. A session that

@@ -49,6 +49,10 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	if store != nil {
 		defer store.Close()
 		recordBaselineBeforeTool(cmd, store, p)
+	} else {
+		// No store for this agent yet (its record is not written): the folder it began
+		// in is still registered, in the root's store.
+		registerStartFolderReporting(cmd, nil, p)
 	}
 
 	reg, err := modules.Registry()
@@ -75,6 +79,7 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 // so it never becomes a denial: the tool call goes ahead, the next one asks
 // again, and Stop asks once more before it measures anything.
 func recordBaselineBeforeTool(cmd *cobra.Command, store sessionstate.Store, p HookPayload) {
+	defer registerStartFolderReporting(cmd, store, p)
 	if _, err := ensureBaselineRecorded(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
 		// The start could not be recorded before this tool call, which may commit: left
@@ -94,5 +99,13 @@ func recordBaselineBeforeTool(cmd *cobra.Command, store sessionstate.Store, p Ho
 func reportUnresolved(cmd *cobra.Command, unresolved []harness.Unresolved) {
 	for _, u := range unresolved {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", u.Message())
+	}
+}
+
+// registerStartFolderReporting registers the folder this agent began in (see
+// registerStartFolder) and reports a failure on stderr without refusing the call.
+func registerStartFolderReporting(cmd *cobra.Command, store sessionstate.Store, p HookPayload) {
+	if err := registerStartFolder(store, p); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: session folder not registered:", err)
 	}
 }
