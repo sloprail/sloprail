@@ -21,14 +21,6 @@ that file is read as a command to the judge.
 you."* The **delimiter** must live where the interpolation happens (the template
 or the script that owns the tag). The clause naming the tag belongs with the tag.
 
-**Why this is the judge's, over the grep.** The grep in `check-rules.sh` reasons
-about `.sh` scripts that invoke a model. A well-factored judge keeps its prompt in
-a `.md.j2` template, not the script — so the interpolation and the place the
-clause belongs are BOTH in the template, which the grep barely inspects. The judge
-reads the template and can see whether `{{ f.newContent }}` (or another
-agent-shaped value) is dropped into the prompt inside a delimiter with the clause,
-or bare.
-
 Note that the engine's judge substrate appends its own data-not-instructions
 suffix to every judge prompt, so a template that ALSO frames its own interpolated
 content is belt-and-braces, not redundant — the author-owned delimiter around the
