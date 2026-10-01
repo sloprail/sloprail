@@ -38,13 +38,10 @@ func TestT041_37_TheRemedySettlesAnUncitedChange(t *testing.T) {
 	}
 	seen := len(e.BlockingErrorsFrom(proj, "s-041-37", "Stop"))
 
-	// The remedy: a commit in the same range that carries the citation.
-	e.Run(proj, "s-041-37", "carry on", Turns("done",
-		Write("w2", "memories/a.md", "v2 as asked"),
-	).ThenCommit("as asked", harness.CitesUser("adopt a decision log")))
-	if got := readProj(t, proj, "memories/a.md"); got != "v2 as asked" {
-		t.Fatalf("the remedy did not land: %q", got)
-	}
+	// The remedy the refusal prints: amend the uncited commit with the trailer. A
+	// later commit that cites does not retroactively ground the earlier one.
+	refusal := stopRefusal(e, proj, "s-041-37")
+	e.Run(proj, "s-041-37", "carry on", Turns("done", harness.RefusalCommand(t, "fix", refusal, "git commit --amend", "adopt a decision log")))
 	if n := len(e.BlockingErrorsFrom(proj, "s-041-37", "Stop")); n != seen {
 		t.Errorf("the printed remedy was still refused (%d refusals, had %d):\n%s", n, seen, stopRefusal(e, proj, "s-041-37"))
 	}
@@ -94,8 +91,8 @@ func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
 
 // T041_34: a cited change lands, then an uncited commit changes the file again: the
 // citation grounds the commit it is in, not the later one, so Stop refuses and names
-// the file. The controls: the cited change alone passes, and a cited commit ON TOP of
-// an uncited one grounds the file as it now stands.
+// the file. The control: the cited change alone passes. A cited commit ON TOP of an
+// uncited one does not ground the file: every commit that changed it must cite.
 func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.Run(proj, "s-041-34", prompt, Turns("done",
@@ -123,15 +120,15 @@ func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
 		Write("w2", "memories/a.md", "# log\nas asked\n"),
 		harness.Commit("c2", "as asked", harness.CitesUser("adopt a decision log")),
 	))
-	if blocks := stopRefusal(e3, proj3, "s-041-34c"); blocks != "" {
-		t.Errorf("a cited commit on top of an uncited one did not ground the file:\n%s", blocks)
+	if blocks := stopRefusal(e3, proj3, "s-041-34c"); !strings.Contains(blocks, noCitation) || !strings.Contains(blocks, "memories/a.md") {
+		t.Errorf("a cited commit on top of an uncited one grounded the file (every commit that changed it must cite):\n%s", blocks)
 	}
 }
 
 // T041_53: citations are attributed PER FILE. Two files are changed in two commits and
 // only the first commit cites: the rule refuses, naming the second file and not the
 // first — one citation in the range does not ground a file it did not ride on. Citing
-// the second file in a commit that changes it passes.
+// the second file's own commit (amended) passes.
 func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.Run(proj, "s-041-53", prompt, Turns("done",
@@ -150,10 +147,38 @@ func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
 	seen := len(e.BlockingErrorsFrom(proj, "s-041-53", "Stop"))
 
 	e.Run(proj, "s-041-53", "cite the second too", Turns("done",
-		Write("w3", "memories/b.md", "# b\nas asked\n"),
-		harness.Commit("c3", "b as asked", harness.CitesUser("adopt a decision log")),
+		harness.RefusalCommand(t, "fix", blocks, "git commit --amend", "adopt a decision log"),
 	))
 	if n := len(e.BlockingErrorsFrom(proj, "s-041-53", "Stop")); n != seen {
-		t.Errorf("citing the second file was still refused (%d refusals, had %d):\n%s", n, seen, stopRefusal(e, proj, "s-041-53"))
+		t.Errorf("citing the second file's commit was still refused (%d refusals, had %d):\n%s", n, seen, stopRefusal(e, proj, "s-041-53"))
+	}
+}
+
+// T041_70 (issue #134): a touch-commit does not wash a citation. An uncited
+// substantive commit X changes a file; a later whitespace-only commit Y carrying a
+// generic trailer does not ground it (a whitespace-only commit grounds nothing, and
+// X is still uncited). The same content cited in X itself passes, with Y uncited.
+func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	e.Run(proj, "s-041-70", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\nthe decision\n"),
+		harness.Commit("x", "write the decision"),
+		Write("w2", "memories/a.md", "# log\n\nthe decision  \n"),
+		harness.Commit("y", "touch", harness.CitesUser("adopt a decision log")),
+	))
+	blocks := stopRefusal(e, proj, "s-041-70")
+	if !strings.Contains(blocks, noCitation) || !strings.Contains(blocks, "memories/a.md") {
+		t.Fatalf("a whitespace-only commit with a trailer washed the earlier uncited change:\n%s", blocks)
+	}
+
+	e2, proj2 := guarded(t, afterCitationGuard)
+	e2.Run(proj2, "s-041-70b", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\nthe decision\n"),
+		harness.Commit("x", "write the decision", harness.CitesUser("adopt a decision log")),
+		Write("w2", "memories/a.md", "# log\n\nthe decision  \n"),
+		harness.Commit("y", "tidy whitespace"),
+	))
+	if blocks := stopRefusal(e2, proj2, "s-041-70b"); blocks != "" {
+		t.Errorf("the change cited in its own commit was refused because of a later whitespace-only commit:\n%s", blocks)
 	}
 }

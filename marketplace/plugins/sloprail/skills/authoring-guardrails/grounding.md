@@ -89,21 +89,23 @@ own call.
   of this list describes a gate's events. A `require: citation` on a file-guard is
   satisfied **per subject**, and the default subject is one selected file
   ([events.md](events.md#changeset--what-a-file-guards-checks-receive)): a file is
-  grounded only by a citation whose trailer is in the commit that last changed THAT
-  file, so one commit citing one file grounds nothing else in the range, an uncited
-  change on top of a cited one leaves the file uncited, and a cited commit on top of
-  an uncited one grounds the file as it now stands. Its `when` runs once per
+  grounded only if EVERY commit of the range that changed its content (whitespace-only
+  changes ignored: content compared with whitespace stripped) carries a resolving
+  citation. One commit citing one file grounds nothing else in the range; an uncited
+  change leaves the file uncited however many cited commits follow it, and a
+  whitespace-only or trailer-only commit grounds nothing (a touch-commit cannot wash an
+  earlier uncited change). A file whose every commit is whitespace-only is judged by the
+  commit that last changed it. Its `when` runs once per
   subject, on a payload whose `subject.files` is that file (the whole `Changeset`
   stays in the payload as context), and the requirement applies only to the files
   whose `when` applies. A refusal names every file that is not grounded and says how to
-  ground them, in order. (1) **Recommended:** a follow-up commit that changes each file
-  and carries the trailer (`git add <files> && git commit -m '<what changed>' -m
-  'Sloprail-Cites-User: <exact quote>'`); never wash a change through a whitespace-only
-  or restated-content commit just to carry a citation (amend your own unpushed commit,
-  or revert). (2) An amend (`git commit --amend --no-edit
-  --trailer 'Sloprail-Cites-User: <exact quote>'`) is offered ONLY when every such
-  file's last commit is HEAD, HEAD is unpushed (no remote branch contains it) and the
-  tree is clean. `git reset --soft` is never suggested. When the session already recorded
+  ground them, in order. The refusal lists the uncited commits per file. A later commit cannot ground
+  them, so the way out is to rewrite them or undo: (1) an amend (`git commit --amend
+  --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'`), offered ONLY when HEAD is the
+  only uncited commit, is unpushed (no remote branch contains it) and the tree is clean;
+  (2) squashing the unpushed range into one cited commit (`git reset --soft <base> && git
+  commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'`), offered under the same
+  safety conditions when the range has a base commit; (3) always, the revert below. When the session already recorded
   quotes for the files (`sr-file --cite`, also by a sub-agent in the shared tree), the
   refusal lists them as the exact trailer lines to paste and builds its commands from the
   first. To undo the whole range it gives one command, `git revert --no-commit <base>..HEAD

@@ -99,6 +99,10 @@ type File struct {
 	// Commits are the SHAs of the range's commits that changed this file, oldest
 	// first, a rename followed back to the name the file had before it.
 	Commits []string `json:"commits"`
+	// Substantive is the subset of Commits whose change to this file is more than
+	// whitespace. Not part of the wire form: it decides which commits must carry a
+	// citation (ForFile).
+	Substantive []string `json:"-"`
 }
 
 // Other is a file of the range the rule did not select.
@@ -204,20 +208,36 @@ func (cs Changeset) Change() string {
 	return b.String()
 }
 
-// ForFile is the citations that ground a file: those quoted by the commit that
-// last changed it. A citation grounds the change it rode on, so an uncited change
-// on top of a cited one leaves the file uncited, while a cited commit on top of an
-// uncited one grounds the file as it now stands — the same way `sr-file` cited the
-// whole file. A file no commit is known to have changed has no citations.
+// ForFile is the citations that ground a file. A file is grounded only if EVERY
+// commit of the range that changed its content (ignoring whitespace-only changes)
+// is quoted by a citation: a citation grounds the change it rode on, so an uncited
+// substantive change leaves the file uncited however many cited commits follow it,
+// and a whitespace-only or trailer-only commit grounds nothing (it neither needs a
+// citation nor lends one). The result is every citation on those commits; nil when
+// any of them has none. A file whose every commit is whitespace-only is judged by
+// the commit that last changed it. A file no commit is known to have changed has no
+// citations.
 func (cs Changeset) ForFile(f File) []Citation {
 	if len(f.Commits) == 0 {
 		return nil
 	}
-	tip := f.Commits[len(f.Commits)-1]
+	must := f.Substantive
+	if len(must) == 0 {
+		must = f.Commits[len(f.Commits)-1:]
+	}
 	var out []Citation
-	for _, c := range cs.Citations {
-		if slices.Contains(c.Commits, tip) {
-			out = append(out, c)
+	for _, sha := range must {
+		grounded := false
+		for _, c := range cs.Citations {
+			if slices.Contains(c.Commits, sha) {
+				grounded = true
+				if !slices.ContainsFunc(out, func(o Citation) bool { return o.Quote == c.Quote && slices.Equal(o.Commits, c.Commits) }) {
+					out = append(out, c)
+				}
+			}
+		}
+		if !grounded {
+			return nil
 		}
 	}
 	return out

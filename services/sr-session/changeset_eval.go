@@ -596,33 +596,47 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 }
 
 // citeHowToFix says, for the files a citation does not ground, how to ground them.
-// A trailer grounds the commit it is on, so it has to be on the commit that last
-// changed each file. In order:
+// A file is grounded only when EVERY commit that changed its content (whitespace-only
+// changes aside) carries a citation, so the commits to fix are the uncited ones of
+// the range, not only the last: a cited commit on top of an uncited one grounds
+// nothing retroactively, and neither does a whitespace-only or trailer-only commit.
+// In order:
 //
-//  1. RECOMMENDED: a follow-up commit that changes each file and carries the trailer.
-//     The file has to change in that commit (an empty commit carrying only the
-//     trailer grounds nothing), so when no change is needed the content is restated
-//     through a cited `sr-file write`, or the file is touched minimally.
-//  2. An amend of HEAD, offered ONLY when it is safe to rewrite: every file's last
-//     commit is HEAD, HEAD is on no remote branch, and the working tree is clean.
+//  1. An amend of HEAD, when the uncited commit is HEAD, HEAD is on no remote branch
+//     and the working tree is clean.
+//  2. Squashing the unpushed range into one cited commit (`git reset --soft <base>`),
+//     when it is safe to rewrite and the range has a base commit.
+//  3. Always: undoing the whole range with one revert, which needs no citation (the
+//     tree is then as it was at the base, so there is nothing to ground).
 //
-// `git reset --soft` is never suggested (it rewrites the whole range, and a range that
-// starts before the first commit has no commit to reset to). Undoing is `git revert`,
-// never `git reset --hard`.
-// Several quotes on one commit are fine.
+// `git reset --hard` is never suggested.
 func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool, recorded []recordedQuote) string {
 	var b strings.Builder
-	b.WriteString("Last changed by:")
-	allHead := true
+	b.WriteString("Every commit that changed a file's content must carry the citation (a later cited commit, a whitespace-only commit or an empty trailer-only commit grounds nothing). Uncited:")
+	onlyHead := true
 	for _, path := range files {
-		tip := ""
+		var uncited []string
 		for _, f := range cs.Files {
-			if f.Path == path && len(f.Commits) > 0 {
-				tip = f.Commits[len(f.Commits)-1]
+			if f.Path != path {
+				continue
+			}
+			must := f.Substantive
+			if len(must) == 0 && len(f.Commits) > 0 {
+				must = f.Commits[len(f.Commits)-1:]
+			}
+			for _, sha := range must {
+				if !slices.ContainsFunc(cs.Citations, func(c changeset.Citation) bool { return slices.Contains(c.Commits, sha) }) {
+					uncited = append(uncited, sha)
+				}
 			}
 		}
-		allHead = allHead && tip != "" && tip == cs.Head
-		fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, tip))
+		if len(uncited) == 0 {
+			uncited = append(uncited, "")
+		}
+		for _, sha := range uncited {
+			onlyHead = onlyHead && sha != "" && sha == cs.Head
+			fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, sha))
+		}
 	}
 	line := trailer + ": <exact quote>"
 	if len(recorded) > 0 {
@@ -634,17 +648,17 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 			fmt.Fprintf(&b, "\n  %s: %s: %s", r.Path, r.Trailer, r.Quote)
 		}
 	}
-	quoted := make([]string, len(files))
-	for i, f := range files {
-		quoted[i] = "'" + f + "'"
-	}
-	fmt.Fprintf(&b, "\nRecommended: ground them with a FOLLOW-UP commit that makes a REAL change to each file and carries the trailer. "+
-		"Never wash a change through a whitespace-only or restated-content commit just to carry a citation: "+
-		"if no real change is needed, amend your own unpushed commit with the trailer (below) or revert. Then:\n"+
-		"  git add %s && git commit -m '<what changed>' -m %s", strings.Join(quoted, " "), shellQuote(line))
-	if allHead && amendSafe {
-		fmt.Fprintf(&b, "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:\n"+
-			"  git commit --amend --no-edit --trailer %s", shellQuote(line))
+	if amendSafe {
+		if onlyHead {
+			fmt.Fprintf(&b, "\nHEAD is the only uncited commit, is not pushed, and the tree is clean: amend it:\n"+
+				"  git commit --amend --no-edit --trailer %s", shellQuote(line))
+		}
+		if cs.Base != gitrepo.EmptyTree {
+			fmt.Fprintf(&b, "\nOr, since the range is not pushed and the tree is clean, squash it into one cited commit (the files stay as they are):\n"+
+				"  git reset --soft %s && git commit -m '<what changed>' -m %s", cs.Base, shellQuote(line))
+		}
+	} else {
+		b.WriteString("\nThe uncited commits cannot be amended here (they are pushed, or the tree is not clean), so they cannot be grounded in place.")
 	}
 	// Undoing the whole range is one command, and it needs no citation: the tree is
 	// then as it was at the base, so there is nothing to ground.
