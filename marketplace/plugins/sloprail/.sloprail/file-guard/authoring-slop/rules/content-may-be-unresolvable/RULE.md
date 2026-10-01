@@ -20,6 +20,7 @@ unknowable.
 | `PreFileCreate` | `newContent` + **`resultKnown`** | `resultKnown` is false — ask it |
 | `PreFileUpdate` | `newContent` + **`resultKnown`** | `resultKnown` is false — ask it |
 | `PostFileCreate` / `PostFileUpdate` | `newContent` (settled) + **`newContentKnown`** | `newContentKnown` is false — the settled file could not be READ (a link to a FIFO or a device, or past the read cap) |
+| `Changeset` (a file-guard) | `changeset.files[].newContent` — a committed blob | never: committed content is always known, and there is no flag to consult |
 
 An absent declared field reads as its zero value, so `newContent == ""` is
 indistinguishable on the value alone from a real empty file: a `NotebookEdit`
@@ -51,9 +52,10 @@ Two floors, both on the script's own text (comments are ignored):
   `PostFileWrite` or `Post*`) and reads `newContent` without naming
   `newContentKnown` is flagged.
 - A script that reads `newContent` without naming `resultKnown` is flagged,
-  whatever the kind — a create-only hook is not exempt. A script that names
-  `newContentKnown` and no Pre kind (a Post-only file-guard half) is exempt from
-  this one.
+  whatever the kind — a create-only hook is not exempt. A script that names no
+  Pre kind and either names `newContentKnown` (a Post-only script) or reads
+  `.changeset` (a file-guard, whose committed content is always known) is exempt
+  from this one.
 
 A script that names the flag but still reads `newContent` in a branch that ignores
 it is left to the judge (`judge-rules/pre-kinds-consult-resultknown`).

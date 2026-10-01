@@ -53,7 +53,7 @@ instead of searching — after which nothing refused it again.
 | `search-needs-declared-scanner` | gate | `PreCommandInvoke`: any line running or naming `gh` | a gh call that searches GitHub (or that it cannot see into), with no scanner declared this session |
 | `verify-scanner-coverage` | gate | `Stop`, while `scanner-declared` is active | a declared scanner no single gh call covered |
 | `scanner-keywords-hold` | gate | `PreFileWrite` and `PreFileDelete` of the scanner file | dropping a keyword, or deleting the scanner, without the user's words; records what the user did ask for |
-| `scanner-keywords-hold` | file-guard, `deletions: include` | the settled scanner file, at `Stop` | the same, as the after-check on what settled |
+| `scanner-keywords-hold` | file-guard, `deletions: include` | the scanner files of the committed range, at `Stop` | the same, as the after-check on what was committed |
 
 ## Why a context and gates
 
@@ -251,10 +251,19 @@ should narrow the WebSearch trigger with `event.input.query` or
 It judges what the scanner **file** holds — its keyword set may grow but not
 shrink — and a weakened declaration must be refused before it lands, while the
 agent can still meet it with a search. Only a gate sees a write before it lands
-(a file-guard acts only at `Stop`, on the settled file), so the prevention is a
+(a file-guard acts only at `Stop`, on committed work), so the prevention is a
 `PreFileWrite` + `PreFileDelete` gate. The same-named file-guard is the
-after-check: the same requirement plus the judge and the record on the settled
-scanner, the backstop for a change the gate could not see. The gate runs no model. One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it (the gate reads the pending bytes and `resultKnown`; the file-guard settled bytes and `newContentKnown`); both read the one shared parser in `scanner-declared`.
+after-check: the same requirement plus the judge and the record on the committed
+scanners, the backstop for a change the gate could not see. The gate runs no model.
+At Stop, an uncommitted change to a scanner file refuses the turn with "commit
+these", and the rule then judges the range from where it last passed to `HEAD`: each
+scanner at the range's base against head (a rename is the old scanner deleted and the
+new one created), with the user's words taken from the commits'
+`Sloprail-Cites-User:` trailers. One library per script, in the file-guard folder
+(`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads
+its own input (the gate the pending bytes and `resultKnown`; the file-guard the
+Changeset, committed content that is always known) and sources it; both read the one
+shared parser in `scanner-declared`.
 
 A gate does not fail closed on a write whose result the engine cannot compute
 (`sed -i`, a `python3 -c` it cannot parse), and every later check reads the
@@ -288,8 +297,9 @@ registry keeps it and the context stays open.
 ### Retiring or narrowing: what the user asked for
 
 A change the user asked for — its citation of their own words resolved on the
-event, and judged to be what they ask — is **recorded** by the last check of the
-file-guard, `record-admitted.sh`, which runs only once the judge before it admitted
+event (the changeset, for the file-guard), and judged to be what they ask — is
+**recorded** by the last check of the file-guard, `record-admitted.sh`, which runs
+only once the judge before it admitted
 the event:
 
 - a **delete retires** the scanner: `retired:<folder>`. Without that, a scanner
@@ -342,8 +352,8 @@ reaches the check and records nothing.
   unread.) A scanner declared this session stays owed in the registry, so Stop
   still refuses without a covering search; a committed scanner never declared
   this session is not in the registry, and its loss surfaces only at Stop, as
-  a `PostFileDelete` the guard refuses for want of the user's words — after the
-  file is already gone.
+  a deleted `scanner.yaml` in the range, which the guard refuses for want of the
+  user's words — after the file is already gone.
 
 ## Proof
 
@@ -365,9 +375,9 @@ reaches the check and records nothing.
   followed, `git rm -r`, a declaration whose stamp cannot be recorded not
   entering, and every list shape the parser reads; the last check recording
   only on the user's citation, and a cited drop narrowing what is owed
-  (T038_42–43). Every scanner script reads a Post kind's `newContent` only when
-  `newContentKnown` is true, and treats an unread settled file as undecidable
-  (the registry keeps what is owed; the citation applies).
+  (T038_42–43). The file-guard's scripts read committed content from the
+  changeset, always known; a payload that is not a readable Changeset is
+  undecidable (the registry keeps what is owed; the citation applies).
 - eval: `eval/security-scan/` — a real Haiku run with its full toolset
   (WebSearch and WebFetch included) and a skill teaching the convention, scored
   on trajectory health, with deterministic failures for a declared scanner

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
@@ -123,6 +124,7 @@ func (r Runner) prerequisiteApplies(req Request, when string) (bool, string, err
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
 		LaunchedBy:     req.LaunchedBy,
+		Env:            req.Env,
 	})
 	if err != nil {
 		return false, "", err
@@ -756,6 +758,25 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 	path, _ := fields["path"].(string)
 
 	switch kind {
+	case changeset.Kind:
+		// A changeset carries its grounding in the commits' messages, next to the
+		// change it grounds; there is no command to chain.
+		trailer := changeset.TrailerFor(pools)
+		how := fmt.Sprintf("Amend or add a commit in this range whose message carries a trailer quoting %s exactly:\n"+
+			"  %s: <exact quote>", what, trailer)
+		if hint != "" {
+			how += "\n" + hint
+		}
+		subject := "this change must cite " + what + ", and no commit in its range carries a citation that resolves."
+		if path != "" {
+			subject = path + " must cite " + what + " in the commit that last changed it, and that commit carries none that resolves."
+			how = fmt.Sprintf("The trailer must be on that commit, quoting %s exactly:\n  %s: <exact quote>", what, trailer)
+			if hint != "" {
+				how += "\n" + hint
+			}
+		}
+		return fmt.Sprintf("%s\n%s\n"+
+			"The quote must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.", subject, how)
 	case declaration.KindPreCommandInvoke:
 		how := fmt.Sprintf("Chain a cite in front of it, quoting the exact words:\n"+
 			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>", strings.Join(names, ","))

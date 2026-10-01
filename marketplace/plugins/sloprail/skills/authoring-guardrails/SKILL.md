@@ -12,10 +12,11 @@ first decision is which one — because the nature fixes the directory, the YAML
 keys, what is in scope for its match, and when it fires.
 
 - **file-guard** — judges a **file's state**. "Every file under `memories/`
-  carries frontmatter." It fires on the file at the end of a turn, judges the
-  *settled* result, and re-fires until the file is fine. It never acts before a
-  write — prevention is a gate's job. `deletions: include`/`only` when losing the
-  file is the rule's business too (by default a deleted file is skipped).
+  carries frontmatter." It judges the *committed* result: at Stop it is handed
+  the commits since it last passed as one changeset, and a fail is replayed
+  until the commits change. It never acts before a write — prevention is a
+  gate's job. `deletions: include`/`only` when losing the file is the rule's
+  business too (by default a deleted file is skipped).
   → [file-guard.md](file-guard.md)
 
 - **gate** — a **checkpoint on an event**. "Block a write under
@@ -84,7 +85,7 @@ A **gate** may trigger on any pre-action kind **plus `Stop`**; a **context** may
 trigger on any pre-action kind **plus the `PostFile*` / `PostTagWrite`** kinds,
 but **not `Stop`** (a context's `exit` is always checked on Stop anyway — see
 [context.md](context.md)). A **file-guard** does not name a kind at all — it
-binds to the file lifecycle by nature.
+binds to a range of commits by nature.
 
 ## The flat event model
 
@@ -105,6 +106,8 @@ and `.context` (every declared context by name, `{active, payload}`).
 The full field set for every event kind, the per-kind tables, the payload
 envelopes, and the flat-vs-nested distinction are in **[events.md](events.md)** —
 the single reference the nature and check docs point to rather than re-listing.
+A file-guard's checks are the exception: they get a `Changeset` payload
+(`.changeset.files[]`, no per-file event) — [file-guard.md](file-guard.md).
 
 A **match expression** reads the same facts, but the three scopes differ in
 shape — this is the one asymmetry to keep straight:
@@ -136,8 +139,8 @@ checks:
 - A **script** is the deterministic half: the check payload on stdin, and its
   **exit code is the verdict** — `0` permits, non-zero refuses.
   → [script-checks.md](script-checks.md). **For a file-guard, start from
-  [check-template.sh](check-template.sh)** (settled `Post*` bytes, fails closed on
-  `newContentKnown`); **for a pre-write gate, from
+  [check-template.sh](check-template.sh)** (loops `.changeset.files[]`, fails closed on an
+  unreadable changeset); **for a pre-write gate, from
   [gate-check-template.sh](gate-check-template.sh)** (refuses an unknown
   `resultKnown`). Copy it beside the YAML and change only `fine()`. It already
   reads each event kind correctly, which a script written from scratch almost
@@ -223,6 +226,11 @@ Loading clean is not the same as firing. What still never fires:
 - a match that is valid but true of nothing real
 - a mistyped key **inside** a list element, or a flag read off an open map
 - a check whose logic permits where it meant to refuse
+
+For a file-guard, `sr-session changeset --rule <name>` prints the range and the
+payload its checks will get without running anything
+([file-guard.md](file-guard.md#seeing-what-a-rule-will-be-handed)), and
+`sr-checks status` / `sr-checks sql` show each recorded verdict.
 
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.

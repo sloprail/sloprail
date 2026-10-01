@@ -21,8 +21,6 @@
 // the message while letting the write through is exactly the failure a
 // stream-only assertion cannot see.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // Every rule here blocks a pending write BEFORE it lands and is re-evaluated
 // fresh on each turn's write, so the vehicle is a GATE on the pre-write events.
 // A gate fires once per turn's matching event (no after-check to double it) and

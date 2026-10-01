@@ -26,7 +26,7 @@ func TestT041_09_IncompleteCycleStaysActiveThenLandedCycleDeactivates(t *testing
 	// ---- Cycle 1: declare the move, write nothing that carries it. ----
 	e.Run(proj, sess, "declare a move but never make it", Turns("done",
 		SayWrite("w1", declRefactor(sha), "unrelated.md", "nothing to do with any marker"),
-	))
+	).ThenCommit("write the files"))
 	if active, payload := e.ContextState(proj, sess, "refactoring"); !active {
 		t.Fatalf("cycle 1: the refactoring context did not stay active after the completeness gate blocked — "+
 			"the two-cycle assertion below would be meaningless if this did not hold first (payload=%v)", payload)
@@ -46,7 +46,7 @@ func TestT041_09_IncompleteCycleStaysActiveThenLandedCycleDeactivates(t *testing
 	moved := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	res := e.Run(proj, sess, "now make the declared move", Turns("done",
 		Write("w2", "dest.go", moved),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("cycle 2: the reconciling declared move was refused at PreToolUse:\n%s", res.Output)

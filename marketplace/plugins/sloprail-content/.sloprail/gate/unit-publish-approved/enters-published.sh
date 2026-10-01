@@ -31,4 +31,5 @@ case "$kind" in
     ;;
 esac
 new_content="$(field '.event.newContent // ""')"
+old_content="$(field '.event.oldContent // ""')"
 lib_check

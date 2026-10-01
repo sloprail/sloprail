@@ -28,10 +28,17 @@ with what the doc says now.
 ## Why file-guard
 
 The question is about the file's state: does the marked code still match its
-doc? A file that drifts keeps failing every cycle until it is fixed or its
-marker is corrected, whichever event last touched it. The match is the marker
+doc? A file that drifts keeps failing every cycle until a commit fixes it or corrects
+its marker. The match is the marker
 (`any(markers, .kind == "docs")`), not a path, so any file that makes the claim
 is held to it and no other file is.
+
+It judges **commits**: at Stop, uncommitted changes to a file the rule selects
+refuse the turn with "commit these" (nothing is committed for the agent), and the
+rule then runs once over the range from where it last passed to `HEAD`, handed to
+the judge as one squashed diff (`{{ change }}`) and the files (`changeset.files`).
+A refused range is never partly passed, so a fix is judged together with the
+commit it fixes.
 
 ## Why the judge reads the raw doc
 
@@ -95,7 +102,7 @@ measured to leak: `-sLo`, `--etag-save`, `--stderr`, `--hsts`, `--dump-header`,
 ## Coverage
 
 - e2e: `tests/e2e/examples/044_doc_conformance/` covers the marker match, a
-  refusal blocking at Stop and re-firing until fixed, the URL and change
+  refusal blocking at Stop and judged again with the fix commit until fixed, the URL and change
   reaching the prompt, the raw-doc instructions reaching the prompt, and the
   pinned grant and its deny reaching the harness intact.
 - eval: `eval/precompact-support/` has a real agent add PreCompact support to

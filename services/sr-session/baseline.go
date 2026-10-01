@@ -41,18 +41,11 @@ import (
 // and belongs inside the difference. Unreachable means the point describes a
 // history this tree no longer has, and it is taken again.
 //
-// Moving it is safe only because an unfixed refusal does not depend on it. A
-// failing verdict is kept in file_checks in its own right, keyed by path,
-// guardrail and the content it was reached on, and is reported again on every
-// cycle until a hook passes it — whatever point the difference is measured
-// from. Both halves have to hold together, or a branch switch quietly drops a
-// violation.
-//
-// KEEPING the verdict is only half of that, and the quieter half is reading it
-// back: a refusal nothing asks for enforces nothing. Once the point moves, the
-// refused file is no longer a difference and the tree says nothing about it, so
-// the re-reporting comes from the record instead — OutstandingRefusals, read by
-// readdOutstanding at the end of every cycle. See T015_04.
+// Moving it is safe because nothing that must outlive it depends on it. What a
+// file-guard concluded lives in the check results, keyed by the rule and the
+// commit range it judged — not against this point — so a branch switch cannot
+// drop an unfixed violation. This point only decides which files a CONTEXT's Post
+// events are computed over.
 
 // baselineOutcome says what a call to the baseline did, so a caller can report
 // it and a test can assert on it without reading the store back.
@@ -153,11 +146,13 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 	// describes a history this tree no longer has, so the difference against it
 	// would be the whole delta between the two.
 	//
-	// The unfixed refusals recorded so far are untouched by this: they sit in
-	// file_checks keyed by path, guardrail and content, not against the point,
-	// and keep surfacing until a hook passes them — readdOutstanding puts them
-	// back into the difference on every cycle, which is what makes that true
-	// once the point has moved past them.
+	// A file-guard's unfixed refusals are untouched by this: a refusal is a recorded
+	// run that did not pass, so the rule's watermark does not move past it, and the
+	// range it refused stays the rule's range (changeset_range.go) until a run
+	// passes. They never depended on this point. What does is the floor of last
+	// resort — the HEAD the session began at, for a rule with no committed
+	// definition — which is why the point still moves when the tree leaves its
+	// history.
 	//
 	// One exception, and it is the reason Position.Branch still exists. A rebase
 	// walks a detached HEAD through commits that reach nothing recorded, at

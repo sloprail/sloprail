@@ -154,6 +154,10 @@ type scriptCall struct {
 	// leaves the variable unset, which is correct for a check that cannot spawn an
 	// agent and harmless for one whose own name is the only entry.
 	LaunchedBy string
+
+	// Env is extra environment appended last (after the engine's own), so it wins:
+	// a changeset's SR_TREE, SR_BASE and SR_HEAD.
+	Env []string
 }
 
 // scriptResult is what a script/prepare execution produced.
@@ -331,6 +335,7 @@ func (s scriptCall) env() []string {
 	if s.TranscriptPath != "" {
 		env = append(env, "SR_TRANSCRIPT="+s.TranscriptPath)
 	}
+	env = append(env, s.Env...)
 	// The re-entry provenance: which guards' checks are on this call stack. Set so
 	// a check that spawns sr-agent carries it across the exec into the launched
 	// agent's own hooks, where the dispatch reads it and declines to re-fire those

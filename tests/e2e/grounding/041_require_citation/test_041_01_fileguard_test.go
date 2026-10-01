@@ -76,7 +76,7 @@ func guardedPre(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installPre(e, proj)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	return e, proj
 }
 
@@ -86,7 +86,7 @@ func guarded(t *testing.T, guard string) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"record.sh": recordScript})
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	return e, proj
 }
 
@@ -171,7 +171,7 @@ func TestT041_03_UnresolvedQuoteIsRefused(t *testing.T) {
 func TestT041_13_DryRunFailureIsQuoted(t *testing.T) {
 	e, proj := guardedPre(t)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-13", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/decisions.md --cite:user 'adopt a decision log' --old-string 'no such line' --new-string x`),
@@ -208,7 +208,7 @@ func TestT041_05_EditWithEchoIsResolved(t *testing.T) {
 	e.GitInit(proj)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n- none yet\n")
 	installPre(e, proj)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-05", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/decisions.md --old-string '- none yet' --new-string '- adopt a decision log' --cite:user 'adopt a decision log' && echo ok`),
@@ -230,7 +230,7 @@ func TestT041_06_DeletionsNeedACitation(t *testing.T) {
 	e.GitInit(proj)
 	e.WriteFile(proj, "memories/old.md", "stale\n")
 	installPre(e, proj)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-06", prompt, Turns("done", Bash("b1", `rm memories/old.md`)))
 	if !res.Refused() || !e.Exists(proj, "memories/old.md") {
@@ -248,24 +248,24 @@ func TestT041_06_DeletionsNeedACitation(t *testing.T) {
 	}
 }
 
-// T041_07: a plain file-guard judges at Stop: an uncited change is refused
-// there, and a cited one — whose citation was recorded at pre-tool — passes.
-func TestT041_07_AfterCheckUsesRecordedCitations(t *testing.T) {
+// T041_07: a plain file-guard judges the range at Stop: a commit that carries no
+// citation is refused there, and one whose `Sloprail-Cites-User` trailer resolves
+// against the user's own words passes.
+func TestT041_07_AfterCheckJudgesTheRangesCitations(t *testing.T) {
 	const afterGuard = `match: "memories/**"
 require:
   - citation: {source_types: [user]}
 `
 	e, proj := guarded(t, afterGuard)
-	e.Run(proj, "s-041-07", prompt, Turns("done", Write("w1", "memories/a.md", "# a")))
-	if len(e.BlockingErrorsFrom(proj, "s-041-07", "Stop")) == 0 {
-		t.Errorf("an uncited change was not refused at Stop")
+	e.Run(proj, "s-041-07", prompt, Turns("done", Write("w1", "memories/a.md", "# a")).ThenCommit("write a note"))
+	if blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-041-07", "Stop"), "\n"); !strings.Contains(blocks, noCitation) {
+		t.Errorf("an uncited commit was not refused at Stop for want of a citation:\n%s", blocks)
 	}
 
 	e2, proj2 := guarded(t, afterGuard)
-	e2.Run(proj2, "s-041-07b", prompt, Turns("done",
-		Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content '# a'`),
-	))
+	e2.Run(proj2, "s-041-07b", prompt, Turns("done", Write("w1", "memories/a.md", "# a")).
+		ThenCommit("write a note", harness.CitesUser("adopt a decision log")))
 	if blocks := e2.BlockingErrorsFrom(proj2, "s-041-07b", "Stop"); len(blocks) != 0 {
-		t.Errorf("a cited change was refused at Stop: %v", blocks)
+		t.Errorf("a commit citing the user's words was refused at Stop: %v", blocks)
 	}
 }

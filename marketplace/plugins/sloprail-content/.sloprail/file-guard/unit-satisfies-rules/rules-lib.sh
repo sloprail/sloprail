@@ -16,12 +16,10 @@
 #
 # Every rule (either location) validates against .sloprail/schemas/rule.cue.
 #
-# THIS LIBRARY READS NO EVENT OF ITS OWN — it walks the rule tree and the
-# filesystem only. The unit's bytes (whichever kind's content is safe to read,
-# a decision each CALLER makes for itself by checking resultKnown on a Pre kind
-# before ever handing bytes here) are the third argument, so the library
-# never reads .event itself. Never call this with content derived from a Pre
-# kind you have not first confirmed resultKnown for.
+# THIS LIBRARY READS NO PAYLOAD OF ITS OWN — it walks the rule tree and the
+# filesystem only. The unit's UNIT.md bytes (committed content, read by the caller
+# from SR_TREE) are the third argument, and <root> is the committed tree the
+# project-wide and topic-scoped rules are read from.
 #
 # collect_applicable_rules "<unit-path>" "<root>" "<unit-bytes>"  ->  one rule
 # FILE PATH per line, for every rule (project-wide or topic-scoped) whose

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Shared by the authoring-slop gate and its file-guard: one library, two thin entries.
-# Each entry reads the event kind and its own bytes; nothing that follows branches
-# on it.
+# The gate entry reads the pending write (lib_init, then a Pre kind, then lib_check);
+# the file-guard entry reads the Changeset, calls lib_scan once per hook file with
+# `path` and `body` set, and lib_report once at the end. lib_scan reads no event.
 
-lib_init() {
+lib_setup() {
 set -u
-
-event="$(cat)"
 
 # This hook ships inside a plugin, so it runs on machines its author has never
 # seen and may not use anything it has not declared. `jq` is its one dependency
@@ -35,6 +34,13 @@ to .sloprail/config.yaml.
 MISSING
   exit 1
 }
+}
+
+# lib_init is the gate's: the pending write's own bytes.
+lib_init() {
+lib_setup
+
+event="$(cat)"
 
 # The new-format CheckPayload carries the event FLAT under `event`: the file's
 # own facts are direct fields (`.event.path`, `.event.newContent`, `.event.kind`,
@@ -66,9 +72,15 @@ esac
 }
 
 lib_check() {
-
 findings=""
-note() { findings="${findings}  - $1
+lib_scan
+lib_report
+}
+
+# lib_scan runs every rule over one hook's bytes (`body`, from `path`) and adds what it
+# finds to `findings`, each finding naming its file.
+lib_scan() {
+note() { findings="${findings}  - $path: $1
 "; }
 
 # --- Rule 1: prefer file events to trajectory parsing -----------------------
@@ -125,13 +137,21 @@ fi
 # survives both spellings — rather than the old literal `fields.newContent`,
 # which a new-format script never contains and which would let exactly this slop
 # through untouched.
-# A Post-only script (a file-guard half) reads settled bytes, which carry
-# newContentKnown rather than resultKnown; rule 2b holds it to that. So this rule
-# stands down only for a script that names newContentKnown and no Pre kind.
+# A script under .sloprail/file-guard/ never sees a Pre event: it reads a Changeset
+# (`.changeset.files[].newContent`, committed blobs, always known, with no resultKnown
+# to consult) or settled Post bytes (rule 2b holds those to newContentKnown). The
+# exemption is by LOCATION ONLY. What a script's text says never exempts it: a gate
+# script (or one anywhere else) whose comment or string mentions `.changeset` or
+# newContentKnown must still name resultKnown.
+# (A lib a gate sources from the file-guard folder reads no event; the gate's own entry
+# script, under gate/, is what is held to this rule.)
+exempt=0
+case "$path" in
+  *.sloprail/file-guard/*) exempt=1 ;;
+esac
 if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null &&
-   ! { printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null &&
-       ! printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qE 'PreFile|Pre[*]' 2>/dev/null; }; then
+   [ "$exempt" = 0 ]; then
   note "rules/content-may-be-unresolvable — reads .event.newContent without .resultKnown.
     On EITHER Pre kind (create as well as update) an absent newContent reads as
     \"\", which is indistinguishable from a write that empties the file — a
@@ -207,7 +227,7 @@ fi
 #    it for the CLI.
 prompt_files=""
 if [ -n "${path:-}" ]; then
-  _dir="${SR_WORKSPACE:-.}/$(dirname "$path")"
+  _dir="${SR_TREE:-${SR_WORKSPACE:-.}}/$(dirname "$path")"
   if [ -d "$_dir" ]; then
     # A judge's prompt is a RUBRIC.md or a `.md.j2` template — both are
     # searched, or a well-factored judge keeping its DATA clause in its
@@ -225,14 +245,18 @@ if printf '%s' "$body" | grep -qE "(claude|claude_bin|CLAUDE_BIN)[^|&;]*(--print
     be judged, never as instructions to you."
 fi
 
-[ -n "$findings" ] || exit 0
+}
+
+# lib_report says what lib_scan found and refuses, or returns when it found nothing.
+lib_report() {
+[ -n "$findings" ] || return 0
 
 cat >&2 <<EOF
-GUARDRAIL AUTHORING: '$path' carries a shape measured to make a rule silently
-inert — it would load, validate, and admit everything.
+GUARDRAIL AUTHORING: this change carries a hook shape measured to make a rule
+silently inert — it would load, validate, and admit everything.
 
 $findings
-Each names the rule file beside this hook that explains it and records the
+Each names its file and the rule file beside this hook that explains it and records the
 measurement behind it.
 Fix the shape, or if this one is a deliberate exception, say so in the judged
 guardrail's own prose (its README.md, or a comment in its file-guard.yaml) — a

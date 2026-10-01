@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// unit-publish-approved is a PreFileWrite gate (refuses before the write lands) plus a plain file-guard (the Stop re-check), both over UNIT.md only.
+// unit-publish-approved is a PreFileWrite gate (refuses before the write lands) plus a file-guard (judging the committed changeset at Stop), both over UNIT.md only.
 //
 //   - A write that moves a unit INTO status: published (from another status,
 //     or by creating it published) must carry a citation of the user's own
@@ -41,9 +41,14 @@ func installPublishProject(t *testing.T, seed string) (*Env, string) {
 	e.GitInit(proj)
 	if seed != "" {
 		e.WriteFile(proj, unitPath, seed)
+		// The seed is history before the rules exist: a rule's range starts at the
+		// parent of the commit that installs it, so a seed committed together with
+		// the rules would be judged as this cycle's work.
+		e.CommitAll(proj, "the seeded unit")
 	}
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
+	e.CommitAll(proj, "install the rules")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	return e, proj
 }
@@ -127,7 +132,7 @@ func TestPublish_CitedTransitionPasses(t *testing.T) {
 
 	res := e.Run(proj, "s-publish-ok", publishPrompt, Turns("done",
 		Bash("b1", publishTransition(`["https://x.com/nikita/status/1"]`, approvalQuote)),
-	))
+	).ThenCommit("Publish the unit", CitesUser(approvalQuote)))
 	if res.Refused() {
 		t.Fatalf("a cited transition into published was refused:\n%s", res.Output)
 	}
@@ -152,7 +157,7 @@ func TestPublish_CitedCreateMultipleURLsPass(t *testing.T) {
 	unit := "---\ncreated: 2026-09-25\ntype: post\nstatus: published\npublished_urls: [\"https://x.com/nikita/status/1\", \"https://reddit.com/r/x/comments/1\"]\n---\n\nAnnouncing the launch.\n"
 	res := e.Run(proj, "s-publish-multi", publishPrompt, Turns("done",
 		Bash("b1", srFileWrite(unitPath, unit, approvalQuote)),
-	))
+	).ThenCommit("Publish the unit", CitesUser(approvalQuote)))
 	if res.Refused() {
 		t.Fatalf("a cited publish with two published_urls was refused:\n%s", res.Output)
 	}
@@ -185,7 +190,7 @@ func TestPublish_NonPublishedStatusUnaffected(t *testing.T) {
 
 	res := e.Run(proj, "s-publish-notyet", publishPrompt, Turns("done",
 		Write("w1", unitPath, draftingUnit),
-	))
+	).ThenCommit("Draft the unit"))
 	if res.Refused() {
 		t.Fatalf("a non-published unit was refused by the publish gate:\n%s", res.Output)
 	}
@@ -202,7 +207,7 @@ func TestPublish_UncitedDraftEditPermitted(t *testing.T) {
 	edited := strings.Replace(draftingUnit, "Announcing the launch.", "Announcing the launch, today.", 1)
 	res := e.Run(proj, "s-publish-draft-edit", publishPrompt, Turns("done",
 		Write("w1", unitPath, edited),
-	))
+	).ThenCommit("Edit the draft"))
 	if res.Refused() {
 		t.Fatalf("an uncited edit of a drafting unit was refused:\n%s", res.Output)
 	}
@@ -220,7 +225,7 @@ func TestPublish_UncitedEditOfPublishedUnitPermitted(t *testing.T) {
 	edited := strings.Replace(publishedUnit, "Announcing the launch.", "Announcing the launch (typo fixed).", 1)
 	res := e.Run(proj, "s-publish-published-edit", publishPrompt, Turns("done",
 		Write("w1", unitPath, edited),
-	))
+	).ThenCommit("Fix a typo"))
 	if res.Refused() {
 		t.Fatalf("an uncited edit of an already-published unit was refused:\n%s", res.Output)
 	}
@@ -396,7 +401,7 @@ func TestPublish_InvalidNonPublishedUnitPermitted(t *testing.T) {
 			e, proj := installPublishProject(t, draftingUnit)
 			res := e.Run(proj, "s-publish-invalid-draft", publishPrompt, Turns("done",
 				Write("w1", unitPath, unit),
-			))
+			).ThenCommit("Edit the unit"))
 			if res.Refused() {
 				t.Fatalf("a unit that is not published (%s) was refused:\n%s", name, res.Output)
 			}

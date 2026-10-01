@@ -1,10 +1,14 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // joinRefusals is the seam that turns the Stop dispatch's COLLECTED refusals into
@@ -55,4 +59,47 @@ func TestJoinRefusals_AllCollectedNotStoppedAtFirst(t *testing.T) {
 	// And they are presented as a list the agent can read rule by rule.
 	assert.Contains(t, got, "the following rules refused this turn's work:")
 	assert.Equal(t, 3, strings.Count(got, "\n  - "), "each collected refusal must be its own bulleted line")
+}
+
+// The Stop dispatch's order is load-bearing: context enters run FIRST, so
+// commit-required, the file-guards (match, `when`, checks) and the gates all read
+// context[] as this turn left it, and context exits run LAST, so what a rule
+// reads at this Stop is still open. The steps are ordinary calls in one function,
+// so the order is pinned by where each call sits in dispatchNatureStop's body.
+func TestDispatchNatureStop_StepOrder(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "nature_stop.go", nil, 0)
+	require.NoError(t, err)
+
+	steps := []string{"runContextEnters", "commitRequired", "evaluateStopChangesets", "runGatesForEvents", "runContextExits"}
+	pos := map[string]token.Pos{}
+	for _, d := range file.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "dispatchNatureStop" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); ok {
+				for _, s := range steps {
+					if id.Name == s {
+						if _, seen := pos[s]; !seen {
+							pos[s] = call.Pos()
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	for _, s := range steps {
+		require.Contains(t, pos, s, "dispatchNatureStop no longer calls %s", s)
+	}
+	for i := 1; i < len(steps); i++ {
+		assert.Less(t, pos[steps[i-1]], pos[steps[i]],
+			"%s must run before %s (enters -> commit-required -> file-guards -> gates -> exits)", steps[i-1], steps[i])
+	}
 }

@@ -19,7 +19,7 @@
 # copies to `/` when the shell substitution comes back empty. See INSTALL_DIR.
 
 BIN_DIR  := bin
-SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval
+SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
 # VERSION is what `sr-session --version` (etc.) reports, and what the plugin's
@@ -282,7 +282,6 @@ test-e2e-shard: mock
 	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/pre_tool/... ;; \
 	  examples) go test -p 1 -count=1 -timeout 30m ./tests/e2e/examples/... ;; \
 	  rest)     go test -p 1 -count=1 -timeout 30m \
-	              ./tests/e2e/revalidation/... \
 	              ./tests/e2e/subagent/... \
 	              ./tests/e2e/gate/... \
 	              ./tests/e2e/context/... \

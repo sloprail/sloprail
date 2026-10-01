@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-body-is-human-authored is a file-guard over
+// task-body-is-human-authored is a PREVENTIVE file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with TWO checks in order:
 //
 //   0. REQUIRE: a write that CREATES the task or CHANGES its body (the guard's
@@ -19,9 +19,9 @@ import (
 //      AND NOTHING ELSE. The prepare skips the judge when the body did not change.
 //      The judge is the model; its verdict is stubbed.
 //
-// The PreFileWrite gate refuses a not-fine write at PRE-tool, before it lands; the
-// plain file-guard re-runs the same checks at Stop on the settled file (Post, against the session
-// baseline).
+// The PreFileWrite gate refuses an uncited or body-less write at PRE-tool, before it
+// lands; the plain file-guard judges the COMMITTED changeset at Stop — the citation
+// rides on the commit as a Sloprail-Cites-User trailer — and holds the judge.
 //
 // The judge verdict is a fixed stub (InstallJudgeClaude) — pass:true admits,
 // pass:false refuses and the judge's reasoning reaches the agent. sr-file's
@@ -36,8 +36,7 @@ import (
 func seedBaselineTask(t *testing.T, e *Env, proj, path, doc string) {
 	t.Helper()
 	e.WriteFile(proj, path, doc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed a task")
+	e.CommitAll(proj, "seed a task")
 }
 
 // TestBody_CitedCreatePasses: a task created with sr-file, citing the user's own
@@ -55,7 +54,7 @@ func TestBody_CitedCreatePasses(t *testing.T) {
 	sess := "s-body-ok"
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
-	))
+	).ThenCommit("Add the task", CitesUser(askQuote)))
 
 	if res.Refused() {
 		t.Fatalf("a cited, judge-accepted task body was refused:\n%s", res.Output)
@@ -79,9 +78,9 @@ func TestBody_CitedCreatePasses(t *testing.T) {
 
 // TestBody_SlopBodyRefusedByJudge: a body whose write cites the user's words but
 // which ALSO carries agent-authored elaboration the human never asked for — the
-// "and nothing else" violation — passes the gate (a user citation is on the write)
-// and lands; the file-guard's judge (stub pass:false) then blocks the turn at Stop,
-// with the judge's reasoning reaching the agent.
+// "and nothing else" violation — is cited, so the gate lets it land, and once it is
+// committed the file-guard's judge (stub pass:false) REFUSES the Stop, with the
+// judge's reasoning reaching the agent.
 func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -90,16 +89,20 @@ func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "TASK BODY: the body adds acceptance criteria and a suggested approach the user never stated"}`)
 
 	body := askBody + " Acceptance criteria: 100% test coverage, a rollback plan, and a metrics dashboard. Suggested approach: strangler-fig migration over three sprints."
-	res := e.Run(proj, "s-body-slop", authPrompt, Turns("done",
+	sess := "s-body-slop"
+	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", body), citeUser(askQuote)),
-	))
+	).ThenCommit("Add the task", CitesUser(askQuote)))
 
 	if res.Refused() {
-		t.Fatalf("the gate (citation only, no model) refused a cited body:\n%s", res.Output)
+		t.Fatalf("the gate refused a cited write; the judge belongs to the file-guard at Stop:\n%s", res.Output)
 	}
-	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-body-slop", "Stop"), "\n")
-	if !strings.Contains(blocks, "acceptance criteria and a suggested approach the user never stated") {
-		t.Errorf("a slop body the judge rejected was not blocked at Stop with its reasoning:\n%s", blocks)
+	if !e.Exists(proj, taskPath) {
+		t.Fatalf("a cited write did not land, so the Stop has nothing committed to judge:\n%s", res.Output)
+	}
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !containsStr(blocks, "acceptance criteria and a suggested approach the user never stated") {
+		t.Fatalf("a slop body the judge rejected was not refused at Stop, or its reasoning did not reach the agent:\n%s", blocks)
 	}
 }
 
@@ -179,7 +182,7 @@ func TestBody_StatusOnlyChangePermittedWithoutCitation(t *testing.T) {
 	sess := "s-body-status-only"
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", taskPath, task("blocked", "P1", askBody)),
-	))
+	).ThenCommit("Block the task"))
 
 	if res.Refused() {
 		t.Fatalf("a status-only change was refused though the body is unchanged:\n%s", res.Output)
@@ -198,8 +201,7 @@ func TestBody_StatusOnlyChangePermittedWithoutCitation(t *testing.T) {
 // TestBody_CitedCreateSurvivesUncitedStatusEdit: the ordinary flow — a task is
 // created with a citation, then its status is changed with the plain Write tool.
 // The engine keeps the path's recorded citations through that uncited write
-// (cited changes accumulate; an uncited one leaves them in place), so the Post
-// event at Stop still carries the ask's citation and a grounded task is not
+// (cited changes accumulate), so the changeset at Stop still carries the ask's citation and a grounded task is not
 // refused at the end of the turn. The Stop judge is handed that citation.
 func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	e := New(t)
@@ -212,7 +214,7 @@ func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
 		Write("w2", taskPath, task("blocked", "P1", askBody)),
-	))
+	).ThenCommit("Add the task, then block it", CitesUser(askQuote)))
 
 	if res.Refused() {
 		t.Fatalf("the cited create or the status edit was refused at Pre:\n%s", res.Output)
@@ -220,8 +222,7 @@ func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "status: blocked") {
 		t.Fatalf("the status edit did not land:\n%s", got)
 	}
-	// The engine's own record of the path's citations survived the uncited edit —
-	// the Post event at Stop is built from it.
+	// The engine's own record of the path's citations survived the uncited edit.
 	if rec := e.Meta(proj, sess, "citations"); !containsStr(rec, askQuote) {
 		t.Fatalf("the engine dropped the path's citation on an uncited edit:\n%s", rec)
 	}
@@ -233,9 +234,8 @@ func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, askQuote) {
 		t.Errorf("the Stop judge was not handed the citation recorded for this body:\n%s", prompt)
 	}
-	// The judge lives in the file-guard: the body is judged once, as it settled
-	// (Stop) — never at the create, never for the status edit.
+	// The body is judged once, over the committed changeset at Stop.
 	if n := e.JudgeCalls(proj, "judge-prompt.txt", "BODY of a task file"); n != 1 {
-		t.Errorf("the body judge was asked %d times, want 1 (Stop)", n)
+		t.Errorf("the body judge was asked %d times, want 1 (the changeset at Stop)", n)
 	}
 }

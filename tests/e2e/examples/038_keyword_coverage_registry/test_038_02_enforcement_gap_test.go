@@ -21,14 +21,13 @@ func TestT038_04_UncoveredScannerRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-04"
 	// Declare an active scanner; run NO gh search — a real coverage violation.
 	res := e.Run(proj, sess, "declare a scanner but never search", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 
 	// The scanner WAS declared (logged) — so this is a genuine uncovered-scanner
 	// setup, not an empty turn.
@@ -70,8 +69,7 @@ func TestT038_06_CoveredScannerAdmits(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-06"
 	// activeScanner declares keywords guardrail, llm, agent — cover them all in one
@@ -79,7 +77,7 @@ func TestT038_06_CoveredScannerAdmits(t *testing.T) {
 	res := e.Run(proj, sess, "declare and search", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", "gh search repos guardrail llm agent --limit=10"),
-	))
+	).ThenCommit("write the files"))
 
 	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:scanners/mine"]; !ok {
 		t.Fatalf("precondition: the scanner was not logged")
@@ -105,15 +103,14 @@ func TestT038_07_KeywordsSplitAcrossCallsRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-07"
 	res := e.Run(proj, sess, "declare and split-search", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", "gh search repos guardrail --limit=5"),
 		Bash("b2", "gh search repos llm agent --limit=5"),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -135,13 +132,12 @@ func TestT038_05_NoScannerNoGate(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-05"
 	res := e.Run(proj, sess, "do ordinary work, no scanner", Turns("done",
 		Write("w1", "notes/idea.md", "nothing to do with scanners"),
-	))
+	).ThenCommit("write the files"))
 
 	if active, _ := e.ContextState(proj, sess, "scanner-declared"); active {
 		t.Errorf("the context activated with no scanner declared")

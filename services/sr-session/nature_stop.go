@@ -9,7 +9,9 @@ import (
 	"github.com/sloprail/sloprail/internal/cyclemod"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -21,33 +23,40 @@ import (
 //
 // # The order, and why it is load-bearing
 //
-//	1. file-guard AFTER-checks on the cycle's Post file events
-//	     — records each verdict into revalidation, so a not-fine file RE-FIRES
-//	       next cycle; refusals block the turn.
-//	2. context ENTERS on the cycle's Post events
+//	0. context ENTERS on the cycle's Post events
 //	     — a context that recognises itself only from settled content
 //	       (a goal.yaml whose active:true exists once the write landed) enters
-//	       here, populating context[] BEFORE any gate reads it.
+//	       here, populating context[] BEFORE anything reads it: a file-guard's
+//	       match, `when` and checks, commit-required's match, and the gates all
+//	       read context[], and each must see this turn's enters, not the last
+//	       turn's state.
+//	1. commit required
+//	     — uncommitted work on a path some file-guard selects (its match may read
+//	       context[]) is refused first.
+//	2. file-guards: each rule evaluated over its changeset of commits
+//	     — every run recorded in the check results, a failing judge replayed
+//	       until its input changes; refusals block the turn.
 //	3. Stop GATES
 //	     — a gate bound to Stop reads context[]/gates[] and blocks the turn on a
-//	       refusal. It must see the contexts from step 2 already active.
+//	       refusal. It must see the contexts from step 0 already active.
 //	4. context EXITS
 //	     — pure lifecycle (the reversal): each active context's exit runs AFTER
-//	       the gates decided, so a gate requiring a context read it still open;
-//	       then the context closes for the next cycle. Never blocks the turn.
+//	       the file-guards and gates decided, so a rule requiring or matching on a
+//	       context read it still open; then the context closes for the next
+//	       cycle. Never blocks the turn.
 //
-// Steps 1–3 can each contribute a turn block; step 4 cannot. All the maps are
-// loaded once and threaded through, so a context that entered in step 2 is the
-// same one a gate reads in step 3 and that closes in step 4.
+// Steps 1–3 can each contribute a turn block; steps 0 and 4 cannot. All the maps
+// are loaded once and threaded through, so a context that entered in step 0 is the
+// same one commit-required, the file-guards and the gates read and that closes in
+// step 4.
 
 // dispatchNatureStop runs the new-format end-of-cycle dispatch and reports the
 // text to block the turn with (or "" to let it end).
 //
-// It computes the cycle's Post events itself (the same postEvents the old Post
-// dispatch uses, which also re-adds outstanding files so a file-guard's prior
-// refusal re-fires) and reuses the caller's already-open store for revalidation,
-// so a file-guard's verdict lands in the same file_checks table the old format's
-// re-fire reads.
+// It computes the cycle's Post events itself (postEvents), which the contexts'
+// enters read; a file-guard does not — it judges the commits of its own range, and
+// its verdicts are recorded in the session's check results (changeset_eval.go),
+// where a refusal stays until a run passes.
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
@@ -59,10 +68,8 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	gatesMap := loadGatesMap(cmd, store)
 
 	// The cycle's Post file events, and the repository root their paths resolve
-	// against. postEvents also re-adds every outstanding (still-refused) path to the
-	// difference, so a file-guard that refused a file last cycle sees it again this
-	// cycle even if the tree no longer shows it changed — the re-fire mechanism,
-	// reused whole. bound names only the file kinds so extraction does the minimum.
+	// against: what the contexts' enters read. bound names only the file kinds so
+	// extraction does the minimum.
 	bound := natureStopBoundKinds(loaded)
 	postFileEvents, root := postEvents(cmd, store, p, reg, bound)
 	if root == "" {
@@ -95,29 +102,34 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// file-STATE), so these go only to the context enters below.
 	tagWriteEvents, recordEnd := tagEvents(cmd, store, p, reg, bound)
 
-	// revalidation over the SAME store the caller opened, so a file-guard's verdict
-	// lands where the re-fire reads it. Constructed inline rather than opened afresh
-	// — a second handle on the same DB is avoidable, and the caller owns Close.
-	rev := &revalidation{store: store}
-
 	var refusals []string
 
-	// 1. file-guard after-checks on the Post FILE events. Records verdicts
-	//    (re-fire), collects refusals.
-	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap, histories) {
-		if r.Refused {
-			refusals = append(refusals, r.Reason+citedUnknownNote(store, r.Path)+" (file-guard "+r.Attribution+")")
-		}
-	}
-
-	if err := clearCitedUnknown(store); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-	}
-
-	// 2. context enters on the Post file events AND the tag events, populating
-	//    context[] before gates read it. Never blocks.
+	// 0. context enters on the Post file events AND the tag events, populating
+	//    context[] before commit-required, the file-guards and the gates read it. Never blocks.
 	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
 	runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
+
+	// 1. commit required: a file-guard judges commits, so uncommitted work on a
+	//    path some rule selects is refused before anything is judged. See
+	//    commit_required.go.
+	commitOwed := false
+	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap)); reason != "" {
+		refusals = append(refusals, reason+" (commit required)")
+		commitOwed = true
+	}
+
+	// 2. file-guards: each rule is evaluated once, over the changeset of commits it
+	//    has not yet passed, and every run is recorded (changeset_eval.go). Not while
+	//    work is owed a commit: judging HEAD would judge an incomplete set, and the
+	//    agent has a commit to make first. And only for an agent that owns the
+	//    tree: a sub-agent working in the session's own tree leaves its commits
+	//    where the root's Stop judges them, and refusing the sub-agent for the
+	//    root's work is a10n's "blocked 17 times in a row".
+	if !commitOwed && ownsTree(p) {
+		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, store) {
+			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
+		}
+	}
 
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
 	//    the subjectless one cyclemod produces. Refusals block the turn.
@@ -128,7 +140,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		}
 	}
 
-	// 4. context exits, AFTER gates decided. Pure lifecycle: flips active/inactive,
+	// 4. context exits, AFTER file-guards and gates decided. Pure lifecycle: flips active/inactive,
 	//    never blocks the turn.
 	runContextExits(cmd, loaded.Contexts, stop, scope, store, contextMap, gatesMap)
 
@@ -140,26 +152,17 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	return joinRefusals(refusals)
 }
 
-// natureStopBoundKinds is every file event kind the Stop dispatch needs extracted
-// — the Post file events (for file-guard after-checks and context Post enters)
-// and PostTagWrite (a context may enter on a tag). The Pre kinds and Stop are not
-// extracted here; the Stop event is synthesised by cyclemod, not by a module.
+// natureStopBoundKinds is every event kind the Stop dispatch needs extracted:
+// the kinds a context binds to (its Post file kinds and PostTagWrite). The Pre
+// kinds and Stop are not extracted here; the Stop event is synthesised by
+// cyclemod, not by a module.
 //
-// File-guards bind to a file's STATE rather than an event, so all three Post file
-// kinds are bound whenever any file-guard exists — the delete even when no guard
-// includes deletions, because a PostFileDelete is also how the after-check learns
-// a file it refused is gone and settles that refusal (settleIfGone). Which guard
-// is actually run on which kind is FileGuard.Covers'. Contexts contribute their own
-// Post `on` kinds. Gates bound to Stop need no extraction (the Stop event is
-// synthesised), so they add nothing here.
+// File-guards contribute nothing. They judge commits, not per-file Post events:
+// their changesets are read from git (changeset_eval.go), so a project with only
+// file-guards computes no tree difference at Stop. Gates bound to Stop need no
+// extraction either.
 func natureStopBoundKinds(loaded declaration.Loaded) []string {
 	var bound []string
-	if len(loaded.FileGuards) > 0 {
-		bound = append(bound,
-			declaration.KindPostFileCreate,
-			declaration.KindPostFileUpdate,
-			declaration.KindPostFileDelete)
-	}
 	for _, c := range loaded.Contexts {
 		for _, trig := range c.On {
 			kinds, _ := declaration.ExpandContextEvent(trig.Event)
@@ -182,4 +185,27 @@ func joinRefusals(refusals []string) string {
 		return refusals[0]
 	}
 	return "the following rules refused this turn's work:\n  - " + strings.Join(refusals, "\n  - ")
+}
+
+// evaluateStopChangesets opens what a changeset evaluation needs — the repository
+// and the session's check results — and evaluates every file-guard. A tree that
+// is not a repository has no commits to judge; a repository that cannot be read
+// refuses, since a state that could not be read must not be read as clean.
+func evaluateStopChangesets(cmd *cobra.Command, p HookPayload, scope hookScope, guards []declaration.FileGuard,
+	contextMap map[string]natures.ContextState, state sessionstate.Store) []fileGuardResult {
+	if len(guards) == 0 {
+		return nil
+	}
+	root, err := gitrepo.Root(p.Cwd)
+	if err != nil {
+		if isNotARepo(err) {
+			return nil
+		}
+		return []fileGuardResult{{Name: "file-guards", Attribution: "file-guards", Refused: true, Reason: failClosed(err)}}
+	}
+	results := openChecksStore(cmd, p, scope)
+	if results != nil {
+		defer results.Close()
+	}
+	return evaluateChangesets(cmd, guards, p, scope, root, contextMap, state, results)
 }

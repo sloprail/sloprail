@@ -53,7 +53,7 @@ func TestStructureGate_AllowedWriteInsideScopePermits(t *testing.T) {
 	sess := "s-structure-allowed"
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
-	))
+	).ThenCommit("Add the task", CitesUser(askQuote)))
 	if res.Refused() {
 		t.Fatalf("a TASK.md write matching the plugin's own allow list was refused:\n%s", res.Output)
 	}

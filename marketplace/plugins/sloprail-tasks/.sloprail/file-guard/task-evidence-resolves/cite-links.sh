@@ -2,19 +2,19 @@
 # and task-review (review-preflight.sh, expand-evidence.sh).
 #
 # An ARTIFACT is a frontmatter string `<repo-relative-file>:<ranges>` — where the
-# result of the work is, at the lines that changed — resolved against the WORKING
-# TREE. It is the one kind of citation a TASK.md still carries in its own bytes,
-# because it names repository content, which reads the same on every checkout.
+# result of the work is, at the lines that changed — resolved against the COMMITTED
+# TREE (callers pass $SR_TREE, the snapshot of head). It is the one kind of
+# citation a TASK.md still carries in its own bytes, because it names repository content, which reads the same on every checkout.
 #
 # What a task no longer carries: the user's words for the ask, and the tool output
 # proving the work happened. Both are transcript content, and a transcript path
-# resolves on no other machine, so both ride on the WRITE instead — `sr-file …
-# --cite:user` / `--cite:tool_result` — and reach a check as `.event.citations`,
+# resolves on no other machine, so both ride on the COMMIT instead —
+# `Sloprail-Cites-User:` / `Sloprail-Cites-Tool:` trailers — and reach a check as `.changeset.citations`,
 # already resolved by the session. Nothing here reads a transcript.
 #
 # Nothing here exits. These are functions that print and return, so the calling
-# guardrail decides what a failure means. This file reads no event and dispatches on
-# no kind — it is a pure library.
+# guardrail decides what a failure means. This file reads no payload — it is a pure
+# library.
 
 # citation_path "<citation>"  ->  the path half of `<path>:<ranges>`. `%%:*` removes
 # the longest `:*` from the right, leaving the path; task.cue's _artifact regex
@@ -53,8 +53,8 @@ citation_lines() {
 # It refuses the two shapes that mean the citation was mis-filed:
 #   - an ABSOLUTE path — an artifact must be reviewable from any checkout;
 #   - a .jsonl path — a session transcript is not a produced result. Proof that the
-#     work happened is tool output, cited on the in_review write with
-#     --cite:tool_result, never a path in the file.
+#     work happened is tool output, cited in the commit that moves the
+#     task to in_review (a Sloprail-Cites-Tool: trailer), never a path in the file.
 # Both are named as such so the agent fixes the kind of evidence rather than a
 # path. The remaining failures — wrong path, reversed range, range past the end —
 # are kept apart because the fixes differ.
@@ -69,7 +69,7 @@ artifact_resolve() {
         return 1 ;;
   esac
   case "$path" in
-    *.jsonl) printf 'the artifact %s points at a .jsonl transcript — that is not a produced result. Cite the tool output that proves the work on the in_review write itself (sr-file … --cite:tool_result '"'"'<exact output>'"'"'), and list only produced files under artifacts.\n' "$citation"
+    *.jsonl) printf 'the artifact %s points at a .jsonl transcript — that is not a produced result. Cite the tool output that proves the work in the commit that moves the task to in_review (a Sloprail-Cites-Tool: trailer), and list only produced files under artifacts.\n' "$citation"
              return 1 ;;
   esac
 

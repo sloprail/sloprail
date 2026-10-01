@@ -21,8 +21,7 @@ func TestT037_01_ContextLogsCreatedPerson(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-037-01"
 	e.Run(proj, sess, "add a person", Turns("done",
@@ -49,8 +48,7 @@ func TestT037_02_TwoPeopleBothLogged(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-037-02"
 	e.Run(proj, sess, "add two people", Turns("done",
@@ -81,8 +79,7 @@ func TestT037_03_ContextLogsDeletedPerson(t *testing.T) {
 	installExampleTree(t, proj, exampleName)
 	// The person exists at the baseline.
 	e.WriteFile(proj, "people/carol.md", "# Carol")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + carol")
+	e.CommitAll(proj, "install + carol")
 
 	sess := "s-037-03"
 	e.Run(proj, sess, "remove carol", Turns("done",
@@ -107,8 +104,7 @@ func TestT037_04_DoesNotFireOutsideScope(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-037-04"
 	e.Run(proj, sess, "write non-people files", Turns("done",

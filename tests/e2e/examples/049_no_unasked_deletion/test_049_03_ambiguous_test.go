@@ -9,6 +9,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,12 +49,12 @@ func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 	sess := "s-049-13"
 	seedTwoUserMessages(t, e, proj, sess, shared)
 
-	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove the second line\n")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the ambiguous cite is refused first"}`)
 
 	res := e.Run(proj, sess, shared, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	))
+	).ThenCommit("write the files", harness.CitesUser("please remove the second line")))
 
 	if !res.Refused() {
 		t.Fatalf("an ambiguous grounded ask (cite rc2) was NOT refused:\n%s", res.Output)

@@ -1,9 +1,9 @@
 // Package sessionstate holds what one session must remember between hook runs.
 //
-// Three things live here, and they are together because they share a lifetime
-// and a location: where the session started, which content each guardrail has
-// already judged, and whatever a rule spanning more than one cycle needs to
-// carry forward. All of it dies with the session, and all of it is keyed by it.
+// Two things live here, and they are together because they share a lifetime
+// and a location: where the session started, and whatever a rule spanning more
+// than one cycle needs to carry forward. (What file-guards concluded about
+// commits is internal/checkstore's.) All of it dies with the session, and all of it is keyed by it.
 //
 // This is the only package that imports a database driver. Callers get their
 // own types back and never learn that any of this is SQL.
@@ -66,32 +66,6 @@ type Store interface {
 	// DeleteMeta forgets a session fact; deleting an absent key is not an error.
 	DeleteMeta(key string) error
 
-	// FileCheck reads one guardrail's verdict on one file. A check never
-	// recorded is a zero verdict and false.
-	FileCheck(path, guardrail string) (Verdict, bool, error)
-	// RecordFileCheck stores a verdict, replacing whatever the same guardrail
-	// last said about the same file.
-	RecordFileCheck(path, guardrail string, v Verdict) error
-	// Skippable reports whether a guardrail may skip a file holding the given
-	// content, which is true only of content it has already permitted.
-	Skippable(path, guardrail, fingerprint string) (bool, error)
-	// OutstandingRefusals reports every path this session has refused and not
-	// since passed, with the content each refusal was reached on.
-	//
-	// This is the reader that makes a retained refusal mean something. Without
-	// it a stored refusal and a discarded one are indistinguishable from
-	// outside: Skippable answers false for both, so the difference only shows
-	// where something asks "what is still unfixed" rather than "may this be
-	// skipped".
-	//
-	// A path is outstanding while its most recent verdict — the highest seq for
-	// that path and guardrail — is a refusal. Judged again at new content and
-	// passed, it falls out; judged again and refused, it stays with the new
-	// content named. That is what "until a hook passes it" means, and reading
-	// the LATEST verdict per pair is what makes a fix end the reporting rather
-	// than a single old refusal pinning a file forever.
-	OutstandingRefusals() ([]Refusal, error)
-
 	// State reads what one guardrail stored under one key. A key never written
 	// is "", false: a rule asking whether it has seen something before should
 	// not have to tell "no" apart from "broken". The guardrail is the caller's
@@ -115,37 +89,6 @@ type Store interface {
 
 	// Close releases the database.
 	Close() error
-}
-
-// Verdict is what one guardrail concluded about one file's content.
-//
-// The fingerprint travels with the verdict because neither is usable alone: a
-// pass is only a licence to skip while the content it was given still yields
-// the same fingerprint.
-type Verdict struct {
-	// Fingerprint of the content that was judged.
-	Fingerprint string
-	// Passed reports whether the guardrail permitted the content. A refusal is
-	// kept rather than dropped, so the violation resurfaces every cycle until
-	// the content changes or the check passes.
-	Passed bool
-}
-
-// Refusal is one file one guardrail refused and has not since passed.
-//
-// It carries the guardrail as well as the path because re-reporting has to name
-// the rule that objected: the file is put back in front of THAT rule, and an
-// engine that pooled refusals per file would ask every rule about a violation
-// only one of them found.
-//
-// The fingerprint is the content the refusal was reached on, not the content on
-// disk now. The two differ exactly when the agent has edited the file since,
-// which is the case where the refusal must not be re-reported blindly — the
-// caller compares them and lets the changed content be judged afresh.
-type Refusal struct {
-	Path        string
-	Guardrail   string
-	Fingerprint string
 }
 
 // Entry is one guardrail-state row as the rule that wrote it sees it: its own

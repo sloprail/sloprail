@@ -42,14 +42,14 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	// Bash, not Write. The mock executes Bash and applies it in whatever tree the
 	// agent is bound to; a Write in a sub-agent's scenario creates no file at
 	// all, which is what made this look untestable.
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'the sub-agent did this' > only-the-sub-made-this.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-01", "delegate into isolation", Turns("root done",
 		Bash("rb1", "echo 'the root did this' > only-the-root-made-this.md"),
 		Dispatch("d1", "do the delegated job", sub, "worktree"),
-	))
+	).ThenCommit("the root's work"))
 
 	if !res.Saw("root done") {
 		t.Fatalf("the delegated cycle did not complete:\n%s", res.Output)
@@ -111,34 +111,24 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	}
 }
 
-// T015_02: a sub-agent SHARING the dispatching session's tree is also judged as
-// itself — and the parent judges the same file again as itself.
+// T015_02: a sub-agent SHARING the dispatching session's tree is not judged
+// separately — the dispatching session's own Stop judges its committed work.
 //
 // The shared tree is the ordinary path and the one where the two sessions are
-// hardest to keep apart: one directory, one set of files, and the only thing
-// separating the two cycles is the identity each is judged under.
-//
-// The double judgement is asserted as the behaviour it is, rather than assumed
-// away. A sub-agent's work is in the tree the root's own Stop later diffs, so the
-// root sees it too and judges it a second time. That is NOT revalidation
-// failing: revalidation exempts a hook from re-judging content ALREADY JUDGED IN
-// THE SAME SESSION'S STORE, and these are two different sessions with two
-// different stores — which is precisely what the state invariant demands. A
-// sub-agent's verdict exempting the parent would be the pooling the spec says
-// must not happen.
-//
-// So the two judgements are the correct consequence of separate state, and this
-// test pins them together: two verdicts on one file, under two identities. An
-// engine that pooled the state would produce ONE — the parent skipping on the
-// strength of the sub-agent's note — and this test is what tells the difference.
-func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing.T) {
+// hardest to keep apart: one directory, one HEAD, one range of commits. A
+// file-guard judges commits, and a sub-agent that shares the tree owns nothing of
+// it: it commits into the very history the dispatching session's Stop judges, so
+// judging the same range at its own stop as well would be one verdict twice, under
+// an identity that owns none of the tree. So the sub-agent's own Stop judges
+// nothing, and the root's judges its work — once, as itself.
+func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
-		Bash("sb1", "echo 'delegated' > from-the-sub.md"),
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
+		harness.CommitFile("sb1", "from-the-sub.md", "delegated\n", "the sub-agent's work"),
 	))
 
 	res := e.Run(proj, "s-015-02", "delegate in the same tree", Turns("root done",
@@ -161,8 +151,8 @@ func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing
 			"cycle judging delegated work:\n%s", res.Output)
 	}
 
-	// Both cycles judged it, and they are the same tree so both ledgers are the
-	// project's own.
+	// One verdict on the file, and it is the root's: the sub-agent's own Stop did
+	// not judge a range it does not own.
 	lines := e.FileGuardLedgerLines(proj, "recorder", "log")
 	var judges []string
 	for _, l := range lines {
@@ -171,20 +161,25 @@ func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing
 		}
 	}
 	if len(judges) == 0 {
-		t.Fatalf("the sub-agent's file was judged by nobody (%v):\n%s", lines, res.Output)
+		t.Fatalf("the sub-agent's committed file was judged by nobody (%v):\n%s", lines, res.Output)
 	}
-	if len(judges) == 1 {
-		t.Fatalf("the sub-agent's file was judged exactly once, by %s. Two sessions changed and "+
-			"then ended over this tree — the sub-agent's cycle and the root's — and each keeps its "+
-			"own record of what it has judged. One verdict means one of them was exempted by the "+
-			"OTHER's note, which is the state pooling the spec forbids: a sub-agent's note that it "+
-			"had already judged must never exempt the parent. Ledger: %v", judges[0], lines)
+	if len(judges) != 1 {
+		t.Fatalf("the sub-agent's file was judged %d times (%v). A sub-agent sharing the tree "+
+			"commits into the range the dispatching session's Stop judges; judging it at its own "+
+			"stop too is one verdict twice. Ledger: %v", len(judges), judges, lines)
 	}
-	if judges[0] == judges[1] {
-		t.Fatalf("both judgements of the sub-agent's file were made under one identity (%s). The "+
-			"sub-agent's cycle and the parent's are different sessions, and an engine collapsing "+
-			"them judges delegated work as the dispatching session's own. Ledger: %v",
-			judges[0], lines)
+	// Whose: the dispatching session's own identity, asked of the engine itself —
+	// never inferred from another ledger line, which the harness's scenario file (kept
+	// out of commits) would not supply. Unconditional: an empty identity fails rather
+	// than skips the comparison.
+	rootID := e.SessionIdentity(proj, "s-015-02")
+	if rootID == "" {
+		t.Fatalf("the engine resolved no identity for the dispatching session, so whose verdict " +
+			"this was cannot be told")
+	}
+	if judges[0] != rootID {
+		t.Fatalf("the sub-agent's file was judged under %q, not the dispatching session's (%q)",
+			judges[0], rootID)
 	}
 }
 
@@ -212,15 +207,23 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo sub > the-subs-file.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
-	res := e.Run(proj, "s-015-03", "remember across a delegation", Turns("root done",
+	const sess = "s-015-03"
+	// Cycle one: the root's own work, so the root's Stop stores a note of its own
+	// BEFORE anything is delegated.
+	e.Run(proj, sess, "work before delegating", Turns("done",
 		Bash("rb1", "echo root > root-before.md"),
+	).ThenCommit("the root's first work"))
+
+	// Cycle two: the delegation, and more of the root's work. The sub-agent's Stop
+	// comes first (it ends inside the dispatch), then the root's.
+	res := e.Run(proj, sess, "remember across a delegation", Turns("root done",
 		Dispatch("d1", "delegate", sub, "worktree"),
 		Bash("rb2", "echo root > root-after.md"),
-	))
+	).ThenCommit("the root's second work"))
 
 	if !res.Saw("root done") {
 		t.Fatalf("the session did not complete:\n%s", res.Output)
@@ -232,40 +235,19 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	rootLines := e.FileGuardLedgerLines(proj, "memo", "log")
 	subLines := subLedger(t, proj, theWorktree(t, proj), "memo", "log")
 
-	// THE POSITIVE CONTROL. Some hook of the ROOT's read back what an earlier
-	// hook of the root's had stored. Without this the isolation assertions below
-	// hold just as well against a store that never opened, and nothing here
-	// would mean anything.
-	//
-	// Asserted as "a later invocation saw a note left by an earlier one", not as
-	// a specific value. Several files change in the root's cycle — its own two
-	// writes and the scenario script the harness drops in the tree — and the
-	// order the Post events are dispatched in is the engine's business, not
-	// this test's. Pinning one exact predecessor would be asserting a dispatch
-	// order that nothing promises, and it fails for a reason that has nothing to
-	// do with state pooling.
-	//
-	// What cannot happen by accident is the thing checked: a value written by
-	// one hook process, read back by a later one, in the same session's scope.
-	// A store that never opened returns an error; one keyed per invocation
-	// returns nothing.
+	// THE POSITIVE CONTROL. The root's second Stop read back the note its first
+	// Stop had stored. Without this the isolation assertions below hold just as
+	// well against a store that never opened, and nothing here would mean anything.
 	after, ok := lineAbout(rootLines, "root-after.md")
 	if !ok {
 		t.Fatalf("the root's write after the delegation was never judged (%v), so the control "+
 			"this test rests on did not run", rootLines)
 	}
-	var carried bool
-	for _, l := range rootLines {
-		if got := beforeOf(l); got != "" && pathOf(l) != got {
-			carried = true
-			break
-		}
-	}
-	if !carried {
-		t.Fatalf("no hook in the ROOT's own session read back anything a previous hook of that "+
-			"session had stored. The session store is not working, so every assertion below about "+
-			"state NOT crossing between sessions would pass against an engine that stores nothing "+
-			"at all. Ledger: %v", rootLines)
+	if got := beforeOf(after); !strings.Contains(got, "root-before.md") {
+		t.Fatalf("the root's second Stop read back %q, not the note its first Stop stored "+
+			"(which names root-before.md). The session store is not working, so every assertion "+
+			"below about state NOT crossing between sessions would pass against an engine that "+
+			"stores nothing at all. Ledger: %v", got, rootLines)
 	}
 
 	// The sub-agent's own cycle ran and stored into a scope of its own.
@@ -276,7 +258,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	}
 
 	// Direction one: the sub-agent did not read the PARENT's note. The root had
-	// already stored root-before.md by the time the sub-agent ran, so a pooled
+	// already stored its first note by the time the sub-agent ran, so a pooled
 	// scope hands it exactly that.
 	if got := beforeOf(subLine); got != "" {
 		t.Fatalf("the sub-agent's guardrail read back %q — a note the PARENT's hook wrote. Pooled "+
@@ -284,17 +266,11 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 			"remembers it about work it was never watching. Sub ledger: %v", got, subLines)
 	}
 
-	// Direction two: NO hook of the parent's read back the SUB-AGENT's note. The
-	// sub-agent stored the-subs-file.md while the root's cycle was in progress,
-	// so a pooled scope surfaces it to one of the root's hooks — checked across
-	// all of them rather than only the last, since which one would see it
-	// depends on a dispatch order this test does not fix.
-	//
-	// `after` is used here so the assertion above it cannot be dead code if the
-	// ledger were ever empty.
-	_ = after
+	// Direction two: the root's second Stop did not read the SUB-AGENT's note. The
+	// sub-agent stored its own while the root's cycle was in progress, so a pooled
+	// scope surfaces it to the root's Stop.
 	for _, l := range rootLines {
-		if beforeOf(l) == "the-subs-file.md" {
+		if strings.Contains(beforeOf(l), "the-subs-file.md") {
 			t.Fatalf("a guardrail in the PARENT's session read back the SUB-AGENT's note (%s). A "+
 				"sub-agent's note that it had already refused would exempt the parent from a "+
 				"refusal the parent never received. Ledger: %v", l, rootLines)
@@ -317,8 +293,8 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
-	first := subScenario(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")))
-	second := subScenario(t, harness.Turns("two done", Bash("a2", "echo two > second-subs-file.md")))
+	first := harness.SubagentScript(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")).ThenCommit("the first sub-agent's work"))
+	second := harness.SubagentScript(t, harness.Turns("two done", Bash("a2", "echo two > second-subs-file.md")).ThenCommit("the second sub-agent's work"))
 
 	res := e.Run(proj, "s-015-04", "delegate twice", Turns("root done",
 		Dispatch("d1", "first job", first, "worktree"),
@@ -391,11 +367,11 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo one > sub-one.md"),
 		Bash("sb2", "echo two > sub-two.md"),
 		Bash("sb3", "echo three > sub-three.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-05", "delegate several turns", Turns("root done",
 		Dispatch("d1", "do three things", sub, "worktree"),

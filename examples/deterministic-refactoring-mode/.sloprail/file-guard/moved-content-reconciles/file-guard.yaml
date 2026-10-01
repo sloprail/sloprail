@@ -3,11 +3,11 @@
 # only for a file carrying an sr:moved-from marker. The same marker outside the
 # context is not this guard's business.
 #
-# This is the after-check on the settled file. The PREVENTION — refusing a move
-# that regenerated instead of carrying the bytes, before the write lands — is the
-# PreFileWrite gate of the same name (gate/moved-content-reconciles); a file-guard
-# only acts on what settled, so it is the backstop for a write the gate could not
-# see (a command the engine does not parse).
+# This judges the committed changeset: each file the range touched that carries the
+# marker is reconciled as committed. The PREVENTION — refusing a move that
+# regenerated instead of carrying the bytes, before the write lands — is the
+# PreFileWrite gate of the same name (gate/moved-content-reconciles); this is the
+# backstop for a write the gate could not see (a command the engine does not parse).
 match: context["refactoring"].active and any(markers, .kind == "moved-from")
 checks:
   - script: ./reconciles-against-origin.sh

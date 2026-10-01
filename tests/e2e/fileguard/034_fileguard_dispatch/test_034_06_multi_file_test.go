@@ -52,8 +52,7 @@ func keepProject(t *testing.T, files ...string) (*harness.Env, string) {
 		e.WriteFile(proj, f, "package src\n")
 	}
 	e.Gate(proj, "keep-files", keepGate, map[string]string{"check.sh": refuseKeepDeletes})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj
 }
 
@@ -159,7 +158,7 @@ func TestT034_15_SecondWriteOfMultiFileCallIsChecked(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "no-plaintext-keys", preventGate, map[string]string{"check.sh": checkNoPlaintextKey})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the rule and its scripts")
 
 	res := e.Run(proj, "s-034-15", "write two secrets", Turns("done",
 		Bash("b1", `sr-file write secrets/a.env --content 'KEY_REF=vault://a' && sr-file write secrets/b.env --content 'KEY=hunter2'`),

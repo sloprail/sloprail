@@ -49,10 +49,31 @@ alone, so drop `decision`.
 
 ## The skeleton
 
+A **file-guard** judges a changeset: loop over `.changeset.files[]`.
+[check-template.sh](check-template.sh) is the full version, fail-closed on an
+unreadable changeset:
+
 ```bash
 #!/usr/bin/env bash
 set -uo pipefail
 payload="$(cat)"                                   # stdin, read ONCE
+n="$(printf '%s' "$payload" | jq -r '.changeset.files | length')" || n=""
+case "$n" in '' | *[!0-9]*) echo '{"reason":"the changeset could not be read"}'; exit 1 ;; esac
+for i in $(seq 0 $((n - 1))); do
+  path="$(printf '%s' "$payload" | jq -r --argjson i "$i" '.changeset.files[$i].path')"
+  content="$(printf '%s' "$payload" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')"
+  # ... decide about $path / $content ...
+  echo '{"reason":"'"$path"' requires ..."}'
+  exit 1
+done
+```
+
+A **gate** judges one event: read `.event.*`.
+
+```bash
+#!/usr/bin/env bash
+set -uo pipefail
+payload="$(cat)"
 path="$(printf '%s' "$payload" | jq -r '.event.path')"
 # ... decide ...
 echo '{"reason":"Writing '"$path"' requires ..."}'
@@ -68,9 +89,12 @@ variable, then extract from that variable.
 
 ## What is on stdin
 
-A script (and a `prepare`) receives one **check payload** as JSON, and the event
-is **flat** — its fields are direct under `.event`, not nested under
-`.event.fields`:
+A script (and a `prepare`) receives one **check payload** as JSON. A
+**file-guard's** is a `Changeset`: `event` is `{"kind":"Changeset"}` and the
+change is under `.changeset` (`commits`, `files[]`, `others`, `citations`; shape in
+[file-guard.md](file-guard.md)). It also gets `SR_TREE`, `SR_BASE` and `SR_HEAD`.
+A **gate's** (and a context's) `event` is **flat** — its fields are direct under
+`.event`, not nested under `.event.fields`:
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
@@ -78,22 +102,23 @@ is **flat** — its fields are direct under `.event`, not nested under
  "context":{"tag-declared":{"active":true,"payload":{…}}}}
 ```
 
-Read `.event.path`, `.event.newContent`, `.event.oldContent`, `.event.kind`,
-`.event.resultKnown`, `.event.invocations`, `.event.tags`,
-`.event.newMarkers`/`.event.oldMarkers` — all flat. Alongside: `.transcriptPath`
+On a gate or context, read `.event.path`, `.event.newContent`,
+`.event.oldContent`, `.event.kind`, `.event.resultKnown`, `.event.invocations`,
+`.event.tags`, `.event.newMarkers`/`.event.oldMarkers` — all flat; a file-guard has
+none of these, only `.changeset.files[]`. Alongside: `.transcriptPath`
 (the session record) and `.context` (every declared context, `{active, payload}`).
-A gate's script gets the same shape (its `event` may be a command, tool or `Stop`
-event); a context's `enter`/`exit` add `.currentContext` and `.gates`.
+A gate's `event` may be a command, tool or `Stop` event; a context's `enter`/`exit` add `.currentContext` and `.gates`.
 
 The full field set for every kind, the payload envelopes, and the flat-vs-nested
 distinction: **[events.md](events.md)**. The `SR_*` variables a script also
 receives (`$SR_WORKSPACE`, `$SR_GUARDRAIL`, `$SR_TRANSCRIPT`, …):
 **[environment.md](environment.md)**.
 
-A field the event omits reads as absent: guard `.event.newContent` with
-`has("newContent")` before reading it on an update, because an absent value is
-indistinguishable from an emptied file ([file-guard.md](file-guard.md), the
-`resultKnown` discipline).
+On a gate, a field the event omits reads as absent: guard `.event.newContent`
+with `.event.resultKnown` before reading it on an update, because an absent value
+is indistinguishable from an emptied file ([file-guard.md](file-guard.md), the
+`resultKnown` discipline). A changeset's `newContent` is committed bytes, always
+known; a `D` entry has none.
 
 ## Asking what the agent did
 

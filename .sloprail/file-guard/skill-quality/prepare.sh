@@ -5,8 +5,8 @@
 # iterates whatever array this emits). Emits the meta-rules as an ARRAY under
 # additionalContext.meta_rules ([{name, body}, ...]); the judge-skill.md.j2 holds
 # the rubric frame and renders the array with a {% for %} loop. The judge
-# template reads the SKILL.md's own content directly off the flat event
-# (event.newContent), so this prepare's ONE job is the meta-rule array.
+# template loops over the changeset's files itself, so this prepare's ONE job is
+# the meta-rule array.
 #
 # WHY A PREPARE AND NOT THE OLD HAND-ROLLED CLAUDE CALL. This guard was a SCRIPT
 # check that assembled the prompt AND called `claude` itself, hand-rolling the
@@ -49,22 +49,14 @@
 
 set -uo pipefail
 
-# The CheckPayload the engine hands prepare on stdin: the file's own facts are
-# FLAT under `.event` (`.event.path`, `.event.newContent`), the new-format shape
-# (internal/declaration/payload.go). prepare reads the SAME payload a script check
-# would.
+# The CheckPayload the engine hands prepare on stdin: a Changeset. The files this
+# guard's match selected are under `.changeset.files[]` (committed content, always
+# known). prepare reads the SAME payload a script check would.
 payload="$(cat)"
-
-path="$(printf '%s' "$payload" | jq -r '.event.path // empty' 2>/dev/null)"
 
 # The guard's own directory, so rules/ resolves under it. The engine sets
 # SR_GUARDRAIL_DIR on every check dispatch (internal/dispatch/exec.go).
 guardrail_dir="${SR_GUARDRAIL_DIR:-}"
-
-if [ -z "$path" ]; then
-  echo "skill-quality: the event named no path, so there is nothing to judge" >&2
-  exit 1
-fi
 
 # SR_GUARDRAIL_DIR absent means the payload did not come from the engine — a
 # hand-made invocation. Without it rules/ cannot be found, and a judge that
@@ -75,43 +67,31 @@ if [ -z "$guardrail_dir" ]; then
   exit 1
 fi
 
-# The content being judged, read FLAT off the event. The judge TEMPLATE reads
-# this same field for the prompt; prepare reads it only to enforce the size gate
-# below, so the two never disagree about what is judged. This is the file-guard:
-# it fires at Stop on the SETTLED file (PostFileCreate/PostFileUpdate), where
-# newContent carries the settled bytes off the tree diff. A settled file the
-# engine could not read (newContentKnown false: a link to a FIFO or a device, or
-# past the read cap) carries "" instead, and judging "" would judge nothing, so
-# it refuses here: the check fails closed.
-if [ "$(printf '%s' "$payload" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
-  echo "skill-quality: the bytes of $path are not known (newContentKnown false), so the skill could not be judged" >&2
+# The files being judged: the changeset's selected files. The judge TEMPLATE loops
+# over the same `.changeset.files[]`; prepare reads them only to enforce the size
+# gate below, so the two never disagree about what is judged. An empty list is
+# refused: judging nothing is not a pass.
+paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')" || {
+  echo "skill-quality: the changeset could not be read, so nothing was judged. REFUSING." >&2
+  exit 1
+}
+if [ -z "$paths" ]; then
+  echo "skill-quality: the changeset holds no SKILL file, so there is nothing to judge" >&2
   exit 1
 fi
-body="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
+body_bytes="$(printf '%s' "$payload" | jq -j '.changeset.files[].newContent' | wc -c | tr -d ' ')" || {
+  echo "skill-quality: the changeset's content could not be read. REFUSING." >&2
+  exit 1
+}
 
-# A skill too large to judge is REFUSED, not permitted.
-#
-# The whole skill plus every meta-rule goes into the judge's prompt, so past
-# roughly max_bytes the request exceeds the model's context and no verdict comes
-# back. Under the OLD script that produced no verdict and the fail-open branch
-# permitted an unjudged file (measured on the sibling: 2.1MB permitted in 3.8s).
-# Size is caused by the content, identical on every run, and fixable — so it is
-# refused here and named, BEFORE the model is ever asked.
-#
-# Threshold shared with the sibling judges: 534KB judged fine, 929KB rejected by
-# the model.
-max_bytes=600000
-body_bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
-if [ -n "$body_bytes" ] && [ "$body_bytes" -gt "$max_bytes" ] 2>/dev/null; then
-  cat >&2 <<EOF
-SKILL QUALITY: $path is ${body_bytes} bytes, which is too large to judge (the
-whole skill goes into the judge's prompt, and past roughly ${max_bytes} bytes
-the request exceeds the model's context and no verdict comes back).
-
-Refused rather than permitted because the size is itself the finding: a skill
-this large is not one an agent can load and act on. Split it into the skill and
-its reference files, and it will be judged normally.
-EOF
+# A changeset too large to judge is REFUSED, not permitted. The cap and its
+# reasoning live in rule-quality's size-cap-lib.sh, the one copy, which the
+# pre-write gate of the same name sources too.
+. "$guardrail_dir/../rule-quality/size-cap-lib.sh" || {
+  echo "skill-quality: rule-quality's size-cap-lib.sh could not be loaded, so the size cap could not be applied. REFUSING." >&2
+  exit 1
+}
+if size_cap_refuses "$body_bytes" "the skill files in this changeset" skill; then
   exit 1
 fi
 
@@ -187,7 +167,7 @@ if [ "$count" -eq 0 ]; then
   # diagnosable. (A missing rules/ dir or an unreadable rule lands here too: the
   # glob matches nothing, count stays 0 — fail-closed, the old fail-open's
   # replacement for the rule-loading machinery.)
-  echo "skill-quality: rules/ contains no meta-rule with 'enforced: true', so there is no standard to judge '$path' against. REFUSING rather than judging against nothing — add a rules/<name>/RULE.md, or disable this guardrail." >&2
+  echo "skill-quality: rules/ contains no meta-rule with 'enforced: true', so there is no standard to judge the changeset's files against. REFUSING rather than judging against nothing — add a rules/<name>/RULE.md, or disable this guardrail." >&2
   exit 1
 fi
 

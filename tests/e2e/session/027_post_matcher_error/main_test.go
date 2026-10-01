@@ -8,7 +8,6 @@ import (
 )
 
 var (
-	New   = harness.New
 	Turns = harness.Turns
 	Bash  = harness.Bash
 	Write = harness.Write
@@ -36,11 +35,6 @@ func project(t *testing.T) (*harness.Env, string) {
 	return e, proj
 }
 
-// commitProject commits the whole project — including the new-format
-// .sloprail/{gate,file-guard}/… declarations — so they are the baseline and not
-// the cycle's own work. The new-format equivalent of the old-format
-// commitGuardrails, which committed .sloprail/guardrails/….
-func commitProject(e *harness.Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
-}
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

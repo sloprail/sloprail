@@ -79,7 +79,7 @@ func TestT035_03_GateReadsContextActiveAndPayload(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.Gate(proj, "deterministic-only", deterministicGate, map[string]string{"check.sh": checkReadsContextPayload})
-	commitGuards(t, proj) // keep the context/gate scripts out of the cycle diff
+	e.CommitAll(proj, "the guards")
 
 	sess := "s-035-03"
 	res := e.Run(proj, sess, "declare a refactor", Turns("done",
@@ -154,7 +154,7 @@ exit 0
 // only inside the context.
 //
 // One session: a `refactor-start` command enters the context, THEN a src/ file
-// with a debug print is written. The guard's match (path under src/ AND refactor
+// with a debug print is written and committed. The guard's match (path under src/ AND refactor
 // active) selects it, and the check refuses — blocking the turn. Without the
 // context active the guard would not have selected the file at all.
 func TestT035_05_FileGuardMatchReadsContext(t *testing.T) {
@@ -166,12 +166,13 @@ func TestT035_05_FileGuardMatchReadsContext(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.FileGuard(proj, "no-debug-in-refactor", contextGatedFileGuard, map[string]string{"check.sh": checkNoDebugPrint})
+	e.CommitAll(proj, "the guards")
 
 	sess := "s-035-05"
 	e.Run(proj, sess, "refactor then leave a debug print", Turns("done",
 		Bash("b1", "refactor-start src/"),
 		Write("w1", "src/x.go", "DEBUG_PRINT here\npackage x"),
-	))
+	).ThenCommit("leave a debug print"))
 
 	// The context is active (the command entered it); the guard's match selected
 	// the file; the check refused → the turn is blocked.
@@ -204,14 +205,14 @@ func TestT035_06_FileGuardDoesNotFireOutsideContext(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.FileGuard(proj, "no-debug-in-refactor", contextGatedFileGuard, map[string]string{"check.sh": checkNoDebugPrint})
-	commitGuards(t, proj) // keep the context/file-guard scripts out of the cycle diff
+	e.CommitAll(proj, "the guards")
 
 	sess := "s-035-06"
 	// No refactor-start — the context is inactive, so the guard's match excludes
 	// the file even though it holds a debug print.
 	e.Run(proj, sess, "leave a debug print outside any refactor", Turns("done",
 		Write("w1", "src/x.go", "DEBUG_PRINT here\npackage x"),
-	))
+	).ThenCommit("leave a debug print"))
 
 	if len(e.BlockingErrorsFrom(proj, sess, "Stop")) != 0 {
 		t.Errorf("a context-gated guard fired though its context was inactive — its match should exclude the file")

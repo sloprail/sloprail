@@ -8,15 +8,14 @@ import (
 // T026_06: a gate bound ONLY to Stop whose trigger match will not load does not
 // block the cycle.
 //
-// # The finding, re-vehicled
+// # The finding
 //
 // This is the same property 013 establishes for every other kind — "a broken rule
 // is not silent, and does not wedge the session" — asked of the one kind that is
-// dispatched at the end of a cycle. Under the old GUARDRAIL.md dispatch a rule
-// bound only to Stop whose matcher would not load was the sharpest case, because
+// dispatched at the end of a cycle. A rule bound only to Stop whose matcher would not load was the sharpest case, because
 // such a project could block EVERY cycle and never end a turn.
 //
-// Under the new nature dispatch a gate whose trigger `match` cannot compile against
+// A gate whose trigger `match` cannot compile against
 // its event's scope is SKIPPED at the moment it would fire — firstMatchingEvent
 // compiles the trigger match per event and, on a compile error, reports it and
 // moves on without waking the gate. So a Stop gate carrying a match Stop cannot
@@ -39,7 +38,7 @@ func TestT026_06_ABrokenStopRuleDoesNotBlockTheCycle(t *testing.T) {
 checks:
   - script: ./permit.sh
 `, map[string]string{"permit.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-06", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
@@ -72,7 +71,7 @@ func TestT026_07_ASoundStopRuleLetsTheCycleEnd(t *testing.T) {
 checks:
   - script: ./permit.sh
 `, map[string]string{"permit.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-07", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
@@ -120,7 +119,7 @@ func TestT026_08_ABrokenRuleDoesNotBlockACycleItNeverGuarded(t *testing.T) {
 checks:
   - script: ./permit.sh
 `, map[string]string{"permit.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-08", "write something, delete nothing", Turns("done",
 		Write("w1", "notes.md", "hello\n"),

@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // A sub-agent's OWN cycle, observed end to end through a user's own wiring.
@@ -64,22 +62,16 @@ import (
 // parent's — but its "never from the agent itself" half is a statement about an
 // absence in the environment, and is pinned at unit level.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
 //
-// A sub-agent's OWN cycle is a Post cycle: the sub-agent's work has settled in its
-// tree, and the guardrail fires at the sub-agent's SubagentStop against that
-// difference. That is exactly a file-guard's after-check — a
-// file-guard fires on the settled Post file event and records into the same
-// revalidation store the old format used (services/sr-session/nature_fileguard.go's
-// runFileGuardsPost, driven from the SubagentStop path the same as the root's Stop).
-// So every observation this package rests on — that the sub-agent's cycle judges the
-// file IT made, under the SUB-AGENT'S own SR_SESSION_ID, and that its state does not
-// pool with the parent's — is reached identically through the file-guard's own
-// after-check. The exact transformation is in tests/e2e/REVEHICLE-PATTERN.md.
+// A sub-agent's OWN cycle settles in its tree, and the guardrail fires at the
+// sub-agent's SubagentStop against what it committed: a file-guard's Stop check,
+// driven from the SubagentStop path the same as the root's Stop. So every
+// observation this package rests on — that the sub-agent's cycle judges the file IT
+// made, under the SUB-AGENT'S own SR_SESSION_ID, and that its state does not pool
+// with the parent's — is reached through that check.
 //
-// The rules here observe the sub-agent's own file EVENTS and its own SR_SESSION_ID,
-// which the file-guard check is handed the same way the old hook was. `match:
-// "**/*.md"` selects the sub-agent's `.md` work at any depth (all of it lands as
+// The rules here observe the sub-agent's own changeset and its own SR_SESSION_ID.
+// `match: // "**/*.md"` selects the sub-agent's `.md` work at any depth (all of it lands as
 // `.md`), and never matches the guard's own ledger (`log`, `count` — no `.md`
 // suffix) so no self-observation doubles the ledger. Refusals (T015_07, T015_08)
 // still surface at SubagentStop and are read with e.SubagentBlockingErrors, from
@@ -172,22 +164,6 @@ func theWorktree(t *testing.T, proj string) string {
 	return trees[0]
 }
 
-// subScenario writes a scenario the mock runs as a sub-agent, OUTSIDE the
-// project tree, and returns its path.
-//
-// Outside deliberately. A script written into the project is an untracked file
-// in the tree the cycle diffs, so it turns up as a change the guardrails are
-// asked about — which is noise in every assertion about what a cycle judged, and
-// in an isolated dispatch it is not even in the sub-agent's tree.
-func subScenario(t *testing.T, s harness.Scenario) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "sub.sh")
-	if err := s.Script(path); err != nil {
-		t.Fatalf("write sub-agent scenario: %v", err)
-	}
-	return path
-}
-
 // recordsPathAndSession is a file-guard whose after-check judges files created in
 // a cycle, and writes down what it was asked about and WHOSE session it was asked
 // as.
@@ -207,10 +183,21 @@ checks:
   - script: ./record.sh
 `
 
+// pathsOfPayload is the shell that lists every file path the rule was asked to judge
+// in the Changeset payload a check is handed, one per line: `.changeset.files[]`,
+// not `.changeset.others` (the rule's own files, which the commit that installed
+// it puts in the range). A file-guard is evaluated once per Stop over the whole
+// range, so one run of the check covers every file the range changed and the
+// recorder writes one ledger line per file.
+const pathsOfPayload = `printf '%s' "$payload" | jq -r '.changeset.files[].path'`
+
+// recordScript writes one line per file in the changeset: what it was asked about
+// and WHOSE session it was asked as.
 const recordScript = `#!/bin/sh
 payload=$(cat)
-path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/log"
+for path in $(` + pathsOfPayload + `); do
+  echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/log"
+done
 exit 0
 `
 
@@ -219,9 +206,9 @@ exit 0
 //
 // This is the only shape that can tell pooled state from separate state. A rule
 // that merely WROTE would leave two stores looking alike from outside; what
-// distinguishes them is whether one scope can READ what another wrote. So each
-// invocation reports `before=[...]` — the value standing in ITS scope when it
-// ran — and then writes its own path there.
+// distinguishes them is whether one scope can READ what another wrote. So each run
+// reports `before=[...]` — the value standing in ITS scope when it ran — and then
+// writes a note of its own: the paths of the changeset it judged, comma-joined.
 const readsBackItsOwnState = `match: "**/*.md"
 checks:
   - script: ./record.sh
@@ -229,9 +216,12 @@ checks:
 
 const readsBackScript = `#!/bin/sh
 payload=$(cat)
-path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$(sr-session state get seen 2>&1)]" >> "$SR_GUARDRAIL_DIR/log"
-sr-session state set seen "$path" >/dev/null 2>&1
+paths=$(` + pathsOfPayload + `)
+before=$(sr-session state get seen 2>&1)
+for path in $paths; do
+  echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$before]" >> "$SR_GUARDRAIL_DIR/log"
+done
+sr-session state set seen "$(printf '%s' "$paths" | tr '\n' ',')" >/dev/null 2>&1
 exit 0
 `
 

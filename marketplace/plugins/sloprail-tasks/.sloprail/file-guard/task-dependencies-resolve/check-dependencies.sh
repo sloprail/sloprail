@@ -28,8 +28,10 @@
 #      this pending write's own edges), and refuse if this task's id is
 #      reachable from itself.
 #
-# THE STOP HALF: this is the file-guard's copy (settled bytes on disk); the PreFileWrite
-# gate of the same name carries the pending-bytes copy.
+# THE FILE-GUARD ENTRY: it checks every task in the changeset, and reads the task
+# tree from SR_TREE (the committed head), so a half-finished edit in the working
+# tree is never what a dependency is resolved against. The PreFileWrite gate of the
+# same name carries the pending-bytes entry.
 #
 # THE GATE: like task-gates-hold, this only matters on entering
 # to_do/in_progress/in_review — moving among backlog/blocked, or staying
@@ -45,30 +47,33 @@ lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset check_dependencies_lib_loaded
 . "$lib_dir/check-dependencies-lib.sh" || exit 2
 [ "${check_dependencies_lib_loaded:-}" = 1 ] || exit 2
-lib_init
-case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    # The engine declares newContentKnown on the Post kinds
-    # (internal/filemod/module.go FieldNewContentKnown): false when it could
-    # not read the settled file — a link to a FIFO or a device, or past the
-    # read cap. That file is unseen here too (and reading it could block), so
-    # refuse rather than pass it unchecked.
-    if [ "$(printf '%s' "$event" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
-      refuse "task-dependencies-resolve: $path could not be read (not a regular file, or too large), so its dependencies could not be checked"
-    fi
-    abs="$root/$path"
-    # Written and then removed within the cycle: nothing to check, nothing
-    # wrong — deliberate fail-open, mirroring the sibling guards' Post branch.
-    if [ ! -f "$abs" ]; then
-      exit 0
-    fi
-    new_content="$(cat "$abs")" || refuse "task-dependencies-resolve: could not read $path, so its dependencies could not be checked"
-    if [ ! -s "$abs" ]; then
-      exit 0
-    fi
-    ;;
-  *)
-    exit 0
-    ;;
-esac
-lib_check
+lib_setup
+
+event="$(cat)"
+[ "$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] ||
+  refuse "task-dependencies-resolve: expected a Changeset event, so the tasks could not be checked"
+root="${SR_TREE:-}"
+[ -n "$root" ] || refuse "task-dependencies-resolve: SR_TREE is not set, so the committed tasks could not be read"
+
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(dirname "$0")/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || refuse "task-dependencies-resolve: the changeset library (lib/changeset.sh) could not be loaded, so the tasks could not be checked"
+[ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-dependencies-resolve: the changeset library (lib/changeset.sh) could not be loaded, so the tasks could not be checked"
+file_n="$(cs_count "$event")" ||
+  refuse "task-dependencies-resolve: the changeset's files could not be read, so the tasks could not be checked"
+case "$file_n" in '' | *[!0-9]*) refuse "task-dependencies-resolve: the changeset's files could not be read, so the tasks could not be checked" ;; esac
+
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(cs_get "$event" "$file_i" .path)" ||
+    refuse "task-dependencies-resolve: could not read file $file_i of the changeset"
+  new_content="$(cs_text "$event" "$file_i" newContent)" ||
+    refuse "task-dependencies-resolve: could not read $path from the changeset"
+  file_i=$((file_i + 1))
+  # An emptied task has no dependencies to resolve.
+  [ -n "$new_content" ] || continue
+  lib_check
+done
+exit 0

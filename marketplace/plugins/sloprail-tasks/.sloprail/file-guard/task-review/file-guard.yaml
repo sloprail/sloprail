@@ -1,7 +1,7 @@
 # `in_review` is a claim; this guard is what judges it. A task whose status is
 # `in_review` asserts the work is finished and that the evidence it carries proves
 # it. This guard reads the stated outcome, reads the DELIVERY evidence — the tool
-# output cited on the write that made the claim, and the frontmatter artifacts —
+# output cited on the commit that made the claim, and the frontmatter artifacts —
 # and asks a model whether that evidence actually substantiates the claim. Without
 # it, `in_review` is a status an agent can write about its own work and nothing
 # ever tests. The full argument lives in README.md.
@@ -18,27 +18,24 @@
 # THIS PROVES DELIVERY, NOT THE ASK. An earlier cut of this guard re-cited the
 # USER's own words — a duplicate of task-body-is-human-authored, and conceptually
 # wrong: a review proves the work was DONE. The evidence it weighs:
-#   - CITED TOOL RESULTS — the write that moved the task into in_review carried
-#     `sr-file … --cite:tool_result '<exact output>'`; the session resolved each
-#     quote to one tool_result of its record, and the Post event at Stop carries it
-#     in `.event.citations` (`{quote, sourceTypes, path, line}` — the citations
-#     of the cited changes that landed on this path this session). The
-#     reviewer is shown each quote AND the full tool result at that line, via
+#   - CITED TOOL RESULTS — the commit that moved the task into in_review carries
+#     `Sloprail-Cites-Tool: <exact output>` trailers; the session resolved each
+#     quote to one tool_result of its record, and the changeset carries it in
+#     `changeset.citations` (`{quote, sourceTypes, path, line, call}` — the
+#     citations of every commit in the range, which is shown to every in_review
+#     task in it). The reviewer is shown each quote AND the full tool result at that line, via
 #     `sr-session trajectory tool-result --path --line`. The task file itself holds
 #     no transcript path: the repository keeps derived text only.
 #   - ARTIFACTS — <repo-relative-file>:<ranges> in the frontmatter, the produced
-#     files at the lines that changed, resolved against the working tree.
+#     files at the lines that changed, resolved against the committed tree.
 # The judge weighs these against the claim: a task claiming X with evidence showing
 # X happening is APPROVED even if X was a poor idea; it checks the gap between what
 # the task says was done and what the evidence shows.
 #
-# A plain file-guard — this is an AFTER-CHECK, the migration of the old-format Post-only
-# binding (PostFileCreate + PostFileUpdate). A file-guard fires ONLY on the settled Post event, at Stop, where the bytes on disk are what
-# actually landed. The old rule chose Post deliberately (README, "The event, and
-# why Post only"): a Pre binding would judge only the cases Post already judges, at
-# the cost of a second model call, and a judged rule evadable by writing the file a
-# different way would be worse than none. Post → after-check is the exact new-format
-# spelling of that choice.
+# A plain file-guard: it judges the committed changeset, at Stop. The range is what
+# has been committed since the rule last passed, so a task's in_review claim is
+# reviewed as committed, never as half-edited in the working tree. Every in_review
+# task in the range is put to one judge call.
 #
 # A JUDGE check, migrated from the old review-task.sh, which called sr-agent itself
 # and had the model Write a {"decision","reasoning","failures"} verdict to a file.
@@ -76,9 +73,9 @@
 # exited 1 (fix the evidence) and APPROVED ALSO exited 1 (delete the folder and
 # commit solely that deletion — a workflow instruction, the hook running no git).
 # The engine's judge is pass/permit or fail/refuse:
-#   - NOT SUBSTANTIATED -> the judge FAILS -> the write is refused with the REJECTED
-#     message. A Post refusal does not advance the read mark, so the same task is
-#     re-judged next cycle until its evidence is fixed — the exact loop the old rule
+#   - NOT SUBSTANTIATED -> the judge FAILS -> the range is refused with the REJECTED
+#     message. A refusal does not move the rule's base, so the same range is
+#     judged again once the evidence is fixed and committed — the exact loop the old rule
 #     wanted, preserved.
 #   - SUBSTANTIATED -> the judge PASSES -> the write is PERMITTED. This is the change:
 #     the old rule refused-to-force-deletion here, which a binary judge whose PASS is

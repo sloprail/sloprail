@@ -204,14 +204,6 @@ func TestResultKnown(t *testing.T) {
 	assert.False(t, resultKnown(absent), "an absent resultKnown reads as not-known")
 }
 
-// A file-guard's revalidation key is namespaced so it cannot pool with
-// an old-format guardrail of the same folder name.
-func TestFileGuardRevKey_Namespaced(t *testing.T) {
-	assert.Equal(t, "file-guard:no-secrets", fileGuardRevKey("no-secrets"))
-	assert.NotEqual(t, "no-secrets", fileGuardRevKey("no-secrets"),
-		"a file-guard's key must not collide with an old-format guardrail's bare name")
-}
-
 // isUnderivablePreWrite fires only on a create or update whose result is unknown,
 // and never on a delete (which has no result to be unknown about).
 func TestIsUnderivablePreWrite(t *testing.T) {

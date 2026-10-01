@@ -33,7 +33,7 @@ func TestT038_08_ADeleteThatWasReadSaysSo(t *testing.T) {
 		"sr-file delete docs/pinned.md --cite:user 'delete the pinned doc'",
 	} {
 		t.Run(command, func(t *testing.T) {
-			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": "include"})
+			e, proj, _ := project(t, static(echoKnownCheck), map[string]string{"echo-known": "include"})
 			res := e.Run(proj, "s-038-08", "delete the pinned doc", Turns("done",
 				Bash("b1", command),
 			))
@@ -55,7 +55,7 @@ func TestT038_09_DeletingALinkToAFIFOReturns(t *testing.T) {
 		"sr-file delete docs/to-zero.md --cite:user 'delete the links'",
 	} {
 		t.Run(command, func(t *testing.T) {
-			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": "include"})
+			e, proj, _ := project(t, static(echoKnownCheck), map[string]string{"echo-known": "include"})
 			fifo := filepath.Join(t.TempDir(), "fifo")
 			if err := syscall.Mkfifo(fifo, 0o644); err != nil {
 				t.Fatal(err)
@@ -114,8 +114,7 @@ func TestT038_10_AnUnreadMarkedFileIsSelectedBeforeItsDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.WriteFile(proj, "docs/specs/spec.md", "// sr:invariant \"refunds-capped\"\n# Refunds\n"+strings.Repeat("Refunds are capped at the order total.\n", 1<<15))
-			e.Git(proj, "add", "-A")
-			e.Git(proj, "commit", "-m", "specs")
+			e.CommitAll(proj, "specs")
 
 			res := e.Run(proj, "s-038-10", "clean up the specs", Turns("done", Bash("b1", "rm -rf docs/specs")))
 			if !res.Refused() || !res.Saw("DELETE-REFUSED") {

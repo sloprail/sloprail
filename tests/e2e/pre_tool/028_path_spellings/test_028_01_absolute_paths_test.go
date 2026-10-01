@@ -27,8 +27,6 @@
 // because that is what a match sees. A test asserting only that the write was
 // permitted or refused would pass on an engine reporting any spelling at all.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // Path canonicalization (`reportable`) is shared engine machinery the new dispatch
 // still uses: the path a file event carries is the same whichever dispatch reads
 // it. The observer is a gate triggering on the pre-write events, recording

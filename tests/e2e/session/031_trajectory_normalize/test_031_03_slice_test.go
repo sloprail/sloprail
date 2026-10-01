@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,10 +30,9 @@ import (
 // it reconstructs the payload from SR_TRANSCRIPT/SR_WORKSPACE the way the shipped
 // examples do — the same idiom 018's askScript uses.
 
-// sliceWatch is a NEW-FORMAT file-guard, after-check (re-vehicled from the old
-// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md), so it runs at a cycle's
+// sliceWatch is a NEW-FORMAT file-guard, after-check , so it runs at a cycle's
 // end and records both a default and a whole-session normalize read of the session.
-// `match: "**/*.md"` fires on whichever Post kind each cycle's write produced. The
+// `match: "**/*.md"` fires on every committed change. The
 // check reaches the session's record and read mark through SR_TRANSCRIPT /
 // SR_WORKSPACE, which the new dispatch sets on a file-guard check exactly as the
 // old-format hook env did. The `scoped`/`whole` ledgers have no `.md` suffix, so
@@ -44,24 +45,24 @@ checks:
 // sliceScript advances the mark through `query`, then records what `normalize`
 // returns by default and with --whole-session. The `raw` command line of each
 // PreCommandInvoke is the distinctive token the assertions look for — a cheap way
-// to ask "did this read include cycle N's Bash turn". The ledgers are under
-// $SR_GUARDRAIL_DIR, the folder the engine sets for the check.
-const sliceScript = `#!/bin/sh
+// to ask "did this read include cycle N's Bash turn". The ledgers are in a temp
+// dir outside the project (DIR below).
+const sliceTemplate = `#!/bin/sh
 cat > /dev/null
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
-  echo "SR_TRANSCRIPT unset" >> "$SR_GUARDRAIL_DIR/whole"
-  echo "SR_TRANSCRIPT unset" >> "$SR_GUARDRAIL_DIR/scoped"
+  echo "SR_TRANSCRIPT unset" >> "DIR/whole"
+  echo "SR_TRANSCRIPT unset" >> "DIR/scoped"
   exit 0
 fi
 payload='{"transcript_path":"'"$SR_TRANSCRIPT"'","cwd":"'"$SR_WORKSPACE"'"}'
 # Advance the mark as the cycle's primary read does.
 printf '%s' "$payload" | sr-session query > /dev/null 2>&1
 # The default read — the part not yet judged.
-printf '%s' "$payload" | sr-session trajectory normalize >> "$SR_GUARDRAIL_DIR/scoped" 2>&1
-printf '\n===CYCLE===\n' >> "$SR_GUARDRAIL_DIR/scoped"
+printf '%s' "$payload" | sr-session trajectory normalize >> "DIR/scoped" 2>&1
+printf '\n===CYCLE===\n' >> "DIR/scoped"
 # The whole record.
-printf '%s' "$payload" | sr-session trajectory normalize --whole-session >> "$SR_GUARDRAIL_DIR/whole" 2>&1
-printf '\n===CYCLE===\n' >> "$SR_GUARDRAIL_DIR/whole"
+printf '%s' "$payload" | sr-session trajectory normalize --whole-session >> "DIR/whole" 2>&1
+printf '\n===CYCLE===\n' >> "DIR/whole"
 exit 0
 `
 
@@ -71,9 +72,12 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	// A repository, so the cycle has a baseline and its Post file event fires the
 	// hook — the same setup 018 needs.
 	e.GitInit(proj)
-	e.FileGuard(proj, "slicer", sliceWatch, map[string]string{"slice.sh": sliceScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "before the session")
+	// The ledgers are outside the repository: in the rule's own folder they would be
+	// committed with the agent's work, and a rule whose folder changed forgets its
+	// earlier passes.
+	ledgers := t.TempDir()
+	e.FileGuard(proj, "slicer", sliceWatch, map[string]string{"slice.sh": strings.ReplaceAll(sliceTemplate, "DIR", ledgers)})
+	e.CommitAll(proj, "before the session")
 
 	const sess = "s-031-09"
 	// Distinctive command lines, one per cycle, that show up as a PreCommandInvoke
@@ -82,14 +86,14 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	e.Run(proj, sess, "first cycle", Turns("done",
 		Bash("b1", "echo CYCLEONECOMMAND"),
 		Write("w1", "one.md", "first\n"),
-	))
+	).ThenCommit("the agent's work"))
 	e.Run(proj, sess, "second cycle", Turns("done",
 		Bash("b2", "echo CYCLETWOCOMMAND"),
 		Write("w2", "two.md", "second\n"),
-	))
+	).ThenCommit("the agent's work"))
 
-	scoped := strings.Join(e.FileGuardLedgerLines(proj, "slicer", "scoped"), "\n")
-	whole := strings.Join(e.FileGuardLedgerLines(proj, "slicer", "whole"), "\n")
+	scoped := readLedgerText(t, filepath.Join(ledgers, "scoped"))
+	whole := readLedgerText(t, filepath.Join(ledgers, "whole"))
 	if scoped == "" || whole == "" {
 		t.Fatalf("the hook never recorded a read, so nothing here can be observed\nscoped:\n%s\nwhole:\n%s", scoped, whole)
 	}
@@ -137,4 +141,14 @@ func splitCycles(ledger string) []string {
 		}
 	}
 	return out
+}
+
+// readLedgerText is a ledger's whole text, empty when nothing was ever recorded.
+func readLedgerText(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(body))
 }

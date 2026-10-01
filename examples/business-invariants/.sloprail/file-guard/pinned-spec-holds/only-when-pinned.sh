@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepare: ask the judge only about a write that changes what a marker pins — the
+# prepare: ask the judge only about a changeset that changes what a marker pins — the
 # same decision changes-pinned-lines.sh makes for the citation requirement, drawn
 # at the same line the engine's `when` draws it: only a decided waiver skips the
 # judge — exit 1 WITH the predicate's `{"waived": …}` sentinel. Any other outcome
@@ -8,6 +8,7 @@
 # there would let any resolvable quote admit the change.
 #
 # The predicate's `what` says what the change does to which pin; the judge gets it.
+# It reads the same Changeset payload changes-pinned-lines.sh does: stdin is inherited.
 set -uo pipefail
 
 out="$("${SR_GUARDRAIL_DIR:-.}/changes-pinned-lines.sh")"

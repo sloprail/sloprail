@@ -1,16 +1,15 @@
-# A task's ASK.md is the human's ask, so every write to it must be grounded in
-# the user's own words. The citation rides on the write itself — `sr-file write
-# …/ASK.md --cite:user '<their exact words>'` — never inside the file, which keeps
-# only the ask as derived text.
+# A task's ASK.md is the human's ask, so every change to it must be grounded in
+# the user's own words. The citation rides on the commit — a
+# `Sloprail-Cites-User: <their exact words>` trailer — never inside the file,
+# which keeps only the ask as derived text.
 #
-# This is the after-check: at Stop, on the settled ASK.md, the same requirement and
-# the same judge as the gate of the same name. The PREVENTION — refusing an
-# ungrounded write before it lands — is that gate, on PreFileWrite (gate/
-# ask-is-human-authored); a file-guard only acts on what settled. What remains
-# here is the backstop for a write the gate could not see (a command the engine
-# does not parse).
+# This judges the committed changeset: the ASK.md files the range touched, with the
+# quotes its commits cite (resolved against the transcripts, `changeset.citations`).
+# The PREVENTION — refusing an ungrounded write before it lands — is the gate of the
+# same name, on PreFileWrite (gate/ask-is-human-authored); a file-guard only judges
+# what was committed.
 #
-# require: unconditional — ASK.md holds nothing but the ask, so there is no write
+# require: unconditional — ASK.md holds nothing but the ask, so there is no change
 # to it that needs no grounding.
 #
 # The judge answers what existence cannot: does ASK.md say what the cited words

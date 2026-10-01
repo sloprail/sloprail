@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -94,15 +94,8 @@ func stableID(p HookPayload) (string, error) {
 // stableIdentity is stableID with the walk's Degraded flag kept: whether the id
 // is the conversation's origin or the continuation root the walk fell back to.
 // See transcript.Identity for the tradeoff, and noteDegradedIdentity for how
-// it is surfaced.
-//
-// Remembered for the life of the process, keyed by the record and its size
-// and modification time: one hook asks for its session's identity several
-// times (the scope, the store, the baseline), and each ask is a walk across the
-// project directory's transcripts. A hook process lives for one event, so the
-// answer cannot go stale in a way that matters; the file's size and time are
-// in the key so that a longer-lived caller (a test) that rewrites a record is
-// not handed the old answer.
+// it is surfaced. The walk itself, and its per-process memory, are
+// sessionpath.StableIdentity — shared with sr-checks.
 func stableIdentity(p HookPayload) (transcript.Identity, error) {
 	path, err := p.record()
 	if err != nil {
@@ -111,29 +104,7 @@ func stableIdentity(p HookPayload) (transcript.Identity, error) {
 	if path == "" {
 		return transcript.Identity{}, fmt.Errorf("sloprail: no transcript path on the hook payload — the record of this session is what its identity is read from")
 	}
-	dir := projectDirOf(path, p.Cwd)
-	key := identityKey(dir, path)
-	if key != "" {
-		if hit, ok := identities.Load(key); ok {
-			return hit.(transcript.Identity), nil
-		}
-	}
-	id, err := transcript.ResolveStableSessionID(dir, path)
-	if err == nil && key != "" {
-		identities.Store(key, id)
-	}
-	return id, err
-}
-
-// identities is stableIdentity's per-process memory.
-var identities sync.Map
-
-func identityKey(dir, path string) string {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%s\x00%s\x00%d\x00%d", dir, path, fi.Size(), fi.ModTime().UnixNano())
+	return sessionpath.StableIdentity(path, p.Cwd)
 }
 
 // degradedMarker prefixes the files, beside a session's state, that record a
@@ -214,34 +185,5 @@ func harnessSessionID(p HookPayload) string {
 }
 
 // projectDirOf is where the conversation's OTHER transcripts live, given the
-// path of this one.
-//
-// Taken from the transcript's own location wherever that is knowable, because
-// the transcript is already in the directory being looked for and a path is a
-// fact where an encoded working directory is an assumption. A sub-agent's record
-// is nested under <project>/<session>/subagents/, so the directory is reached by
-// climbing back out of that nesting rather than by encoding a cwd that for an
-// isolated sub-agent names somewhere else entirely.
-//
-// How FAR out is not a constant, which is why the climb is delegated rather than
-// written here as two calls to filepath.Dir. Real data carries a second layout,
-// <session>/subagents/workflows/wf_<id>/agent-<id>.jsonl, one a fixed two-level
-// climb resolves to <session>/subagents — a directory holding no transcripts at
-// all, so the conversation's history would read as empty. SessionDirOfSubagent
-// finds the subagents component instead of counting to it; see its note.
-//
-// Falls back to encoding the working directory when the path is empty, which is
-// the SessionStart case: the hook fires as the session begins and no record has
-// been written yet.
-func projectDirOf(path, cwd string) string {
-	if path == "" {
-		return transcript.ProjectDir(transcript.ConfigDir(), cwd)
-	}
-	// A sub-agent's record is nested under <session>/subagents/; the
-	// conversation's other transcripts sit beside the session's own file, one
-	// level above that directory.
-	if sessionDir := transcript.SessionDirOfSubagent(path); sessionDir != "" {
-		return filepath.Dir(sessionDir)
-	}
-	return filepath.Dir(path)
-}
+// path of this one — sessionpath.ProjectDirOf, shared with sr-checks.
+var projectDirOf = sessionpath.ProjectDirOf

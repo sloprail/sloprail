@@ -21,10 +21,11 @@ import (
 type Env = harness.Env
 
 var (
-	New   = harness.New
 	Turns = harness.Turns
 	Bash  = harness.Bash
 	Write = harness.Write
+
+	CommitRequired = harness.CommitRequired
 )
 
 // TestMain removes the binary build dir when this package's tests finish.
@@ -34,3 +35,7 @@ func TestMain(m *testing.M) {
 	harness.Cleanup()
 	os.Exit(code)
 }
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

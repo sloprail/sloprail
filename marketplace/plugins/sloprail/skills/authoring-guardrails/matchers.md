@@ -15,14 +15,16 @@ fact under different names.
 
 ### File-guard: the file's own facts, **bare**
 
-A file-guard's `match` reasons about a settled file, so it sees the file's facts
-directly:
+A file-guard's `match` reasons about a file in the changeset, so it sees the file's
+facts directly:
 
 | variable | type | |
 |---|---|---|
 | `path` | string | the file's repository-relative path |
-| `markers` | list | the `sr:` markers the file carries, elements `{kind, fqn, line}` |
-| `oldMarkers` | list | the markers it carried before this change (empty on a create; the session baseline's on a Post kind) |
+| `status` | string | `A`, `M`, `D` or `R` — the file's net change across the range. A rename (`R`) is selected if `match` holds on its new path **or** on the path it came from, evaluated with `path` the old path and `markers` the ones it carried there |
+| `markers` | list | the `sr:` markers the file carries at `head`, elements `{kind, fqn, line}` (a deleted file's are the ones it carried) |
+| `oldMarkers` | list | the markers it carried at the range's base (empty on a create) |
+| `trailers` | map | each commit-message trailer key in the range to its list of values |
 | `context` | map | every declared context, by name, `{active, payload}` |
 
 ```
@@ -30,6 +32,7 @@ path endsWith "SKILL.md"
 any(markers, .kind == "invariant")
 context["refactoring"].active and any(markers, .kind == "moved-from")
 any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
+status == "A" and "move-only" in (trailers["Sloprail-Refactor"] ?? [])
 ```
 
 The last form is how a rule sees a marker **leave**: an update that strips a

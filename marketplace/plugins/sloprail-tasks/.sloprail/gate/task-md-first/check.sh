@@ -10,9 +10,7 @@
 # would look for gates/TASK.md, which is never where it lives.
 lib_dir="$(cd "$(dirname "$0")/../../file-guard/task-md-first" && pwd)"
 unset check_lib_loaded
-unset check_lib_loaded
 . "$lib_dir/check-lib.sh" || exit 2
-[ "${check_lib_loaded:-}" = 1 ] || exit 2
 [ "${check_lib_loaded:-}" = 1 ] || exit 2
 lib_init
 case "$kind" in

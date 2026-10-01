@@ -53,7 +53,8 @@ and that quote has to resolve to something the user really said.
 This is a **gate with a file-guard of the same name**. The gate runs before the
 update lands, while the content that would be lost is still on disk, so the loss
 is prevented rather than mourned; it is cheap, with no model in it. The file-guard is
-the after-check and carries the judge: it rules on the settled file at Stop, which
+the after-check and carries the judge: it rules on the committed changeset at Stop
+(uncommitted changes to a memory file refuse the Stop with "commit these"), which
 catches a rewrite the gate could not see ahead, such as a script.
 
 ## The actual configuration
@@ -98,10 +99,11 @@ rather than admit bytes nobody saw.
 
 ### file-guard
 
-The after-check. It matches the same memory files, acts only at Stop on the
-settled file, and repeats the requirement and the judge. `removes-content.sh`
-here reads the settled `Post*` events; the gate's entry reads the `Pre*` ones and
-both source the same `removes-content-lib.sh`.
+The after-check. It matches the same memory files, acts at Stop on the committed
+range as one squashed diff, and repeats the requirement and the judge; the user's
+words come from the commits' `Sloprail-Cites-User:` trailers. `removes-content.sh`
+here reads the Changeset; the gate's entry reads the `Pre*` events and both source
+the same `removes-content-lib.sh`.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/preserves-unasked-content/file-guard.yaml" />
 <Code code={removalSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/removes-content.sh" />

@@ -46,7 +46,7 @@ to. Then two things are checked independently:
 <Steps>
 
 1. A move that regenerated instead of carrying the bytes — refused by a **gate**
-   before the write lands, and re-checked by a **file-guard** on the settled file
+   before the write lands, and re-checked by a **file-guard** on the committed files
    at turn-end.
 
 2. A declared move that never happened — caught at turn-end by the completeness
@@ -111,9 +111,9 @@ since a gate does not fail closed on that by itself.
 
 ### file-guard
 
-The after-check of the same name. A file-guard only acts on what settled, so at
-`Stop` it runs the same reconcile on the file on disk — the backstop for a write
-the gate could not see.
+The after-check of the same name. A file-guard judges commits, so at `Stop` (once
+the moves are committed) it runs the same reconcile on each moved file of the
+changeset — the backstop for a write the gate could not see.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/moved-content-reconciles/file-guard.yaml" />
 <Code code={reconcileSh} lang="bash" title=".sloprail/file-guard/moved-content-reconciles/reconciles-against-origin.sh" />

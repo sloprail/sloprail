@@ -52,7 +52,7 @@ func TestRubricReachesRuleJudgePrompt(t *testing.T) {
 	const marker = "ZZ_RULE_BODY_MARKER a distinctive line in the rule body"
 	e.Run(proj, "s-erj-wire-rule", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\n"+marker+"\n"),
-	))
+	).ThenCommit("write the file"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -79,7 +79,7 @@ func TestRubricReachesSkillJudgePrompt(t *testing.T) {
 	const marker = "ZZ_SKILL_BODY_MARKER a distinctive line in the skill body"
 	e.Run(proj, "s-erj-wire-skill", "write a skill", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\n"+marker+"\n"),
-	))
+	).ThenCommit("write the file"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -111,7 +111,7 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 
 	e.Run(proj, "s-erj-config", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA clean body.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
@@ -160,7 +160,7 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 
 	e.Run(proj, "s-erj-workspace", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA clean body.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
@@ -275,12 +275,11 @@ func TestEmptyRulesIsRefusalNotFailOpen(t *testing.T) {
 	// enforced rules — the empty-standard case prepare refuses on.
 	e.WriteFile(proj, ".sloprail/file-guard/rule-quality/rules/high-signal/RULE.md",
 		"---\nenforced: false\n---\n# high-signal\n\nno longer enforced\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "disable the only enforced meta-rule")
+	e.CommitAll(proj, "disable the only enforced meta-rule")
 
 	e.Run(proj, "s-erj-emptyrules", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA body.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	// The file-guard's refusal blocks the turn at Stop: prepare refuses with its
 	// "no standard to judge" message rather than permitting — the asymmetry.

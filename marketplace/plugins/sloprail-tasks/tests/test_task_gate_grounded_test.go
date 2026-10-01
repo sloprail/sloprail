@@ -1,11 +1,8 @@
 package e2e
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// task-gate-is-grounded is a file-guard over
+// task-gate-is-grounded is a file-guard (judged at Stop over the committed changeset) over
 // memories/tasks/<cat>/<name>/gates/<gate-name>.{sh,md} with ONE check: a
 // JUDGE, no script stage. A gate carries NO citations of its own -- only the
 // write that creates a TASK.md or changes its body cites the user's words, and
@@ -18,10 +15,10 @@ import (
 // for a .sh gate -- not TRIVIAL (a script whose control flow can never
 // actually fail).
 //
-// The judge runs at Stop on the settled gate file (a gate holds no judge), so a
-// not-fine gate blocks the turn at Stop with the judge's reasoning.
+// It has no PreFileWrite half: the judge is the whole rule, so a rejected gate
+// lands, is committed, and is refused at Stop.
 //
-// These prove: the judge is what blocks a gate it finds
+// These prove: the judge is what refuses a gate it finds
 // untraceable/trivial/contradicting and admits one it finds derived from the
 // task -- proven by flipping the SAME stubbed verdict; and the judge is
 // invoked (and can reject) even when the task was written with no citation,
@@ -59,25 +56,24 @@ func TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation(t *testing.T) {
 
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", groundedTaskPath, ungroundedDoc),
-	))
+	).ThenCommit("Add the task"))
 	if res0.Refused() {
 		t.Fatalf("landing the uncited task (task-body disabled) was itself refused (setup broken):\n%s", res0.Output)
 	}
 
 	e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", groundedGatePath, passingGate),
-	))
-	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !strings.Contains(blocks, "nothing to do with what the task describes") {
-		t.Fatalf("the judge did not run (or did not block at Stop) on a gate under an uncited task -- task-gate-is-grounded should not depend on the task body carrying a citation:\n%s", blocks)
+	).ThenCommit("Add the gate"))
+	if blocks := stopBlocks(e, proj, sess); !containsStr(blocks, "nothing to do with what the task describes") {
+		t.Fatalf("the judge did not run (or did not refuse) on a gate under an uncited task -- task-gate-is-grounded should not depend on the task body carrying a citation:\n%s", blocks)
 	}
 }
 
 // TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate: the sibling task
 // exists (created with a cited ask, so task-body's own judge passes it), but the
-// task-gate-is-grounded judge rejects the gate itself at Stop (untraceable,
+// task-gate-is-grounded judge rejects the gate itself (untraceable,
 // contradicting, invented, or trivial -- the judge is stubbed, so this
-// proves the STOP BLOCK reaches the agent, not any one specific
+// proves the REFUSAL PATH reaches the agent, not any one specific
 // judgement).
 func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 	e := New(t)
@@ -96,7 +92,7 @@ func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", groundedTaskPath, groundedDoc, citeUser(askQuote)),
-	))
+	).ThenCommit("Add the task", CitesUser(askQuote)))
 	if res0.Refused() {
 		t.Fatalf("landing the grounded task was itself refused (setup broken):\n%s", res0.Output)
 	}
@@ -107,10 +103,9 @@ func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 	// is stubbed to reject.
 	e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", groundedGatePath, passingGate),
-	))
-	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !strings.Contains(blocks, "can never fail") {
-		t.Fatalf("a gate the judge rejects (untraceable/trivial) was not blocked at Stop with its reasoning:\n%s", blocks)
+	).ThenCommit("Add the gate"))
+	if blocks := stopBlocks(e, proj, sess); !containsStr(blocks, "can never fail") {
+		t.Fatalf("a gate the judge rejects (untraceable/trivial) was not refused at Stop:\n%s", blocks)
 	}
 }
 
@@ -130,16 +125,19 @@ func TestGateGrounded_JudgePermitsDerivedGate(t *testing.T) {
 
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", groundedTaskPath, groundedDoc, citeUser(askQuote)),
-	))
+	).ThenCommit("Add the task", CitesUser(askQuote)))
 	if res0.Refused() {
 		t.Fatalf("landing the grounded task was itself refused (setup broken):\n%s", res0.Output)
 	}
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", groundedGatePath, passingGate),
-	))
+	).ThenCommit("Add the gate"))
 	if res.Refused() {
 		t.Fatalf("a gate the judge PASSES was refused:\n%s", res.Output)
+	}
+	if blocks := stopBlocks(e, proj, sess); containsStr(blocks, "GATE:") {
+		t.Fatalf("a gate the judge PASSES was refused at Stop:\n%s", blocks)
 	}
 	if !e.Exists(proj, groundedGatePath) {
 		t.Errorf("an admitted gate write did not land on disk")

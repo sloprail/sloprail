@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"os"
 	"path/filepath"
 	"testing"
@@ -164,8 +165,8 @@ func TestCurrentSessionTranscript_UsesTheProjectsDirScheme(t *testing.T) {
 	// component under a different root; it must never be what a transcript resolves
 	// to. (encodeWorkspace also anchors on the git root, so for a repo subdirectory
 	// it would name a shorter, wrong directory entirely.)
-	wrong := filepath.Join(cfg, "projects", encodeWorkspace(cwd), sessionID+".jsonl")
-	if got == wrong && encodeWorkspace(cwd) != transcript.EncodeProjectDir(transcript.ResolveWorkDir(cwd)) {
+	wrong := filepath.Join(cfg, "projects", sessionpath.EncodeWorkspace(cwd), sessionID+".jsonl")
+	if got == wrong && sessionpath.EncodeWorkspace(cwd) != transcript.EncodeProjectDir(transcript.ResolveWorkDir(cwd)) {
 		t.Fatalf("resolved via encodeWorkspace %q, but the projects dir uses the raw-cwd scheme", got)
 	}
 }

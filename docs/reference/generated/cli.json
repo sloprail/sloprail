@@ -12,6 +12,12 @@
         "long": "Run an agent, whichever harness is running.\n\nRuns sr-agent, passing everything after `agent` to it unchanged.\nRun `sr-agent --help` — or `sr agent --help` — for its own help."
       },
       {
+        "path": "sr checks",
+        "use": "checks ...",
+        "short": "What this session's file-guards concluded about its commits",
+        "long": "What this session's file-guards concluded about its commits.\n\nRuns sr-checks, passing everything after `checks` to it unchanged.\nRun `sr-checks --help` — or `sr checks --help` — for its own help."
+      },
+      {
         "path": "sr eval",
         "use": "eval ...",
         "short": "Prove a guardrail's use case against a real agent",
@@ -41,8 +47,20 @@
     "path": "sr-session",
     "use": "sr-session",
     "short": "Session lifecycle — the hook points a harness calls",
-    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-stop  a subagent's turn has ended\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-stop  a subagent's turn has ended\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n  sr-session changeset --rule X    what a file-guard would be judged on, without running it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
     "children": [
+      {
+        "path": "sr-session changeset",
+        "use": "changeset --rule <name>",
+        "short": "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
+        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range runs from a base to HEAD, and the base is:\n\n  watermark      the latest head the rule passed, at ANY definition of the rule,\n                 while it is still an ancestor of HEAD: work up to it was approved\n  otherwise the EARLIER, in ancestry, of\n    root floor     the PARENT of the last commit that touched the rule's whole\n                   .sloprail root (a rule that lives in this repository): the\n                   commit that adds or changes a rule, a schema or a shared lib is\n                   judged by it. A root commit's base is git's empty tree\n    session start  the HEAD recorded when this session began (and the only\n                   candidate for a plugin's rule, whose root is outside this\n                   repository, or one not committed yet)\n  so nothing made in this session is skipped, and older history stays grandfathered.\n\nThe watermark is not stored on its own: it is the newest run of the rule that\npassed and whose head is still an ancestor of HEAD, read from the session's check\nresults (`sr-checks status` shows them).\n\nIf none can be used — no floor and the session start was never recorded, or the\ntree left its history — the command fails rather than guess.\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified\nname as a refusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  origin              which base was used: watermark | floor | session-start\n  base, head          the range, as SHAs\n  droppedWatermark    a watermark that was offered and is no longer reachable\n                      (an amend or a rebase), when there was one\n  ruleHash            the hash of the rule's whole .sloprail root (its own folder,\n                      every other rule, schemas and shared scripts)\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits,\n                      files, others, citations — each with the commits that carried\n                      it and the files they changed), subject\n\nNothing is run and nothing is recorded. Where the session cannot be found from\nthe environment (no CLAUDE_CODE_SESSION_ID), there is no watermark and no\nsession start, and quotes are not resolved; the root floor still applies.",
+        "flags": [
+          {
+            "name": "rule",
+            "usage": "The file-guard, by folder name or qualified name"
+          }
+        ]
+      },
       {
         "path": "sr-session id",
         "use": "id",
@@ -166,7 +184,7 @@
             "path": "sr-session trajectory normalize",
             "use": "normalize",
             "short": "The trajectory as normalized entries, each carrying the events re-derived from it",
-            "long": "Read a trajectory as normalized entries, each enriched with the events\nre-derived from it.\n\nEach entry is the normalized Entry (spread whole — type, uuid, isSidechain,\nmessage and the rest) plus two fields: its 1-based physical line in the file,\nand the events re-derived FROM it. One assistant entry with three tool calls\nyields three events; an entry that yields none carries an empty array.\n\nOnly what can be RE-DERIVED from the record populates events — the pre-action\nfile and command events, and tags (PostTagWrite). Not the git-observed Post file\nevents, not PreToolUse, not Stop.\n\n  --path <PATH>          which trajectory to read; defaults to the hooked-in one\n  --events <Kind,...>    which event kinds populate each entry's events, named by\n                         the event's own kind (PreCommandInvoke, PostTagWrite,\n                         PreFileCreate, PreFileUpdate, PreFileDelete). Absent\n                         means every re-derivable kind; a kind normalize cannot\n                         re-derive is refused here.\n  --whole-session        read the entire record, not just the part no cycle has\n                         judged yet\n\nThe answer is NormalizedEntry[] as JSON, for whatever the hook already uses to\nread JSON.",
+            "long": "Read a trajectory as normalized entries, each enriched with the events\nre-derived from it.\n\nEach entry is the normalized Entry (spread whole — type, uuid, isSidechain,\nmessage and the rest) plus two fields: its 1-based physical line in the file,\nand the events re-derived FROM it. One assistant entry with three tool calls\nyields three events; an entry that yields none carries an empty array.\n\nOnly what can be RE-DERIVED from the record populates events — the pre-action\nfile and command events, and tags (PostTagWrite). Not the git-observed Post file\nevents, not PreToolUse, not Stop.\n\n  --path <PATH>          which trajectory to read; defaults to the hooked-in one\n  --events <Kind,...>    which event kinds populate each entry's events, named by\n                         the event's own kind (PreCommandInvoke, PostTagWrite,\n                         PreFileCreate, PreFileUpdate, PreFileDelete). Absent\n                         means every re-derivable kind; a kind normalize cannot\n                         re-derive is refused here.\n  --whole-session        read the entire record, not just the part no cycle has\n                         judged yet\n  --ran-only             keep only the tool calls that RAN: a call with no\n                         tool_result, or whose result is the harness saying it\n                         never ran (a hook block, a permission denied, an\n                         interrupt, a <tool_use_error>), is in the record as a\n                         tool_use but did nothing\n\nThe answer is NormalizedEntry[] as JSON, for whatever the hook already uses to\nread JSON.",
             "flags": [
               {
                 "name": "events",
@@ -176,6 +194,11 @@
               {
                 "name": "path",
                 "usage": "Which trajectory to read; defaults to the one the hook was invoked for"
+              },
+              {
+                "name": "ran-only",
+                "default": "false",
+                "usage": "Keep only tool calls that ran (not refused, denied, interrupted, or left without a result)"
               },
               {
                 "name": "whole-session",
@@ -366,6 +389,42 @@
         "name": "verify-attempts",
         "default": "2",
         "usage": "How many times the agent may be asked before --verify reports failure (1-20)"
+      }
+    ]
+  },
+  {
+    "path": "sr-checks",
+    "use": "sr-checks <command>",
+    "short": "What this session's file-guards concluded about its commits",
+    "long": "What this session's file-guards concluded about its commits.\n\nA file-guard judges commits: at Stop each rule is evaluated over the range of\ncommits it has not yet passed, and every evaluation is recorded — the range, and\none row per check with its status (pass, fail, skip, error), the fingerprint it\nis cached by, and what it found. These commands read that record. They change\nnothing.\n\n  sr-checks status [--failing] [--rule X] [--json]   the latest run of each rule\n  sr-checks sql '<select>'                            any read-only SELECT\n\nThe session is the current one, found from the environment (CLAUDE_CODE_SESSION_ID)\nthe way `sr-session trajectory cite` finds it. The tables are check_runs, checks\nand check_items; `sr-checks sql 'select name from sqlite_master'` lists them.",
+    "children": [
+      {
+        "path": "sr-checks sql",
+        "use": "sql '<select>'",
+        "short": "Run a read-only SELECT over the check tables",
+        "long": "Run a read-only SELECT over the session's check results and print the rows as\na JSON array.\n\nOnly a SELECT (or a WITH ... SELECT) is accepted, and the connection is read-only\nbesides, so nothing a statement says can change the record. The tables are\ncheck_runs, checks and check_items — a10n's shape; a rule's identity is\ncheck_runs.check_id, its range base_ref..head_ref, and a check's outcome is\nchecks.status with its findings in checks.metadata (JSON).\n\nEXAMPLES:\n  sr-checks sql 'select check_id, head_ref, error from check_runs order by run_at desc'\n  sr-checks sql \"select subject, kind, status from checks where status = 'fail'\"\n  sr-checks sql \"select json_extract(metadata, '$.reasoning') as why from checks where status = 'fail'\"\n\nUnlike `status`, nothing recorded yet IS an error here: there are no tables to query."
+      },
+      {
+        "path": "sr-checks status",
+        "use": "status",
+        "short": "Each rule's latest run and its checks",
+        "long": "Each file-guard's latest evaluation this session, one line per check.\n\nA rule that was evaluated and had nothing to check (its match selected nothing)\nshows as a pass with no check. A rule whose evaluation failed as an engine — a git\nerror, a range that could not be computed — shows as an error carrying the\nmessage: a range that could not be read is never shown as an empty one.\n\n--failing keeps only what is failing: a fail, an error, or an interrupted check.\n--rule limits the listing to one rule, by folder name or qualified name.\n--json prints the rows as a JSON array (rule, subject, kind, status, base_ref,\nhead_ref, run_at, fingerprint, error, metadata).\n\nA run still being recorded reads as interrupted: that can be transient — a Stop in\nflight — so look again before treating it as a failure. A run that died half-way\nstays interrupted, and is never counted as a pass.\n\nNothing recorded yet is not an error: the listing is empty.",
+        "flags": [
+          {
+            "name": "failing",
+            "default": "false",
+            "usage": "Only what is failing"
+          },
+          {
+            "name": "json",
+            "default": "false",
+            "usage": "Print the rows as JSON"
+          },
+          {
+            "name": "rule",
+            "usage": "Only this rule (folder name or qualified name)"
+          }
+        ]
       }
     ]
   }

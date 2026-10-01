@@ -133,9 +133,6 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	if err := recordPending(store, pendingChanges(store, events, p.Root(), grounded.wholes, nowNano())); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
-	if err := markCitedUnknown(store, events); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-	}
 	if grounds {
 		if err := noteBackground(store, p); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)

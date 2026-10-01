@@ -42,7 +42,7 @@ const (
 // other — Go names an installed binary after its directory, and a directory
 // called `session` would install as `session` while the proxy looked for
 // `sr-session`. Listed once here so a new service is added in one place.
-var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent"}
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {
@@ -55,10 +55,11 @@ type Env struct {
 	// tmpDir is the mock's CLAUDE_CODE_TMPDIR: where it writes a background
 	// task's output file (<tmpdir>/claude-<uid>/<cwd>/<session>/tasks/), as real
 	// Claude Code does. Per test, so no run writes into the shared /tmp.
-	tmpDir   string
-	repoRoot string
-	mock     string
-	shimDir  string // a `claude` that is really the mock, ahead of the real one on PATH
+	tmpDir          string
+	repoRoot        string
+	mock            string
+	noShippedGuards bool   // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
+	shimDir         string // a `claude` that is really the mock, ahead of the real one on PATH
 
 	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
 	// mock runs — how many times the mock re-runs the agent when a Stop hook
@@ -247,8 +248,20 @@ func fileExists(p string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// Option changes how New stands the environment up.
+type Option func(*Env)
+
+// WithoutShippedFileGuards switches off the sloprail plugin's authoring file-guards for
+// every project of this environment: GitInit writes the disabled list into
+// `.sloprail/config.yaml` of the repository's INITIAL commit, so it sits in the base of
+// every range, before any rule's floor, and never shows up in a changeset's `others`.
+// For a package about some other rule: the commit that adds a rule puts the rule's own
+// files in every range that starts before it, which is exactly what the authoring guards
+// exist to judge. A package about authoring must not use it.
+func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards = true } }
+
 // New stands up an isolated environment.
-func New(t *testing.T) *Env {
+func New(t *testing.T, opts ...Option) *Env {
 	t.Helper()
 	mock := findMock(t)
 	if mock == "" {
@@ -273,6 +286,9 @@ func New(t *testing.T) *Env {
 		repoRoot:     repoRoot(t),
 		mock:         mock,
 		seenSessions: map[string]bool{},
+	}
+	for _, opt := range opts {
+		opt(e)
 	}
 	for _, d := range []string{e.home, e.configDir, e.pluginDir, e.tmpDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -963,23 +979,39 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 // depend on whatever the machine has configured.
 func (e *Env) GitInit(dir string) {
 	e.t.Helper()
-	e.Git(dir, "init", "--initial-branch=main")
-	e.Git(dir, "config", "user.email", "e2e@example.invalid")
-	e.Git(dir, "config", "user.name", "E2E")
-	e.Git(dir, "add", "-A")
-	e.Git(dir, "commit", "--allow-empty", "-m", "initial")
+	InitRepo(e.t, dir)
+	e.excludeMockFiles(dir)
+	if e.noShippedGuards {
+		e.DisablePluginGuardrail(dir, shippedFileGuards...)
+	}
+	e.CommitAll(dir, "initial")
+}
+
+// excludeMockFiles keeps the mock's own scenario scripts out of every commit the test
+// makes: they are the harness's, not the project's work. (A check's ledger is not
+// excluded: it lives outside the project — see Env.NewLedger — so nothing of a
+// check's own recording can reach a commit and change a rule's hash.)
+func (e *Env) excludeMockFiles(dir string) {
+	e.t.Helper()
+	path := filepath.Join(e.Git(dir, "rev-parse", "--absolute-git-dir"), "info", "exclude")
+	patterns := "/.scenario.sh\n/.inner-scenario.sh\n"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		e.t.Fatalf("harness: exclude mock files: %v", err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		e.t.Fatalf("harness: exclude mock files: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(patterns); err != nil {
+		e.t.Fatalf("harness: exclude mock files: %v", err)
+	}
 }
 
 // Git runs a git command in dir and returns its trimmed output.
 func (e *Env) Git(dir string, args ...string) string {
 	e.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		e.t.Fatalf("harness: git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return Git(e.t, dir, args...)
 }
 
 // Meta reads one of the engine's own per-session facts — the baseline commit,
@@ -1545,11 +1577,22 @@ func (e *Env) DisablePluginGuardrail(projDir string, qualified ...string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
 	}
-	body := "disabled:\n"
+	// Merged into whatever the project's config already holds (a test may have written
+	// `stop_hook_block_cap:` before the initial commit), never overwriting it.
+	path := filepath.Join(dir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	} else if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: read config: %v", err)
+	}
+	if !strings.Contains(body, "disabled:") {
+		body += "disabled:\n"
+	}
 	for _, name := range qualified {
 		body += "  - " + name + "\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: write config: %v", err)
 	}
 }
@@ -1870,7 +1913,7 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 // it — an assertion that cannot fail.
 func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 	e.t.Helper()
-	return e.blockingErrors(projDir, sessionID, "")
+	return e.blockingErrors(projDir, sessionID, "", true)
 }
 
 // BlockingErrorsFrom returns the text of every blocking hook error recorded for
@@ -1889,15 +1932,25 @@ func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 // see there for why the record rather than the stream.
 func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string {
 	e.t.Helper()
-	return e.blockingErrors(projDir, sessionID, hookEvent)
+	return e.blockingErrors(projDir, sessionID, hookEvent, true)
+}
+
+// AllBlockingErrorsFrom is BlockingErrorsFrom WITHOUT the de-duplication: one entry per
+// recorded refusal, in order, so the same text recorded again is counted again. The
+// de-duplicated form answers "which refusals arrived"; this one answers "how many times
+// was the turn refused", which is what a test that compares counts across cycles asks —
+// a refusal repeated with the same words would be invisible to the other.
+func (e *Env) AllBlockingErrorsFrom(projDir, sessionID, hookEvent string) []string {
+	e.t.Helper()
+	return e.blockingErrors(projDir, sessionID, hookEvent, false)
 }
 
 // blockingErrors reads refusals out of the record, optionally narrowed to one
 // lifecycle event. An empty hookEvent means every event.
-func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
+func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) []string {
 	e.t.Helper()
 
-	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent)
+	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
 }
 
 // StopContinuations returns the reason of every time a Stop hook refused to let
@@ -1999,7 +2052,7 @@ func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
 					fed[strings.TrimPrefix(text, "Stop hook feedback:\n")] = true
 				}
 			}
-			for _, text := range blockingErrorsIn(line, "SubagentStop") {
+			for _, text := range blockingErrorsIn(line, "SubagentStop", true) {
 				if fed[text] && !seen[text] {
 					seen[text] = true
 					out = append(out, text)
@@ -2028,14 +2081,14 @@ func (e *Env) AnySubagentBlockingErrors(projDir, sessionID string) []string {
 		if err != nil {
 			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
 		}
-		out = append(out, blockingErrorsIn(string(b), "SubagentStop")...)
+		out = append(out, blockingErrorsIn(string(b), "SubagentStop", true)...)
 	}
 	return out
 }
 
 // blockingErrorsIn reads the refusals out of a record's lines, optionally
-// narrowed to one lifecycle event.
-func blockingErrorsIn(record, hookEvent string) []string {
+// narrowed to one lifecycle event, and optionally without repeats.
+func blockingErrorsIn(record, hookEvent string, dedupe bool) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, line := range strings.Split(record, "\n") {
@@ -2064,7 +2117,7 @@ func blockingErrorsIn(record, hookEvent string) []string {
 		// A blocked stop is retried, so the same refusal is recorded once per
 		// attempt. What a test asks is which refusals arrived, not how many
 		// times the agent was driven round.
-		if text != "" && !seen[text] {
+		if text != "" && !(dedupe && seen[text]) {
 			seen[text] = true
 			out = append(out, text)
 		}

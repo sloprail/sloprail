@@ -475,3 +475,22 @@ func BelongsToSession(path, sessionID string) (bool, error) {
 	return false, fmt.Errorf("%w: %s says it belongs to %s, not %s",
 		ErrWrongSession, path, found, sessionID)
 }
+
+// StartCwd is the working directory a session began in: the first directory its
+// record names. A later record may name another (an agent that `cd`'d), and that
+// is the point of asking for the first — where the session's own tree is decided
+// once, not wherever the agent last stood.
+//
+// "" with a nil error when the record names none; an error only when it cannot be
+// read. Callers that need an answer treat "" as "cannot be determined".
+func StartCwd(path string) (string, error) {
+	var found string
+	err := scanFile(path, func(rec claudeRecord) bool {
+		if rec.Cwd != "" {
+			found = rec.Cwd
+			return false
+		}
+		return true
+	})
+	return found, err
+}

@@ -12,9 +12,9 @@
 # name travels beside its body. That is the shape the reviewer asked the judge
 # guardrails to use.
 #
-# The file content being judged is NOT this prepare's job: the judge template
-# reads it directly off the flat event, the same fields a script check reads
-# from stdin. prepare's ONE job is the rules array.
+# The files being judged are NOT this prepare's job: the judge template loops over
+# `changeset.files` itself, the same list a script check reads from stdin.
+# prepare's ONE job is the rules array.
 #
 # EXIT 0 with additionalContext on stdout: the rules are assembled; the judge runs
 # against them. EXIT 1: a REFUSAL — the check fails closed carrying this script's
@@ -25,10 +25,8 @@
 
 set -uo pipefail
 
-# The CheckPayload the engine hands prepare on stdin: the file's own facts are
-# FLAT under `.event` (`.event.path`, the file's bytes), the new-format shape
-# (internal/declaration/payload.go). prepare reads the SAME payload a script check
-# would.
+# The CheckPayload the engine hands prepare on stdin: a Changeset, the files the
+# guard's match selected under `.changeset.files[]`.
 payload="$(cat)"
 
 # jq is this hook's one dependency beyond POSIX sh, and the whole plugin refuses
@@ -39,24 +37,38 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-path="$(printf '%s' "$payload" | jq -r '.event.path // empty' 2>/dev/null)"
-if [ -z "$path" ]; then
-  echo "authoring-slop judge prepare: the event named no path, so there is nothing to judge." >&2
+# A changeset with no file has nothing to judge for primitive usage, so this
+# abstains (skip: true) rather than asking the model to judge nothing. (A deleted
+# file never reaches here: `deletions:` is left at its default, so deletions are not
+# in `files`.)
+files_n="$(printf '%s' "$payload" | jq -r '.changeset.files | length')" || {
+  echo "authoring-slop judge prepare: the changeset could not be read, so nothing was judged. REFUSING." >&2
   exit 1
+}
+if [ "$files_n" -eq 0 ]; then
+  echo '{"skip": true}'
+  exit 0
 fi
 
-# A deleted file has nothing left to judge for primitive usage, and the template
-# interpolates the file's new bytes, which a delete does not carry: abstain (skip: true).
-kind="$(printf '%s' "$payload" | jq -r '.event.kind // empty' 2>/dev/null)"
-case "$kind" in
-  PostFileDelete)
-    echo '{"skip": true}'
-    exit 0
-    ;;
-esac
-
-# The guard's own directory, so judge-rules/ resolves under it. Taken from $0,
-# not from SR_GUARDRAIL_DIR, which is not reliably absolute.
+# The guard's own directory, so judge-rules/ resolves under it.
+#
+# NOT via SR_GUARDRAIL_DIR. The engine sets it on every check dispatch
+# (internal/dispatch/exec.go), but it is not reliably ABSOLUTE — measured
+# directly with a debug probe: a real dispatch carried
+# SR_GUARDRAIL_DIR="marketplace/plugins/sloprail/.sloprail/file-guard/authoring-slop"
+# (relative) while the process's own cwd was ALREADY that exact directory
+# (this check, like every check, runs from the guard's own folder per
+# authoring-guardrails/script-checks.md: "a script's command is resolved
+# relative to that folder, and it runs with the folder as its working
+# directory"). Joining a relative SR_GUARDRAIL_DIR onto that cwd doubles the
+# path (.../authoring-slop/marketplace/plugins/sloprail/.sloprail/file-guard/
+# authoring-slop/judge-rules/*/RULE.md — never exists), so the glob below
+# silently matched nothing and every judge call refused with "judge-rules/
+# contains no rule with enforced: true" regardless of the rules on disk —
+# confirmed identical to check-rules.sh's OWN sibling script, which never hit
+# this because it already resolves judge-rules/ relative to $0, not an env
+# var. Matching that pattern here removes the double-prefix entirely; SR_
+# GUARDRAIL_DIR is no longer read.
 #
 # SR_GUARDRAIL (the guard's NAME, not its path) still stands in for "was this
 # dispatched by the engine" — absent means a hand-made invocation, and a judge
@@ -121,7 +133,7 @@ if [ "$count" -eq 0 ]; then
   # rule-quality keeps. A judge with no criteria cannot find a violation, so
   # permitting here is indistinguishable from a permanent clean bill of health.
   # Refuse instead — loud and immediately diagnosable.
-  echo "authoring-slop judge prepare: judge-rules/ contains no rule with 'enforced: true', so there is no standard to judge '$path' against. REFUSING rather than judging against nothing — add a judge-rules/<name>/RULE.md, or disable this guardrail." >&2
+  echo "authoring-slop judge prepare: judge-rules/ contains no rule with 'enforced: true', so there is no standard to judge the changeset against. REFUSING rather than judging against nothing — add a judge-rules/<name>/RULE.md, or disable this guardrail." >&2
   exit 1
 fi
 

@@ -11,69 +11,56 @@ func edit(id, path, old, new string) harness.Turn {
 	return harness.ToolUse(id, "Edit", map[string]string{"file_path": path, "old_string": old, "new_string": new})
 }
 
-// A citation recorded at pre-tool grounds, at Stop, only the change it rode on
-// — the change that actually LANDED — and only while the file still holds what
-// that change produced. Anything that reached the file uncited since (or
-// before) is a change no citation grounds, and a rule requiring one refuses it
-// unless its `when` waives that part.
+// What grounds a file-guard's change at Stop is the citations the range's commits
+// carry as `Sloprail-Cites-User:` / `Sloprail-Cites-Tool:` trailers, each resolved
+// against the session's own record. A range holds them together: a citation in
+// any commit of it grounds the range's changeset, and a rule requiring one
+// refuses a range none of whose commits carries one that resolves — unless its
+// `when` waives that part.
 
 const afterCitationGuard = `match: "memories/**"
 require:
   - citation: {source_types: [user]}
 `
 
-// T041_33: a cited sr-file call that FAILS changes nothing, and its citation
-// grounds nothing: an uncited rewrite of the same file after it is refused at
-// Stop.
+// noCitation is the Stop refusal's own words for a range no citation grounds.
+const noCitation = "in the commit that last changed it, and that commit carries none that resolves"
+
+// stopRefusal is what the root's Stop refused with, as one string.
+func stopRefusal(e *harness.Env, proj, sess string) string {
+	return strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+}
+
+// T041_33: a cited sr-file call that FAILS changes nothing and grounds nothing: an
+// uncited rewrite of the same file, committed with no trailer, is refused at Stop
+// for want of a citation (not merely for want of a commit).
 func TestT041_33_AFailedCitedCallGroundsNothing(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.WriteFile(proj, "memories/a.md", "# a\nkeep this\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	e.Run(proj, "s-041-33", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/a.md --old-string 'NOT THERE' --new-string 'x' --cite:user 'adopt a decision log'`),
 		Write("w1", "memories/a.md", "# rewritten without a citation\n"),
-	))
+	).ThenCommit("rewrite the note"))
 	if got := readProj(t, proj, "memories/a.md"); got != "# rewritten without a citation\n" {
 		t.Fatalf("the uncited rewrite did not land, so this tests nothing: %q", got)
 	}
-	blocks := e.BlockingErrorsFrom(proj, "s-041-33", "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("an uncited rewrite passed at Stop on the citation of a cited call that failed")
+	if blocks := stopRefusal(e, proj, "s-041-33"); !strings.Contains(blocks, noCitation) {
+		t.Fatalf("an uncited rewrite passed at Stop on the citation of a cited call that failed:\n%s", blocks)
 	}
 }
 
-// T041_34: a cited change lands, then an uncited Write changes the file again:
-// the citation grounds the first change, not the second, so Stop refuses —
-// and says the file was changed without a citation.
-func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
-	e.Run(proj, "s-041-34", prompt, Turns("done",
-		Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content '# log'`),
-		Write("w1", "memories/a.md", "# log\nand a line nobody asked for\n"),
-	))
-	blocks := e.BlockingErrorsFrom(proj, "s-041-34", "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("an uncited change on top of a cited one passed at Stop")
-	}
-	if !strings.Contains(strings.Join(blocks, "\n"), "without a citation") {
-		t.Errorf("the refusal does not say the file was changed without a citation:\n%s", strings.Join(blocks, "\n"))
-	}
-
-	// The control: the cited change alone passes.
-	e2, proj2 := guarded(t, afterCitationGuard)
-	e2.Run(proj2, "s-041-34b", prompt, Turns("done",
-		Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content '# log'`),
-	))
-	if blocks := e2.BlockingErrorsFrom(proj2, "s-041-34b", "Stop"); len(blocks) != 0 {
-		t.Errorf("a cited change was refused at Stop: %v", blocks)
-	}
-}
+// T041_34 (a cited change grounds the first change but not a later uncited one) is
+// removed: a citation is carried by a COMMIT now, and grounds the range it is in —
+// so two changes in one range are one changeset with one citation, which is what
+// T041_07 and T041_35 pin. The per-change history is gone with per-file citations.
 
 // T041_35: a rule whose `when` waives some changes keeps a cited file grounded
 // through an uncited change `when` waives — the tasks shape: the ask is written
 // with a citation, and a later status flip made with a plain edit needs none.
-// An uncited change `when` does NOT waive is still refused.
+// An uncited change `when` does NOT waive is refused. The two are different
+// ranges: the rule passes the cited commit, so its next range starts there.
 func TestT041_35_WhenDecidesAnUncitedChangeSince(t *testing.T) {
 	const whenGuard = `match: "memories/**"
 require:
@@ -85,35 +72,33 @@ require:
 	const bodyChanged = `#!/usr/bin/env bash
 set -uo pipefail
 p="$(cat)"
-old="$(printf '%s' "$p" | jq -r '.event.oldContent // ""' | tail -n +2)"
-new="$(printf '%s' "$p" | jq -r '.event.newContent // ""' | tail -n +2)"
+old="$(printf '%s' "$p" | jq -r '.changeset.files[0].oldContent // ""' | tail -n +2)"
+new="$(printf '%s' "$p" | jq -r '.changeset.files[0].newContent // ""' | tail -n +2)"
 [ "$old" = "$new" ] && exit 1
 exit 0
 `
-	run := func(id string, turns ...harness.Turn) []string {
+	run := func(id string, turns ...harness.Turn) string {
 		e := New(t)
 		proj := e.Project()
 		e.GitInit(proj)
 		e.FileGuard(proj, "grounded-memories", whenGuard, map[string]string{"body-changed.sh": bodyChanged})
-		commitAll(t, proj)
-		e.Run(proj, id, prompt, Turns("done", turns...))
-		return e.BlockingErrorsFrom(proj, id, "Stop")
+		e.CommitAll(proj, "baseline")
+		// The ask, written with a citation: passed, so the rule's next range starts here.
+		e.Run(proj, id, prompt, Turns("done",
+			Write("w0", "memories/task.md", "status: todo\nadopt a decision log\n"),
+		).ThenCommit("write the ask", harness.CitesUser("adopt a decision log")))
+		if blocks := stopRefusal(e, proj, id); blocks != "" {
+			t.Fatalf("the cited ask was refused: %s", blocks)
+		}
+		e.Run(proj, id, "carry on", Turns("done", turns...).ThenCommit("carry on"))
+		return stopRefusal(e, proj, id)
 	}
 
-	if blocks := run("s-041-35",
-		Bash("b1", `sr-file write memories/task.md --cite:user 'adopt a decision log' --content 'status: todo
-adopt a decision log'`),
-		edit("e1", "memories/task.md", "status: todo", "status: done"),
-	); len(blocks) != 0 {
-		t.Errorf("an uncited change `when` waives dropped the file's citation at Stop: %v", blocks)
+	if blocks := run("s-041-35", edit("e1", "memories/task.md", "status: todo", "status: done")); blocks != "" {
+		t.Errorf("an uncited change `when` waives was refused at Stop: %s", blocks)
 	}
-
-	if blocks := run("s-041-35b",
-		Bash("b1", `sr-file write memories/task.md --cite:user 'adopt a decision log' --content 'status: todo
-adopt a decision log'`),
-		edit("e1", "memories/task.md", "adopt a decision log", "adopt a decision log and delete the old notes"),
-	); len(blocks) == 0 {
-		t.Errorf("an uncited body change after a cited one passed at Stop")
+	if blocks := run("s-041-35b", edit("e1", "memories/task.md", "adopt a decision log", "adopt a decision log and delete the old notes")); !strings.Contains(blocks, noCitation) {
+		t.Errorf("an uncited body change after a cited one passed at Stop:\n%s", blocks)
 	}
 }
 
@@ -123,7 +108,7 @@ adopt a decision log'`),
 func TestT041_36_EachDryRunFailureIsQuotedBesideItsFile(t *testing.T) {
 	e, proj := guardedPre(t)
 	e.WriteFile(proj, "notes/b.md", "# b\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-36", prompt, Turns("done",
 		Bash("b1", `sr-file write memories/a.md --cite:user 'QUOTE-NOBODY-SAID-4410' --content x; sr-file edit notes/b.md --cite:user 'adopt a decision log' --old-string 'no such line' --new-string x`),

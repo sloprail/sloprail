@@ -1,6 +1,10 @@
 package e2e
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
 
 // T046_10: DELETING a file that carries an sr:invariant marker still ARMS the
 // guard.
@@ -37,24 +41,28 @@ func TestT046_10_DeletingStalePinnedFileStillBlocksAtStop(t *testing.T) {
 	e := newEnv(t)
 	proj := biProject(t, e)
 	shaV1 := commitSpec(t, e, proj, "SPEC.md", specV1, "spec v1")
-	commitSpec(t, e, proj, "SPEC.md",
-		"an invariants spec\nan order total must never be negative OR ZERO\n(end)\n", "spec v2 reworded")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the script should refuse first"}`)
 
-	fqn := proj + "@" + shaV1 + ":SPEC.md#L2-2" // pinned to the OLD, since-reworded wording
-	code := invariantCode(fqn, "func charge(total int) { if total < 0 { panic(\"never negative\") } }\n")
-	e.WriteFile(proj, "src/charge.go", code)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed src/charge.go")
+	// The pin is fine when the session starts: the first Stop passes it, which moves
+	// the rule's base past this seed (see settleBaseline).
+	fqn := proj + "@" + shaV1 + ":SPEC.md#L2-2"
+	e.WriteFile(proj, "src/charge.go", invariantCode(fqn, "func charge(total int) { if total < 0 { panic(\"never negative\") } }\n"))
+	e.CommitAll(proj, "seed src/charge.go")
 
 	// The delete cites the user's words: removing the file removes its pin, which
 	// pinned-spec-holds refuses without them (T046_16). Cited, the delete lands,
 	// and what is tested here is what pinned-invariant makes of it.
 	const ask = "delete the invariant-pinned file"
 	sess := "s-046-10"
-	e.Run(proj, sess, ask, Turns("done",
+	settleBaseline(t, e, proj, sess, ask)
+
+	// The spec is then reworded (a change of the test's own, past the passed range),
+	// which is what makes the pin stale.
+	commitSpec(t, e, proj, "SPEC.md",
+		"an invariants spec\nan order total must never be negative OR ZERO\n(end)\n", "spec v2 reworded")
+	e.Run(proj, sess, "go on", Turns("done",
 		Bash("b1", "sr-file delete src/charge.go --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if e.Exists(proj, "src/charge.go") {
 		t.Fatalf("the cited delete did not land, so there is no delete for pinned-invariant to judge")
 	}

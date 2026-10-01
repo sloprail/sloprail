@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // task-management is a PreFileWrite gate (with a same-named file-guard for the Stop after-check) over `**/tasks/*/*/ASK.md`: every
@@ -38,7 +40,7 @@ func TestT045_01_UncitedWriteRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-045-01", authPrompt, Turns("done",
 		Write("w1", askPath, "Migrate the auth module to the new token format."),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("an uncited ASK.md write was not refused:\n%s", res.Output)
@@ -63,7 +65,7 @@ func TestT045_02_CitedButRejectedByJudgeBlocksAtStop(t *testing.T) {
 
 	res := e.Run(proj, "s-045-02", authPrompt, Turns("done",
 		writeAsk("w1", "Migrate the auth module — and also refactor logging, add metrics, and write docs.", "migrate the auth module"),
-	))
+	).ThenCommit("record the ask", harness.CitesUser("migrate the auth module")))
 
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited ask:\n%s", res.Output)
@@ -129,7 +131,7 @@ func TestT045_05_CitedWordsReachTemplate(t *testing.T) {
 
 	e.Run(proj, "s-045-05a", authPrompt, Turns("done",
 		writeAsk("w1", authPrompt, "migrate the auth module to the new token format"),
-	))
+	).ThenCommit("record the ask", harness.CitesUser("migrate the auth module to the new token format")))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -148,7 +150,7 @@ func TestT045_05_CitedWordsReachTemplate(t *testing.T) {
 
 	e2.Run(proj2, "s-045-05b", other, Turns("done",
 		writeAsk("w1", other, "rate limiting to the public API gateway"),
-	))
+	).ThenCommit("record the ask", harness.CitesUser("rate limiting to the public API gateway")))
 
 	prompt2 := e2.JudgePrompt(proj2, "judge-prompt.txt")
 	if prompt2 == "" {
@@ -175,7 +177,7 @@ func TestT045_06_NonAskWritesAreNeverJudged(t *testing.T) {
 	res := e.Run(proj, "s-045-06", "implement the migration", Turns("done",
 		Write("w1", "memories/tasks/auth/001/RESULT.md", "Implemented the token migration."),
 		Write("w2", "memories/notes/scratch.md", "a scratch note"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a write outside ASK.md was refused — the guard fired where it must not:\n%s", res.Output)
@@ -198,7 +200,7 @@ func TestT045_07_UncitedEditOfAskRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-045-07", "the migration is half done", Turns("done",
 		Write("w1", askPath, "Migrate part of the auth module.\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("an uncited rewrite of the ask was not refused:\n%s", res.Output)
@@ -206,5 +208,38 @@ func TestT045_07_UncitedEditOfAskRefused(t *testing.T) {
 	body, _ := readProj(proj, askPath)
 	if body != "Migrate the auth module to the new token format.\n" {
 		t.Errorf("the ask changed despite the refusal: %q", body)
+	}
+}
+
+// T045_08: the gate's citation rides the write, the file-guard's rides the commit. A
+// write cited to the gate but committed with no `Sloprail-Cites-User` trailer is
+// refused at Stop for the missing citation (before any judge), and the same ask
+// committed with the trailer passes.
+func TestT045_08_CommitMustCiteTheUsersWords(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installExampleTree(t, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	ask := writeAsk("w1", "Migrate the auth module to the new token format.\n", "migrate the auth module to the new token format")
+	e.Run(proj, "s-045-08", authPrompt, Turns("done", ask).ThenCommit("record the ask"))
+
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-045-08", "Stop"), "\n")
+	if !strings.Contains(blocks, "must cite the user's own words") {
+		t.Fatalf("an uncited commit of ASK.md was not refused at Stop for its citation:\n%s", blocks)
+	}
+
+	seen := len(e.StopContinuations(proj, "s-045-08"))
+	if seen == 0 {
+		t.Fatalf("the refusal did not hold the turn")
+	}
+	// A citation grounds the files its own commit changed, so it is added by amending
+	// the commit that changed the ask.
+	e.Run(proj, "s-045-08", "go on", Turns("done", harness.AmendLast("amend", "record the ask",
+		harness.CitesUser("migrate the auth module to the new token format"))))
+	if got := len(e.StopContinuations(proj, "s-045-08")); got != seen {
+		t.Fatalf("a commit citing the user's words was still refused (%d refusals, had %d):\n%s", got, seen,
+			strings.Join(e.BlockingErrorsFrom(proj, "s-045-08", "Stop"), "\n"))
 	}
 }

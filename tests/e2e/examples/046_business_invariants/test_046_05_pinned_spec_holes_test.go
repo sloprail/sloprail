@@ -38,8 +38,7 @@ func pinnedSpecProjectMarker(t *testing.T, e *env, markerLine func(proj, sha str
 	proj := biProject(t, e)
 	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
 	e.WriteFile(proj, "src/charge.go", markerLine(proj, sha)+"\n"+refundBody)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "pinned refund")
+	e.CommitAll(proj, "pinned refund")
 	return proj, sha
 }
 
@@ -70,7 +69,7 @@ func TestT046_15_EveryMarkerSpellingPinsTheRule(t *testing.T) {
 
 			res := e.Run(proj, "s-046-15-"+c.name, "allow goodwill refunds", Turns("done",
 				Write("w1", "SPEC.md", relaxedSpec),
-			))
+			).ThenCommit("write the files"))
 			if !res.Refused() || !res.Saw("rewrites SPEC.md L3-3") {
 				t.Fatalf("an uncited rewrite of a rule pinned by a %s marker was not refused:\n%s", c.name, res.Output)
 			}
@@ -111,7 +110,7 @@ func TestT046_16_DroppingOrMovingTheMarkerFirstDoesNotUnpin(t *testing.T) {
 			res := e.Run(proj, "s-046-16-"+c.name, "allow goodwill refunds", Turns("done",
 				c.first(proj, sha),
 				Write("w2", "SPEC.md", relaxedSpec),
-			))
+			).ThenCommit("write the files"))
 			if !res.Saw("moves src/charge.go off the spec wording") {
 				t.Errorf("the %s marker was not refused as a change to what the code is pinned to:\n%s", c.name, res.Output)
 			}
@@ -139,7 +138,7 @@ func TestT046_16b_MarkerDroppedUnseenStillPinnedAtHead(t *testing.T) {
 	res := e.Run(proj, "s-046-16b", "allow goodwill refunds", Turns("done",
 		Bash("b1", `python3 -c "open('src/charge.go','w').write('func Refund(charged, amount int) bool { return true }\\n')"`),
 		Write("w1", "SPEC.md", relaxedSpec),
-	))
+	).ThenCommit("write the files"))
 	if strings.Contains(readFile(t, proj, "src/charge.go"), "sr:invariant") {
 		t.Fatalf("the drop was refused or undone, so this no longer tests an unseen drop — find another command the engine does not see as a write: %s", res.Output)
 	}
@@ -162,7 +161,7 @@ func TestT046_17_GitMvThenCreateIsRefused(t *testing.T) {
 	res := e.Run(proj, "s-046-17", "allow goodwill refunds", Turns("done",
 		Bash("b1", "git mv SPEC.md SPEC.old"),
 		Write("w1", "SPEC.md", relaxedSpec),
-	))
+	).ThenCommit("write the files"))
 	if !res.Saw("rewrites SPEC.md L3-3") {
 		t.Fatalf("a relaxed SPEC.md created after `git mv` was not refused:\n%s", res.Output)
 	}
@@ -181,14 +180,14 @@ func TestT046_18_RepinToNewWordingIsRefused(t *testing.T) {
 
 	withException := strings.Replace(billingSpec, "(end)\n", "3a. Goodwill refunds are exempt from rule 2.\n(end)\n", 1)
 	e.WriteFile(proj, "SPEC.md", withException)
-	e.Git(proj, "commit", "-am", "an exception on a line of its own")
+	e.CommitAll(proj, "an exception on a line of its own")
 	newSha := e.Git(proj, "rev-parse", "HEAD")
 
 	repinned := invariantCode(proj+"@"+newSha+":SPEC.md#L3-4",
 		"func Refund(charged, amount int, goodwill bool) bool { return goodwill || amount <= charged }\n")
 	res := e.Run(proj, "s-046-18", "allow goodwill refunds", Turns("done",
 		Write("w1", "src/charge.go", repinned),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("moves src/charge.go off the spec wording") {
 		t.Fatalf("re-pinning the code to wording that carries an exception was not refused:\n%s", res.Output)
 	}
@@ -206,13 +205,13 @@ func TestT046_19_RepinToSameWordingNeedsNothing(t *testing.T) {
 
 	shifted := strings.Replace(billingSpec, "Billing invariants\n", "Billing invariants\n(see also PAYMENTS.md)\n", 1)
 	e.WriteFile(proj, "SPEC.md", shifted)
-	e.Git(proj, "commit", "-am", "a line above the rules")
+	e.CommitAll(proj, "a line above the rules")
 	newSha := e.Git(proj, "rev-parse", "HEAD")
 
 	repinned := invariantCode(proj+"@"+newSha+":SPEC.md#L4-4", refundBody)
 	res := e.Run(proj, "s-046-19", "re-pin Refund after the spec moved", Turns("done",
 		Write("w1", "src/charge.go", repinned),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a re-pin to the same wording was refused:\n%s", res.Output)
 	}
@@ -235,12 +234,11 @@ func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
 	e.WriteFile(proj, ".claude/skills/pin/SKILL.md", placeholder)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a skill with a placeholder marker")
+	e.CommitAll(proj, "a skill with a placeholder marker")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	res := e.Run(proj, "s-046-27", "allow goodwill refunds", Turns("done",
 		Write("w1", "SPEC.md", relaxedSpec),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("rewrites SPEC.md L3-3") {
 		t.Fatalf("the refusal did not name the pinned line that changed:\n%s", res.Output)
 	}
@@ -250,13 +248,12 @@ func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
 	proj2 := biProject(t, e2)
 	commitSpec(t, e2, proj2, "SPEC.md", billingSpec, "spec")
 	e2.WriteFile(proj2, ".claude/skills/pin/SKILL.md", placeholder)
-	e2.Git(proj2, "add", "-A")
-	e2.Git(proj2, "commit", "-m", "a skill with a placeholder marker")
+	e2.CommitAll(proj2, "a skill with a placeholder marker")
 	e2.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
 	res = e2.Run(proj2, "s-046-27b", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a spec named only by an unparseable pin needed a citation:\n%s", res.Output)
 	}

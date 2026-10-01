@@ -36,7 +36,7 @@ func TestT032_11_UnknownFilterInJudgeTemplateFailsClosed(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "work-is-done", typoGate, map[string]string{"is-done.md.j2": typoTemplate})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	load := e.CLI(proj, "session", "start")
@@ -64,7 +64,7 @@ func TestT032_12_KnownFilterRendersAndLoadsClean(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "work-is-done", typoGate, map[string]string{"is-done.md.j2": cleanTemplate})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	load := e.CLI(proj, "session", "start")

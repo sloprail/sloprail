@@ -21,8 +21,6 @@
 // be wrong, because the spec explicitly declines to promise it and the test
 // would fail the day the walk changed for a good reason.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // Every rule here acts at the PRE-ACTION moment (a pending write or command
 // blocked, or a permitting rule recording what it was asked), so the vehicle is
 // a GATE. Several gates on one event stand in for several guardrails on one kind;

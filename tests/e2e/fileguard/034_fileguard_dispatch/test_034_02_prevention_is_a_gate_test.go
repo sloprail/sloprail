@@ -45,7 +45,7 @@ func TestT034_04_GateBlocksPreWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "no-plaintext-keys", preventGate, map[string]string{"check.sh": checkNoPlaintextKey})
-	commitGuards(t, proj) // keep the rule's own check.sh out of the cycle diff
+	e.CommitAll(proj, "the rule and its scripts")
 
 	res := e.Run(proj, "s-034-04", "write a secret with a plaintext key", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY=hunter2"),
@@ -73,7 +73,7 @@ func TestT034_05_GateAdmitsFineWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "no-plaintext-keys", preventGate, map[string]string{"check.sh": checkNoPlaintextKey})
-	commitGuards(t, proj) // keep the rule's own check.sh out of the cycle diff
+	e.CommitAll(proj, "the rule and its scripts")
 
 	res := e.Run(proj, "s-034-05", "write a clean secret reference", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY_REF=vault://prod"),
@@ -98,7 +98,7 @@ func TestT034_06_FileGuardDoesNotBlockPreWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-plaintext-keys", resultGuard, map[string]string{"check.sh": checkNoPlaintextKey})
-	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
+	e.CommitAll(proj, "the rule and its scripts")
 
 	res := e.Run(proj, "s-034-06", "write a secret with a plaintext key", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY=hunter2"),
@@ -128,7 +128,7 @@ func TestT034_07_GateAndFileGuardOfOneRuleWorkTogether(t *testing.T) {
 	e.GitInit(proj)
 	e.Gate(proj, "no-plaintext-keys", preventGate, map[string]string{"check.sh": checkNoPlaintextKey})
 	e.FileGuard(proj, "no-plaintext-keys", resultGuard, map[string]string{"check.sh": checkNoPlaintextKey})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the rule and its scripts")
 
 	bad := e.Run(proj, "s-034-07a", "write a secret with a plaintext key", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY=hunter2"),
@@ -139,7 +139,7 @@ func TestT034_07_GateAndFileGuardOfOneRuleWorkTogether(t *testing.T) {
 
 	good := e.Run(proj, "s-034-07b", "write a clean secret reference", Turns("done",
 		Write("w2", "secrets/prod.env", "KEY_REF=vault://prod"),
-	))
+	).ThenCommit("add the reference"))
 	if good.Refused() || !e.Exists(proj, "secrets/prod.env") {
 		t.Fatalf("the fine write was refused or did not land:\n%s", good.Output)
 	}

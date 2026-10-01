@@ -10,8 +10,8 @@
 #   2. ARTIFACTS RESOLVE — every `<repo-relative-file>:<ranges>` names a file under
 #      the repo whose cited lines exist; an in_review task names at least one.
 #   3. PROOF RIDES ON THE TRANSITION — not this script's: the guard's `require`
-#      demands a tool_result citation on a write that moves the task INTO
-#      in_review (`when: ./in-review.sh --entering`), and the engine refuses an
+#      demands a tool_result citation (a Sloprail-Cites-Tool: trailer on a commit
+#      of the range) when a task moves INTO in_review (`when: ./in-review.sh --entering`), and the engine refuses an
 #      uncited one before this runs. The task file carries no transcript path of
 #      any kind.
 #
@@ -20,8 +20,9 @@
 # judgement about whether the cited output SUBSTANTIATES the claim — that is
 # task-review's model call. See the plugin README for the three-way split.
 #
-# THE STOP HALF. This is the file-guard's copy: it reads the settled bytes on disk.
-# The PreFileWrite gate of the same name carries the pending-bytes copy.
+# THE FILE-GUARD ENTRY. It checks every task in the changeset from its committed
+# bytes, and resolves artifacts against SR_TREE (the committed head), not the
+# working tree. The PreFileWrite gate of the same name carries the pending-bytes entry.
 #
 # THE REFUSAL CONTRACT (internal/dispatch/exec.go): exit 0 permits; any non-zero
 # exit refuses, carrying `{"reason": "..."}` on stdout. Fails closed throughout —
@@ -33,25 +34,30 @@ lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset check_task_lib_loaded
 . "$lib_dir/check-task-lib.sh" || exit 2
 [ "${check_task_lib_loaded:-}" = 1 ] || exit 2
-lib_init
-# WHERE THE BYTES COME FROM. This is the file-guard's copy: the settled file at
-# Stop, off the disk.
-kind="$(field '.event.kind // ""')"
-case "$kind" in
-  PostFileCreate | PostFileUpdate)
-    # newContentKnown (declared on the Post kinds, internal/filemod/module.go)
-    # false: the engine could not read the settled file — a link to a FIFO or a
-    # device, or past the read cap. Unseen: refuse rather than pass unchecked.
-    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
-      refuse "task-evidence-resolves: $path could not be read (not a regular file, or too large), so it could not be checked"
-    abs="$root/$path"
-    # Written and then removed within the cycle: nothing to check, nothing wrong.
-    [ -f "$abs" ] || exit 0
-    content="$(cat "$abs")" || refuse "task-evidence-resolves: could not read $path to check it"
-    ;;
-  *)
-    # A delete, or a kind this guard is not about: nothing to check.
-    exit 0
-    ;;
-esac
-lib_check
+lib_setup
+
+payload="$(cat)"
+field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
+[ "$(field '.event.kind // ""')" = "Changeset" ] ||
+  refuse "task-evidence-resolves: expected a Changeset event, so the tasks could not be checked"
+root="${SR_TREE:-}"
+[ -n "$root" ] || refuse "task-evidence-resolves: SR_TREE is not set, so the committed tree could not be read"
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(dirname "$0")/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || refuse "task-evidence-resolves: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be checked"
+[ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-evidence-resolves: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be checked"
+file_n="$(cs_count "$payload")" || true
+case "$file_n" in '' | *[!0-9]*) refuse "task-evidence-resolves: the changeset's files could not be read, so nothing could be checked" ;; esac
+
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(cs_get "$payload" "$file_i" .path)" ||
+    refuse "task-evidence-resolves: could not read file $file_i of the changeset"
+  content="$(cs_text "$payload" "$file_i" newContent)" ||
+    refuse "task-evidence-resolves: could not read $path from the changeset"
+  file_i=$((file_i + 1))
+  lib_check
+done
+exit 0

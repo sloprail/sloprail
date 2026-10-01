@@ -30,8 +30,6 @@ func TestMain(m *testing.M) {
 // seeEveryCreate is a GATE that records what each pending write was reported as,
 // and permits.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The spelling a rule is handed is the spelling its match narrows on, and this
 // suite reads that spelling off the payload. The old observer bound PreFileCreate
 // unnarrowed and recorded `.event.fields.path`; the new observer is a gate

@@ -1,55 +1,33 @@
 package main
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/sloprail/sloprail/internal/declaration"
-	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
 )
 
-// This file is the FILE-GUARD half of the new nature dispatch (3c): a rule bound
-// to a FILE'S STATE, not to an event trigger (dot-dir-file-store/main.tsp
-// FileGuardDeclaration). It runs at ONE moment: at Stop, on the POST file events,
-// checking the settled content. A file-guard never acts before a write — refusing
-// a write or a delete BEFORE it lands is a gate's job (runGatesForEvents on a
-// PreFileWrite / PreFileDelete trigger); the `preventive:` key that once let a
-// file-guard do both was removed, and the loader refuses a declaration carrying it.
+// This file holds what a file-guard's `match` is asked and the vocabulary shared
+// with the gate dispatch. A file-guard is a rule bound to a FILE'S STATE, and it
+// judges COMMITS: at Stop each rule is evaluated once over the changeset of
+// commits it has not yet passed (changeset_eval.go), with commit-required
+// refusing uncommitted work first (commit_required.go). It never acts before a
+// write — refusing a write or a delete BEFORE it lands is a gate's job
+// (runGatesForEvents on a PreFileWrite / PreFileDelete trigger).
 //
-// A refusal here does not undo the write (it is on disk); it blocks the TURN and,
-// crucially, is RECORDED in the same revalidation store the old format uses —
-// which is what makes a not-fine file RE-FIRE every cycle until its content
-// satisfies the checks, the file-guard's defining "re-fires until fine"
-// semantics.
-//
-// # How the file's STATE is matched (not an event trigger)
+// # How a file is matched (not an event trigger)
 //
 // A gate matches an event's fields; a file-guard matches a FILE. Its `match` is a
-// FileMatchExpression over FileMatchScope — the file's own path, the `sr:`
-// markers it carries, and `context[<name>]`. So this builds a FileMatchScope
-// from a file event (path off the event, markers off the event's new markers —
-// the settled file's markers on a Post, the would-be result's on a Pre) and the
-// context[] map, and evaluates the compiled match against THAT, not against the
-// event nested under `event`. guardrail.CompileFileMatch is the same compiler the
+// FileMatchExpression over FileMatchScope — the file's own path, its status in
+// the changeset, the `sr:` markers it carries and carried, the range's commit
+// trailers, and `context[<name>]`. The scope is FLAT — NOT the event nested under
+// `event` a gate reads. guardrail.CompileFileMatch is the same compiler the
 // loader validated the match with, so a glob and a full expression behave
 // identically here and at load.
-//
-// # Reuse
-//
-// The CHECK-RUNNER is dispatch-core's Runner (Nature=file-guard). This file only
-// MATCHES a guard to a file event and calls Run — it re-implements no check,
-// judge, or payload assembly. The re-fire integrates with the old format's
-// revalidation machinery (readdOutstanding re-adds an outstanding path to the
-// diff next cycle, so a not-fine file produces a Post event again), which this
-// file records into via the same revalidation.Record the old dispatch uses.
 
 // fileGuardResult is one file-guard's outcome on one file: the guard's name, how a
 // refusal should attribute it, whether it refused, and the reason to relay.
@@ -93,228 +71,6 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// runFileGuardsPost runs EVERY file-guard against a cycle's POST file events,
-// recording each verdict into the revalidation store so a not-fine file re-fires,
-// and returns every refusal (in guard-then-file order).
-//
-// This is the authoritative file-guard check: the file has settled, its content
-// is on disk, and the guard judges the settled state. A refusal is collected
-// (not returned early) so the agent hears every not-fine file at once, the same
-// as the old Post dispatch collects all objections.
-//
-// # Re-fire integrates with revalidation
-//
-// The verdict is recorded via rev.Record(guardKey, subject, passed) — the same
-// machinery the old format uses. A refusal is retained (revalidation keeps a
-// failing FileCheck), so next cycle readdOutstanding re-adds the path to the tree
-// difference, a Post event is produced for it again, and this guard is asked
-// again — until the content changes and the checks pass. A pass at a fingerprint
-// lets the guard SKIP that exact content next cycle (rev.Skip), so a fine file is
-// not re-judged every cycle. The guard's revalidation key is namespaced
-// (file-guard:<name>) so it never collides with an old-format guardrail of the
-// same folder name, keeping each rule's verdicts its own (verdict_per_guardrail).
-func runFileGuardsPost(
-	cmd *cobra.Command,
-	guards []declaration.FileGuard,
-	events []event.Event,
-	rev *revalidation,
-	scope hookScope,
-	root string,
-	contextMap map[string]natures.ContextState,
-	histories map[string]*dispatchcore.FileHistory,
-) []fileGuardResult {
-	if len(guards) == 0 {
-		return nil
-	}
-	runner := dispatchcore.Runner{}
-	var results []fileGuardResult
-
-	for _, g := range guards {
-		if isLaunchedBy(os.Getenv, g.Name) {
-			fmt.Fprintf(cmd.ErrOrStderr(),
-				"sloprail: file-guard %q not enforced here — this session was launched by its own check (%s)\n",
-				g.Name, LaunchedByEnv)
-			continue
-		}
-
-		match, err := guardrail.CompileFileMatch(g.Match)
-		if err != nil {
-			// Unreachable for a loaded guard (the loader compiled the same match), but
-			// on the off chance the compile disagrees with load it must fail CLOSED
-			// rather than skip the guard silently: a match the engine cannot build has
-			// not decided the file is fine. Collect a refusal that holds the turn
-			// (matcher.go:186), naming the guard and quoting the expression.
-			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match: %v\n", g.Name, err)
-			results = append(results, fileGuardResult{
-				Name:        g.Name,
-				Attribution: g.Attribution(),
-				Refused:     true,
-				Reason: fmt.Sprintf(
-					"the file-guard %q could not be evaluated: its match %q could not be compiled (%v); "+
-						"refusing because a guard that could not decide must not be read as approval",
-					g.Name, g.Match, err),
-			})
-			continue
-		}
-
-		for _, e := range events {
-			if !isPostFileEvent(e.Kind) {
-				continue
-			}
-			if !g.Covers(e.Kind) {
-				// Not this guard's business (see declaration.FileGuard.Covers): a
-				// PostFileDelete for a guard that skips deletions, or a create/update
-				// for a deletions-only guard. On a delete the file is gone, and a
-				// refusal this guard left outstanding on it could never be cleared —
-				// it will never be asked about this path again — so settle it.
-				settleIfGone(cmd, rev, g, e)
-				continue
-			}
-			selected, err := fileGuardSelects(match, e, contextMap)
-			if err != nil {
-				// The match COMPILED at load but could not be EVALUATED against this
-				// settled file. As in the gate path and in the old dispatch
-				// (matcher.go:186 — the caller refuses the action and says why), a match
-				// the engine cannot answer is NOT a rule that cleanly did not match: it
-				// is the engine unable to decide, which must not be read as approval.
-				// This path COLLECTS refusals (it does not return early), so append a
-				// refusal that holds the turn — mirroring the runner-error branch below.
-				// A verdict is deliberately NOT recorded: writing a pass would exempt a
-				// file nobody judged, a refusal would blame the rule for the machine; the
-				// turn is held and the file re-enters the diff next cycle by the ordinary
-				// difference. The raw expression is quoted so an author can fix it.
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match on %s: %v\n", g.Name, e.Kind, err)
-				results = append(results, fileGuardResult{
-					Name:        g.Name,
-					Attribution: g.Attribution(),
-					Refused:     true,
-					Reason: fmt.Sprintf(
-						"the file-guard %q could not be evaluated: its match %q could not be evaluated against this %s (%v); "+
-							"refusing because a guard that could not decide must not be read as approval",
-						g.Name, g.Match, e.Kind, err),
-				})
-				continue
-			}
-			if !selected {
-				// A deleted file this guard's match no longer selects (a marker or
-				// context match can stop selecting once the content is gone) is
-				// likewise one it will never be asked about again.
-				settleIfGone(cmd, rev, g, e)
-				continue
-			}
-
-			// What content this guard is about, and whether it has already judged
-			// this exact content and passed it. The subject is fingerprinted from
-			// the settled file on disk (the Post branch of rev.Subject), so a guard
-			// that passed this content once skips it now — a judge is a model call,
-			// and asking twice can block work already fixed. Keyed per guard.
-			guardKey := fileGuardRevKey(g.Name)
-			subj, fingerprinted := rev.Subject(e, root)
-			if fingerprinted {
-				skip, serr := rev.Skip(guardKey, subj)
-				if serr != nil {
-					fmt.Fprintln(cmd.ErrOrStderr(), serr)
-				}
-				if skip {
-					continue
-				}
-			}
-
-			path, _ := e.Fields[filemod.FieldPath].(string)
-			verdict, err := runner.Run(dispatchcore.Request{
-				Nature:         dispatchcore.NatureFileGuard,
-				Require:        g.Require,
-				Checks:         g.Checks,
-				Event:          e,
-				TranscriptPath: scope.Transcript,
-				Context:        contextMap,
-				Dir:            g.Dir,
-				GuardName:      g.Name,
-				Workspace:      scope.Workspace,
-				SessionID:      scope.SessionID,
-				// The file's history this session: a `citation` prerequisite
-				// holds only when the parts of its change no cited change made
-				// are ones its `when` waives. See cited_changes.go.
-				History: histories[path],
-				// Re-entry provenance for an after-check that spawns sr-agent: this
-				// guard appended to any launched checks already on the stack, so the
-				// launched agent's own Write does not re-fire this guard on itself
-				// (isLaunchedBy above, one exec down). See the gate dispatch.
-				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
-			})
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
-				results = append(results, fileGuardResult{
-					Name:        g.Name,
-					Attribution: g.Attribution(),
-					Refused:     true,
-					Reason: fmt.Sprintf(
-						"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
-						g.Name, err),
-				})
-				// Do not record a verdict for a run that did not reach one — writing
-				// a pass would exempt content nobody judged, a refusal would blame
-				// the rule for the machine. The turn is held; the file re-enters the
-				// diff next cycle by the ordinary difference, not by an outstanding
-				// refusal this did not record.
-				continue
-			}
-
-			// Record whichever way it went, so a refusal RESURFACES next cycle and a
-			// pass lets the fine content be skipped. This is the entire re-fire
-			// mechanism, reusing the old format's file_checks table.
-			if fingerprinted {
-				if rerr := rev.Record(guardKey, subj, !verdict.Refused); rerr != nil {
-					fmt.Fprintln(cmd.ErrOrStderr(), rerr)
-				}
-			}
-
-			if verdict.Refused {
-				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason, Path: path})
-				// One refusal per (guard, file); keep judging the remaining files so
-				// the agent hears every not-fine one at once.
-				continue
-			}
-
-			// A guard that covers deletions and PASSED this delete has judged the
-			// file's last state — gone — and found it fine. A refusal it left on the
-			// content that preceded the delete is answered, so it ends here rather
-			// than re-adding the path, and re-asking about the delete, every cycle.
-			settleIfGone(cmd, rev, g, e)
-		}
-	}
-	return results
-}
-
-// settleIfGone ends a file-guard's outstanding refusal on a file that is now
-// DELETED, when the guard has not refused the delete itself — it does not cover
-// deletions, its match no longer selects the file, or it judged the delete and
-// passed it. A no-op on any other kind.
-//
-// Why this is needed. A refusal is outstanding while the latest verdict for
-// (path, guard) is a refusal, and readdOutstanding re-adds every outstanding
-// path to the tree difference each cycle; a re-added path that is no longer on
-// disk comes back as a PostFileDelete. A delete has no content to fingerprint
-// (revalidation.Subject), so nothing on the delete path ever RECORDS a verdict
-// — the refusal on the pre-delete content would stay outstanding for the rest
-// of the session, re-adding a path that no longer exists (and handing a
-// PostFileDelete to every guard that includes deletions) every cycle, with no
-// action the agent could take to clear it. For a guard that does not even see
-// deletions (the default) that is a refusal it can never clear by construction.
-//
-// A delete this guard REFUSED is left alone: the refusal is the guard's live
-// answer, and it must keep re-firing until the file is back and fine. A run
-// that errored is left alone too — nobody judged anything.
-func settleIfGone(cmd *cobra.Command, rev *revalidation, g declaration.FileGuard, e event.Event) {
-	if e.Kind != declaration.KindPostFileDelete {
-		return
-	}
-	path, _ := e.Fields[filemod.FieldPath].(string)
-	if err := rev.SettleGone(fileGuardRevKey(g.Name), path); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), err)
-	}
 }
 
 // fileGuardSelects reports whether a file-guard's compiled match selects a file
@@ -432,32 +188,12 @@ func isUnderivablePreWrite(e event.Event) bool {
 	}
 }
 
-// fileGuardRevKey namespaces a file-guard's revalidation key so it cannot collide
-// with an old-format guardrail of the same folder name.
-//
-// revalidation keys a FileCheck by (path, guardrail, fingerprint); the "guardrail"
-// string here is the file-guard's name. An old-format guardrail and a new-format
-// file-guard could both be named `no-secrets`, and pooling their verdicts would
-// let one exempt the other's file (breaking verdict_per_guardrail). The prefix
-// keeps them apart in the one shared file_checks table.
-func fileGuardRevKey(name string) string { return "file-guard:" + name }
-
 // isPreFileEvent reports whether a kind is a PRE file event a gate can fire on.
 // A delete is included: a gate bound to PreFileDelete may refuse an unasked
 // deletion.
 func isPreFileEvent(kind string) bool {
 	switch kind {
 	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete:
-		return true
-	}
-	return false
-}
-
-// isPostFileEvent reports whether a kind is a POST file event a guard's
-// after-check fires on.
-func isPostFileEvent(kind string) bool {
-	switch kind {
-	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
 		return true
 	}
 	return false

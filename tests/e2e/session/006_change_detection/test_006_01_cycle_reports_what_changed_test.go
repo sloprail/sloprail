@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,39 +16,27 @@ import (
 // What makes these end-to-end rather than unit tests is the question they
 // answer: not "does the dispatcher classify correctly" but "does the end of a
 // cycle ever reach the dispatcher at all". Nothing in this repo dispatched a
-// Post event before this hook point was implemented, so every claim below was
+// cycle-end check before this hook point was implemented, so every claim below was
 // unreachable from outside the binary.
 //
-// # RE-VEHICLED onto the NEW-format nature dispatch (was old GUARDRAIL.md hooks)
 //
-// Re-vehicled per tests/e2e/REVEHICLE-PATTERN.md so this coverage of the shared
-// change-detection machinery survives the deletion of the old dispatch, which
-// does not read GUARDRAIL.md. The vehicle is chosen from what each test OBSERVES:
+// The vehicle is chosen from what each test OBSERVES:
 //
-//   - the FILE cases (a create/update/delete observed with the right kind, an
+//   - the FILE cases (a create/update/delete observed with the right status, an
 //     untouched file staying silent, committed and untracked work still counted)
-//     are file-STATE facts, so they ride a NEW-FORMAT file-guard after-check
-//     (a file-guard acts only at Stop). It fires on whichever Post kind the change produced —
-//     runFileGuardsPost hands one check every create, update and delete — so the
-//     old binding to all three Post kinds collapses into the one `match: "**/*.md"`.
+//     are file-STATE facts, so they ride a file-guard that records every
+//     Changeset it is handed at Stop (`match: "**/*.md"`).
 //   - the STOP cases (Stop fires once and subjectless; a Stop-bound rule still
-//     runs after a Post refusal) are about the cycle as a whole. Stop is a
-//     GateEventKind, so a rule bound to it is a GATE waking on Stop
-//     (nature_stop.go step 3), never a file-guard. This mirrors
-//     session/026_stop_subjectless, the dedicated re-vehicled Stop suite.
+//     runs after a refusal) are about the cycle as a whole. Stop is a
+//     GateEventKind, so a rule bound to it is a GATE waking on Stop, never a
+//     file-guard; session/026_stop_subjectless is the dedicated Stop suite.
 //
-// The check reads the FLAT event (`.event.kind`, `.event.path`), never the old
-// nested `.event.fields`, and records into $SR_GUARDRAIL_DIR (the folder the
-// engine sets for a check) rather than $PWD. A check's cwd is its rule's folder
-// INSIDE the compared tree, so recording is itself a change the next comparison
-// would report — the rules are therefore committed before the session runs (see
-// commitRules), and every assertion names the path it expects rather than
-// counting events, so a ledger file appearing in a later cycle's difference
-// cannot make a test lie. The ledgers (`events`, `seen` — no `.md` suffix) fall
-// outside `**/*.md`, so a guard never re-observes its own bookkeeping.
+// The file-guard check reads the Changeset (`.changeset.files[]`), and records into a
+// harness ledger OUTSIDE the project (changesetkit.RecordScript): inside the rule's
+// folder the recording would change the rule's hash between cycles. The rules are
+// committed before the session runs (see the session-start commit).
 
-// recordFileEvent is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed, one line per run, and permits unconditionally — the
+// recordFileEvent is a NEW-FORMAT file-guard that records every Changeset it is handed, one line per run, and permits unconditionally — the
 // question here is which changes were observed, not what anyone decided about
 // them. `match: "**/*.md"` selects every markdown file at the repository root or
 // any depth (`**/` compiles to an OPTIONAL leading directory).
@@ -56,15 +46,6 @@ const recordFileEvent = `match: "**/*.md"
 deletions: include
 checks:
   - script: ./record.sh
-`
-
-// recordFileScript appends the whole payload as one line, into the folder the
-// engine sets for a file-guard check ($SR_GUARDRAIL_DIR =
-// `.sloprail/file-guard/<name>/`).
-const recordFileScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/events"
-printf '\n' >> "$SR_GUARDRAIL_DIR/events"
-exit 0
 `
 
 // recordStopGate is a NEW-FORMAT gate that wakes on Stop and records the event it
@@ -77,69 +58,7 @@ checks:
   - script: ./record.sh
 `
 
-// recordStopScript appends the whole Stop payload as one line, into the folder the
-// engine sets for a gate check ($SR_GUARDRAIL_DIR = `.sloprail/gate/<name>/`).
-const recordStopScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/events"
-printf '\n' >> "$SR_GUARDRAIL_DIR/events"
-exit 0
-`
-
-// commitRules commits whatever rules a test installed, so their own folders are
-// part of the baseline and the cycle's difference does not report them as newly
-// created files (and a check writing into its own folder is not itself reported).
-func commitRules(e *Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
-}
-
-// hasEvent reports whether the recorded events hold one of the given kind naming
-// the given path.
-//
-// Both on ONE line, which is what makes it an assertion about a single event: a
-// cycle dispatching a create for one file and a delete for another would satisfy
-// any test that looked for the kind and the path separately. Read against the
-// FLAT wire form — `.event.kind` and `.event.path` spread directly under `event`,
-// not nested under an `event.fields` envelope the way the old format wrote them.
-func hasEvent(events []string, kind, path string) bool {
-	for _, line := range events {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			continue
-		}
-		if p.Event.Kind == kind && p.Event.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
-// mentions reports whether any recorded event names the given path at all,
-// whatever its kind — for the untouched-stays-silent assertion, which is about a
-// path never appearing rather than about a particular kind.
-func mentions(events []string, path string) bool {
-	for _, line := range events {
-		var p struct {
-			Event struct {
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			continue
-		}
-		if p.Event.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
-// T006_01: what a cycle changed becomes Post events, one per file.
+// T006_01: what a cycle changed reaches a file-guard as one changeset entry per file.
 //
 // The agent writes one file, edits a file the project already had, and deletes
 // another — through ordinary tool calls, with nothing telling the engine which
@@ -155,73 +74,79 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 	e.WriteFile(proj, "existing.md", "before")
 	e.WriteFile(proj, "doomed.md", "before")
 	e.WriteFile(proj, "untouched.md", "before")
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
-	commitRules(e, proj)
+	e.CommitAll(proj, "the project before the rule")
+	// The rule goes in its own commit: its range starts at that commit's parent, so
+	// the files above are the base, not part of the first range.
+	led := e.NewLedger("events")
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": led.RecordScript()})
+	e.CommitAll(proj, "the rule, before the session")
 
 	e.Run(proj, "s-006-01", "change some files", Turns("done",
 		Write("w1", "created.md", "new file"),
 		Write("w2", "existing.md", "changed"),
 		Bash("b1", "rm doomed.md"),
-	))
+	).ThenCommit("change some files"))
 
-	events := e.FileGuardLedgerLines(proj, "records", "events")
+	events := led.Lines()
 	if len(events) == 0 {
-		t.Fatalf("the end of the cycle dispatched nothing — no Post event reached a file-guard")
+		t.Fatalf("the end of the cycle dispatched nothing — no changeset reached a file-guard")
 	}
 
-	for _, want := range []struct{ kind, path string }{
-		{"PostFileCreate", "created.md"},
-		{"PostFileUpdate", "existing.md"},
-		{"PostFileDelete", "doomed.md"},
+	for _, want := range []struct{ status, path string }{
+		{"A", "created.md"},
+		{"M", "existing.md"},
+		{"D", "doomed.md"},
 	} {
-		if !hasEvent(events, want.kind, want.path) {
-			t.Errorf("no %s for %q in what the cycle dispatched:\n%s", want.kind, want.path, strings.Join(events, "\n"))
+		if !changesetkit.Has(changesetkit.Files(t, events), want.status, want.path) {
+			t.Errorf("no file with status %s for %q in what the cycle dispatched:\n%s", want.status, want.path, strings.Join(events, "\n"))
 		}
 	}
 
 	// untouched_stays_silent. A file the cycle never touched must not be
 	// reported, or the first cycle in any real project buries the agent's work
 	// under the rest of the repository.
-	if mentions(events, "untouched.md") {
+	if changesetkit.Saw(changesetkit.Files(t, events), "untouched.md") {
 		t.Errorf("a file the cycle never touched was reported:\n%s", strings.Join(events, "\n"))
 	}
 }
 
-// T006_02: work the agent COMMITTED is still the cycle's work.
+// T006_02: work committed in separate commits is one changeset.
 //
-// difference_spans_both, and the half a naive implementation loses. An agent
-// that commits leaves a tree with nothing outstanding in it, so a comparison
-// reading only what is outstanding reports that the cycle changed nothing —
-// precisely wrong, and silently so.
-//
-// Both halves in one cycle, so the test cannot pass by covering either alone.
-func TestT006_02_CommittedAndUncommittedWorkBothCount(t *testing.T) {
+// The agent commits once mid-cycle and once at the end. A rule's range spans
+// both commits, so a changeset reading only the last one would report the cycle
+// as smaller than it was.
+func TestT006_02_WorkInSeparateCommitsIsOneChangeset(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
-	commitRules(e, proj)
+	led := e.NewLedger("events")
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": led.RecordScript()})
+	base := e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-02", "write and commit", Turns("done",
 		Write("w1", "committed.md", "this gets committed"),
-		Bash("b1", "git add committed.md && git commit -m 'agent commit'"),
+		harness.CommitPaths("b1", "agent commit", "committed.md"),
 		Write("w2", "outstanding.md", "this does not"),
-	))
+	).ThenCommit("the rest"))
 
-	events := e.FileGuardLedgerLines(proj, "records", "events")
-
-	// The tree really is clean of the committed file, or this proves nothing:
-	// it would be reported by any implementation that looked only at what is
-	// outstanding.
-	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
-		t.Fatalf("committed.md is still outstanding (%q), so this test does not exercise the committed half", status)
+	// The premise: committed.md really was committed in a commit of its own, before
+	// the end-of-cycle one, so the range holds two commits and a changeset reading only
+	// the last would miss it. Without this the test is one commit at the end and proves
+	// nothing about spanning.
+	if subjects := e.Git(proj, "log", "--format=%s", base+"..HEAD", "--", "committed.md"); subjects != "agent commit" {
+		t.Fatalf("committed.md was not committed mid-cycle in its own commit (commits touching it: %q)", subjects)
+	}
+	if n := e.Git(proj, "rev-list", "--count", base+"..HEAD"); n != "2" {
+		t.Fatalf("the cycle made %s commits, want 2 (the mid-cycle one and the last)", n)
 	}
 
-	if !hasEvent(events, "PostFileCreate", "committed.md") {
+	events := led.Lines()
+
+	if !changesetkit.Has(changesetkit.Files(t, events), "A", "committed.md") {
 		t.Errorf("work committed during the cycle fell out of the difference:\n%s", strings.Join(events, "\n"))
 	}
-	if !hasEvent(events, "PostFileCreate", "outstanding.md") {
-		t.Errorf("work left outstanding fell out of the difference:\n%s", strings.Join(events, "\n"))
+	if !changesetkit.Has(changesetkit.Files(t, events), "A", "outstanding.md") {
+		t.Errorf("work committed at the end fell out of the difference:\n%s", strings.Join(events, "\n"))
 	}
 }
 
@@ -240,8 +165,9 @@ func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Gate(proj, "cyclestop", recordStopGate, map[string]string{"record.sh": recordStopScript})
-	commitRules(e, proj)
+	led := e.NewLedger("events")
+	e.Gate(proj, "cyclestop", recordStopGate, map[string]string{"record.sh": led.RecordScript()})
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-03", "write several files", Turns("done",
 		Write("w1", "a.md", "one"),
@@ -249,7 +175,7 @@ func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 		Write("w3", "c.md", "three"),
 	))
 
-	lines := e.GateLedgerLines(proj, "cyclestop", "events")
+	lines := led.Lines()
 
 	var stops []string
 	for _, l := range lines {
@@ -298,7 +224,7 @@ func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 	}
 }
 
-// T006_04: a rule refusing a Post event cannot undo the write, and DOES stop the
+// T006_04: a file-guard's refusal cannot undo the write, and DOES stop the
 // turn from ending; and a rule bound to the end of the cycle still runs after the
 // refusal.
 //
@@ -350,11 +276,11 @@ func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 	e.Gate(proj, "after", recordStopGate, map[string]string{
 		"record.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + afterLog + "\nexit 0\n",
 	})
-	commitRules(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-006-04", "write a file", Turns("done",
 		Write("w1", "unwanted.md", "it landed anyway"),
-	))
+	).ThenCommit("write a file"))
 
 	// The rule ran and refused. Without this the rest is a test about a file
 	// existing after nothing tried to stop it.
@@ -405,31 +331,38 @@ func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 	}
 }
 
-// T006_05: a file the agent created and never staged is still the cycle's work.
+// T006_05: a file the agent created and never committed is not judged: the Stop
+// is refused for the commit, and once the agent commits it the rule sees it.
 //
-// `git diff` compares tracked content, so an untracked file appears in no diff
-// at all — an implementation asking only that question reports nothing for
-// exactly the files an agent writing scratch output produces.
-func TestT006_05_UntrackedWorkIsReported(t *testing.T) {
+// An untracked file appears in no diff at all, so the engine cannot judge it; it
+// asks for the commit instead (never making one itself).
+func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
-	commitRules(e, proj)
+	led := e.NewLedger("events")
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": led.RecordScript()})
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-05", "write a scratch file", Turns("done",
 		Write("w1", "scratch.md", "never staged"),
 	))
 
-	// The control: git really is not tracking it, so the diff alone cannot have
-	// been what found it.
+	// The control: git really is not tracking it.
 	if tracked := e.Git(proj, "ls-files", "--", "scratch.md"); tracked != "" {
 		t.Fatalf("scratch.md is tracked (%q), so this test does not exercise the untracked half", tracked)
 	}
+	e.AssertCommitRequired(proj, "s-006-05", "scratch.md")
+	if events := led.Lines(); changesetkit.Saw(changesetkit.Files(t, events), "scratch.md") {
+		t.Fatalf("an uncommitted file was judged:\n%s", strings.Join(events, "\n"))
+	}
+	seen := len(CommitRequired(e.BlockingErrorsFrom(proj, "s-006-05", "Stop")))
 
-	events := e.FileGuardLedgerLines(proj, "records", "events")
-	if !hasEvent(events, "PostFileCreate", "scratch.md") {
-		t.Errorf("an untracked file the agent created was never reported:\n%s", strings.Join(events, "\n"))
+	e.Run(proj, "s-006-05", "now commit it", Turns("committed").ThenCommit("the scratch file"))
+
+	e.NoCommitRequired(proj, "s-006-05", seen)
+	if events := led.Lines(); !changesetkit.Has(changesetkit.Files(t, events), "A", "scratch.md") {
+		t.Errorf("the committed file never reached the rule:\n%s", strings.Join(events, "\n"))
 	}
 }
 
@@ -454,11 +387,11 @@ func TestT006_06_EveryRefusalReachesTheAgentAtOnce(t *testing.T) {
 			"record.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"objection from " + name + "\"}'\nexit 1\n",
 		})
 	}
-	commitRules(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-06", "write a file", Turns("done",
 		Write("w1", "f.md", "x"),
-	))
+	).ThenCommit("write a file"))
 
 	blocking := e.BlockingErrors(proj, "s-006-06")
 	if len(blocking) == 0 {

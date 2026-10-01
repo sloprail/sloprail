@@ -35,12 +35,11 @@ import (
 // how a premise check in 019 failed against a working engine.
 
 // refuseCreates is a NEW-FORMAT file-guard, after-check (a file-guard acts only at Stop),
-// that objects to every markdown file the cycle produces (re-vehicled from the old
-// GUARDRAIL.md PostFileCreate hook per tests/e2e/REVEHICLE-PATTERN.md). An
+// that objects to every markdown file the cycle produces . An
 // after-check refusal is exactly this directory's subject: it does not undo the
 // write (the file is on disk), it holds the TURN, and it re-fires next cycle —
 // which is the whole mechanism a Post refusal enforces a correction with. `match:
-// "**/*.md"` fires on whichever Post kind each write produced; every file this
+// "**/*.md"` fires on every committed change; every file this
 // directory writes is `.md`.
 const refuseCreates = `match: "**/*.md"
 checks:
@@ -89,11 +88,6 @@ func project(t *testing.T) (*harness.Env, string) {
 	return e, proj
 }
 
-func commitGuardrails(e *harness.Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
-}
-
 // T024_01: one refusal — the file survives AND the turn is blocked AND the
 // reason reaches the agent.
 //
@@ -105,11 +99,11 @@ func commitGuardrails(e *harness.Env, proj string) {
 func TestT024_01_OneRefusalBlocksTheTurnWithoutUndoingTheWrite(t *testing.T) {
 	e, proj := project(t)
 	ranLog := refusingGuardrail(t, e, proj, "solorule", "this file should not have been written")
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-01", "write a file", Turns("done",
 		Write("w1", "unwanted.md", "it landed anyway\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	// The rule ran and refused. Without this the rest is a test about a file
 	// existing after nothing tried to stop it.
@@ -166,11 +160,11 @@ func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 	for _, name := range []string{"alpharule", "betarule", "gammarule"} {
 		logs[name] = refusingGuardrail(t, e, proj, name, "objection from "+name)
 	}
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-02", "write a file", Turns("done",
 		Write("w1", "contested.md", "one file, three objections\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	// Every rule really ran. Without this, "all three were reported" could hold
 	// because only one ran and the assertion below is checking a string that
@@ -225,11 +219,11 @@ func TestT024_03_ARefusalDoesNotSilenceThePassingRuleAfterIt(t *testing.T) {
 checks:
   - script: ./record.sh
 `, map[string]string{"record.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + afterLog + "\nexit 0\n"})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-03", "write a file", Turns("done",
 		Write("w1", "watched.md", "the subject\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the refusing hook never ran, so there is no refusal here to survive:\n%s", got.Output)
@@ -258,11 +252,11 @@ checks:
 func TestT024_04_ARefusingSessionStillTerminates(t *testing.T) {
 	e, proj := project(t)
 	ranLog := refusingGuardrail(t, e, proj, "looper", "still not acceptable")
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-04", "write a file", Turns("done",
 		Write("w1", "looped.md", "the subject\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	body, err := os.ReadFile(ranLog)
 	if err != nil {
@@ -302,11 +296,11 @@ func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 	e.FileGuard(proj, "passer", refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\nexit 0\n",
 	})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-05", "write a file", Turns("done",
 		Write("w1", "fine.md", "nothing wrong with this\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	// The rule ran. Without this the absence of a block says only that no rule
 	// was ever consulted.
@@ -341,11 +335,11 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 	e.FileGuard(proj, "zzpermitter", refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + passerLog + "\nexit 0\n",
 	})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-06", "write a file", Turns("done",
 		Write("w1", "mixed.md", "one rule objects, one does not\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	for name, log := range map[string]string{"zzrefuser": refuserLog, "zzpermitter": passerLog} {
 		if _, err := os.Stat(log); err != nil {
@@ -384,12 +378,12 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 	e, proj := project(t)
 	ranLog := refusingGuardrail(t, e, proj, "persistent", "still not acceptable")
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-024-07"
 	first := e.Run(proj, sess, "write the bad file", Turns("done",
 		Write("w1", "offending.md", "violates\n"),
-	))
+	).ThenCommit("the agent's work"))
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the rule never ran in the first cycle:\n%s", first.Output)
 	}
@@ -401,7 +395,7 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 	// A second cycle that does not touch the offending file at all.
 	second := e.Run(proj, sess, "do something else", Turns("done",
 		Write("w2", "unrelated.md", "fine\n"),
-	))
+	).ThenCommit("the agent's work"))
 
 	if continuations(e, proj, sess) <= firstBlocks {
 		t.Fatalf("a cycle that left an unfixed violation in place was allowed to end:\n%s\n"+

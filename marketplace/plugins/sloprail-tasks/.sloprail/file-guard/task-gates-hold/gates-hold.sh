@@ -13,14 +13,16 @@
 #                                                          stage 2's subject
 #
 # THE GATE: like task-dependencies-resolve, gates are checked ONLY on the
-# transition OUT of backlog/blocked INTO to_do/in_progress — moving among
+# transition OUT of backlog/blocked INTO to_do/in_progress (a task's status at the
+# range's base against its status at head; a task added by the range has none
+# before) — moving among
 # backlog/blocked, staying in to_do/in_progress, or moving to in_review costs
 # nothing here (in_review's own claim is task-review's subject, over
 # DELIVERY evidence, not start conditions).
 #
 # EVERY .sh FILE under this task's gates/ is run, in NAME order (so a run is
-# reproducible and a refusal always names the same first failure), with
-# SR_WORKSPACE set and the task's own directory as its cwd. A gate that is not
+# reproducible and a refusal always names the same first failure), in the committed
+# tree (SR_TREE, the file-guard entry's root) with SR_WORKSPACE pointed at it. A gate that is not
 # executable, or that cannot be run at all, is a REFUSAL (fail-closed) — a
 # gate this rule could not actually run is not evidence the condition holds.
 # `.md` files are skipped here entirely; they are stage 2's subject.
@@ -41,43 +43,48 @@ lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset gates_hold_lib_loaded
 . "$lib_dir/gates-hold-lib.sh" || exit 2
 [ "${gates_hold_lib_loaded:-}" = 1 ] || exit 2
-lib_init
-case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
-    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
-    # events.md): false when it could not read the settled file — a link to a
-    # FIFO or a device, or past the read cap. Unseen: refuse, not pass.
-    if [ "$(printf '%s' "$event" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
-      refuse "task-gates-hold: $path could not be read (not a regular file, or too large), so its gates could not be checked"
-    fi
-    abs="$root/$path"
-    if [ ! -f "$abs" ]; then
-      exit 0
-    fi
-    new_content="$(cat "$abs")" || refuse "task-gates-hold: could not read $path"
-    if [ ! -s "$abs" ]; then
-      exit 0
-    fi
-    ;;
-  *)
-    exit 0
-    ;;
-esac
+lib_setup
 
-new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || refuse "task-gates-hold: sr-file could not validate $path, so its status is unknown: $new_doc"
-new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
-[ -n "$new_status" ] || refuse "task-gates-hold: $path carries no readable status, so its gates could not be checked"
+event="$(cat)"
+[ "$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] ||
+  refuse "task-gates-hold: expected a Changeset event, so the tasks could not be checked"
+root="${SR_TREE:-}"
+[ -n "$root" ] || refuse "task-gates-hold: SR_TREE is not set, so the committed tasks could not be read"
 
-case "$new_status" in
-  to_do|in_progress) : ;;
-  *) exit 0 ;;
-esac
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(dirname "$0")/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || refuse "task-gates-hold: the changeset library (lib/changeset.sh) could not be loaded, so the tasks could not be checked"
+[ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-gates-hold: the changeset library (lib/changeset.sh) could not be loaded, so the tasks could not be checked"
+file_n="$(cs_count "$event")" || true
+case "$file_n" in '' | *[!0-9]*) refuse "task-gates-hold: the changeset's files could not be read, so the tasks could not be checked" ;; esac
 
-old_content=""
-case "$kind" in
-  PostFileUpdate)
-    old_content="$(printf '%s' "$event" | jq -r '.event.oldContent // ""' 2>/dev/null)"
-    ;;
-esac
-lib_check
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(cs_get "$event" "$file_i" .path)" ||
+    refuse "task-gates-hold: could not read file $file_i of the changeset"
+  status="$(cs_get "$event" "$file_i" .status)" ||
+    refuse "task-gates-hold: could not read $path from the changeset"
+  new_content="$(cs_text "$event" "$file_i" newContent)" ||
+    refuse "task-gates-hold: could not read $path from the changeset"
+  old_content="$(cs_text "$event" "$file_i" oldContent)" ||
+    refuse "task-gates-hold: could not read the earlier $path from the changeset"
+  file_i=$((file_i + 1))
+  [ -n "$new_content" ] || continue
+  # A task the range added had no status before ("" covers a new task written
+  # straight to to_do/in_progress).
+  [ "$status" = "A" ] && old_content=""
+
+  new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || refuse "task-gates-hold: sr-file could not validate $path, so its status is unknown: $new_doc"
+  new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
+  [ -n "$new_status" ] || refuse "task-gates-hold: $path carries no readable status, so its gates could not be checked"
+
+  case "$new_status" in
+    to_do|in_progress) : ;;
+    *) continue ;;
+  esac
+
+  lib_check
+done
+exit 0

@@ -42,8 +42,7 @@ func TestT036_01_UnaccountedMessageRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install example")
+	e.CommitAll(proj, "install example")
 
 	sess := "s-036-01"
 	// The agent does some work but never records a task for the request and never
@@ -98,8 +97,7 @@ func TestT036_02_AccountedMessageAdmits(t *testing.T) {
 	// parenthesized markdown-link form the gate matches: (/abs/path:N-N).
 	e.WriteFile(proj, "tasks/task-a/ASK.md",
 		"# Task A\n\nRaised by the user request ("+ref+").\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + task")
+	e.CommitAll(proj, "install + task")
 
 	res := e.Run(proj, sess, "please handle request A", Turns("done",
 		Say("m1", "Recorded it as task-a."),
@@ -130,8 +128,7 @@ func TestT036_03_DoesNotFireOnFileWrite(t *testing.T) {
 	sess := "s-036-03"
 	ref := fmt.Sprintf("%s:%d-%d", e.TranscriptPath(proj, sess), e.RootMessageLine(sess), e.RootMessageLine(sess))
 	e.WriteFile(proj, "tasks/t/ASK.md", "("+ref+")\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + task")
+	e.CommitAll(proj, "install + task")
 
 	res := e.Run(proj, sess, "handle request A", Turns("done",
 		Write("w1", "notes/scratch.md", "some mid-turn note"),

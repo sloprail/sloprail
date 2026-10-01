@@ -75,8 +75,36 @@ own call.
 
 - An `sr-file` citation lands on that file's events and on the command event. A
   chained `cite` lands on every event the command produces.
-- A `Post` file event at Stop carries the citations of the cited changes that
-  **landed** on its path this session: a cited call that failed, was denied, or
+- A file-guard's `changeset.citations` are the quotes its range's commits cite
+  as `Sloprail-Cites-User: <quote>` and `Sloprail-Cites-Tool: <quote>` trailers,
+  resolved like `sr-file --cite:user` / `--cite:tool_result`: the quote must match
+  exactly one real user message (or tool output), model text is never citable, and
+  a quote that resolves nowhere is not a citation (`sr-session changeset` lists it
+  under `unresolvedCitations`). The current session's transcript is searched
+  first, then the project's other sessions newest to oldest; the first session
+  containing the quote must match it exactly once. Outside a session (no
+  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. Each entry also says which
+  commits carried it (`commits`, SHAs) and which selected files those commits
+  changed (`files`); the list as a whole stays the range's, for a judge. The rest
+  of this list describes a gate's events. A `require: citation` on a file-guard is
+  satisfied **per subject**, and the default subject is one selected file
+  ([events.md](events.md#changeset--what-a-file-guards-checks-receive)): a file is
+  grounded only by a citation whose trailer is in the commit that last changed THAT
+  file, so one commit citing one file grounds nothing else in the range, an uncited
+  change on top of a cited one leaves the file uncited, and a cited commit on top of
+  an uncited one grounds the file as it now stands. Its `when` runs once per
+  subject, on a payload whose `subject.files` is that file (the whole `Changeset`
+  stays in the payload as context), and the requirement applies only to the files
+  whose `when` applies. A refusal names every file that is not grounded, and says
+  the one command that grounds them: when each such file was last changed by HEAD,
+  `git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'`;
+  when one was changed by an earlier commit, squash the range into one commit
+  carrying the quote(s) (`git reset --soft <base> && git commit -m '<what changed>'
+  -m 'Sloprail-Cites-User: <exact quote>'`; repeat the trailer for each quote, the
+  earlier commits' messages are replaced). An empty commit carrying only the trailer
+  does not count: the trailer grounds the commit it is in, and that commit must be the
+  one that changed the file. Several quotes on one commit are fine.
+- A cited call that failed, was denied, or
   never ran grounds nothing. A citation grounds only the change it rode on, and
   only for a requirement whose pools it resolved in (a `--cite:tool_result`
   change does not ground a `user` requirement). Every other part of the file's
@@ -140,8 +168,8 @@ require:
 ```
 
 Pair it with a plain file-guard of the same name (`match: 'path startsWith
-"memories/rules/"'` with the same `require`), which refuses at Stop a change that
-reached the tree without a citation — a command the engine could not model, say.
+"memories/rules/"'` with the same `require`), which refuses at Stop commits that
+carry no citation trailer — a change a command made that the engine could not model, say.
 `preventive:` on the file-guard no longer exists; a declaration carrying it is
 refused at load.
 
@@ -159,7 +187,9 @@ require:
 ```
 
 ```bash
-# removes-content.sh: exit 0 when a line present before is gone after.
+# removes-content.sh, a gate's `when` (a file-guard's decides for .subject.files, one
+# file, and reads the rest of .changeset only as context; see
+# examples/no-unasked-deletion): exit 0 when a line present before is gone after.
 input="$(cat)"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
 new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
@@ -177,9 +207,10 @@ move from, what counts as proof). A hint that spells the exact command (an
 forms' place; one that only advises follows the form for this kind of change,
 so a refusal always carries a command the agent can run.
 
-On `Post` kinds `oldContent` is the session baseline, so a transition such as
-"status became `published` this session" reads the same on the gate and on the
-file-guard beside it. A change whose result the engine could not compute
+A transition such as "status became `published`" reads the same on the gate
+(`event.oldContent` to `event.newContent`) and on the file-guard beside it
+(`oldContent` at the range's base to `newContent` at `head`, per file of
+`.subject.files`). A change whose result the engine could not compute
 (`resultKnown: false`) is an unknown result: a `require: citation` gate is checked
 first, and a content-dependent check after it must refuse an unknown result
 itself ([file-guard.md](file-guard.md), "The resultKnown discipline"). The
@@ -193,9 +224,9 @@ A judge decides whether the cited words support **this** change — the change,
 not the whole file: a citation grounds what the write it rode on added, altered or
 removed, and lines the change leaves alone were grounded, or not, when they were
 written. It needs no `prepare`: the template reads `{{ change }}` (the unified diff
-of the event's `oldContent` to its `newContent`; at Stop, everything since the
-session baseline, matching the citations recorded this session) and
-`event.citations` directly. Each citation
+of the event's `oldContent` to its `newContent`; on a file-guard, the combined
+diff of the selected files over the range) and `event.citations` (on a
+file-guard, `changeset.citations`) directly. Each citation
 carries its `quote` (the fragment the agent cited, often a short search key) and
 its `message` (the whole entry it was taken from: the user's full message, the
 question with the selected answers, or the tool's output, capped at 16 KB). A

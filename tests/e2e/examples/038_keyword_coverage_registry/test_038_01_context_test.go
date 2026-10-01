@@ -26,13 +26,12 @@ func TestT038_01_ContextLogsDeclaredScanner(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-01"
 	e.Run(proj, sess, "declare a scanner", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 
 	reg := e.GuardrailState(proj, sess, "scanner-declared", "")
 	val, ok := reg["scanner:scanners/mine"]
@@ -59,13 +58,12 @@ func TestT038_02_InactiveScannerNotLogged(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-02"
 	res := e.Run(proj, sess, "declare an inactive scanner", Turns("done",
 		Write("w1", "scanners/off/scanner.yaml", "active: false\nkeywords:\n  - foo\n"),
-	))
+	).ThenCommit("write the files"))
 
 	reg := e.GuardrailState(proj, sess, "scanner-declared", "")
 	if _, ok := reg["scanner:scanners/off"]; ok {
@@ -89,14 +87,13 @@ func TestT038_03_DoesNotFireOutsideScope(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-03"
 	e.Run(proj, sess, "write non-scanner files", Turns("done",
 		Write("w1", "scanners/mine/notes.md", "not a scanner.yaml"),
 		Write("w2", "scanner.yaml", "active: true\nkeywords:\n  - x\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if active, _ := e.ContextState(proj, sess, "scanner-declared"); active {
 		t.Errorf("the context activated for a path outside scanners/<name>/scanner.yaml")

@@ -35,8 +35,6 @@ import "testing"
 // that did not prevent the work leaves no file to find — whether or not a
 // message came back.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The property observed is PREVENTION of a shell deletion: `rm notes.md` is a
 // command about to run whose derived PreFileDelete names notes.md, and the block
 // happens at the pre-action moment before the command runs. The decision rule

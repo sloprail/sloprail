@@ -8,6 +8,7 @@ import (
 
 	"github.com/pmezard/go-difflib/difflib"
 
+	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -68,6 +69,7 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check) (Verdict, error
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
 		LaunchedBy:     req.LaunchedBy,
+		Env:            req.Env,
 	})
 	if err != nil {
 		return Verdict{}, err
@@ -101,30 +103,55 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check) (Verdict, error
 //     is this case with no additional context — silence lets the judge run, it is
 //     not a skip.
 func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error) {
-	var additional declaration.PreparedContext
-	if c.Prepare != "" {
-		prepared, v, err := r.runPrepare(req, c.Prepare)
-		if err != nil {
-			return Verdict{}, err
-		}
-		if v.Refused {
-			// prepare could not run (or refused): the check fails closed, carrying
-			// prepare's own words.
-			return v, nil
-		}
-		if prepared.Skip {
-			// prepare inspected the subject and decided the judge does not apply
-			// here: ABSTAIN WITHOUT a model call. Returning abstain() before
-			// judgeInputJSON/runJudge is what makes "skip" mean no model invocation
-			// at all — nothing renders the template and no agent is spawned — while
-			// leaving the guard's decision to the remaining checks rather than
-			// forcing a pass that would mask a later refusal.
-			return abstain(), nil
-		}
-		additional = prepared.Context
+	prepared, v, err := r.PrepareJudge(req, c)
+	if err != nil || v.Refused {
+		return v, err
 	}
+	if prepared.Skip {
+		// prepare inspected the subject and decided the judge does not apply
+		// here: ABSTAIN WITHOUT a model call. Returning abstain() before
+		// judgeInputJSON/runJudge is what makes "skip" mean no model invocation
+		// at all — nothing renders the template and no agent is spawned — while
+		// leaving the guard's decision to the remaining checks rather than
+		// forcing a pass that would mask a later refusal.
+		return abstain(), nil
+	}
+	return r.Judge(req, c, prepared)
+}
 
-	input, err := r.judgeInputJSON(req, additional)
+// Prepared is what a judge check's prepare step concluded, ready for the judge.
+type Prepared struct {
+	// Skip: prepare asked not to run the judge; the check abstains.
+	Skip bool
+	// Context is prepare's additionalContext, folded into the judge's input.
+	Context declaration.PreparedContext
+}
+
+// PrepareJudge runs a judge check's prepare step, when it has one. A refused
+// verdict means prepare failed (the check fails closed, carrying prepare's own
+// words); otherwise Prepared says whether to skip the judge and what context to
+// give it. Split from Judge so a caller that caches verdicts can fingerprint what
+// the judge is about to receive — including what prepare inlined — before paying
+// for the model.
+func (r Runner) PrepareJudge(req Request, c declaration.Check) (Prepared, Verdict, error) {
+	r = r.withDefaults()
+	if c.Prepare == "" {
+		return Prepared{}, pass(), nil
+	}
+	prepared, v, err := r.runPrepare(req, c.Prepare)
+	if err != nil {
+		return Prepared{}, Verdict{}, err
+	}
+	if v.Refused {
+		return Prepared{}, v, nil
+	}
+	return Prepared{Skip: prepared.Skip, Context: prepared.Context}, pass(), nil
+}
+
+// Judge asks the model about one judge check, after prepare.
+func (r Runner) Judge(req Request, c declaration.Check, p Prepared) (Verdict, error) {
+	r = r.withDefaults()
+	input, err := r.judgeInputJSON(req, p.Context)
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -152,7 +179,13 @@ func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error)
 		AllowedTools:    c.AllowedTools,
 		DisallowedTools: c.DisallowedTools,
 		Workspace:       req.Workspace,
+		Env:             req.Env,
 	})
+}
+
+// RunScript runs one script check: the payload on stdin, exit code the verdict.
+func (r Runner) RunScript(req Request, c declaration.Check) (Verdict, error) {
+	return r.withDefaults().runScriptCheck(req, c)
 }
 
 // checkTimeout parses a check's `timeout` duration string, or returns 0 (meaning
@@ -210,6 +243,7 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
 		LaunchedBy:     req.LaunchedBy,
+		Env:            req.Env,
 	})
 	if err != nil {
 		return preparedResult{}, Verdict{}, err
@@ -240,6 +274,9 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 // than changing the bytes. Both are built here so a script's stdin and a judge's
 // (prepare-less) input agree.
 func (r Runner) checkPayloadJSON(req Request) ([]byte, error) {
+	if req.Changeset != nil {
+		return json.Marshal(*req.Changeset)
+	}
 	switch req.Nature {
 	case NatureGate:
 		return json.Marshal(declaration.GateCheckPayload{
@@ -265,6 +302,13 @@ func (r Runner) checkPayloadJSON(req Request) ([]byte, error) {
 // so a prepare key cannot collide with `event` or `transcriptPath`. That is the
 // spec's rule, and inlining the payload struct is what enforces it.
 func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedContext) ([]byte, error) {
+	if req.Changeset != nil {
+		return json.Marshal(changesetJudgeInput{
+			Payload:           *req.Changeset,
+			Change:            req.Changeset.Changeset.Change(),
+			AdditionalContext: additional,
+		})
+	}
 	switch req.Nature {
 	case NatureGate:
 		return json.Marshal(declaration.GateJudgeInput{
@@ -286,6 +330,17 @@ func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedConte
 			AdditionalContext: additional,
 		})
 	}
+}
+
+// changesetJudgeInput is a changeset file-guard's judge input: the Changeset
+// payload spread flat at the template's top level (`{{ changeset }}`,
+// `{{ subject }}`, `{{ event }}`, `{{ transcriptPath }}`, `{{ context }}`), plus
+// `{{ change }}` — the combined diff of the selected files — and
+// `additionalContext` when prepare returned one.
+type changesetJudgeInput struct {
+	changeset.Payload
+	Change            string                      `json:"change"`
+	AdditionalContext declaration.PreparedContext `json:"additionalContext,omitempty"`
 }
 
 // fileChange is the unified diff of a file event's oldContent to its newContent,
@@ -406,3 +461,10 @@ func trimSpace(b []byte) []byte {
 }
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// CheckRequire evaluates only req.Require, without running any check. A
+// changeset evaluation records each prerequisite as a check of its own, so it
+// asks one at a time.
+func (r Runner) CheckRequire(req Request) (Verdict, error) {
+	return r.withDefaults().checkRequire(req)
+}

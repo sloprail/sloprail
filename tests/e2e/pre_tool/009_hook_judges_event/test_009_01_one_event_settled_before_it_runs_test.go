@@ -15,8 +15,6 @@ import (
 // happened, so nothing the match excluded arrives; and the payload carries the
 // event and the session facts, not the history a match is forbidden to read.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // It used to install an OLD-format rule (`hooks: PreFileCreate: [matcher: path
 // startsWith "guarded/"]`) whose hook read the NESTED payload (`.event.fields.path`)
 // and asserted the surface was `{event, guardrailDir}`. The NEW dispatch hands a

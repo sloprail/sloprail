@@ -50,7 +50,7 @@ func TestT044_01_NonConformingMarkedFileBlocks(t *testing.T) {
 
 	e.Run(proj, "s-044-01", "write a mock that claims to follow the doc", Turns("done",
 		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"toolUseResult\":{}}` }")),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, "s-044-01", "Stop")
 	if len(blocks) == 0 {
@@ -79,7 +79,7 @@ func TestT044_02_ConformingMarkedFileAdmits(t *testing.T) {
 
 	e.Run(proj, "s-044-02", "write a mock that follows the doc", Turns("done",
 		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"type\":\"assistant\"}` }")),
-	))
+	).ThenCommit("write the files"))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-044-02", "Stop"); len(blocks) != 0 {
 		t.Errorf("a conforming marked file was blocked anyway:\n%v", blocks)
@@ -105,7 +105,7 @@ func TestT044_03_UnmarkedOrWrongKindIsNeverJudged(t *testing.T) {
 		Write("w1", "internal/mock/plain.go", "package mock\n\nfunc Emit() string { return \"{}\" }\n"),
 		// A well-formed marker of a DIFFERENT kind — must not match docs.
 		Write("w2", "internal/mock/other.go", "// sr:invariant Mock.id\npackage mock\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-044-03", "Stop"); len(blocks) != 0 {
 		t.Errorf("the guard fired on a file with no docs marker:\n%v", blocks)
@@ -132,7 +132,7 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 
 	e.Run(proj, "s-044-04a", "write a marked mock", Turns("done",
 		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return marker_body_alpha() }")),
-	))
+	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -156,7 +156,7 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 
 	e2.Run(proj2, "s-044-04b", "write a differently-marked mock", Turns("done",
 		Write("w1", "internal/mock/hooks.go", markedMock(otherDocURL, "func Fire() string { return marker_body_beta() }")),
-	))
+	).ThenCommit("write the files"))
 
 	prompt2 := e2.JudgePrompt(proj2, "judge-prompt.txt")
 	if prompt2 == "" {
@@ -190,7 +190,7 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R1 mock diverges from the linked doc"}`)
 	e.Run(proj, sess, "write a non-conforming marked mock", Turns("done",
 		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"toolUseResult\":{}}` }")),
-	))
+	).ThenCommit("write the files"))
 	if !hasReason(e, proj, sess, "R1") {
 		t.Fatalf("the non-conforming marked file did not block in the first cycle")
 	}
@@ -200,7 +200,7 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R2 the marked mock is still outstanding"}`)
 	e.Run(proj, sess, "write an unmarked helper", Turns("done",
 		Write("w2", "internal/mock/helper.go", "package mock\n\nfunc Helper() {}\n"),
-	))
+	).ThenCommit("write the files"))
 	if !hasReason(e, proj, sess, "R2") {
 		t.Fatalf("the outstanding marked file was NOT re-judged on a cycle that never touched it — the re-fire did not happen")
 	}
@@ -209,13 +209,13 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	e.Run(proj, sess, "make the mock conform", Turns("done",
 		Write("w3", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"type\":\"assistant\"}` }")),
-	))
+	).ThenCommit("write the files"))
 
 	// Cycle 4: another unmarked file, judge armed to refuse. Nothing should re-fire.
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R4 must not appear if the fix cleared the file"}`)
 	e.Run(proj, sess, "write another unmarked helper", Turns("done",
 		Write("w4", "internal/mock/helper2.go", "package mock\n\nfunc Helper2() {}\n"),
-	))
+	).ThenCommit("write the files"))
 	if hasReason(e, proj, sess, "R4") {
 		t.Errorf("a FIXED marked file kept re-firing: cycle 4 touched nothing the guard matches, yet a fresh block appeared")
 	}

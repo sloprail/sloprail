@@ -21,8 +21,7 @@ func researchProjectWithScanner(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e, proj := researchProject(t)
 	e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "scanner")
+	e.CommitAll(proj, "scanner")
 	return e, proj
 }
 
@@ -43,7 +42,7 @@ func TestT038_27_ScannersSharingAFolderNameAreTwoObligations(t *testing.T) {
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Write("w2", "zz/scanners/mine/scanner.yaml", "active: true\nkeywords:\n  - guardrail\n"),
 		Bash("b1", stubbed(`gh search repos guardrail`)),
-	))
+	).ThenCommit("write the files"))
 
 	reg := e.GuardrailState(proj, sess, "scanner-declared", "scanner:")
 	if len(reg) != 2 {
@@ -69,44 +68,41 @@ func TestT038_27_ScannersSharingAFolderNameAreTwoObligations(t *testing.T) {
 // retires nothing.)
 func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	e, proj := researchProject(t)
-	// The scanner is committed before the session: a file-guard sees a delete
-	// at Stop only for a file that existed in the tree at the session's start.
-	e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the scanner")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to remove the scanner"}`)
 	const sess = "s-038-28"
 	const ask = "remove the mine scanner, we no longer track it"
 
-	// The retirement is recorded by the file-guard at Stop, on the delete of a
-	// scanner that was in the tree before this cycle.
-	e.Run(proj, sess, "research guardrails", Turns("done",
+	// A scanner written and deleted inside one range is no change at all, so the
+	// declaration is committed first; the delete is then its own changeset, whose
+	// commit carries the user's words as a trailer.
+	e.Run(proj, sess, ask, Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("declare the scanner"))
+	// The declaring Stop was owed a search, rightly; what counts is what comes after.
 	before := coverageRefusals(t, e.TranscriptPath(proj, sess))
 	if before == 0 {
 		t.Fatalf("precondition: the declared scanner should be owed a search")
 	}
-
-	res := e.Run(proj, sess, ask, Turns("done",
-		Bash("b1", "sr-file delete scanners/mine/scanner.yaml --cite:user '"+ask+"'"),
-	))
+	res := e.Run(proj, sess, "go ahead", Turns("done",
+		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
+	).ThenCommit("remove the scanner", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("the delete the user asked for was refused:\n%s", res.Output)
 	}
 	if _, err := os.Stat(filepath.Join(proj, "scanners", "mine", "scanner.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: the cited delete should have landed: %v", err)
 	}
-	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n != before {
-		t.Fatalf("Stop was refused %d more time(s) for a scanner the user asked to remove:\n%s", n-before, stopRefusals(e, proj, sess))
+	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)) - before; n != 0 {
+		t.Fatalf("Stop was refused %d time(s) for a scanner the user asked to remove:\n%s", n, stopRefusals(e, proj, sess))
 	}
 
 	// Declared again, it is a new obligation — the retirement was of the
 	// declaration the user removed, not of the name.
+	retired := coverageRefusals(t, e.TranscriptPath(proj, sess))
 	e.Run(proj, sess, "declare it again", Turns("done",
 		Write("w2", "scanners/mine/scanner.yaml", activeScanner),
-	))
-	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n == 0 {
+	).ThenCommit("write the files"))
+	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)) - retired; n == 0 {
 		t.Errorf("a scanner declared again after its retirement was not owed a search")
 	}
 }
@@ -124,7 +120,7 @@ func TestT038_29_AnUnreadableRegistryRefuses(t *testing.T) {
 	res := e.Run(proj, sess, "research guardrails", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("could not be checked against a declared scanner") {
 		t.Errorf("a search was let through although the registry could not be read:\n%s", res.Output)
 	}
@@ -192,7 +188,7 @@ func TestT038_31_TheGuardReadsKeywordsAsTheRegistryDoes(t *testing.T) {
 		res := e.Run(proj, sess, "search for guardrail work", Turns("done",
 			Write("w1", "scanners/mine/scanner.yaml", commented),
 			Write("w2", "scanners/mine/scanner.yaml", "active: true\nkeywords:\n  - guardrail\n# the rest\n"),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() || !res.Saw("drops the declared keyword(s) agent") {
 			t.Errorf("dropping the keyword after the comment was not refused:\n%s", res.Output)
 		}
@@ -206,7 +202,7 @@ func TestT038_31_TheGuardReadsKeywordsAsTheRegistryDoes(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR038 the judge ran on a restyle"}`)
 		res := e.Run(proj, "s-038-31b", "tidy the scanner", Turns("done",
 			Write("w1", "scanners/mine/scanner.yaml", "active: true\nkeywords:\n  - \"guardrail\"\n  - 'llm'\n  - agent   # the agent keyword\n"),
-		))
+		).ThenCommit("write the files"))
 		if res.Refused() || res.Saw("SR038 the judge ran") {
 			t.Errorf("a quote-only restyle was refused or judged as a drop:\n%s", res.Output)
 		}

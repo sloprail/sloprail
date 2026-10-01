@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// content-rule-is-grounded is a PreFileWrite gate plus a plain file-guard (the Stop re-check) over RULE.md/
+// content-rule-is-grounded is a PreFileWrite gate plus a file-guard (the judge, at Stop over the committed changeset) over RULE.md/
 // CONSTRAINT.md. Every change must be grounded in the user's own words,
 // cited on the ACTION (`sr-file write|edit ... --cite:user '<quote>'`), never
 // stored in the rule:
@@ -16,7 +16,7 @@ import (
 //  1. SCRIPT (check-rule.sh): the frontmatter satisfies rule.cue and the body
 //     is not empty.
 //  2. PREPARE + JUDGE (resolve-cited-rule-quotes.sh + judge-rule-body.md.j2):
-//     the judge is handed the cited quotes off event.citations and decides
+//     the judge is handed the cited quotes off changeset.citations (the commit's Sloprail-Cites-User trailers) and decides
 //     whether the rule holds THAT AND NOTHING ELSE. The verdict is stubbed.
 //
 // An earlier version required a `[quote](jsonl)` link in the rule's body and
@@ -43,9 +43,12 @@ func installRuleProject(t *testing.T, seed string) (*Env, string) {
 	e.GitInit(proj)
 	if seed != "" {
 		e.WriteFile(proj, rulePath, seed)
+		// History before the rules exist (see installPublishProject).
+		e.CommitAll(proj, "the seeded rule")
 	}
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
+	e.CommitAll(proj, "install the rules")
 	return e, proj
 }
 
@@ -103,7 +106,7 @@ func TestRuleGrounded_CitedWritePasses(t *testing.T) {
 	tp := e.TranscriptPath(proj, sess)
 	res := e.Run(proj, sess, rulePrompt, Turns("done",
 		Bash("b1", srFileWrite(rulePath, ruleBody, ruleQuote)),
-	))
+	).ThenCommit("Add the rule", CitesUser(ruleQuote)))
 	if res.Refused() {
 		t.Fatalf("a cited, judge-accepted rule was refused:\n%s", res.Output)
 	}
@@ -137,7 +140,7 @@ func TestRuleGrounded_SlopBodyBlockedByJudgeAtStop(t *testing.T) {
 	slop := "---\nlevel: must_not\ncreated: 2026-09-25\n---\nRule: no hype language. This applies to every unit except drafts under 50 words, which may use up to two hype phrases.\n"
 	res := e.Run(proj, "s-rule-slop", rulePrompt, Turns("done",
 		Bash("b1", srFileWrite(rulePath, slop, ruleQuote)),
-	))
+	).ThenCommit("Add the rule", CitesUser(ruleQuote)))
 	if res.Refused() {
 		t.Fatalf("the gate (no model) refused a cited, well-formed rule:\n%s", res.Output)
 	}
@@ -181,7 +184,7 @@ func TestRuleGrounded_LegacyLinkRuleEditPasses(t *testing.T) {
 
 	res := e.Run(proj, "s-rule-legacy", rulePrompt, Turns("done",
 		Bash("b1", srFileEdit(rulePath, "Rule: no hype.", "Rule: no hype language.", ruleQuote)),
-	))
+	).ThenCommit("Reword the rule", CitesUser(ruleQuote)))
 	if res.Refused() {
 		t.Fatalf("a cited edit of a rule carrying a legacy link was refused:\n%s", res.Output)
 	}

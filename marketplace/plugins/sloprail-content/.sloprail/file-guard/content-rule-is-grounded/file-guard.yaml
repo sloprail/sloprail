@@ -3,19 +3,19 @@
 # ask. Without it, an agent could invent a rule nobody asked for and have it
 # silently start gating every future unit.
 #
-# GROUNDING RIDES ON THE ACTION, NOT IN THE FILE. Every change to a RULE.md /
-# CONSTRAINT.md is made with `sr-file write|edit ... --cite:user '<exact
-# quote>'`, and the session resolves that quote against its own record before
-# any check runs. The rule file itself stores only the derived rule text — no
-# `[quote](/abs/session.jsonl:N)` link, which would not resolve on any other
+# GROUNDING RIDES ON THE COMMIT, NOT IN THE FILE. Every commit that changes a
+# RULE.md / CONSTRAINT.md carries `Sloprail-Cites-User: <exact quote>` trailers
+# (`git commit -m '...' -m 'Sloprail-Cites-User: <quote>'`), and the session
+# resolves each quote against its own transcripts into `changeset.citations`
+# before any check runs. The rule file itself stores only the derived rule text —
+# no `[quote](/abs/session.jsonl:N)` link, which would not resolve on any other
 # machine. (Rules written before this carry such links; they are NOT forbidden
 # and are simply not read — see the plugin README.)
 #
 # THREE stages, cheapest first:
-#   0. REQUIRE (citation, user pool): the engine refuses a change
-#      carrying no citation that resolves to the user's own words, before any
-#      check runs, with a remedy naming sr-file. The Write and Edit tools
-#      cannot carry a citation, so they are always refused here.
+#   0. REQUIRE (citation, user pool): the engine refuses a changeset whose
+#      commits carry no citation that resolves to the user's own words, before
+#      any check runs.
 #   1. SCRIPT (check-rule.sh): the frontmatter satisfies rule.cue and the body
 #      is not empty.
 #   2. PREPARE + JUDGE (resolve-cited-rule-quotes.sh + judge-rule-body.md.j2):
@@ -30,15 +30,13 @@
 # unit-satisfies-rules/file-guard.yaml's header): every rule is a judge rule
 # now, so an untraceable, vacuous or self-contradicting rule fails stage 2.
 #
-# THE STOP AFTER-CHECK. The gate of the same name (../../gate/
+# THE COMMITTED CHANGESET. The gate of the same name (../../gate/
 # content-rule-is-grounded) refuses an ungrounded or invented rule before it
-# lands; this judges the settled file, the backstop. A citation grounds only the
-# change it rode on — citations do not accumulate: `event.citations` are those of
-# the cited changes that landed on the path this session, and since this
-# requirement has no `when`, every part of the change the agent made must come
-# from a cited change in the user pool (a cited `sr-file write` restating the
-# file grounds everything before it; a change the agent did not make, such as the
-# user's own edit between turns, is not charged).
+# lands; this judges the rules in the commits since it last passed, the
+# backstop. A rule's base does not move until it passes, so the range
+# accumulates its commits and their citations: the requirement is met by any
+# resolved user citation in the range, and the judge decides whether the cited
+# words ground everything the range changed.
 #
 # match: EITHER rule location — project-wide RULE.md or topic-scoped
 # CONSTRAINT.md, the same two paths rules-lib.sh collects from.
@@ -47,7 +45,7 @@ match: path matches "^\\.sloprail/content-rules/[^/]+/RULE\\.md$" or path matche
 # deletions: left at the default (skip). Deleting a rule removes a constraint
 # rather than inventing one, so it is not this guard's business.
 
-# UNCONDITIONAL: every create or update must cite the user's own words.
+# UNCONDITIONAL: the range must cite the user's own words.
 require:
   - citation: {source_types: [user]}
 checks:

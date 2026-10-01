@@ -26,4 +26,6 @@ unknown result: the gate must refuse it itself, or the write lands unchecked.
   tell the agent to write the file content directly); a gate that only supplements
   a file-guard of the same name may `exit 0` and let the file-guard judge what
   landed at Stop. Read `newContent` only when `resultKnown` is true.
+- `Changeset` (a file-guard): `.changeset.files[].newContent` is a committed
+  blob and always known. There is no flag to consult, so none is required.
 - A delete, or a kind the guard is not about: nothing to read.

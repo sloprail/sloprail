@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -28,7 +27,6 @@ import (
 // The enforcement half mirrors the gate's pure-require pair (032_01's
 // T032_03/T032_04) one nature over: same skill, same loaded-vs-not distinction,
 // against a file-guard instead of a gate.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -43,22 +41,6 @@ var (
 	Bash  = harness.Bash
 )
 
-// commitGuards commits the project's `.sloprail` tree so a guard installed after
-// the baseline is part of it, not the first cycle's diff — the same reason 034's
-// suite commits (the sloprail plugin ships authoring-slop, a gate and a file-guard
-// whose Stop after-check judges a guardrail's own files; an uncommitted one reads
-// as this cycle's write). This guard ships no scripts at all (its whole rule is a
-// `require:`), so there is nothing for that judge to catch here, but committing
-// keeps the recipe identical to the working gate tests and keeps the guard's
-// own file-guard.yaml out of the cycle difference. Requires a git repo (callers
-// GitInit before installing). Scoped to `.sloprail` so it never sweeps in the
-// memories/ files the scenarios write.
-func commitGuards(t *testing.T, proj string) {
-	t.Helper()
-	if out, err := exec.Command("git", "-C", proj, "add", ".sloprail").CombinedOutput(); err != nil {
-		t.Fatalf("commitGuards: git add .sloprail: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "-m", "baseline .sloprail").CombinedOutput(); err != nil {
-		t.Fatalf("commitGuards: git commit: %v\n%s", err, out)
-	}
-}
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

@@ -28,19 +28,20 @@ func TestT044_06_PromptTellsTheJudgeToReadTheRawDoc(t *testing.T) {
 
 	e.Run(proj, "s-044-06", "write a marked mock", Turns("done",
 		Write("w1", "internal/mock/hooks.go", markedMock(otherDocURL+"#precompact", "func Fire() string { return `{\"trigger\":\"auto\"}` }")),
-	))
+	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
 		t.Fatalf("the judge never ran, so nothing about the wiring can be concluded")
 	}
 	for _, want := range []string{
-		otherDocURL + "#precompact",                // the marker's own URL, anchor included
-		"append `.md` to the path",                 // how to get the raw page
-		"curl -sL <url>.md | grep -n -A60",         // fetch piped into a section cut
-		"EXACTLY `curl -sL <url>.md`",              // the one curl form the grant permits
-		"<change path=\"internal/mock/hooks.go\">", // the diff being judged
-		"QUOTE the doc line",                       // a refusal must quote the doc
+		otherDocURL + "#precompact",              // the marker's own URL, anchor included
+		"append `.md` to the path",               // how to get the raw page
+		"curl -sL <url>.md | grep -n -A60",       // fetch piped into a section cut
+		"EXACTLY `curl -sL <url>.md`",            // the one curl form the grant permits
+		"<change>",                               // the diff being judged (every file of the range, one diff)
+		"<file path=\"internal/mock/hooks.go\">", // the file, committed
+		"QUOTE the doc line",                     // a refusal must quote the doc
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the judge prompt lacks %q:\n%s", want, prompt)
@@ -68,7 +69,7 @@ func TestT044_07_PinnedToolsReachTheHarnessIntact(t *testing.T) {
 
 	e.Run(proj, "s-044-07", "write a marked mock", Turns("done",
 		Write("w1", "internal/mock/hooks.go", markedMock(otherDocURL+"#precompact", "func Fire() {}")),
-	))
+	).ThenCommit("write the files"))
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {

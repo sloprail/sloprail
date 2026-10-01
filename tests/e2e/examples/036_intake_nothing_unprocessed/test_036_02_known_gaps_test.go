@@ -24,8 +24,7 @@ func TestT036_04_ExplicitSkipAdmits(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-036-04"
 	// The one user message is at transcript line RootMessageLine (the mock's preamble
@@ -73,8 +72,7 @@ func TestT036_05_SkipOfWrongLineStillRefuses(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-036-05"
 	res := e.Run(proj, sess, "please handle a real task", Turns("done",

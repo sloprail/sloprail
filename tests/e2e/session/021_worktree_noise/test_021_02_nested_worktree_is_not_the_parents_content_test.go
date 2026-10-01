@@ -1,14 +1,14 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // A sub-agent's own worktree is not the parent's changed content.
@@ -45,11 +45,9 @@ import (
 // T021_01 reproduced the defect and was deleted when the fix landed, on its own
 // instructions. T021_02 is the invariant it guarded and is now live.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event the cycle dispatches, so a test can read exactly which paths were put
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset the cycle dispatches, so a test can read exactly which paths were put
 // in front of a rule bound to the ROOT's own work. `match: "**/*.md"` fires on
-// whichever Post kind each change produced. (Re-vehicled from the old GUARDRAIL.md
-// hooks per tests/e2e/REVEHICLE-PATTERN.md; used by T021_03, which drives the real
+// every committed change. ; used by T021_03, which drives the real
 // dispatch. T021_02 above reads gitrepo.Changed directly and is format-neutral.)
 // The ledger (`seen`, no `.md`) is not matched, so the guard cannot re-observe its
 // own bookkeeping.
@@ -58,49 +56,8 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
-type observed struct {
-	Kind string
-	Path string
-}
-
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
-	}
-	return got
-}
-
-func sawPath(got []observed, path string) bool {
-	for _, o := range got {
-		if o.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
 // underWorktree reports the observed paths that lie inside a nested worktree.
-func underWorktree(got []observed) []string {
+func underWorktree(got []changesetkit.Observed) []string {
 	var out []string
 	for _, o := range got {
 		if strings.Contains(o.Path, ".claude/worktrees/") {
@@ -108,19 +65,6 @@ func underWorktree(got []observed) []string {
 		}
 	}
 	return out
-}
-
-// git runs a git command in dir and returns its output, failing the test if it
-// cannot run at all.
-func git(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return string(out)
 }
 
 // repoWithNestedWorktree builds a repository holding a real nested worktree at
@@ -137,19 +81,15 @@ func git(t *testing.T, dir string, args ...string) string {
 func repoWithNestedWorktree(t *testing.T) (dir, baseline string) {
 	t.Helper()
 	dir = t.TempDir()
-	git(t, dir, "init", "--initial-branch=main", ".")
-	git(t, dir, "config", "user.email", "e2e@example.invalid")
-	git(t, dir, "config", "user.name", "E2E")
+	harness.InitRepo(t, dir)
 
 	if err := os.WriteFile(filepath.Join(dir, "tracked.md"), []byte("before\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-m", "the project before the session")
-	baseline = strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	baseline = harness.CommitAllIn(t, dir, "the project before the session")
 
 	// The sub-agent's tree, at the path Claude Code binds it to.
-	git(t, dir, "worktree", "add", filepath.Join(".claude", "worktrees", "agent-d1"))
+	harness.Git(t, dir, "worktree", "add", filepath.Join(".claude", "worktrees", "agent-d1"))
 
 	// The root's own work, so every assertion below has a positive to rest on.
 	if err := os.WriteFile(filepath.Join(dir, "root-own.md"), []byte("the root's own work\n"), 0o644); err != nil {
@@ -159,7 +99,7 @@ func repoWithNestedWorktree(t *testing.T) (dir, baseline string) {
 	// The premise, asserted rather than assumed: git really does consider that
 	// directory a separate checkout. Without it this is a test about an
 	// ordinary untracked directory with a suggestive name.
-	if list := git(t, dir, "worktree", "list"); !strings.Contains(list, filepath.Join(".claude", "worktrees", "agent-d1")) {
+	if list := harness.Git(t, dir, "worktree", "list"); !strings.Contains(list, filepath.Join(".claude", "worktrees", "agent-d1")) {
 		t.Fatalf("git does not report a nested worktree:\n%s", list)
 	}
 	return dir, baseline
@@ -210,7 +150,7 @@ func TestT021_02_ANestedWorktreeIsNotTheParentsChangedContent(t *testing.T) {
 	// this test asserts the absence of must actually be on offer. git names the
 	// nested checkout in the untracked listing — as one path with a trailing
 	// slash — and gitrepo.Changed is what declines to carry it.
-	others := git(t, dir, "ls-files", "-z", "--others", "--exclude-standard", "--full-name")
+	others := harness.Git(t, dir, "ls-files", "-z", "--others", "--exclude-standard", "--full-name")
 	var offered []string
 	for _, p := range strings.Split(others, "\x00") {
 		if strings.Contains(p, ".claude/worktrees/") {
@@ -287,15 +227,15 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
+	e.CommitAll(proj, "the project before the session")
 
 	// The mock does not APPLY a sub-agent's tool calls, so this script's Write
 	// creates nothing. What matters is the dispatch itself, which binds a real
 	// `git worktree add` inside the parent's tree.
 	subScript := filepath.Join(t.TempDir(), "sub.sh")
-	if err := Turns("delegated done", Write("s1", "child.md", "written in the child tree\n")).
+	if err := Turns("delegated done", harness.CommitFile("s1", "child.md", "written in the child tree\n", "the child's work")).
 		Script(subScript); err != nil {
 		t.Fatalf("write sub-agent scenario: %v", err)
 	}
@@ -304,7 +244,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e.Run(proj, "s-021-03", "delegate into a worktree", Turns("done",
 		Write("w1", "root-own.md", "the root's own work\n"),
 		Dispatch("d1", "do the delegated thing", subScript, "worktree"),
-	))
+	).ThenCommit("the root's work"))
 
 	// The premise: a worktree really was bound inside the parent's tree, and git
 	// reports it as untracked content of the parent. Without both, the silence
@@ -314,15 +254,18 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 		t.Fatalf("no worktree was bound under .claude/worktrees (%v) — isolation=%q did not "+
 			"create a nested checkout, so this proves nothing", err, "worktree")
 	}
-	if others := git(t, proj, "ls-files", "-o", "--exclude-standard", "--full-name"); !strings.Contains(others, ".claude/worktrees/") {
-		t.Fatalf("git does not report the nested checkout as the parent's untracked content:\n%s\n"+
-			"the pollution this test is about is not present, so its conclusion would be vacuous", others)
+	// The agent's own `git add -A` commits the nested checkout as an embedded
+	// repository (a mode-160000 entry), so it is in the parent's committed range
+	// rather than merely untracked: the entry the rule must not be shown.
+	if staged := harness.Git(t, proj, "ls-files", "-s", "--full-name", "--", ".claude/worktrees"); !strings.Contains(staged, "160000") {
+		t.Fatalf("the parent's history does not hold the nested checkout as an embedded repository:\n%s\n"+
+			"the pollution this test is about is not present, so its conclusion would be vacuous", staged)
 	}
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 
 	// The control: the root's own work reached the rule.
-	if !sawPath(got, "root-own.md") {
+	if !changesetkit.Saw(got, "root-own.md") {
 		t.Fatalf("the root's own file never reached the rule: %v — this cycle dispatched nothing "+
 			"recognisable, so what it did or did not include proves nothing", got)
 	}

@@ -37,7 +37,7 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	sess := "s-046-08"
 	e.Run(proj, sess, "add invariant-upholding code", Turns("done",
 		Write("w1", "src/charge.go", code),
-	))
+	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -71,7 +71,7 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	}
 	// The pinned spec line, read by the prepare at the marker's pin, so the judge
 	// rules on it without having to read the spec itself.
-	if !strings.Contains(prompt, "<pinned fqn=\""+fqn+"\"") ||
+	if !strings.Contains(prompt, "<pinned file=\"src/charge.go\" fqn=\""+fqn+"\"") ||
 		!strings.Contains(prompt, "an order total must never be negative\n</pinned>") {
 		t.Fatalf("the pinned spec text did not reach the judge prompt — the prepare's output is not wired:\n%s", prompt)
 	}
@@ -89,7 +89,7 @@ func TestT046_09_DifferentContentYieldsDifferentPrompt(t *testing.T) {
 		e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 		e.Run(proj, "s-046-09-"+tag, "add code", Turns("done",
 			Write("w1", "src/charge.go", invariantCode(fqn, body)),
-		))
+		).ThenCommit("write the files"))
 		p := e.JudgePrompt(proj, "judge-prompt.txt")
 		if p == "" {
 			t.Fatalf("[%s] the judge never ran — no prompt captured", tag)

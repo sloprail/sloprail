@@ -1,6 +1,10 @@
 package e2e
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
 
 // T005_01: a session in a repository records where it begins.
 //
@@ -65,7 +69,7 @@ func TestT005_03_CommittingDoesNotMoveThePoint(t *testing.T) {
 	const sess = "s-005-03"
 	e.Run(proj, sess, "commit something", Turns("done",
 		Write("w1", "notes.md", "hello"),
-		Bash("b1", "git add -A && git commit -m 'agent commit'"),
+		harness.Commit("b1", "agent commit"),
 	))
 
 	if now := e.Git(proj, "rev-parse", "HEAD"); now == start {
@@ -129,7 +133,8 @@ func TestT005_06_NewBranchOffOwnWorkDoesNotMoveThePoint(t *testing.T) {
 	const sess = "s-005-06"
 	e.Run(proj, sess, "commit then branch", Turns("done",
 		Write("w1", "notes.md", "hello"),
-		Bash("b1", "git add -A && git commit -m 'agent commit' && git checkout -b feature"),
+		harness.Commit("b1", "agent commit"),
+		Bash("b2", "git checkout -b feature"),
 	))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
@@ -157,7 +162,8 @@ func TestT005_07_RenamingTheBranchDoesNotMoveThePoint(t *testing.T) {
 	const sess = "s-005-07"
 	e.Run(proj, sess, "rename the branch", Turns("done",
 		Write("w1", "notes.md", "hello"),
-		Bash("b1", "git add -A && git commit -m 'agent commit' && git branch -m main trunk"),
+		harness.Commit("b1", "agent commit"),
+		Bash("b2", "git branch -m main trunk"),
 	))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "trunk" {

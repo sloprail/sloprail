@@ -21,7 +21,7 @@ func TestT045_11_CommandDerivedEditRefusedAsUnderivable(t *testing.T) {
 
 	res := e.Run(proj, "s-045-11", authPrompt, Turns("done",
 		Bash("b1", "sed -i.bak s/migrate/MIGRATE/ "+askPath),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("a command-derived (resultKnown:false) edit to ASK.md was not refused:\n%s", res.Output)

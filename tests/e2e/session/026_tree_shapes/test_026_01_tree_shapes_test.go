@@ -1,14 +1,13 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // The file SHAPES a cycle has to classify, driven through a real session.
@@ -46,9 +45,7 @@ import (
 // over on an odd tree reports nothing at all, and "the strange path was not
 // reported" is satisfied perfectly by that.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
-// tests/e2e/REVEHICLE-PATTERN.md).
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset it is handed .
 //
 // `match: path != ""` — an expression that admits every real path, the file-guard
 // "match everything" this directory needs: it drives non-`.md` paths a `**/*.md`
@@ -56,8 +53,7 @@ import (
 // asserts what does or does not reach the rule for them. It is an expression rather
 // than the `**` glob because `**` compiles to the regexp `.*`, whose `.` does not
 // match a newline — the same blind spot 023 documents — and an empty match is
-// rejected at load. A single file-guard fires on whichever Post kind each change
-// produced, so the create/update/delete classification the kind assertions read
+// rejected at load. A single file-guard fires on every committed change, so the create/update/delete classification the kind assertions read
 // comes through the new dispatch unchanged.
 //
 // Because the match is this wide it WOULD also select the guard's own ledger
@@ -68,111 +64,56 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-payload="$(cat)"
-path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
-case "$path" in
-  .sloprail/*) exit 0 ;;
-esac
-printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
-type observed struct {
-	Kind string
-	Path string
-}
-
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
-	}
-	return got
-}
-
-func kindsFor(got []observed, path string) []string {
-	var out []string
-	for _, o := range got {
-		if o.Path == path {
-			out = append(out, o.Kind)
-		}
-	}
-	return out
-}
-
-func sawPath(got []observed, path string) bool { return len(kindsFor(got, path)) > 0 }
-
 // countPath is how many times a path was put in front of the rule.
-func countPath(got []observed, path string) int { return len(kindsFor(got, path)) }
+func countPath(got []changesetkit.Observed, path string) int {
+	return len(changesetkit.Statuses(got, path))
+}
 
 // project is a repository with the recording guardrail committed, so the rule's
-// own folder is part of the baseline rather than of every difference.
-func project(t *testing.T) (*harness.Env, string) {
+// own folder is part of the baseline rather than of every difference. The third
+// result is the ledger the rule records into.
+func project(t *testing.T) (*harness.Env, string, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
+	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
-	return e, proj
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
+	e.CommitAll(proj, "the project before the session")
+	return e, proj, ledger
 }
 
-// runOne drives a single cycle and returns everything the rule was handed.
-func runOne(t *testing.T, e *harness.Env, proj, sess string, s harness.Scenario) []observed {
+// runOne drives a single cycle, in which the agent commits its work, and returns
+// everything the rule was handed.
+func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.Scenario) []changesetkit.Observed {
 	t.Helper()
-	e.Run(proj, sess, "cycle", s)
-	return observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
+	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
 }
 
-// cycles drives a sequence of cycles under one session id and returns, for each,
-// only the events THAT cycle added to the ledger.
+// cycles drives a sequence of cycles under one session id, the agent committing
+// at the end of each, and returns, for each, only the files THAT cycle added to
+// the ledger.
 //
 // The per-cycle slicing is the whole helper. Reading totals is how a multi-cycle
 // test silently stops testing anything: eight sightings after cycle one and
 // eight after cycle two is indistinguishable from a second cycle that reported
 // nothing, and a "reported again" assertion written against a total passes on
 // input where nothing was reported again at all.
-func cycles(t *testing.T, e *harness.Env, proj, sess string, scenarios ...harness.Scenario) [][]observed {
+func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios ...harness.Scenario) [][]changesetkit.Observed {
 	t.Helper()
-	var out [][]observed
+	var out [][]changesetkit.Observed
 	seen := 0
 	for i, s := range scenarios {
-		e.Run(proj, sess, "cycle", s)
-		lines := e.FileGuardLedgerLines(proj, "watcher", "seen")
+		e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
+		lines := harness.ReadLedgerLines(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}
-		out = append(out, observedFiles(t, lines[seen:]))
+		out = append(out, changesetkit.Files(t, lines[seen:]))
 		seen = len(lines)
 	}
 	return out
-}
-
-// git runs a git command in dir, failing the test if it cannot run at all.
-func git(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return string(out)
 }
 
 // T026_01: a file whose only change is its MODE is reported as an update.
@@ -190,22 +131,27 @@ func git(t *testing.T, dir string, args ...string) string {
 // The control is a second file whose content really did change, so the positive
 // and the mode case are read from the same live ledger.
 func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
-	e, proj := project(t)
-
+	// The files are committed BEFORE the rule is installed: a rule's range starts
+	// at the commit that added it, so they are at the baseline.
+	e := New(t)
+	proj := e.Project()
+	ledger := filepath.Join(t.TempDir(), "seen")
+	e.GitInit(proj)
 	e.WriteFile(proj, "script.sh", "#!/bin/sh\necho hello\n")
 	e.WriteFile(proj, "other.md", "original\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file the session will chmod")
+	e.CommitAll(proj, "a file the session will chmod")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
+	e.CommitAll(proj, "the project before the session")
 
 	// The premise: git is actually tracking the mode. On a filesystem or a
 	// configuration where core.fileMode is off, `chmod` is invisible to git and
 	// this test would be asserting about a change that does not exist.
-	if mode := strings.Fields(git(t, proj, "ls-files", "-s", "script.sh"))[0]; mode != "100644" {
+	if mode := strings.Fields(harness.Git(t, proj, "ls-files", "-s", "script.sh"))[0]; mode != "100644" {
 		t.Fatalf("the file does not start non-executable in the index (%s), so the chmod "+
 			"below is not the change this test is about", mode)
 	}
 
-	got := runOne(t, e, proj, "s-026-01", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-026-01", Turns("done",
 		Bash("b1", "chmod +x script.sh"),
 		Write("w1", "other.md", "genuinely edited\n"),
 	))
@@ -213,24 +159,24 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	// The premise, after the fact: git really sees a difference. If core.fileMode
 	// is off in this environment the diff is empty and the silence below would be
 	// correct rather than a defect.
-	if status := e.Git(proj, "status", "--porcelain", "--", "script.sh"); status == "" {
+	if changed := e.Git(proj, "diff", "--name-only", "HEAD~1", "HEAD", "--", "script.sh"); changed == "" {
 		t.Skipf("git records no change for the chmod (core.fileMode is off on this " +
 			"filesystem), so there is no mode difference for the engine to report")
 	}
 
 	// The control: the ledger is live.
-	if !sawPath(got, "other.md") {
+	if !changesetkit.Saw(got, "other.md") {
 		t.Fatalf("the genuinely edited file is missing from %v — nothing was dispatched, so "+
 			"anything concluded about the mode change would be vacuous", got)
 	}
 
-	k := kindsFor(got, "script.sh")
+	k := changesetkit.Statuses(got, "script.sh")
 	if len(k) == 0 {
 		t.Fatalf("a file whose mode changed was not reported at all: %v — the difference was "+
 			"derived from content rather than from git's answer, so a change git records and "+
 			"a person can see went unjudged", got)
 	}
-	if k[0] != "PostFileUpdate" {
+	if k[0] != "M" {
 		t.Fatalf("a mode change on a file present at the baseline arrived as %v; want "+
 			"PostFileUpdate — the path was at the point being measured from and is still "+
 			"there, so it is neither a creation nor a deletion", k)
@@ -248,9 +194,9 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 // carry a real event rather than being folded into silence: a rule that forbids
 // empty files is exactly the rule that needs this one.
 func TestT026_02_AnEmptyFileIsReported(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
-	got := runOne(t, e, proj, "s-026-02", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-026-02", Turns("done",
 		Bash("b1", ": > empty.md"),
 		Write("w1", "nonempty.md", "has content\n"),
 	))
@@ -265,18 +211,18 @@ func TestT026_02_AnEmptyFileIsReported(t *testing.T) {
 	}
 
 	// The control.
-	if !sawPath(got, "nonempty.md") {
+	if !changesetkit.Saw(got, "nonempty.md") {
 		t.Fatalf("the ordinary file is missing from %v — nothing was dispatched", got)
 	}
 
-	k := kindsFor(got, "empty.md")
+	k := changesetkit.Statuses(got, "empty.md")
 	if len(k) == 0 {
 		t.Fatalf("an empty file the cycle created was not reported: %v — zero bytes is a file "+
 			"the agent wrote, and a rule forbidding empty files is precisely the one that "+
 			"needs to see it", got)
 	}
-	if k[0] != "PostFileCreate" {
-		t.Fatalf("an empty file absent from the baseline arrived as %v; want PostFileCreate", k)
+	if k[0] != "A" {
+		t.Fatalf("an empty file absent from the baseline arrived as %v; want A", k)
 	}
 }
 
@@ -293,11 +239,11 @@ func TestT026_02_AnEmptyFileIsReported(t *testing.T) {
 // read the file; an engine or a fixture that rewrote it to add the newline would
 // change the agent's work while judging it.
 func TestT026_03_AFileWithNoTrailingNewlineIsReportedAndUnaltered(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
 	const body = "no newline at the end"
 
-	got := runOne(t, e, proj, "s-026-03", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-026-03", Turns("done",
 		Bash("b1", "printf '%s' 'no newline at the end' > terse.md"),
 		Write("w1", "ordinary.md", "ends properly\n"),
 	))
@@ -312,11 +258,11 @@ func TestT026_03_AFileWithNoTrailingNewlineIsReportedAndUnaltered(t *testing.T) 
 	}
 
 	// The control.
-	if !sawPath(got, "ordinary.md") {
+	if !changesetkit.Saw(got, "ordinary.md") {
 		t.Fatalf("the ordinary file is missing from %v — nothing was dispatched", got)
 	}
-	if k := kindsFor(got, "terse.md"); len(k) == 0 || k[0] != "PostFileCreate" {
-		t.Fatalf("a file with no trailing newline was reported as %v; want one PostFileCreate: %v\n"+
+	if k := changesetkit.Statuses(got, "terse.md"); len(k) == 0 || k[0] != "A" {
+		t.Fatalf("a file with no trailing newline was reported as %v; want one A: %v\n"+
 			"the marker git prints for this in a textual diff names no path, and a reader that "+
 			"mistook it for one would report a change to a file that does not exist", k, got)
 	}
@@ -344,46 +290,32 @@ func TestT026_03_AFileWithNoTrailingNewlineIsReportedAndUnaltered(t *testing.T) 
 // event carries a path rather than the bytes: the fixture greps the file on disk
 // and records what it found, which is exactly what a real content rule does.
 func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
+	e, proj, ledger := project(t)
+	content := filepath.Join(t.TempDir(), "content")
 
-	// Reads the file the event names and records the verdict word it found. The
-	// project root is derived from $SR_GUARDRAIL_DIR — the new-format CheckPayload
-	// has no `guardrailDir` field the old payload carried, and SR_GUARDRAIL_DIR is
-	// its replacement (`.sloprail/file-guard/watcher`, so trimming
-	// `/.sloprail/file-guard/*` yields the project root). The `.sloprail/*` skip is
-	// load-bearing under the wide `path != ""` match, keeping the guard off its own
-	// ledgers.
-	const readsContent = `#!/bin/sh
-payload="$(cat)"
-path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
-case "$path" in
-  .sloprail/*) exit 0 ;;
-esac
-printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
-root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
-if [ -n "$path" ] && [ -f "$root/$path" ]; then
-  printf '%s=%s\n' "$path" "$(cat "$root/$path")" >> "$SR_GUARDRAIL_DIR/content"
-fi
-exit 0
-`
+	// Reads the file the changeset names and records what it found there. The
+	// project root is derived from $SR_GUARDRAIL_DIR (`.sloprail/file-guard/watcher`,
+	// so trimming `/.sloprail/file-guard/*` yields the project root). Both ledgers
+	// live outside the repository.
+	readsContent := "#!/bin/sh\npayload=\"$(cat)\"\nprintf '%s\\n' \"$payload\" >> '" + ledger + "'\n" +
+		"root=\"${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}\"\n" +
+		"case \"$payload\" in *drafted.md*) [ -f \"$root/drafted.md\" ] && printf 'drafted.md=%s\\n' \"$(cat \"$root/drafted.md\")\" >> '" + content + "' ;; esac\n" +
+		"exit 0\n"
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": readsContent})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the rule reads content")
 
-	got := runOne(t, e, proj, "s-026-04", Turns("done",
+	got := runOne(t, e, proj, ledger, "s-026-04", Turns("done",
 		Write("w1", "drafted.md", "FIRSTDRAFT"),
 		Write("w2", "drafted.md", "FINALVERSION"),
 	))
 
-	k := kindsFor(got, "drafted.md")
+	k := changesetkit.Statuses(got, "drafted.md")
 	if len(k) == 0 {
 		t.Fatalf("a file created and then edited in one cycle was not reported at all: %v", got)
 	}
-	if len(k) != 1 || k[0] != "PostFileCreate" {
+	if len(k) != 1 || k[0] != "A" {
 		t.Fatalf("a file created and edited within one cycle arrived as %v; want exactly one "+
-			"PostFileCreate — against the session's baseline the path is simply absent, so the "+
+			"A — against the session's baseline the path is simply absent, so the "+
 			"intermediate write is not a second difference; reporting two events means the "+
 			"engine is accumulating what it saw rather than comparing against the point", k)
 	}
@@ -398,7 +330,7 @@ exit 0
 	// word therefore matches the scenario file and fails against a correct
 	// engine, which is what this assertion did before it was scoped.
 	var line string
-	for _, l := range e.FileGuardLedgerLines(proj, "watcher", "content") {
+	for _, l := range harness.ReadLedgerLines(t, content) {
 		if strings.HasPrefix(l, "drafted.md=") {
 			line = strings.TrimPrefix(l, "drafted.md=")
 		}
@@ -406,7 +338,7 @@ exit 0
 	if line == "" {
 		t.Fatalf("the rule never read the file it was told about, so which bytes it would have "+
 			"been judging cannot be observed and the assertion below would be vacuous: %v",
-			e.FileGuardLedgerLines(proj, "watcher", "content"))
+			harness.ReadLedgerLines(t, content))
 	}
 	if line != "FINALVERSION" {
 		t.Fatalf("the rule was shown %q, want %q — only what the tree holds when the "+
@@ -448,54 +380,43 @@ exit 0
 // Both premises are required before the silence is read: the root's own change
 // must be present, and git must still be naming the clone in its raw listing.
 func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
 	// A repository of its own, unrelated to this one, sitting inside the tree.
 	other := t.TempDir()
-	git(t, other, "init", "--initial-branch=main", ".")
-	git(t, other, "config", "user.email", "e2e@example.invalid")
-	git(t, other, "config", "user.name", "E2E")
+	harness.InitRepo(t, other)
 	if err := os.WriteFile(filepath.Join(other, "theirs.md"), []byte("not ours\n"), 0o644); err != nil {
 		t.Fatalf("seed the other repository: %v", err)
 	}
-	git(t, other, "add", "-A")
-	git(t, other, "commit", "-m", "a repository that is not this one")
+	harness.CommitAllIn(t, other, "a repository that is not this one")
 
-	got := runOne(t, e, proj, "s-026-05", Turns("done",
+	// The agent commits its own file only: the clone stays an untracked nested
+	// repository, which commit-required must not count as guarded work.
+	sess := "s-026-05"
+	e.Run(proj, sess, "cycle", Turns("done",
 		Bash("b1", "git clone -q "+shellArg(other)+" vendor/clone"),
 		Write("w1", "root-own.md", "the root's own work\n"),
+		harness.CommitPaths("c1", "the agent's work", "root-own.md"),
 	))
-
-	// The premise: git really does treat it as a separate checkout, and names it
-	// with the trailing slash the exclusion keys on.
-	others := git(t, proj, "ls-files", "-z", "--others", "--exclude-standard", "--full-name")
-	var offered []string
-	for _, p := range strings.Split(others, "\x00") {
-		if strings.Contains(p, "vendor/clone") {
-			offered = append(offered, p)
-		}
+	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")); len(errs) != 0 {
+		t.Fatalf("an untracked nested clone was treated as uncommitted guarded work: %q", errs)
 	}
-	if len(offered) == 0 {
-		t.Fatalf("git does not name the nested clone in its untracked listing:\n%q\n"+
-			"there is no noise here for the engine to be excluding, so this silence proves "+
-			"nothing", others)
-	}
-	for _, p := range offered {
-		if !strings.HasSuffix(p, "/") {
-			t.Fatalf("git named the nested clone as %q, without the trailing slash the "+
-				"exclusion keys on — git's behaviour has changed and the rule no longer rests "+
-				"on what it was measured against", p)
-		}
+	got := changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
+	// The premise: the clone really is a separate checkout sitting in the tree.
+	if _, err := os.Stat(filepath.Join(proj, "vendor", "clone", ".git")); err != nil {
+		t.Fatalf("the nested clone is not a repository of its own, so there is no foreign "+
+			"tree here for the engine to keep out: %v", err)
 	}
 
 	// The control: the root's own work reached the rule.
-	if !sawPath(got, "root-own.md") {
+	if !changesetkit.Saw(got, "root-own.md") {
 		t.Fatalf("the root's own file never reached the rule: %v — nothing was dispatched, so "+
 			"the silence below proves nothing", got)
 	}
 
+	// The clone was never committed (no gitlink), and no path inside it reached the rule.
 	for _, o := range got {
-		if strings.Contains(o.Path, "vendor/clone") {
+		if strings.HasPrefix(o.Path, "vendor/clone/") {
 			t.Fatalf("a path inside an unrelated nested repository reached a rule about this "+
 				"project: %q (all: %v)\nanother checkout's tree is not this session's work, "+
 				"whoever put it there", o.Path, got)
@@ -517,15 +438,11 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 // The shape: cycle one writes and commits; cycle two touches something else. The
 // committed file must be judged once and then fall silent.
 func TestT026_06_CommittedWorkIsJudgedOnceAndStaysSettled(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
-	got := cycles(t, e, proj, "s-026-06",
+	got := cycles(t, e, proj, ledger, "s-026-06",
 		Turns("done",
 			Write("w1", "committed.md", "written then committed\n"),
-			// This path only. Committing the harness's own .scenario.sh makes the
-			// next cycle's rewrite of it a tracked modification, which is noise
-			// this test would then have to explain.
-			Bash("b1", "git add committed.md && git commit -m 'agent commit'"),
 		),
 		Turns("done", Write("w2", "elsewhere.md", "cycle two\n")),
 	)
@@ -543,7 +460,7 @@ func TestT026_06_CommittedWorkIsJudgedOnceAndStaysSettled(t *testing.T) {
 	}
 
 	// The control: cycle two dispatched.
-	if !sawPath(second, "elsewhere.md") {
+	if !changesetkit.Saw(second, "elsewhere.md") {
 		t.Fatalf("cycle two reported nothing at all: %v — the silence below proves nothing", second)
 	}
 	if n := countPath(second, "committed.md"); n > 0 {

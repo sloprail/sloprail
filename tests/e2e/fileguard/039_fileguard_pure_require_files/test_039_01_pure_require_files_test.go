@@ -50,7 +50,7 @@ func TestT039_02_SkillLoadedButFileUnreadStillRefuses(t *testing.T) {
 	e.GitInit(proj)
 	writeProjectSkill(t, proj, "document-topic", "detail.md")
 	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 
 	res := e.Run(proj, "s-039-02", "load the skill but not its detail page, then write a topic", Turns("done",
 		Skill("s1", "document-topic"),
@@ -76,7 +76,7 @@ func TestT039_03_NeitherSkillNorFileRefusesNamingTheSkillFirst(t *testing.T) {
 	e.GitInit(proj)
 	writeProjectSkill(t, proj, "document-topic", "detail.md")
 	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 
 	res := e.Run(proj, "s-039-03", "write a topic with neither skill nor detail read", Turns("done",
 		Write("w1", "memories/topics/idea.md", "# an idea"),
@@ -104,7 +104,7 @@ func TestT039_04_SkillLoadedAndFileReadPermitsWrite(t *testing.T) {
 	e.GitInit(proj)
 	subpagePath := writeProjectSkill(t, proj, "document-topic", "detail.md")
 	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 
 	res := e.Run(proj, "s-039-04", "load the skill, read its detail page, then write a topic", Turns("done",
 		Skill("s1", "document-topic"),
@@ -129,7 +129,7 @@ func TestT039_05_CatOnTheSubpagePermitsWrite(t *testing.T) {
 	e.GitInit(proj)
 	subpagePath := writeProjectSkill(t, proj, "document-topic", "detail.md")
 	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 
 	res := e.Run(proj, "s-039-05", "load the skill, cat its detail page, then write a topic", Turns("done",
 		Skill("s1", "document-topic"),

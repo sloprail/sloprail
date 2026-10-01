@@ -8,8 +8,9 @@ import (
 )
 
 // guardYAML is a file-guard over docs/ with one script check, with the given
-// `deletions:` value ("" leaves the key out — the default). A file-guard acts at
-// Stop only, so it is handed Post events.
+// `deletions:` value ("" leaves the key out — the default). A file-guard judges
+// committed changes at Stop, so it is handed a Changeset, and `deletions:` is a
+// filter on the status of the files in it.
 func guardYAML(deletions string) string {
 	y := "match: \"docs/**\"\n"
 	if deletions != "" {
@@ -29,8 +30,8 @@ func guardYAML(deletions string) string {
 //	only            PreFileDelete
 //
 // So ONE rule (a gate and a file-guard sharing a name) is observed on both paths:
-// the Pre events at pre-tool and the Post events at Stop. A filter applied on only
-// one of them shows up as a Pre line without its Post line, or the reverse.
+// the Pre events at pre-tool and the changeset's files at Stop. A filter applied on
+// only one of them shows up as a Pre line without its Changeset line, or the reverse.
 func gateYAML(deletions string) string {
 	const write = "  - event: PreFileWrite\n    match: event.path startsWith \"docs/\"\n"
 	const del = "  - event: PreFileDelete\n    match: event.path startsWith \"docs/\"\n"
@@ -46,16 +47,29 @@ func gateYAML(deletions string) string {
 	return y + "checks:\n  - script: ./check.sh\n"
 }
 
-// ledgerCheck appends `<kind> <path>` for every event it is handed, and passes.
-// The ledger is not under docs/ and has no suffix the plugin's own guards read,
-// so no guard is ever handed its own bookkeeping.
-const ledgerCheck = `#!/bin/sh
+// ledgerCheck appends `<kind> <path>` for every event a gate is handed, and
+// `Changeset:<status> <path>` for every file of a changeset a file-guard is handed,
+// and passes. The ledger is a harness ledger, outside the project: no guard is ever
+// handed its own bookkeeping, and it cannot change the rule's hash.
+func ledgerCheck(led *harness.Ledger) string {
+	return `#!/bin/sh
 payload="$(cat)"
 kind="$(printf '%s' "$payload" | jq -r '.event.kind')"
-path="$(printf '%s' "$payload" | jq -r '.event.path')"
-echo "$kind $path" >> "$SR_GUARDRAIL_DIR/ledger"
+if [ "$kind" = "Changeset" ]; then
+  printf '%s' "$payload" | jq -r '.changeset.files[] | "Changeset:" + .status + " " + .path' >> ` + led.Sh() + `
+else
+  path="$(printf '%s' "$payload" | jq -r '.event.path')"
+  echo "$kind $path" >> ` + led.Sh() + `
+fi
 exit 0
 `
+}
+
+// A check is the script a rule runs, given the ledger it may record into; static is a
+// check that records nothing.
+type check func(led *harness.Ledger) string
+
+func static(script string) check { return func(*harness.Ledger) string { return script } }
 
 // refuseDeletesCheck refuses a delete and passes everything else — a guard that
 // exists to stop files going away. Written the naive way, with no knowledge of
@@ -63,52 +77,70 @@ exit 0
 const refuseDeletesCheck = `#!/bin/sh
 payload="$(cat)"
 kind="$(printf '%s' "$payload" | jq -r '.event.kind')"
+deleted="no"
 case "$kind" in
-  *FileDelete)
-    echo '{"reason":"DELETE-REFUSED: files under docs/ are not deleted"}'
-    exit 1 ;;
+  *FileDelete) deleted="yes" ;;
+  Changeset)
+    if printf '%s' "$payload" | jq -e 'any(.changeset.files[]; .status == "D")' >/dev/null; then deleted="yes"; fi ;;
 esac
+if [ "$deleted" = "yes" ]; then
+  echo '{"reason":"DELETE-REFUSED: files under docs/ are not deleted"}'
+  exit 1
+fi
 exit 0
 `
 
 // project is a repository with docs/pinned.md and docs/notes.md COMMITTED before
-// the session — a delete produces a PostFileDelete only for a file the session's
-// baseline holds — and with the given rules (name → `deletions:` value) installed
-// as a gate AND a file-guard of that name, and committed, so their own files are
-// part of the baseline rather than the diff.
-func project(t *testing.T, check string, rules map[string]string) (*harness.Env, string) {
+// the session — a delete is in a changeset only for a file the range's base holds —
+// and with the given rules (name → `deletions:` value) installed
+// as a gate AND a file-guard of that name, committed after the docs. It returns the
+// ledger of each rule: the gate and the file-guard of one name record into the same one.
+func project(t *testing.T, chk check, rules map[string]string) (*harness.Env, string, map[string]*harness.Ledger) {
+	t.Helper()
+	return projectWith(t, chk, rules, true)
+}
+
+// projectWith is project, with the gates left out when gates is false: rules that are
+// file-guards only, so nothing is refused before the file lands.
+func projectWith(t *testing.T, chk check, rules map[string]string, gates bool) (*harness.Env, string, map[string]*harness.Ledger) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/pinned.md", "pinned\n")
 	e.WriteFile(proj, "docs/notes.md", "notes v1\n")
+	e.CommitAll(proj, "the project before the rules")
+	// The rules go in their own commit: a range starts at the parent of the commit
+	// that last touched the rule's folder, so the docs above are the base (M, not A)
+	// and the rules' own files land in `others`.
+	leds := map[string]*harness.Ledger{}
 	for name, deletions := range rules {
-		e.Gate(proj, name, gateYAML(deletions), map[string]string{"check.sh": check})
-		e.FileGuard(proj, name, guardYAML(deletions), map[string]string{"check.sh": check})
+		leds[name] = e.NewLedger(name)
+		if gates {
+			e.Gate(proj, name, gateYAML(deletions), map[string]string{"check.sh": chk(leds[name])})
+		}
+		e.FileGuard(proj, name, guardYAML(deletions), map[string]string{"check.sh": chk(leds[name])})
 	}
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
-	return e, proj
+	e.CommitAll(proj, "the rules, before the session")
+	return e, proj, leds
 }
 
 // editCreateDelete is the agent's work in the ledger tests: edit a tracked file,
-// create a new one, delete a tracked one — one of each file change.
+// create a new one, delete a tracked one — one of each file change — and commit it.
 func editCreateDelete() harness.Scenario {
 	return Turns("done",
 		Write("w1", "docs/notes.md", "notes v2\n"),
 		Write("w2", "docs/new.md", "new\n"),
 		Bash("b1", "rm docs/pinned.md"),
-	)
+	).ThenCommit("edit, create and delete")
 }
 
 // seen reads a guard's ledger as the set of "<kind> <file>" it was handed, the
 // path reduced to its docs/-relative form so the assertion does not depend on
 // how a Pre event spells it.
-func seen(e *harness.Env, proj, guard string) map[string]bool {
+func seen(led *harness.Ledger) map[string]bool {
 	out := map[string]bool{}
-	lines := append(e.GateLedgerLines(proj, guard, "ledger"), e.FileGuardLedgerLines(proj, guard, "ledger")...)
-	for _, line := range lines {
+	for _, line := range led.Lines() {
 		kind, path, _ := strings.Cut(line, " ")
 		if i := strings.Index(path, "docs/"); i >= 0 {
 			path = path[i:]
@@ -120,11 +152,11 @@ func seen(e *harness.Env, proj, guard string) map[string]bool {
 
 var (
 	writeEvents = []string{
-		"PreFileUpdate docs/notes.md", "PostFileUpdate docs/notes.md",
-		"PreFileCreate docs/new.md", "PostFileCreate docs/new.md",
+		"PreFileUpdate docs/notes.md", "Changeset:M docs/notes.md",
+		"PreFileCreate docs/new.md", "Changeset:A docs/new.md",
 	}
 	deleteEvents = []string{
-		"PreFileDelete docs/pinned.md", "PostFileDelete docs/pinned.md",
+		"PreFileDelete docs/pinned.md", "Changeset:D docs/pinned.md",
 	}
 )
 
@@ -156,10 +188,8 @@ func keys(m map[string]bool) []string {
 
 // T038_01: DEFAULT (no key) — the guard runs on the edit and the create, at both
 // moments, and is NOT run on the delete at either. The delete goes through.
-//
-// On the old engine the guard was handed PreFileDelete and PostFileDelete too.
 func TestT038_01_DefaultSkipsDeletes(t *testing.T) {
-	e, proj := project(t, ledgerCheck, map[string]string{"watch": ""})
+	e, proj, leds := project(t, ledgerCheck, map[string]string{"watch": ""})
 
 	res := e.Run(proj, "s-038-01", "edit, create, delete", editCreateDelete())
 	if res.Refused() {
@@ -169,7 +199,7 @@ func TestT038_01_DefaultSkipsDeletes(t *testing.T) {
 		t.Fatalf("the rm never ran, so there is no delete to observe:\n%s", res.Output)
 	}
 
-	got := seen(e, proj, "watch")
+	got := seen(leds["watch"])
 	requireSeen(t, got, "watch", writeEvents...) // the positive control: the guard is live
 	requireNotSeen(t, got, "watch", deleteEvents...)
 }
@@ -179,7 +209,7 @@ func TestT038_01_DefaultSkipsDeletes(t *testing.T) {
 // watching the same files in the same session, is the control: it is handed the
 // writes and not the delete, so the difference is the key and nothing else.
 func TestT038_02_IncludeSeesDeletesAndWrites(t *testing.T) {
-	e, proj := project(t, ledgerCheck, map[string]string{
+	e, proj, leds := project(t, ledgerCheck, map[string]string{
 		"watch-include": "include",
 		"watch-default": "",
 	})
@@ -189,28 +219,26 @@ func TestT038_02_IncludeSeesDeletesAndWrites(t *testing.T) {
 		t.Fatalf("a passing guard refused something:\n%s", res.Output)
 	}
 
-	inc := seen(e, proj, "watch-include")
+	inc := seen(leds["watch-include"])
 	requireSeen(t, inc, "watch-include", writeEvents...)
 	requireSeen(t, inc, "watch-include", deleteEvents...)
 
-	def := seen(e, proj, "watch-default")
+	def := seen(leds["watch-default"])
 	requireSeen(t, def, "watch-default", writeEvents...)
 	requireNotSeen(t, def, "watch-default", deleteEvents...)
 }
 
 // T038_03: `deletions: only` — the guard runs on the delete at both moments and
 // on nothing else: not the edit, not the create.
-//
-// On the old engine it was handed all six events.
 func TestT038_03_OnlySeesOnlyDeletes(t *testing.T) {
-	e, proj := project(t, ledgerCheck, map[string]string{"watch": "only"})
+	e, proj, leds := project(t, ledgerCheck, map[string]string{"watch": "only"})
 
 	res := e.Run(proj, "s-038-03", "edit, create, delete", editCreateDelete())
 	if res.Refused() {
 		t.Fatalf("a passing guard refused something:\n%s", res.Output)
 	}
 
-	got := seen(e, proj, "watch")
+	got := seen(leds["watch"])
 	requireSeen(t, got, "watch", deleteEvents...)
 	requireNotSeen(t, got, "watch", writeEvents...)
 	if len(got) != len(deleteEvents) {
@@ -224,7 +252,7 @@ func TestT038_03_OnlySeesOnlyDeletes(t *testing.T) {
 func TestT038_04_GateIncludeOrOnlyBlocksTheDelete(t *testing.T) {
 	for _, mode := range []string{"include", "only"} {
 		t.Run(mode, func(t *testing.T) {
-			e, proj := project(t, refuseDeletesCheck, map[string]string{"keep-docs": mode})
+			e, proj, _ := project(t, static(refuseDeletesCheck), map[string]string{"keep-docs": mode})
 
 			res := e.Run(proj, "s-038-04-"+mode, "delete the pinned doc", Turns("done",
 				Bash("b1", "rm docs/pinned.md"),
@@ -244,22 +272,40 @@ func TestT038_04_GateIncludeOrOnlyBlocksTheDelete(t *testing.T) {
 
 // T038_05: the SAME refusing rule with the key left off (the default, skip) is
 // never asked about the delete — by the gate (no PreFileDelete trigger) or by the
-// file-guard (skip): the `rm` goes through, and nothing blocks the turn at Stop
-// either.
+// file-guard (skip): the `rm` goes through, the agent COMMITS the delete, and
+// nothing blocks the turn at Stop either.
 //
-// On the old engine the delete was refused — every file-guard was handed it.
+// The delete is committed, because a file-guard judges commits: an uncommitted delete
+// never reaches the guard whatever its `deletions:` value, so it would prove nothing
+// about skip. The control is the same committed delete under a file-guard with
+// `deletions: include`, which refuses it at Stop: the refusal comes first, and what
+// skip adds is its absence.
 func TestT038_05_DefaultLetsTheDeleteThrough(t *testing.T) {
-	e, proj := project(t, refuseDeletesCheck, map[string]string{"keep-docs": ""})
+	// The control: a file-guard that includes deletes refuses the committed delete.
+	ctl, ctlProj, _ := projectWith(t, static(refuseDeletesCheck), map[string]string{"keep-docs": "include"}, false)
+	ctl.Run(ctlProj, "s-038-05-include", "delete the pinned doc", Turns("done",
+		Bash("b1", "rm docs/pinned.md"),
+	).ThenCommit("delete the pinned doc"))
+	if told := strings.Join(ctl.BlockingErrorsFrom(ctlProj, "s-038-05-include", "Stop"), "\n"); !strings.Contains(told, "DELETE-REFUSED") {
+		t.Fatalf("a file-guard with deletions: include did not refuse the committed delete, so the "+
+			"default's silence below proves nothing; Stop said:\n%s", told)
+	}
+
+	e, proj, _ := project(t, static(refuseDeletesCheck), map[string]string{"keep-docs": ""})
 
 	const sess = "s-038-05"
 	res := e.Run(proj, sess, "delete the pinned doc", Turns("done",
 		Bash("b1", "rm docs/pinned.md"),
-	))
+	).ThenCommit("delete the pinned doc"))
 	if res.Refused() {
 		t.Fatalf("a rule on the default deletions: skip refused a delete:\n%s", res.Output)
 	}
 	if e.Exists(proj, "docs/pinned.md") {
 		t.Errorf("the delete did not go through")
+	}
+	// The premise: the delete really is a commit, in a range the guard is asked about.
+	if deleted := e.Git(proj, "log", "-1", "--diff-filter=D", "--name-only", "--format=", "--", "docs/pinned.md"); deleted != "docs/pinned.md" {
+		t.Fatalf("the delete was never committed, so no range holds it: %q", deleted)
 	}
 	if blocking := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocking) != 0 {
 		t.Errorf("the after-check blocked the turn on the delete: %v", blocking)
@@ -267,98 +313,77 @@ func TestT038_05_DefaultLetsTheDeleteThrough(t *testing.T) {
 }
 
 // contentCheck is a guard that validates CONTENT, written the naive way: a file
-// under docs/ must say OK. It reads newContent and knows nothing about deletes —
-// on a delete (no newContent) it would refuse, which is exactly what the default
-// spares it from being asked.
-//
-// The reason names the event kind, so a refusal of the DELETE is a different
-// text from the refusal of the write. The harness de-duplicates blocking errors
-// by text (a retried Stop records the same one per attempt), so without the kind
-// a delete refused in a later cycle would read as the first cycle's refusal and
-// the assertions below could not see it.
+// under docs/ must say OK. It reads the committed files and refuses one that does
+// not. A file-guard on the default `deletions:` is never handed a deleted file, so
+// it is spared the file it would have had no content to judge.
 const contentCheck = `#!/bin/sh
 payload="$(cat)"
-if printf '%s' "$payload" | jq -e '.event.newContent // "" | contains("OK")' >/dev/null; then
-  exit 0
+bad="$(printf '%s' "$payload" | jq -r '[.changeset.files[] | select((.newContent // "") | contains("OK") | not) | .path] | join(" ")')"
+if [ -n "$bad" ]; then
+  echo "{\"reason\":\"CONTENT-REFUSED: $bad must say OK\"}"
+  exit 1
 fi
-kind="$(printf '%s' "$payload" | jq -r '.event.kind')"
-echo "{\"reason\":\"CONTENT-REFUSED on $kind: a doc must say OK\"}"
-exit 1
+exit 0
 `
 
-// refusedDelete reports the blocking errors that refused a delete.
-func refusedDelete(blocking []string) []string {
-	var out []string
-	for _, b := range blocking {
-		if strings.Contains(b, "FileDelete") {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
-// T038_06: the RE-FIRE path. A content guard (default deletions) refuses a file
-// the agent wrote; the agent then deletes the file. The refusal must end there:
+// T038_06: a file added and then deleted inside the range is not in the net change,
+// so the refusal it earned ends with it. A content guard (default deletions)
+// refuses a file the agent committed; the agent then deletes the file and commits
+// that. The refused range never moved, so it is judged again with the delete in it,
+// and the squashed change holds nothing of the file:
 //
 //   - the guard is not asked about the delete, so it cannot refuse it for lacking
 //     content — the turn is not blocked;
-//   - the refusal it left on the file is settled rather than left outstanding, so
-//     the vanished path is not re-added to every later cycle's difference. A
-//     `deletions: only` observer counts the deletes it is handed: exactly one,
-//     in the cycle that deleted the file, and none after.
-//
-// On the old engine the content guard was handed the re-added PostFileDelete in
-// every cycle after the delete and refused it each time — a turn the agent could
-// never finish, having already removed the file the refusal was about.
-func TestT038_06_RefusalOnADeletedFileIsSettled(t *testing.T) {
+//   - the refusal is not carried into later cycles;
+//   - the `deletions: only` observer, whose first range passed (it selected
+//     nothing), sees the delete once, in the cycle that made it.
+func TestT038_06_AFileAddedAndDeletedInOneRangeIsNotJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "README", "a project\n")
+	observed := e.NewLedger("observer")
 	e.FileGuard(proj, "says-ok", guardYAML(""), map[string]string{"check.sh": contentCheck})
-	e.FileGuard(proj, "observer", guardYAML("only"), map[string]string{"check.sh": ledgerCheck})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.FileGuard(proj, "observer", guardYAML("only"), map[string]string{"check.sh": ledgerCheck(observed)})
+	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-038-06"
 
-	// Cycle one: a doc that is not OK. Refused at Stop.
+	// Cycle one: a doc that is not OK, committed. Refused at Stop.
 	e.Run(proj, sess, "write a doc", Turns("done",
 		Write("w1", "docs/bad.md", "not fine\n"),
-	))
-	afterFirst := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if !strings.Contains(strings.Join(afterFirst, "\n"), "CONTENT-REFUSED on PostFileCreate") {
-		t.Fatalf("the content guard did not refuse the bad doc (blocking: %v), so there is no refusal to settle", afterFirst)
+	).ThenCommit("add a doc"))
+	afterFirst := e.AllBlockingErrorsFrom(proj, sess, "Stop")
+	if !strings.Contains(strings.Join(afterFirst, "\n"), "CONTENT-REFUSED: docs/bad.md") {
+		t.Fatalf("the content guard did not refuse the bad doc (blocking: %v), so there is no refusal to end", afterFirst)
 	}
 
-	// Cycle two: the agent removes the file the refusal is about.
+	// Cycle two: the agent removes the file the refusal is about, and commits that.
 	e.Run(proj, sess, "remove the doc", Turns("done",
 		Bash("b1", "rm docs/bad.md"),
-	))
-	if refused := refusedDelete(e.BlockingErrorsFrom(proj, sess, "Stop")); len(refused) != 0 {
-		t.Fatalf("removing the refused file did not end the refusal — the delete was refused: %v", refused)
+	).ThenCommit("remove the doc"))
+	if blocking := e.AllBlockingErrorsFrom(proj, sess, "Stop"); len(blocking) != len(afterFirst) {
+		t.Fatalf("removing the refused file did not end the refusal: %v", blocking[len(afterFirst):])
 	}
 
 	// Cycle three: unrelated work.
 	e.Run(proj, sess, "unrelated", Turns("done",
 		Write("w2", "README", "a project, edited\n"),
-	))
-	afterThird := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if refused := refusedDelete(afterThird); len(refused) != 0 {
-		t.Fatalf("a later cycle was blocked over the deleted file: %v", refused)
-	}
-	if len(afterThird) != len(afterFirst) {
-		t.Fatalf("a cycle after the delete was blocked: %v", afterThird[len(afterFirst):])
+	).ThenCommit("edit the readme"))
+	if blocking := e.AllBlockingErrorsFrom(proj, sess, "Stop"); len(blocking) != len(afterFirst) {
+		t.Fatalf("a cycle after the delete was blocked: %v", blocking[len(afterFirst):])
 	}
 
-	var deletes []string
-	for _, line := range e.FileGuardLedgerLines(proj, "observer", "ledger") {
-		if strings.HasPrefix(line, "PostFileDelete ") && strings.HasSuffix(line, "docs/bad.md") {
-			deletes = append(deletes, line)
+	// The observer passed the first cycle (a delete-only rule selected nothing), so
+	// its range began there: the delete is in its range once, in the cycle that made
+	// it, and not again.
+	deletes := 0
+	for _, line := range observed.Lines() {
+		if line == "Changeset:D docs/bad.md" {
+			deletes++
 		}
 	}
-	if len(deletes) != 1 {
-		t.Errorf("the deleted file was handed to the observer %d times, want exactly once (the cycle "+
-			"that deleted it) — a refusal left outstanding on it keeps re-adding it: %v", len(deletes), deletes)
+	if deletes != 1 {
+		t.Errorf("the observer was handed the delete of docs/bad.md %d times, want exactly once (the cycle that deleted it)", deletes)
 	}
 }

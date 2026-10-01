@@ -5,7 +5,7 @@ enforced: true
 # A script's refusal condition must be a fact, not a keyword standing in for meaning
 
 **Mistake:** a `script` check whose refusal condition is a literal-string or
-keyword grep against free-form content (`event.newContent`, a transcript
+keyword grep against free-form content (`event.newContent`, `changeset.files[].newContent`, a transcript
 quote, a prompt) where the actual question is about MEANING — "does this
 text reveal X", "is this content clean", "does this logic genuinely depend
 on Y" — not a structural fact a machine can read off directly.

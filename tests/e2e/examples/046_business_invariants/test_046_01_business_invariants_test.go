@@ -48,9 +48,21 @@ func biProject(t *testing.T, e *env) string {
 func commitSpec(t *testing.T, e *env, proj, path, body, msg string) string {
 	t.Helper()
 	e.WriteFile(proj, path, body)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", msg)
-	return e.Git(proj, "rev-parse", "HEAD")
+	return e.CommitSeedThenRules(proj, msg)
+}
+
+// settleBaseline is the session's first turn, doing nothing: its Stop passes what
+// the test seeded, which moves every rule's base past the seed. A test about what a
+// LATER change does to something seeded needs it, because a rule judges the whole
+// range since it last passed, and a file created and then deleted (or reworded)
+// inside one range nets to nothing. The prompt is the session's first user message:
+// what a later command cites must be said once. It fails the test if the seed itself is refused.
+func settleBaseline(t *testing.T, e *env, proj, sess, prompt string) {
+	t.Helper()
+	e.Run(proj, sess, prompt, Turns("done"))
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Fatalf("the seeded state was refused before the test changed anything:\n%s", joinBlocks(blocks))
+	}
 }
 
 // specV1 is a spec whose line 2 is the invariant the code pins to.
@@ -76,7 +88,7 @@ func TestT046_01_PinMatchesAndJudgePassesAdmits(t *testing.T) {
 	sess := "s-046-01"
 	res := e.Run(proj, sess, "add the invariant-upholding charge()", Turns("done",
 		Write("w1", "src/charge.go", code),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a matching pin + a passing judge was refused at pre-tool: %s", res.Output)
@@ -112,7 +124,7 @@ func TestT046_02_StalePinBlocksViaScript(t *testing.T) {
 	sess := "s-046-02"
 	e.Run(proj, sess, "add code pinned to a since-reworded spec", Turns("done",
 		Write("w1", "src/charge.go", code),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -150,7 +162,7 @@ func TestT046_03_UnresolvablePinBlocksViaScript(t *testing.T) {
 	sess := "s-046-03"
 	e.Run(proj, sess, "add code with a dead pin", Turns("done",
 		Write("w1", "src/charge.go", code),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -183,7 +195,7 @@ func TestT046_04_MatchingPinJudgeFailBlocksViaJudge(t *testing.T) {
 	sess := "s-046-04"
 	e.Run(proj, sess, "add code that ignores the invariant", Turns("done",
 		Write("w1", "src/charge.go", code),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -209,7 +221,7 @@ func TestT046_05_NoMarkerDoesNotFire(t *testing.T) {
 	sess := "s-046-05"
 	res := e.Run(proj, sess, "add plain unmarked code", Turns("done",
 		Write("w1", "src/plain.go", "func plain() {}\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("an unmarked file was refused at pre-tool — the guard fired where it should not:\n%s", res.Output)
@@ -245,7 +257,7 @@ func TestT046_06_MarkerPresenceIsWhatDrivesTheGuard(t *testing.T) {
 		sess := "s-046-06-with"
 		e.Run(proj, sess, "code with the stale-pinned marker", Turns("done",
 			Write("w1", "src/charge.go", invariantCode(fqn, body)),
-		))
+		).ThenCommit("write the files"))
 		if len(e.BlockingErrorsFrom(proj, sess, "Stop")) == 0 {
 			t.Fatalf("WITH the marker, the stale pin was not refused")
 		}
@@ -260,7 +272,7 @@ func TestT046_06_MarkerPresenceIsWhatDrivesTheGuard(t *testing.T) {
 		sess := "s-046-06-without"
 		res := e.Run(proj, sess, "the same code with no marker", Turns("done",
 			Write("w1", "src/charge.go", body),
-		))
+		).ThenCommit("write the files"))
 		if res.Refused() {
 			t.Fatalf("WITHOUT the marker, the same code was refused at pre-tool:\n%s", res.Output)
 		}

@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -40,22 +39,6 @@ var (
 	Bash    = harness.Bash
 	ToolUse = harness.ToolUse
 )
-
-// commitGuards commits the project's `.sloprail` and `.claude` trees so a guard
-// (and the skill it requires) installed after the baseline is part of it, not the
-// first cycle's diff — the same reason 037's suite commits (the sloprail plugin
-// ships authoring-slop, a file-guard whose Stop after-check judges a
-// guardrail's own files; an uncommitted one reads as this cycle's write).
-// Requires a git repo (callers GitInit before installing).
-func commitGuards(t *testing.T, proj string) {
-	t.Helper()
-	if out, err := exec.Command("git", "-C", proj, "add", ".sloprail", ".claude").CombinedOutput(); err != nil {
-		t.Fatalf("commitGuards: git add: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "-m", "baseline .sloprail + .claude").CombinedOutput(); err != nil {
-		t.Fatalf("commitGuards: git commit: %v\n%s", err, out)
-	}
-}
 
 // writeProjectSkill writes a project skill's SKILL.md, and a subpage beside it,
 // at the exact layout SkillFilePaths/SkillSubpagePaths resolve

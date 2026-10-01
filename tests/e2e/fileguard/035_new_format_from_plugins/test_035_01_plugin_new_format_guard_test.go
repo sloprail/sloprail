@@ -113,14 +113,16 @@ func TestT035_02_PluginGuardStillPermitsWhatItDoesNotObjectTo(t *testing.T) {
 }
 
 // T035_03: the headline for Stop. A plugin shipping a NEW-format AFTER-check
-// file-guard blocks the TURN at Stop for a not-fine settled file — and the block
+// file-guard blocks the TURN at Stop for a not-fine committed file — and the block
 // NAMES THE PLUGIN. This is the Stop half of "loads at both pre and Stop": the
 // same nature dispatch that ran at pre-tool also runs at Stop, and it must resolve
 // and load the plugin's guard there too.
 //
-// The write LANDS (a Post after-check cannot undo it — the file is on disk), but
-// the turn is blocked, and the block text is read from the conversation record
-// (BlockingErrorsFrom), where a Stop refusal actually travels.
+// The write LANDS and is committed (a file-guard judges commits and cannot undo
+// them), but the turn is blocked, and the block text is read from the conversation
+// record (BlockingErrorsFrom), where a Stop refusal actually travels. A plugin's
+// rule lives outside the repository, so its range starts at the HEAD recorded when
+// the session began.
 func TestT035_03_PluginAfterCheckGuardFiresAtStopAndNamesThePlugin(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -131,7 +133,7 @@ func TestT035_03_PluginAfterCheckGuardFiresAtStopAndNamesThePlugin(t *testing.T)
 
 	e.Run(proj, "s-035-03", "write a memory with a secret", Turns("done",
 		Write("w1", "memories/note.md", "the password is SECRET"),
-	))
+	).ThenCommit("add the memory"))
 
 	blocks := e.BlockingErrorsFrom(proj, "s-035-03", "Stop")
 	if len(blocks) == 0 {
@@ -163,7 +165,7 @@ func TestT035_04_PluginAfterCheckGuardAdmitsFineFile(t *testing.T) {
 
 	e.Run(proj, "s-035-04", "write a clean memory", Turns("done",
 		Write("w1", "memories/note.md", "a perfectly ordinary note"),
-	))
+	).ThenCommit("add the memory"))
 
 	blocks := e.BlockingErrorsFrom(proj, "s-035-04", "Stop")
 	if len(blocks) != 0 {

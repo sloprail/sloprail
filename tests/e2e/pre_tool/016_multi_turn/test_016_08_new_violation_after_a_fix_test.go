@@ -28,8 +28,6 @@ import (
 // Both are asserted below, and neither is observable from the stream alone —
 // the turn-1 refusal text is still in the output no matter what turn 3 did.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // A gate on the pre-write events is re-evaluated fresh on each turn's write, so
 // "each subject judged on its own facts, each turn" is the gate dispatch's own
 // behaviour — a gate carries no cross-turn verdict of its own to leak forward,

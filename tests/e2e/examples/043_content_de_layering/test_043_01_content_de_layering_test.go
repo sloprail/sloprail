@@ -56,7 +56,7 @@ func TestT043_01_DuplicatedFactBlocks(t *testing.T) {
 
 	e.Run(proj, "s-043-01", "write a weekly update", Turns("done",
 		Write("w1", "memories/updates/2026-08-18.md", duplicatedUpdate),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, "s-043-01", "Stop")
 	if len(blocks) == 0 {
@@ -89,7 +89,7 @@ func TestT043_02_CleanReferenceAdmits(t *testing.T) {
 
 	e.Run(proj, "s-043-02", "write a clean update", Turns("done",
 		Write("w1", "memories/updates/2026-08-18.md", cleanUpdate),
-	))
+	).ThenCommit("write the files"))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-043-02", "Stop"); len(blocks) != 0 {
 		t.Errorf("a clean referencing update was blocked anyway:\n%v", blocks)
@@ -118,7 +118,7 @@ func TestT043_03_OutsideMatchIsNeverJudged(t *testing.T) {
 		Write("w1", "memories/notes/scratch.md", duplicatedUpdate),
 		// A near-miss the match must NOT treat as an updates/ segment.
 		Write("w2", "myupdates/note.md", duplicatedUpdate),
-	))
+	).ThenCommit("write the files"))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-043-03", "Stop"); len(blocks) != 0 {
 		t.Errorf("the guard fired on a path outside updates//branding/ (or on the myupdates/ near-miss):\n%v", blocks)
@@ -148,7 +148,7 @@ func TestT043_04_FileContentReachesTemplate(t *testing.T) {
 
 	e.Run(proj, "s-043-04a", "write a branding doc with strategy in it", Turns("done",
 		Write("w1", "memories/branding/voice.md", "# Voice\n\nWe price at a premium because the segment is underserved — a strategy call.\n"),
-	))
+	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -172,7 +172,7 @@ func TestT043_04_FileContentReachesTemplate(t *testing.T) {
 
 	e2.Run(proj2, "s-043-04b", "write an update duplicating a role", Turns("done",
 		Write("w1", "memories/updates/2026-08-18.md", duplicatedUpdate),
-	))
+	).ThenCommit("write the files"))
 
 	prompt2 := e2.JudgePrompt(proj2, "judge-prompt.txt")
 	if prompt2 == "" {
@@ -219,7 +219,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R1 Dana Per's role duplicated inline"}`)
 	e.Run(proj, sess, "write a weekly update", Turns("done",
 		Write("w1", "memories/updates/2026-08-18.md", duplicatedUpdate),
-	))
+	).ThenCommit("write the files"))
 	if !hasReason(e, proj, sess, "R1") {
 		t.Fatalf("the duplicated-fact file did not block in the first cycle")
 	}
@@ -229,7 +229,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R2 the duplicated update is still outstanding"}`)
 	e.Run(proj, sess, "do unrelated non-matching work", Turns("done",
 		Write("w2", "memories/notes/unrelated.md", "a plain note the guard does not match"),
-	))
+	).ThenCommit("write the files"))
 	if !hasReason(e, proj, sess, "R2") {
 		t.Fatalf("an unfixed not-fine file was NOT re-judged on a cycle that never touched it — the re-fire did not happen")
 	}
@@ -238,7 +238,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	e.Run(proj, sess, "fix the update", Turns("done",
 		Write("w3", "memories/updates/2026-08-18.md", cleanUpdate),
-	))
+	).ThenCommit("write the files"))
 
 	// Cycle 4: work OUTSIDE the match again, judge armed to refuse with a NEW
 	// reason. If the fix cleared the outstanding file, nothing re-fires and R4 never
@@ -246,7 +246,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R4 must not appear if the fix cleared the file"}`)
 	e.Run(proj, sess, "more unrelated non-matching work", Turns("done",
 		Write("w4", "memories/notes/another.md", "another plain unmatched note"),
-	))
+	).ThenCommit("write the files"))
 	if hasReason(e, proj, sess, "R4") {
 		t.Errorf("a FIXED file kept re-firing: cycle 4 touched nothing the guard matches, yet a fresh block appeared")
 	}

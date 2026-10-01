@@ -8,31 +8,42 @@
 # script cannot decide exits 0 rather than waive it: no jq, the sibling library
 # missing, an unreadable settled file, a Pre result the engine could not compute.
 #
-# This is the file-guard's copy: a Post kind compares `.event.newContent` (the settled
-# file) with `.event.oldContent` (the session baseline). Both are read off the event,
-# never the disk: at Stop the engine also asks about each PART of a change no
-# citation rode on, with the event narrowed to that part, and the file on disk is
-# only its last state.
+# This is the file-guard's entry: it reads the Changeset, each task's oldContent (at
+# the range's base) against its newContent (at head). The gate's entry compares the
+# pending bytes with the file on disk. The comparison itself is the library's.
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset body_changed_lib_loaded
 . "$lib_dir/body-changed-lib.sh" || exit 2
 [ "${body_changed_lib_loaded:-}" = 1 ] || exit 2
-lib_init
-case "$kind" in
-  PostFileCreate)
-    applies
-    ;;
-  PostFileUpdate)
-    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
-    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
-    # events.md): false when it could not read the settled file — a link to a
-    # FIFO or a device, or past the read cap. Undecidable: apply (exit 0).
-    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
-    content="$(field '.event.newContent // ""')"
-    ;;
-  *)
-    # A delete is not this guard's business (deletions default to skip).
-    exit 1
-    ;;
-esac
-lib_check
+lib_setup
+
+payload="$(cat)"
+field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
+[ "$(field '.event.kind // ""')" = "Changeset" ] || exit 0
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(dirname "$0")/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || exit 0
+[ "${changeset_lib_loaded:-}" = 1 ] || exit 0
+idxs="$(cs_indexes "$payload")" || exit 0
+
+# Every file of the subject (one task for the requirement) is asked. One that sets an ask applies the requirement (lib_check exits
+# 0 with its hint); only when none does is the citation waived.
+for idx in $idxs; do
+  f() { field ".changeset.files[$idx]$1"; }
+  status="$(f '.status')" || exit 0
+  path="$(f '.path')" || exit 0
+  # A delete is not this guard's business (deletions default to skip).
+  [ "$status" = "D" ] && continue
+  # A created task sets its ask.
+  [ "$status" = "A" ] && applies
+  # A field the status should carry and lacks is undecidable, not empty: apply.
+  content="$(cs_text "$payload" "$idx" newContent)" || exit 0
+  old_content=""
+  if [ "$status" != "A" ]; then
+    old_content="$(cs_text "$payload" "$idx" oldContent)" || exit 0
+  fi
+  lib_check
+done
+exit 1

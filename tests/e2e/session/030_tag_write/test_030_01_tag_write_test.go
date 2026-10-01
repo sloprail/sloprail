@@ -20,17 +20,13 @@ import (
 // bind point exists at all. That whole wiring is only observable from outside
 // the binary.
 //
-// # RE-VEHICLED onto a NEW-format CONTEXT (was old GUARDRAIL.md PostTagWrite hooks)
 //
 // PostTagWrite is a ContextEventKind, NOT a GateEventKind (a gate wakes on
-// pre-action events plus Stop, never on a Post event; a context may wake on the
-// Post file events and PostTagWrite "because it sometimes must recognise itself
-// from a file's settled content" — internal/declaration/events.go). So the new
-// vehicle for a rule bound to PostTagWrite is a CONTEXT that ENTERS on it, and the
-// context's enter is the check that is handed the event. The mechanical
-// transformation is otherwise the one in tests/e2e/REVEHICLE-PATTERN.md: the enter
-// receives the FLAT event (`.event.kind`, `.event.tags`), never the old nested
-// `.event.fields`.
+// pre-action events plus Stop, never on a tag write; a context may wake on it
+// because it sometimes must recognise itself from a file's settled content —
+// internal/declaration/events.go). So the rule bound to PostTagWrite is a CONTEXT
+// that ENTERS on it, and the context's enter is the check that is handed the
+// event. The enter receives the FLAT event (`.event.kind`, `.event.tags`).
 //
 // The context enters unconditionally on every PostTagWrite (its trigger carries no
 // `match`), which is what lets T030_02 observe the empty-tags cycle too. What the
@@ -71,7 +67,7 @@ exit 1
 // tagsSeen reads the event a PostTagWrite context's enter recorded, as the JSON a
 // rule bound to PostTagWrite was handed. The enter emits the flat event as the
 // context's payload, so this re-marshals that payload back to JSON and the
-// assertions read the same wire shape the old hook read off its stdin.
+// assertions read the same wire shape a check reads off its stdin.
 func tagsSeen(t *testing.T, e *Env, proj, sess, contextName string) string {
 	t.Helper()
 	active, payload := e.ContextState(proj, sess, contextName)
@@ -95,8 +91,7 @@ func TestT030_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 		"enter.sh": enterRecordsTags,
 		"exit.sh":  exitStayActive,
 	})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	sess := "s-030-01"
 	e.Run(proj, sess, "do some tagged work", Turns("done",
@@ -139,8 +134,7 @@ func TestT030_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
 		"enter.sh": enterRecordsTags,
 		"exit.sh":  exitStayActive,
 	})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	sess := "s-030-02"
 	e.Run(proj, sess, "say something untagged", Turns("done",

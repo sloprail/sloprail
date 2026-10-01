@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -17,7 +16,6 @@ import (
 // its own record before any rule sees the event, and a rule requiring a citation
 // refuses an action carrying none — so a guarded file can only be changed the
 // grounded way, and a guarded command only run behind a resolving cite.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -33,17 +31,6 @@ var (
 
 // prompt is the user's own message every scenario cites.
 const prompt = "record the decision to adopt a decision log"
-
-// commitAll commits the project's current tree so installed rules (and any
-// seeded file) are the baseline, not the first cycle's difference.
-func commitAll(t *testing.T, proj string) {
-	t.Helper()
-	for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", "baseline"}} {
-		if out, err := exec.Command("git", append([]string{"-C", proj}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-}
 
 // recordScript appends what the check was handed — kind, path, citation count and
 // the first quote — so a test sees the citations the event carried.
@@ -72,3 +59,7 @@ case "$(printf '%s' "$payload" | jq -r '.event.kind')" in
 esac
 exit 0
 `
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

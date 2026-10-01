@@ -12,8 +12,6 @@ import (
 // what it hands a check is the event and the session facts, the same surface for
 // every kind, so adding a kind costs it nothing.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // This is SHARED machinery the new dispatch reuses: the per-guard `sr-session
 // state` keyspace, the environment a check runs in, and the fixed payload surface.
 // The old rules installed via `e.Guardrail` and read the NESTED payload; these

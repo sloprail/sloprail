@@ -1,11 +1,9 @@
 package e2e
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// task-gates-hold is a file-guard over
+// task-gates-hold is a PreFileWrite gate (the .sh half) and a file-guard (both
+// halves, at Stop, over the committed changeset) over
 // memories/tasks/<cat>/<name>/TASK.md with TWO checks in order:
 //
 //  1. SCRIPT (gates-hold.sh): every gates/*.sh under the task's own gates/
@@ -60,7 +58,7 @@ func TestGates_FailingScriptGateBlocksThenPassingPermits(t *testing.T) {
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b0", gatesTaskPath, backlogDoc, citeUser(askQuote)),
 		Write("w1", gateShPath, failingGate),
-	))
+	).ThenCommit("Add the task and its gate", CitesUser(askQuote)))
 	if res0.Refused() {
 		t.Fatalf("landing the task and its gate at backlog was refused (setup broken):\n%s", res0.Output)
 	}
@@ -79,14 +77,14 @@ func TestGates_FailingScriptGateBlocksThenPassingPermits(t *testing.T) {
 	// Rewrite the SAME gate file to pass.
 	res2 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w3", gateShPath, passingGate),
-	))
+	).ThenCommit("Make the gate pass"))
 	if res2.Refused() {
 		t.Fatalf("rewriting the gate to pass was itself refused (setup broken):\n%s", res2.Output)
 	}
 
 	res3 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w4", gatesTaskPath, toDoDoc),
-	))
+	).ThenCommit("Start the task"))
 	if res3.Refused() {
 		t.Fatalf("moving to to_do with a passing gate was refused:\n%s", res3.Output)
 	}
@@ -124,7 +122,7 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		res0 := e.Run(proj, sess, authPrompt, Turns("done",
 			srWrite("b0", gatesTaskPath, backlogDoc, citeUser(askQuote)),
 			Write("w1", gateMdPath, judgmentGate),
-		))
+		).ThenCommit("Add the task and its gate", CitesUser(askQuote)))
 		if res0.Refused() {
 			t.Fatalf("landing the task and its judgment gate was refused (setup broken):\n%s", res0.Output)
 		}
@@ -135,14 +133,13 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": false, "reasoning": "GATES: the launch video does not exist."}`)
 
 		toDoDoc := task("to_do", "P1", body)
+		// The judgment half lives in the file-guard: the transition lands, is
+		// committed, and the Stop is refused with the judge's reasoning.
 		e.Run(proj, sess, authPrompt, Turns("done",
 			Write("w2", gatesTaskPath, toDoDoc),
-		))
-		// The judge lives in the file-guard: the transition lands and the turn
-		// is blocked at Stop with the judge's reasoning.
-		blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-		if !strings.Contains(blocks, "does not exist") {
-			t.Fatalf("a judgment gate the judge FAILS did not block the turn at Stop:\n%s", blocks)
+		).ThenCommit("Start the task"))
+		if blocks := stopBlocks(e, proj, sess); !containsStr(blocks, "does not exist") {
+			t.Fatalf("a judgment gate the judge FAILS did not refuse the transition at Stop:\n%s", blocks)
 		}
 	})
 
@@ -160,7 +157,7 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		res0 := e.Run(proj, sess, authPrompt, Turns("done",
 			srWrite("b0", gatesTaskPath, backlogDoc, citeUser(askQuote)),
 			Write("w1", gateMdPath, judgmentGate),
-		))
+		).ThenCommit("Add the task and its gate", CitesUser(askQuote)))
 		if res0.Refused() {
 			t.Fatalf("landing the task and its judgment gate was refused (setup broken):\n%s", res0.Output)
 		}
@@ -168,9 +165,12 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		toDoDoc := task("to_do", "P1", body)
 		res := e.Run(proj, sess, authPrompt, Turns("done",
 			Write("w2", gatesTaskPath, toDoDoc),
-		))
+		).ThenCommit("Start the task"))
 		if res.Refused() {
 			t.Fatalf("a judgment gate the judge PASSES refused the transition:\n%s", res.Output)
+		}
+		if blocks := stopBlocks(e, proj, sess); containsStr(blocks, "GATES") {
+			t.Fatalf("a judgment gate the judge PASSES refused the transition at Stop:\n%s", blocks)
 		}
 	})
 }

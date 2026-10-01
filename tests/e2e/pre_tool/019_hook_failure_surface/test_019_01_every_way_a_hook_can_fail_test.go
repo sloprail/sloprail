@@ -22,8 +22,6 @@
 // and that the tree is unchanged. Only the second is what a guardrail is for.
 // These use the harness's Refused(), which reads the harness's own marker.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The fail-closed discipline is the new check-runner's own (internal/dispatch:
 // a check that cannot run, times out, or exits non-zero is a refusal), and it is
 // reached identically whether a gate or a file-guard invokes it. The vehicle is a

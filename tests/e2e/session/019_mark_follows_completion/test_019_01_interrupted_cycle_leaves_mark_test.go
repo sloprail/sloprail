@@ -26,12 +26,10 @@ import (
 // is NOT covered there is the consequence for a cycle that judged SOME of its
 // turns and was then cut short, which is what this directory adds.
 
-// askWhatHappened is a NEW-FORMAT file-guard (re-vehicled from the old
-// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md), after-check so it runs
-// at a cycle's end. `match: "**/*.md"` fires on whichever Post kind each cycle's
-// write produced — the same two kinds the old hooks bound. The check reaches the
-// session's record through SR_TRANSCRIPT / SR_WORKSPACE, which the new dispatch
-// sets on a file-guard check exactly as the old-format hook env did.
+// askWhatHappened is a NEW-FORMAT file-guard , after-check so it runs
+// at a cycle's end. `match: "**/*.md"` fires on every committed change. —. The check reaches the
+// session's record through SR_TRANSCRIPT / SR_WORKSPACE, which the dispatch sets
+// on a file-guard check.
 const askWhatHappened = `match: "**/*.md"
 checks:
   - script: ./ask.sh
@@ -42,14 +40,16 @@ checks:
 // harness payload; piping that in makes the command answer "no transcript path on
 // the hook payload" every time — an answer in which every marker below reads as
 // absent, indistinguishable from correct narrowing. See answered() for the guard
-// that keeps that from passing. The ledger is $SR_GUARDRAIL_DIR/answers, the
-// folder the engine sets for the check.
-const askScript = `#!/bin/sh
+// that keeps that from passing. The ledger is a harness.Ledger, outside the project,
+// so it cannot change the rule's hash.
+func askScript(led *harness.Ledger) string {
+	return `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
+  sr-session query >> ` + led.Sh() + ` 2>&1
 exit 0
 `
+}
 
 // crashingAsk asks the same question and then refuses.
 //
@@ -60,13 +60,15 @@ exit 0
 // observe from. New-format refusal contract: exit non-zero refuses and a
 // `{"reason":…}` on stdout is the reason the agent is told — the replacement for
 // the old exit-2-with-stderr channel.
-const crashingAskScript = `#!/bin/sh
+func crashingAskScript(led *harness.Ledger) string {
+	return `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
+  sr-session query >> ` + led.Sh() + ` 2>&1
 echo '{"reason":"this cycle did not finish"}'
 exit 1
 `
+}
 
 // answered fails the test when the engine reported an error instead of entries.
 //
@@ -107,16 +109,18 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	// from. Without one there is no diff and no PostFile* event, and a rule
 	// bound to one would never run.
 	e.GitInit(proj)
+	led := e.NewLedger("answers")
 
 	const sess = "s-019-01"
 	const firstMarker = "MARKEREPSILON"
 	const secondMarker = "MARKERZETA"
 
 	// A cycle whose judging is cut short.
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript(led)})
+	e.CommitAll(proj, "the guards")
 	first := e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "interrupted cycle\n"),
-	))
+	).ThenCommit("the cycle's work"))
 	// The premise: the cycle really did not finish cleanly. Without this the
 	// test is about an ordinary completed cycle and proves nothing.
 	//
@@ -130,19 +134,20 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 		t.Fatalf("the first cycle completed normally, so there is no interrupted cycle here:\n%s\nblocking: %v",
 			first.Output, blocking)
 	}
-	if len(e.FileGuardLedgerLines(proj, "asker", "answers")) == 0 {
+	if len(led.Lines()) == 0 {
 		t.Fatalf("the interrupted cycle never reached the hook at all, so this proves nothing")
 	}
-	before := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
+	before := len(led.Lines())
 
 	// The next cycle finishes cleanly, and must still be offered the turns the
 	// interrupted one never settled.
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.CommitAll(proj, "the clean guard replaces the crashing one")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "completed cycle\n"),
-	))
+	).ThenCommit("the cycle's work"))
 
-	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
+	answers := led.Lines()
 	if len(answers) <= before {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), before)
@@ -179,8 +184,9 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	// from. Without one there is no diff and no PostFile* event, and a rule
 	// bound to one would never run.
 	e.GitInit(proj)
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
-	commitGuards(t, proj) // keep ask.sh out of the cycle diff (authoring-slop judges guard .sh at Stop)
+	led := e.NewLedger("answers")
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.CommitAll(proj, "the guards")
 
 	const sess = "s-019-02"
 	const firstMarker = "MARKERETA"
@@ -188,16 +194,16 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
-	))
-	before := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
+	).ThenCommit("the cycle's work"))
+	before := len(led.Lines())
 	if before == 0 {
 		t.Fatalf("the first cycle never reached the hook, so this proves nothing")
 	}
 
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
-	))
-	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
+	).ThenCommit("the cycle's work"))
+	answers := led.Lines()
 	if len(answers) <= before {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), before)

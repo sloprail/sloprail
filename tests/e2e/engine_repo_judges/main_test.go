@@ -1,9 +1,11 @@
 // The engine repo's OWN judges — rule-quality and skill-quality, the two rules in
 // this repo's .sloprail/ that judge the repo's own rules and skills. Each is a
-// pair of natures under one name: a GATE (.sloprail/gate/<name>/) that judges the
-// pending write on PreFileWrite and refuses before it lands, and a plain
-// FILE-GUARD (.sloprail/file-guard/<name>/) that judges the settled file at Stop.
-// A test installs only the nature it is about, so a refusal can only come from it.
+// pair of natures under one name: a plain FILE-GUARD (.sloprail/file-guard/<name>/)
+// that judges the committed changeset at Stop, and a PreFileWrite GATE
+// (.sloprail/gate/<name>/) whose only check is the deterministic size cap (the
+// judge never runs in a gate), sharing size-cap-lib.sh with the file-guard.
+// A test installs only the nature it is about, except the size-cap test, which
+// needs both (the gate sources the lib from the file-guard folder).
 //
 // Each test here maps to an invariant those judges must uphold, driven through
 // the claude-MOCK exactly as the rest of the e2e is: the harness runs
@@ -93,7 +95,34 @@ func installGuardrail(t *testing.T, projDir, nature, name string) string {
 	src := filepath.Join(repoRoot(t), ".sloprail", nature, name)
 	dst := filepath.Join(projDir, ".sloprail", nature, name)
 	copyTree(t, src, dst)
+	installSizeCapLib(t, projDir, name)
 	return dst
+}
+
+// installSizeCapLib places the one size-cap-lib.sh (rule-quality's, which skill-quality
+// sources too) beside an installed rule-quality or skill-quality, where the rule's
+// scripts look for it (../rule-quality/ from the file-guard, ../../file-guard/rule-quality/
+// from the gate).
+func installSizeCapLib(t *testing.T, projDir, name string) {
+	t.Helper()
+	if name != "rule-quality" && name != "skill-quality" {
+		return
+	}
+	rel := filepath.Join(".sloprail", "file-guard", "rule-quality", "size-cap-lib.sh")
+	dst := filepath.Join(projDir, rel)
+	if _, err := os.Stat(dst); err == nil {
+		return
+	}
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+	if err != nil {
+		t.Fatalf("installSizeCapLib: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatalf("installSizeCapLib: %v", err)
+	}
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		t.Fatalf("installSizeCapLib: %v", err)
+	}
 }
 
 func copyTree(t *testing.T, src, dst string) {
@@ -161,8 +190,7 @@ func projectOf(t *testing.T, e *harness.Env, nature, guardrail string) string {
 	proj := e.Project()
 	e.GitInit(proj)
 	installGuardrail(t, proj, nature, guardrail)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install "+nature+" "+guardrail)
+	e.CommitAll(proj, "install "+nature+" "+guardrail)
 	return proj
 }
 

@@ -213,10 +213,12 @@ EOF
     '[.[] | select((.retired and (.dir as $d | any($gone[]; . == $d))) | not) | {dir, keywords}]'
 }
 
-# has_user_citation PAYLOAD — whether the event carries a resolved citation of
-# the user's own words (one the engine resolved against the user's messages).
+# has_user_citation PAYLOAD — whether the payload carries a resolved citation of
+# the user's own words (one the engine resolved against the user's messages): the
+# event's citations (a gate), or the changeset's, from the range's commits (a
+# file-guard).
 has_user_citation() {
-  printf '%s' "$1" | jq -e '[.event.citations[]? | select((.sourceTypes // []) | index("user"))] | length > 0' >/dev/null 2>&1
+  printf '%s' "$1" | jq -e '[(.event.citations[]?, .changeset.citations[]?) | select((.sourceTypes // []) | index("user"))] | length > 0' >/dev/null 2>&1
 }
 
 # LOADED SENTINEL — keep this the LAST line. bash runs a sourced file up to its

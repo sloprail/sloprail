@@ -163,6 +163,11 @@ func TestSubagentStopTakesTheBaselineInItsOwnStore(t *testing.T) {
 	require.True(t, ok, "no baseline recorded: the sub-agent's cycle measured from nothing")
 	assert.NotEmpty(t, commit)
 
+	// Taken at ITS Stop, so marked: a file-guard's range must not start there.
+	_, atStop, err := store.Meta(sessionstate.MetaBaselineAtStop)
+	require.NoError(t, err)
+	assert.True(t, atStop, "a baseline first taken at the sub-agent's own Stop must say so")
+
 	// And it is the sub-agent's store, not the parent's. Were the point written
 	// under the parent's identity, the parent's next cycle would measure from a
 	// point the sub-agent took.

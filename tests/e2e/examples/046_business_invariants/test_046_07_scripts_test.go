@@ -8,8 +8,8 @@ package e2e
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,19 +67,41 @@ func runRuleScriptEnv(t *testing.T, dir, script, workspace, payload string, extr
 	}
 }
 
-// T046_23: a pin names <repo>@<sha>, so outside a git work tree nothing can be
-// pinned — a decided answer: the predicate waives (exit 1, with its sentinel),
-// rather than making every write in a git-less project need a citation. Without
-// the git binary, whether a matched file is pinned cannot be told, and the
-// citation applies (exit 0).
-func TestT046_23_PredicateOutsideARepoWaives(t *testing.T) {
+// T046_23: outside a git work tree the markers cannot be scanned, so whether the
+// file is pinned is undecidable and the citation applies (exit 0, never a waive);
+// without the git binary likewise. The file-guard entry applies as well when its
+// base revision does not resolve.
+func TestT046_23_PredicateOutsideARepoApplies(t *testing.T) {
 	notRepo := t.TempDir()
 	payload := `{"event":{"kind":"PreFileUpdate","path":"SPEC.md","resultKnown":true,` +
 		`"oldContent":"a\nb\n","newContent":"a\nc\n","oldMarkers":[],"newMarkers":[]}}`
 	dir := gateDir(t, "pinned-spec-holds")
 	out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", notRepo, payload)
+	if code != 0 || strings.Contains(out, `"waived"`) {
+		t.Fatalf("outside a git work tree the predicate exited %d (%s); it cannot scan markers there, so it must apply", code, out)
+	}
+
+	// The file-guard entry, in a real repo whose base revision does not exist.
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"}} {
+		if o, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, o)
+		}
+	}
+	csPayload := `{"event":{"kind":"Changeset"},"subject":{"id":"SPEC.md","files":["SPEC.md"]},"changeset":{"files":[{"status":"M","path":"SPEC.md",` +
+		`"oldContent":"a\nb\n","newContent":"a\nc\n","oldMarkers":[],"newMarkers":[]}]}}`
+	g := guardDir(t, "pinned-spec-holds")
+	out, code = runRuleScriptEnv(t, g, "changes-pinned-lines.sh", repo, csPayload, "SR_TREE="+repo, "SR_BASE=0000000000000000000000000000000000000001")
+	if code != 0 || strings.Contains(out, `"waived"`) {
+		t.Fatalf("an unresolvable SR_BASE: predicate exited %d (%s); it must apply", code, out)
+	}
+	out, code = runRuleScriptEnv(t, g, "changes-pinned-lines.sh", repo, csPayload, "SR_TREE="+t.TempDir(), "SR_BASE=HEAD")
+	if code != 0 || strings.Contains(out, `"waived"`) {
+		t.Fatalf("a non-git SR_TREE: predicate exited %d (%s); it must apply", code, out)
+	}
+	out, code = runRuleScriptEnv(t, g, "changes-pinned-lines.sh", repo, csPayload, "SR_TREE="+repo, "SR_BASE=HEAD")
 	if code != 1 || !strings.Contains(out, `"waived"`) {
-		t.Fatalf("outside a git work tree the predicate exited %d (%s); nothing can be pinned there, so it must waive", code, out)
+		t.Fatalf("a resolvable base and nothing pinned: predicate exited %d (%s); it must waive", code, out)
 	}
 
 	// A PATH with the tools the script uses, but no git.
@@ -162,7 +184,8 @@ func TestT046_24_PrepareRunsTheJudgeWhenThePredicateCrashes(t *testing.T) {
 // refuse and the prepare no pin to read. `seq 0 -1` counts DOWN on macOS, so a
 // loop over it ran once with the fqn "null" and refused.
 func TestT046_25_NoInvariantMarkersIsNothingToCheck(t *testing.T) {
-	payload := `{"event":{"kind":"PostFileUpdate","path":"src/a.go","newMarkers":[{"kind":"endpoint","fqn":"x","line":1}]}}`
+	payload := `{"event":{"kind":"Changeset"},"changeset":{"files":[{"path":"src/a.go","status":"M",` +
+		`"newMarkers":[{"kind":"endpoint","fqn":"x","line":1}]}]}}`
 	dir := ruleDir(t, "pinned-invariant")
 	// seq counting down, as macOS's does, first on PATH: GNU seq prints nothing
 	// for `seq 0 -1`, so on a Linux runner the old loop would pass unnoticed.
@@ -170,14 +193,11 @@ func TestT046_25_NoInvariantMarkersIsNothingToCheck(t *testing.T) {
 	if out, code := runRuleScriptEnv(t, dir, "pin-still-matches-head.sh", t.TempDir(), payload, path); code != 0 {
 		t.Errorf("the pin check refused a file with no invariant marker (exit %d): %s", code, out)
 	}
+	// Nothing marked and nothing to read: the prepare abstains, so the judge is not
+	// asked about a changeset with no invariant in it.
 	out, code := runRuleScriptEnv(t, dir, "pinned-text.sh", t.TempDir(), payload, path)
-	var got struct {
-		AdditionalContext struct {
-			Pins []any `json:"pins"`
-		} `json:"additionalContext"`
-	}
-	if code != 0 || json.Unmarshal([]byte(out), &got) != nil || got.AdditionalContext.Pins == nil || len(got.AdditionalContext.Pins) != 0 {
-		t.Errorf("the prepare did not hand the judge an empty pin list (exit %d): %s", code, out)
+	if code != 0 || !strings.Contains(out, `"skip": true`) {
+		t.Errorf("the prepare did not skip the judge for a changeset with no invariant marker (exit %d): %s", code, out)
 	}
 }
 
@@ -195,19 +215,13 @@ func writeExec(t *testing.T, dir, name, body string) {
 // a jq call per field.
 func TestT046_35_AnUnpinnedFileIsAnsweredCheaply(t *testing.T) {
 	repo := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"}} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-	}
+	harness.InitRepo(t, repo)
 	writeExec(t, repo, "SPEC.md", "rules\n1. a\n")
 	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeExec(t, repo, "src/a.go", "// sr:invariant \""+repo+"@0000000:SPEC.md#L2-2\"\nfunc A() {}\n")
-	if out, err := exec.Command("sh", "-c", "cd "+repo+" && git add -A && git commit -qm x --no-gpg-sign").CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v %s", err, out)
-	}
+	harness.CommitAllIn(t, repo, "x")
 
 	// Shims that log each call, then run the real tool.
 	shims, log := t.TempDir(), filepath.Join(t.TempDir(), "calls")
@@ -245,13 +259,11 @@ func TestT046_35_AnUnpinnedFileIsAnsweredCheaply(t *testing.T) {
 // file has no code left to rule on (whether it may drop its pins is
 // pinned-spec-holds' question).
 func TestT046_37_PrepareSkipsTheJudgeOnADelete(t *testing.T) {
-	for _, kind := range []string{"PostFileDelete"} {
-		payload := `{"event":{"kind":"` + kind + `","path":"src/charge.go","oldContent":"x",` +
-			`"oldMarkers":[{"kind":"invariant","fqn":"/r@abcdef1:SPEC.md#L1-1","line":1}]}}`
-		out, code := runRuleScript(t, ruleDir(t, "pinned-invariant"), "pinned-text.sh", t.TempDir(), payload)
-		if code != 0 || !strings.Contains(out, `"skip": true`) {
-			t.Errorf("%s: the prepare did not skip the judge (exit %d): %s", kind, code, out)
-		}
+	payload := `{"event":{"kind":"Changeset"},"changeset":{"files":[{"path":"src/charge.go","status":"D","oldContent":"x",` +
+		`"oldMarkers":[{"kind":"invariant","fqn":"/r@abcdef1:SPEC.md#L1-1","line":1}]}]}}`
+	out, code := runRuleScript(t, ruleDir(t, "pinned-invariant"), "pinned-text.sh", t.TempDir(), payload)
+	if code != 0 || !strings.Contains(out, `"skip": true`) {
+		t.Errorf("the prepare did not skip the judge on a deleted file (exit %d): %s", code, out)
 	}
 }
 

@@ -175,8 +175,17 @@ func TestPrepareRefusesAPartlyLoadedRulesLib(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "rules-lib.sh"), []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out := runScript(t, dir, "prepare-judge-rules.sh", nil,
-		`{"event":{"kind":"PostFileUpdate","path":"memories/topics/t/units/01/UNIT.md","newContent":"---\ntags: [x]\n---\nbody\n"}}`)
+	// The unit's UNIT.md is read from the committed tree.
+	tree := t.TempDir()
+	unitDir := filepath.Join(tree, "memories/topics/t/units/01")
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unitDir, "UNIT.md"), []byte("---\ntags: [x]\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out := runScript(t, dir, "prepare-judge-rules.sh", []string{"SR_TREE=" + tree},
+		`{"event":{"kind":"Changeset"},"changeset":{"files":[{"path":"memories/topics/t/units/01/UNIT.md","status":"M","newContent":"---\ntags: [x]\n---\nbody\n"}]}}`)
 	if code == 0 || !strings.Contains(out, "rules-lib.sh") {
 		t.Errorf("a partly-loaded rules-lib.sh was not refused by name (exit %d):\n%s", code, out)
 	}
@@ -209,19 +218,35 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 			"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-body-is-human-authored",
 			"body-changed.sh", "lib-body.sh",
 			"task_body() { printf 'same body\\n'; }\n", "lib_body_loaded=1\n",
-			`{"event":{"kind":"PostFileUpdate","path":"memories/tasks/a/b/TASK.md","newContentKnown":true,"oldContent":"---\nstatus: open\n---\nsame body\n","newContent":"---\nstatus: open\n---\nsame body\n"}}`,
+			`{"event":{"kind":"Changeset"},"subject":{"id":"memories/tasks/a/b/TASK.md","files":["memories/tasks/a/b/TASK.md"]},"changeset":{"files":[{"path":"memories/tasks/a/b/TASK.md","status":"M","oldContent":"---\nstatus: open\n---\nsame body\n","newContent":"---\nstatus: open\n---\nsame body\n"}]}}`,
 		},
 		{
 			"marketplace/plugins/sloprail-content/.sloprail/file-guard/unit-publish-approved",
 			"enters-published.sh", "publish-claim.sh",
 			"publish_claim_norm() { printf '%s' \"$1\"; }\npublish_claim() { claim=no claim_status=drafting claim_why=; }\n", "publish_claim_loaded=1\n",
-			`{"event":{"kind":"PostFileUpdate","path":"memories/topics/t/units/01/UNIT.md","newContentKnown":true,"oldContent":"---\nstatus: drafting\n---\n","newContent":"---\nstatus: drafting\n---\nedited\n"}}`,
+			`{"event":{"kind":"Changeset"},"subject":{"id":"memories/topics/t/units/01/UNIT.md","files":["memories/topics/t/units/01/UNIT.md"]},"changeset":{"files":[{"path":"memories/topics/t/units/01/UNIT.md","status":"M","oldContent":"---\nstatus: drafting\n---\n","newContent":"---\nstatus: drafting\n---\nedited\n"}]}}`,
 		},
 	} {
 		t.Run(tc.script, func(t *testing.T) {
 			env := []string{"PATH=" + stubBin + string(os.PathListSeparator) + os.Getenv("PATH")}
 
-			control := t.TempDir()
+			// A guard folder laid out as in the plugin (<plugin>/.sloprail/file-guard/<rule>),
+			// with the plugin's shared changeset library beside it when it ships one, so
+			// a script's `../../lib/changeset.sh` resolves as it does installed.
+			newGuardDir := func() string {
+				dir := filepath.Join(t.TempDir(), "file-guard", "rule")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if shared := filepath.Join(root, tc.guard, "..", "..", "lib", "changeset.sh"); fileExists(shared) {
+					if err := os.MkdirAll(filepath.Join(dir, "..", "..", "lib"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					copyFile(t, shared, filepath.Join(dir, "..", "..", "lib", "changeset.sh"))
+				}
+				return dir
+			}
+			control := newGuardDir()
 			lib := strings.TrimSuffix(tc.script, ".sh") + "-lib.sh"
 			copyFile(t, filepath.Join(root, tc.guard, tc.script), filepath.Join(control, tc.script))
 			copyFile(t, filepath.Join(root, tc.guard, lib), filepath.Join(control, lib))
@@ -231,7 +256,7 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 			}
 
 			for stop, stopper := range map[string]string{"syntax error": syntaxError, "returns early": returnsEarly} {
-				partial := t.TempDir()
+				partial := newGuardDir()
 				copyFile(t, filepath.Join(root, tc.guard, tc.script), filepath.Join(partial, tc.script))
 				copyFile(t, filepath.Join(root, tc.guard, lib), filepath.Join(partial, lib))
 				helper := tc.reader + stopper + tc.sentinel
@@ -442,4 +467,9 @@ func TestSourcedCallsFindEachForm(t *testing.T) {
 	if _, err := sourcedCalls([]byte("x='unclosed\n. \"$lib\"\n"), "broken.sh"); err == nil || !strings.Contains(err.Error(), "broken.sh") {
 		t.Errorf("a script with an unclosed quote parsed without an error naming it: %v", err)
 	}
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }

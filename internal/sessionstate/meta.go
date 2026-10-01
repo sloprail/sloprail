@@ -16,6 +16,10 @@ const (
 	// point recorded on the line it left describes a history the tree no longer
 	// has.
 	MetaBaselineBranch = "baseline_branch"
+	// MetaBaselineAtStop marks a baseline that was first recorded at a sub-agent's
+	// OWN Stop, not as its work began. It is the HEAD the sub-agent's commits had
+	// already produced, so a file-guard's range must not be measured from it.
+	MetaBaselineAtStop = "baseline_at_stop"
 	// MetaTranscriptRead is how far the session's own record has been read. A
 	// position rather than a state, because a record only grows.
 	MetaTranscriptRead = "transcript_read"
@@ -38,6 +42,14 @@ const (
 	// a refusal loop after a set number of blocks; reset when a Stop completes or
 	// a new sequence begins.
 	MetaStopRefusals = "stop_refusals"
+
+	// MetaCommitRequired is the commit-required gate's loop breaker: how many
+	// times in a row it refused the same set of uncommitted paths, as
+	// "<hash of the set>:<count>". Its own counter rather than MetaStopRefusals,
+	// because that one counts every refusal of a Stop while this one counts one
+	// reason for refusing, and it is keyed on the set so committing some of the
+	// work starts the count again.
+	MetaCommitRequired = "commit_required"
 
 	// MetaStopSeenRecord is how far the previous judged Stop read the record for
 	// tags, as "<entry count>:<uuid of the last entry>". Text up to there was
@@ -77,12 +89,6 @@ const (
 	// turns, a branch switch, a file dirty when the session began) from one it
 	// made.
 	MetaCitedCycle = "cited_cycle"
-
-	// MetaCitedUnknown is the files a permitted call changed with resolved
-	// citations but a result not computable ahead of time, as a JSON object of
-	// path to true — so a refusal at Stop can say why the citations did not
-	// count.
-	MetaCitedUnknown = "cited_unknown"
 )
 
 // Meta reads a session fact.

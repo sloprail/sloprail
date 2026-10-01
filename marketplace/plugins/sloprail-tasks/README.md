@@ -59,7 +59,11 @@ record — the `user` pool is the user's own messages (never the agent's output,
 tool result, or a harness-injected `<system-reminder>`/`<task-notification>`), the
 `tool_result` pool is what tools returned (never an AskUserQuestion answer, which is
 the user's words, nor a hook's refusal) — and puts the ones that resolve on
-`.event.citations` as `{quote, sourceTypes, path, line, message}`. A quote that matches nothing, or more than one
+`.event.citations` as `{quote, sourceTypes, path, line, message}`. The gates read
+that. The **file-guards** judge commits and read the same grounding from the
+commits' trailers: `Sloprail-Cites-User: <quote>` and `Sloprail-Cites-Tool: <quote>`,
+resolved the same way (the current session's transcript first, then the project's
+other sessions) into `changeset.citations`. A quote that matches nothing, or more than one
 entry, is not a citation. So a rule sees only citations that **exist**; whether one
 actually grounds the change is the judges' question.
 
@@ -168,7 +172,7 @@ that can never actually fail. See that guard's own section below.
 
 ### task-md-first — PreFileWrite gate + file-guard
 
-*Prevention is a gate, the settled-state check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the settled file at Stop). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
+*Prevention is a gate, the committed-changeset check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the committed files at Stop: uncommitted changes to a task file refuse the Stop with "commit these", and the rule then runs over the range of commits since it last passed, each script looping over `changeset.files[]` and reading the committed tree from `$SR_TREE`). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
 
 Over any file inside a task folder (`memories/tasks/<group>/<task>/`, gate
 files under its `gates/` included) other than `TASK.md` itself. A task folder
@@ -177,7 +181,7 @@ this plugin keys off `TASK.md`, so a file written before it exists is
 orphaned. The check is purely path-based: it computes the task folder as the
 first two segments after `memories/tasks/` (not simply the file's own parent,
 since a `gates/*.sh`/`gates/*.md` file sits one level deeper than `TASK.md`)
-and refuses the write unless `<task folder>/TASK.md` already exists on disk.
+and refuses the write unless `<task folder>/TASK.md` already exists (on disk for the gate, in the committed head for the file-guard).
 
 Deletions are not this guard's business (`deletions` is left at its default,
 `skip`): the reviewer deletes an **approved** task's whole folder — `TASK.md`
@@ -200,9 +204,10 @@ rewritten to match the work.
 Two checks, cheap first. The gate half runs only the first — no model runs before a
 write lands — and the file-guard runs both at Stop:
 1. **Script** (gate and file-guard) — a write that **creates** the task, or **changes its body** (the
-   prose after the frontmatter, compared with the file on disk at Pre and with the
-   session baseline at Stop), must carry at least one citation of the user's own
-   words (`--cite:user`). None is refused deterministically before the model, and
+   prose after the frontmatter, compared with the file on disk at Pre and, in the
+   file-guard, at the range's base against head), must carry at least one citation
+   of the user's own words (`--cite:user`, or a `Sloprail-Cites-User:` commit
+   trailer). None is refused deterministically before the model, and
    the refusal spells out the `sr-file` form to use. A write that leaves the body
    byte-identical — a status change — is permitted uncited.
 2. **Judge** (file-guard, at Stop) — the body must correspond to the cited words and hold that **and
@@ -218,16 +223,13 @@ Preventive: an edit to the ask must be refused **before** it lands, because a
 post-write refusal reports damage already done to the oracle. The Stop after-check
 backstops writes that reached the tree without passing pre-tool.
 
-*Uncited frontmatter edits and the Stop check.* The engine hands a Stop event
-the citations of every cited change that landed on the path this session, and a
-citation grounds only the change it rode on, in the pool it was cited in: each
-part of the file's change the agent made that no such citation rode on must be
-one the rule's `when` waives (a change the agent did not make, such as your own
-edit between turns, is not charged). A status edit leaves the
-body unchanged, so `body-changed.sh` waives it, and a task created with a
-citation and then moved to `in_progress` with a plain edit still reaches Stop
-with its ask's citation. Each uncited *body* change is refused at pre-tool, and
-at Stop should one reach the tree another way.
+*Uncited frontmatter edits and the Stop check.* The file-guard judges the squashed
+range: a rule's base does not move until it passes, so the range accumulates its
+commits and their citations. `body-changed.sh` says whether any task in it was
+created or had its body changed (a status edit leaves the body unchanged and is
+waived), so a task created with a cited commit and then moved to `in_progress` by
+a plain one still carries its ask's citation. Each uncited *body* change is refused
+at pre-tool, and at Stop should one reach a commit another way.
 
 ### task-evidence-resolves — PreFileWrite gate + file-guard
 
@@ -237,11 +239,12 @@ The **deterministic floor** — the `in_review` split's structural half, no mode
 - Every **artifact** `<repo-relative-file>:<ranges>` must resolve — the file exists
   under the repo and every cited line exists — and an `in_review` task must name
   at least one.
-- A write that moves the task **into** `in_review` (old status not `in_review`, new
-  status `in_review`; a create straight into `in_review` counts) must carry at
-  least one citation whose `sourceTypes` include `tool_result` — the output of the
-  test run or build that proves the work, cited on the claim itself. The refusal
-  names the `sr-file edit … --cite:tool_result` form.
+- A change that moves the task **into** `in_review` (status at the range's base not
+  `in_review`, at head `in_review`; a create straight into `in_review` counts) must
+  carry at least one citation whose `sourceTypes` include `tool_result` — the output
+  of the test run or build that proves the work, cited on the claim itself. The
+  gate's refusal names the `sr-file edit … --cite:tool_result` form; the
+  file-guard's names the `Sloprail-Cites-Tool:` commit trailer.
 
 It spends no model call and makes **no judgement** about whether the evidence
 *substantiates* the claim — that is task-review's. It also does **not** check the
@@ -252,28 +255,27 @@ into `done` is refused at the point of writing.
 
 `in_review` is a **claim**; this guard judges it — the split's **judged** half. It
 proves **delivery**, not the ask (it used to re-cite the user, a duplicate of
-task-body — that conflation is the bug this fixes). Bound as an after-check (Post /
-Stop only, never Pre — a judged rule evadable by writing the file a different way
-would be worse than none), it reads the task's stated outcome and its **delivery
+task-body — that conflation is the bug this fixes). Bound as an after-check (the
+committed changeset at Stop only, never Pre — a judged rule evadable by writing the
+file a different way would be worse than none), it reads the task's stated outcome and its **delivery
 evidence** and asks a model whether the evidence **substantiates** the claim.
 
 - A **script pre-flight** gates on `in_review` (most task writes cost nothing),
   re-runs every `gates/*.sh` under the task (the SAME start conditions
   `task-gates-hold` held at the beginning of work — see "Gates hold twice"
   below), and refuses deterministically if a gate fails, if no tool output is
-  cited on record for the claim (a task already in_review when the session
+  cited in the range's commits (a task already in_review when the session
   began, edited with no tool output cited), or if an artifact is missing or
   does not resolve — there is nothing to review until the evidence is there and
-  the gates still hold. The tool output must ground the claim as it stands: an
-  in_review task edited again without citing tool output after its cited
-  transition is refused at Stop, since a citation grounds only the change it
-  rode on, and only in the pool it was cited in.
+  the gates still hold. The tool output must be cited in a commit of the range, in the
+  `tool_result` pool; every in_review task in the range is shown the range's cited
+  results (a commit's citation is not tied to one task).
 - The **prepare** gates on `in_review` a **second** time — it is a separate check
   from the pre-flight, and a passing pre-flight does not stop it, so without its own
   gate a to_do task would still pay for the model call. For a non-in_review task it
   emits `{"skip": true}` and the judge check **abstains** (no model call, no verdict).
   For an in_review task it expands the evidence to the bytes: each `tool_result`
-  citation on the event to its **quote and the full tool result** at its line
+  citation on the changeset to its **quote and the full tool result** at its line
   (`sr-session trajectory tool-result --path --line` — the reviewer judges the whole
   output, not only the words the agent chose to quote), each artifact to the
   **cited tree lines** — and collects every `gates/*.md` judgment gate's text. The

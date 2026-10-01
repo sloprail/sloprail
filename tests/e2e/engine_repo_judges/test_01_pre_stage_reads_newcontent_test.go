@@ -31,13 +31,13 @@ func TestStopJudgeBlocksAFlaggedSkillWrite(t *testing.T) {
 
 	e.Run(proj, "s-erj-pre-skill", "write a bad skill with a tool", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA body the judge flags.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if !e.Exists(proj, "skills/x/SKILL.md") {
 		t.Errorf("the write did not land: a file-guard does not prevent")
 	}
 	if !sawRefusal(e.BlockingErrors(proj, "s-erj-pre-skill"), "SKILL QUALITY") {
-		t.Fatalf("a flagged SKILL.md was not blocked at Stop — the judge did not see the settled body (event.newContent):\n%v", e.BlockingErrors(proj, "s-erj-pre-skill"))
+		t.Fatalf("a flagged SKILL.md was not blocked at Stop — the judge did not see the committed body (changeset.files[].newContent):\n%v", e.BlockingErrors(proj, "s-erj-pre-skill"))
 	}
 }
 
@@ -50,10 +50,10 @@ func TestStopJudgeBlocksAFlaggedRuleWrite(t *testing.T) {
 
 	e.Run(proj, "s-erj-pre-rule", "write a bad rule with a tool", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA body the judge flags.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if !sawRefusal(e.BlockingErrors(proj, "s-erj-pre-rule"), "RULE QUALITY") {
-		t.Fatalf("a flagged RULE.md was not blocked at Stop — the judge did not see the settled body (event.newContent):\n%v", e.BlockingErrors(proj, "s-erj-pre-rule"))
+		t.Fatalf("a flagged RULE.md was not blocked at Stop — the judge did not see the committed body (changeset.files[].newContent):\n%v", e.BlockingErrors(proj, "s-erj-pre-rule"))
 	}
 }
 
@@ -66,7 +66,7 @@ func TestStopJudgePermitsACleanSkillWrite(t *testing.T) {
 
 	e.Run(proj, "s-erj-pre-clean", "write a clean skill with a tool", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA clean body.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if sawRefusal(e.BlockingErrors(proj, "s-erj-pre-clean"), "SKILL QUALITY") {
 		t.Fatalf("a clean SKILL.md was blocked at Stop")

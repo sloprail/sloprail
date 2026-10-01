@@ -113,8 +113,8 @@ not event.resultKnown                                          a gate trigger: c
 
 In a script, check `resultKnown` first; a **gate that prevents** a write refuses
 (exit 1) when the result is not known, because a write whose bytes nobody saw has
-not been checked — A file-guard never meets this: it reads the settled
-`Post*` kinds. `PreFileCreate` carries `resultKnown` too, so check it on both kinds.
+not been checked. A file-guard never meets this: it reads committed bytes from
+`changeset.files[]`. `PreFileCreate` carries `resultKnown` too, so check it on both kinds.
 Details are in [file-guard.md](file-guard.md) ("The resultKnown discipline").
 
 ### `PreCommandInvoke` — a shell command line about to run
@@ -256,10 +256,64 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 - on a **tag**, `seen: true` = only in text an earlier Stop read;
 - on a **Post file event**, `seen: true` = same content an earlier Stop was handed.
 
+`seen` on a Post file event is delivered to **contexts** (and anything else still
+bound to `PostFile*`). A **file-guard** does not receive Post file events: it
+judges commits. What replaces `seen` for it is the watermark — a passed range is
+never re-delivered — and the verdict cache — unchanged input is never re-judged; see
+[file-guard.md](file-guard.md#passed-ranges-and-replayed-fails).
+
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
 any Stop, records nothing — what it covered is delivered unseen again, so it is
 re-judged rather than skipped.
+
+### `Changeset` — what a file-guard's checks receive
+
+Not a kind a gate or a context binds to: a file-guard binds to no event, and its
+checks are handed one `Changeset` per rule per range (per **subject**, below). `event` is always
+`{"kind": "Changeset"}`; the `.event.path`, `.event.newContent` and
+`.event.oldContent` of a file event do not exist for a file-guard — loop over
+`.changeset.files[]`.
+
+```json
+{"event": {"kind": "Changeset"},
+ "changeset": {
+   "base": "…", "head": "…",
+   "commits": [{"sha": "…", "subject": "…", "body": "…",
+                "trailers": {"Sloprail-Cites-User": ["…"]}}],
+   "files": [{"path": "…", "status": "M", "oldPath": "", "oldContent": "…",
+              "newContent": "…", "oldMarkers": [], "newMarkers": [], "diff": "…"}],
+   "others": [{"path": "README.md", "status": "M"}],
+   "citations": [{"quote": "…", "sourceTypes": ["user"], "path": "…", "line": 3, "message": "…"}]},
+ "subject": {"id": "changeset", "files": ["…"]},
+ "transcriptPath": "…", "context": {}}
+```
+
+- `base`, `head` — the range, as SHAs ([file-guard.md](file-guard.md) for how the
+  base is chosen).
+- `commits` — every commit in the range, oldest first; `trailers` maps the
+  trailer key in canonical case (`Sloprail-Cites-User`) to its values.
+- `files` — the files `match` selected, in full. `status` is `A` (body in
+  `newContent`), `M` (`oldContent` is the range's first bytes, `newContent` the
+  last), `R` (`oldPath` set; a rename is not a deletion) or `D` (`oldContent` and
+  `oldMarkers`, no `newContent`). `diff` is that file's part of the squashed diff.
+- `others` — the rest of the range, `{path, status}` only.
+- `citations` — the range's resolved `Sloprail-Cites-*` quotes
+  ([grounding.md](grounding.md)); empty outside a session.
+- `subject` — the unit being decided: `{id, files}`, where `files` are paths in
+  `changeset.files`. The rest of the changeset stays in the payload as context. It
+  depends on what is asking:
+  - a **requirement** (`require:` and its `when`) is evaluated once per subject, and the
+    default subject is **one selected file**: `{"id": "<path>", "files": ["<path>"]}`.
+    A `when` script decides for `.subject.files` and reads the rest of the
+    changeset only as context; the requirement applies to the files whose `when`
+    applies.
+  - a **check** (a script or a judge) has ONE subject by default, the whole
+    changeset: `{"id": "changeset", "files": [<every selected file>]}`.
+
+  A future `subjects:` key will supply the list, for requirements and checks alike,
+  in this same shape. A gate's payload has no `subject`: it has `.event`.
+  `transcriptPath` and `context` as everywhere.
 
 ### `Stop` — a work cycle ended
 
@@ -281,7 +335,7 @@ at load** otherwise, rather than binding to something that silently never fires.
 |---|---|---|---|
 | **gate** | yes | yes | **no** |
 | **context** | yes | **no** (its `exit` is always checked on Stop anyway) | yes |
-| **file-guard** | binds to the file lifecycle by nature — names no kind at all (`deletions:` decides whether the delete kinds reach it) | | |
+| **file-guard** | binds to a range of commits by nature — names no kind at all (`deletions:` decides whether `D` entries reach it) | | |
 
 Alias availability follows from the table: `PreFileWrite` is admitted on both a
 gate and a context; `PostFileWrite` is **context-only** (a gate does not wake on
@@ -294,7 +348,7 @@ stdin (or a judge template renders against). The envelope differs by nature and 
 which script it feeds; all of them carry the event flat under `event`. The Go
 shapes are in `internal/declaration/payload.go`.
 
-### CheckPayload — a file-guard's script / prepare / (prepare-less) judge
+### CheckPayload — the base envelope (a file-guard's is a `Changeset`)
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
@@ -302,14 +356,14 @@ shapes are in `internal/declaration/payload.go`.
  "context":{"some-context":{"active":true,"payload":{…}}}}
 ```
 
-- `event` — the file event, flat. Always a `Post*` kind: a file-guard judges the
-  settled file at Stop and is never handed a `Pre*` event. A `*FileDelete` only
-  when the guard's `deletions:` is `include` or `only`; with `only`, never a
-  create or update ([file-guard.md](file-guard.md)).
+- `event` — the event, flat. A file-guard's check does not get this envelope: it
+  gets a `Changeset` payload ([above](#changeset--what-a-file-guards-checks-receive)),
+  with deleted files as `status: "D"` entries when `deletions:` is `include` or
+  `only` ([file-guard.md](file-guard.md)).
 - `transcriptPath` — the session record, for reading what the event does not carry
   (which human message grounds this write). Also on `$SR_TRANSCRIPT`.
 - `context` — every declared context by name, `{active, payload}`, at parity with
-  the file-guard's match scope.
+  the match scope.
 
 ### GateCheckPayload — a gate's script / prepare / judge
 
@@ -369,7 +423,9 @@ own `prepare` returned one:
 </rules>
 ```
 
-A file-guard's judge also gets `{{ change }}`, the unified diff of the event's
+A file-guard's judge renders `{{ changeset }}`, `{{ subject }}` and `{{ change }}`
+(the combined diff of the files `match` selected) in place of a file event's
+fields; a gate's judge also gets `{{ change }}`, the diff of the event's
 `oldContent` to its `newContent` ([judge-checks.md](judge-checks.md)).
 
 `additionalContext` is additive — it never replaces the payload, and a `prepare`

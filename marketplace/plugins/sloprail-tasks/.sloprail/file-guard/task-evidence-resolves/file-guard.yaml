@@ -11,17 +11,17 @@
 #     names repository content. The file exists under the repo and every cited
 #     line exists — the file-citation check task.cue cannot make.
 #   - the PROOF that the work happened is tool output (a test run that came back
-#     green), and it rides on the WRITE that moves the task into in_review:
-#     `sr-file edit …/TASK.md --old-string 'status: in_progress' --new-string
-#     'status: in_review' --cite:tool_result '<exact output>'`. (The frontmatter `observations:` list of absolute `.jsonl:<ranges>` strings
-#     this replaced is gone from the schema.)
+#     green), and it rides on the COMMIT that moves the task into in_review, as a
+#     trailer: `git commit -m 'Move to in_review' -m 'Sloprail-Cites-Tool: <exact
+#     output>'`. (The frontmatter `observations:` list of absolute `.jsonl:<ranges>`
+#     strings this replaced is gone from the schema.)
 #
 # THE REQUIREMENT IS DECLARED, CONDITIONALLY. Tool output is not demanded on
 # every write to a task — creating one, changing its priority. Only the
-# TRANSITION into in_review (old status not in_review, new status in_review) is a
-# claim of finished work, so `require` applies `when: ./in-review.sh --entering`
-# says the write makes it. An uncited transition is refused by the engine before
-# check-task.sh runs, naming the sr-file form.
+# TRANSITION into in_review (status at the range's base not in_review, at head
+# in_review) is a claim of finished work, so `require` applies when
+# `./in-review.sh --entering` says the changeset makes it. An uncited transition is
+# refused by the engine before check-task.sh runs.
 #
 # THIS IS THE STRUCTURAL HALF ONLY. It answers "is the evidence there", never
 # "does the evidence substantiate the claim" — that is task-review's model call,
@@ -40,12 +40,10 @@ match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
 # The PREVENTION half — refusing a malformed or unproven TASK.md before it lands
 # (the right moment for a rule about permission to act) — is the PreFileWrite gate
-# of the same name, beside this guard under gate/. This file-guard is the Stop
-# after-check on the SETTLED file: the backstop for a write the gate could not
-# cover (its result underivable at pre-tool, or a write that reached the tree
-# without passing it), where the event's oldContent is the session baseline and its
-# citations are those recorded for the cited changes that landed on the path this
-# session. check-task.sh here reads the file on disk (a Post kind).
+# of the same name, beside this guard under gate/. This file-guard judges the
+# committed changeset: every task the range touched, with the commits' citations.
+# check-task.sh reads each task's committed bytes and resolves its artifacts
+# against the committed tree.
 
 require:
   - citation: {source_types: [tool_result]}

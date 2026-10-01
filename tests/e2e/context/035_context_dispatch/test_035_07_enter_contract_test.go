@@ -56,7 +56,7 @@ func pathContextProject(t *testing.T) (*harness.Env, string) {
 		"enter.sh": enterByPath,
 		"exit.sh":  exitNever,
 	})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 	return e, proj
 }
 

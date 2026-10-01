@@ -34,7 +34,11 @@ sr-file write MIGRATION.md --cite:tool_result '<exact words from the output>' --
 The citation rides on the command, never in the file, so the file holds only its
 own content. The engine resolves each quote against the session's record, in the
 `tool_result` pool only — the user's words or the agent's own summary never
-resolve as source output — so a citation on the event *exists*. A quote that
+resolve as source output — so a citation on the event *exists*. The same grounding
+can ride on the **commit**, which is where the file-guard reads it: a
+`Sloprail-Cites-Tool: <exact words from the output>` trailer, resolved exactly like
+`sr-file --cite:tool_result` (against the transcripts on disk; the current session
+first, then the project's others; it must match exactly one real tool output). A quote that
 resolves nowhere is not a citation at all.
 
 ## Why a gate, and a file-guard of the same name
@@ -46,9 +50,12 @@ The two halves are split by what each is for, and each is a separate folder:
   *before it lands*, while the agent still has the source in view and can fix the
   write. It requires the citation (no model runs in it).
 - **`file-guard/citations-resolve`** is the after-check and holds the judge. It acts
-  only at Stop, on the settled file, with the same `require`. It sees what the
-  gate cannot: a markdown file changed by a script the engine did not see as a
-  write.
+  at Stop, on the committed changeset (the markdown files the range touched, as one
+  diff), with the same `require`; the citations are the ones the range's commits
+  carry (`changeset.citations`), and since the rule's range does not move until it
+  passes, the commits since it last passed all count. Uncommitted markdown refuses
+  the Stop with "commit these" first. It sees what the gate cannot: a markdown file
+  changed by a script the engine did not see as a write.
 
 A file-guard alone would only report a bad claim after it was written; a gate
 alone would miss a write the engine cannot see ahead. The judge prompt lives in the

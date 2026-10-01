@@ -169,6 +169,16 @@ it, to guarantee that ordering. (A `match` that merely *reports* absence — `no
 …active` — needs no `require`; there is nothing for the context to have run
 first.)
 
+### The Stop order
+
+At Stop the work runs in one fixed order: **context enters → commit-required →
+file-guards → gates → context exits.** Enters come first, so commit-required, a
+file-guard's `match`/`when`/checks and a gate's `match`/`require` all read the
+contexts this turn entered, not last turn's state. Exits come last, so a context
+that closes at this Stop is still active for every rule judged at that same Stop,
+and is closed afterwards. (Before a tool call the order is enters, then structure
+gates, then gates.)
+
 Note that a `match` reads `context[...]` at **run time** (context names are
 project-defined, so the type checker leaves the map open) — a typo in the context
 name is not caught at load. Cause the trigger and confirm the dependent rule

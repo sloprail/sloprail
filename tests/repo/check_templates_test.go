@@ -9,16 +9,20 @@ import (
 )
 
 // The two script-check templates the authoring skill ships teach opposite halves
-// of the same discipline, so each is run against the events it must decide:
-// the file-guard template judges settled (Post*) bytes and fails closed on an
-// unread file; the gate template judges pending (Pre*) bytes and fails closed on
-// an unknown result. A file-guard never receives a Pre* kind, so the file-guard
-// template refuses one rather than permit on `resultKnown` false.
+// of the same discipline, so each is run against what it must decide: the
+// file-guard template judges the committed files of a Changeset (always known, and
+// refuses anything that is not a readable Changeset); the gate template judges
+// pending (Pre*) bytes and fails closed on an unknown result.
 
 func runTemplate(t *testing.T, name string, event map[string]any) (int, string) {
 	t.Helper()
+	return runTemplatePayload(t, name, map[string]any{"event": event})
+}
+
+func runTemplatePayload(t *testing.T, name string, body map[string]any) (int, string) {
+	t.Helper()
 	script := filepath.Join(repoRoot(t), "marketplace", "plugins", "sloprail", "skills", "authoring-guardrails", name)
-	payload, err := json.Marshal(map[string]any{"event": event})
+	payload, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,25 +39,37 @@ func runTemplate(t *testing.T, name string, event map[string]any) (int, string) 
 	return -1, ""
 }
 
-func TestFileGuardTemplateIsPostOnlyAndFailsClosed(t *testing.T) {
-	post := func(kind string, known bool, content string) map[string]any {
-		return map[string]any{"kind": kind, "path": "a.md", "newContent": content, "newContentKnown": known}
+func TestFileGuardTemplateJudgesAChangesetAndFailsClosed(t *testing.T) {
+	changeset := func(files ...map[string]any) map[string]any {
+		return map[string]any{
+			"event":     map[string]any{"kind": "Changeset"},
+			"changeset": map[string]any{"files": files},
+		}
 	}
-	if code, out := runTemplate(t, "check-template.sh", post("PostFileUpdate", true, "fine")); code != 0 {
-		t.Errorf("a fine settled file was refused (%d): %s", code, out)
+	file := func(status, content string) map[string]any {
+		return map[string]any{"path": "a.md", "status": status, "newContent": content}
 	}
-	if code, _ := runTemplate(t, "check-template.sh", post("PostFileUpdate", true, "CHANGE-ME")); code == 0 {
-		t.Errorf("a settled file failing fine() was permitted")
+	if code, out := runTemplatePayload(t, "check-template.sh", changeset(file("M", "fine"))); code != 0 {
+		t.Errorf("a fine committed file was refused (%d): %s", code, out)
 	}
-	if code, _ := runTemplate(t, "check-template.sh", post("PostFileCreate", false, "")); code == 0 {
-		t.Errorf("a settled file the engine could not read (newContentKnown false) was permitted")
+	if code, out := runTemplatePayload(t, "check-template.sh", changeset(file("M", "fine"), file("A", "CHANGE-ME"))); code == 0 || !strings.Contains(out, "a.md") {
+		t.Errorf("a committed file failing fine() was permitted, or the refusal did not name it (%d): %s", code, out)
 	}
-	// A file-guard is never handed a Pre kind: the template does not teach
-	// "permit and let Stop judge it", it refuses the unexpected kind.
-	for _, kind := range []string{"PreFileCreate", "PreFileUpdate"} {
-		ev := map[string]any{"kind": kind, "path": "a.md", "resultKnown": false, "newContent": ""}
-		if code, _ := runTemplate(t, "check-template.sh", ev); code == 0 {
-			t.Errorf("the file-guard template permitted a %s", kind)
+	// A deleted file has nothing to judge here.
+	if code, out := runTemplatePayload(t, "check-template.sh", changeset(file("D", ""))); code != 0 {
+		t.Errorf("a deleted file was refused (%d): %s", code, out)
+	}
+	// Anything that is not a readable Changeset is a refusal, never a pass: a file-guard
+	// is never handed a file event, and an empty payload must not read as "no files".
+	for name, body := range map[string]map[string]any{
+		"a Pre kind":       {"event": map[string]any{"kind": "PreFileUpdate", "path": "a.md", "resultKnown": false, "newContent": ""}},
+		"a Post kind":      {"event": map[string]any{"kind": "PostFileUpdate", "path": "a.md", "newContent": "x", "newContentKnown": true}},
+		"no changeset":     {"event": map[string]any{"kind": "Changeset"}},
+		"an empty payload": {},
+		"files not a list": {"event": map[string]any{"kind": "Changeset"}, "changeset": map[string]any{"files": "x"}},
+	} {
+		if code, _ := runTemplatePayload(t, "check-template.sh", body); code == 0 {
+			t.Errorf("the file-guard template permitted %s", name)
 		}
 	}
 }

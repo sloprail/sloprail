@@ -22,7 +22,6 @@ import (
 // cycle would read the first's mark from a brand-new store. Each test also
 // asks the engine which identity each transcript resolves to.
 var (
-	New                          = harness.New
 	Turns                        = harness.Turns
 	Write                        = harness.Write
 	Bash                         = harness.Bash
@@ -36,3 +35,7 @@ func TestMain(m *testing.M) {
 	harness.Cleanup()
 	os.Exit(code)
 }
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

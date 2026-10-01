@@ -45,8 +45,7 @@ func TestT035_11_ContextEntersOnTag(t *testing.T) {
 		"exit.sh":  exitNever,
 	})
 	// The tag scan reads the committed record, so the project is committed first.
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "before the session")
+	e.CommitAll(proj, "before the session")
 
 	sess := "s-035-11"
 	e.Run(proj, sess, "declare research", Turns("done",
@@ -75,8 +74,7 @@ func TestT035_12_ContextDoesNotEnterOnOtherTag(t *testing.T) {
 		"enter.sh": enterOnResearch,
 		"exit.sh":  exitNever,
 	})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "before the session")
+	e.CommitAll(proj, "before the session")
 
 	sess := "s-035-12"
 	e.Run(proj, sess, "tag something else", Turns("done",

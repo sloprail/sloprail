@@ -7,6 +7,7 @@ package e2e
 // that carry the same pin does not let each vouch for the other.
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,7 +77,7 @@ func TestT046_44_UnknownResultRemedyLeadsWithACheckableEdit(t *testing.T) {
 	res := e.Run(proj, "s-046-44", "rename charged to chargedCents", Turns("done",
 		Bash("b1", "sed -i.bak 's/charged/chargedCents/g' src/charge.go"),
 		Write("w1", "src/charge.go", renamed),
-	))
+	).ThenCommit("write the files"))
 	i := strings.Index(res.Output, "Make this edit with Edit or Write")
 	j := strings.Index(res.Output, "cite their words")
 	if i < 0 || (j >= 0 && j < i) {
@@ -91,15 +92,10 @@ func TestT046_44_UnknownResultRemedyLeadsWithACheckableEdit(t *testing.T) {
 // guards, and pinned-invariant refuses it.
 func TestT046_45_PinIntoAnotherRepositoryIsRefused(t *testing.T) {
 	other := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"}} {
-		if out, err := exec.Command("git", append([]string{"-C", other}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-	}
+	harness.InitRepo(t, other)
+	harness.CommitAllIn(t, other, "x")
 	writeExec(t, other, "SPEC.md", billingSpec)
-	if out, err := exec.Command("sh", "-c", "cd "+other+" && git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm spec").CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v %s", err, out)
-	}
+	harness.CommitAllIn(t, other, "spec")
 	otherSha, _ := exec.Command("git", "-C", other, "rev-parse", "HEAD").Output()
 
 	e := newEnv(t)
@@ -109,7 +105,7 @@ func TestT046_45_PinIntoAnotherRepositoryIsRefused(t *testing.T) {
 	sess := "s-046-45"
 	e.Run(proj, sess, "pin to the other repo", Turns("done",
 		Write("w1", "src/charge.go", invariantCode(other+"@"+strings.TrimSpace(string(otherSha))+":SPEC.md#L3-3", refundBody)),
-	))
+	).ThenCommit("write the files"))
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
 	if !containsAll(joined, "not this project's", "pinned-invariant") {
 		t.Fatalf("a pin into another repository was not refused:\n%s", joined)
@@ -144,7 +140,7 @@ func TestT046_46_SpecConventionAgrees(t *testing.T) {
 	pinSh := filepath.Join(root, "pinned-invariant", "pin.sh")
 	for p, want := range paths {
 		watched, err := match.Match(event.Event{Fields: map[string]any{
-			"path": p, "markers": []any{}, "oldMarkers": []any{}, "context": map[string]any{},
+			"path": p, "status": "M", "markers": []any{}, "oldMarkers": []any{}, "context": map[string]any{},
 		}})
 		if err != nil {
 			t.Fatalf("%s: match: %v", p, err)
@@ -180,14 +176,14 @@ func TestT046_47_DeletingTwoHoldersOfOnePinInOneCommand(t *testing.T) {
 	marked := invariantCode(proj+"@"+sha+":SPEC.md#L3-3", refundBody)
 	e.WriteFile(proj, "src/a.go", marked)
 	e.WriteFile(proj, "src/b.go", marked)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "two holders of one pin")
+	e.CommitAll(proj, "two holders of one pin")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-046-47"
-	e.Run(proj, sess, "clean up", Turns("done",
+	settleBaseline(t, e, proj, sess, "clean up")
+	e.Run(proj, sess, "go on", Turns("done",
 		Bash("b1", "rm src/a.go src/b.go"),
-	))
+	).ThenCommit("write the files"))
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
 	if !containsAll(joined, "moves src/a.go off", "moves src/b.go off", "pinned-spec-holds") {
 		t.Fatalf("deleting both holders of a pin in one command was not refused at Stop for both:\n%s", joined)
@@ -209,7 +205,7 @@ func TestT046_48_ReplaceRefDoesNotStandInForThePinnedCommit(t *testing.T) {
 	sess := "s-046-48"
 	e.Run(proj, sess, "code pinned to v1", Turns("done",
 		Write("w1", "src/charge.go", invariantCode(proj+"@"+shaV1+":SPEC.md#L2-2", "func charge(total int) {}\n")),
-	))
+	).ThenCommit("write the files"))
 	if joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")); !containsAll(joined, "since changed at HEAD", "pinned-invariant") {
 		t.Fatalf("a replace ref let a stale pin read the new wording:\n%s", joined)
 	}
@@ -227,7 +223,7 @@ func TestT046_49_UncitedNewLineInAPinnedSpecIsRefused(t *testing.T) {
 	res := e.Run(proj, "s-046-49", "allow goodwill refunds", Turns("done",
 		Write("w1", "SPEC.md", withException),
 		Write("w2", "NOTES.md", "goodwill refunds: ask the user\n"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("every rule in a pinned spec is the user's") {
 		t.Fatalf("an uncited new line in a pinned spec was not refused:\n%s", res.Output)
 	}
@@ -248,7 +244,7 @@ func TestT046_50_CitedNewRuleTheUserAskedForIsAdmitted(t *testing.T) {
 	const ask = "add a rule 3 to the spec: a refund must be issued within 30 days of the charge"
 	res := e.Run(proj, "s-046-50", ask, Turns("done",
 		Bash("b1", "sr-file edit SPEC.md --old-string '(end)' --new-string '3. A refund must be issued within 30 days of the charge.\n(end)' --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("a cited new rule the user asked for was refused:\n%s", res.Output)
 	}
@@ -271,7 +267,7 @@ func TestT046_54_WhitespaceOutsidePinnedLinesNeedsNothing(t *testing.T) {
 	reformatted := strings.Replace(billingSpec, "Billing invariants\n", "Billing invariants   \n", 1) + "\n"
 	res := e.Run(proj, "s-046-54", "tidy the spec", Turns("done",
 		Write("w1", "SPEC.md", reformatted),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a whitespace-only change outside the pinned lines was refused:\n%s", res.Output)
 	}

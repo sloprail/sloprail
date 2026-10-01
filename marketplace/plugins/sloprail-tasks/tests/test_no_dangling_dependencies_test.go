@@ -36,8 +36,7 @@ func TestDangling_DeleteWithoutStrippingRefusesAtStop(t *testing.T) {
 	e.WriteFile(proj, danglingDepPath, task("to_do", "P1", "Set up CI."))
 	dependentDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\nDepends on CI. Placeholder body, no citation needed for a BASELINE file the guard never Pre-checked.\n"
 	e.WriteFile(proj, taskPath, dependentDoc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed dependent and dependency, both correct")
+	e.CommitAll(proj, "seed dependent and dependency, both correct")
 
 	sess := "s-dangling-nostrip"
 
@@ -45,7 +44,7 @@ func TestDangling_DeleteWithoutStrippingRefusesAtStop(t *testing.T) {
 	// leaving the dependent's depends_on pointing at nothing.
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Bash("b1", "rm -rf memories/tasks/infra/setup-ci"),
-	))
+	).ThenCommit("Delete the dependency"))
 	if res.Refused() {
 		t.Fatalf("the delete itself was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -82,8 +81,7 @@ func TestDangling_DeleteWithStripPermits(t *testing.T) {
 	e.WriteFile(proj, danglingDepPath, task("to_do", "P1", "Set up CI."))
 	dependentDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\nDepends on CI. Placeholder body, no citation needed for a BASELINE file the guard never Pre-checked.\n"
 	e.WriteFile(proj, taskPath, dependentDoc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed dependent and dependency, both correct")
+	e.CommitAll(proj, "seed dependent and dependency, both correct")
 
 	sess := "s-dangling-strip"
 	// The rewritten dependent: depends_on stripped, body untouched. Stripping an
@@ -94,7 +92,7 @@ func TestDangling_DeleteWithStripPermits(t *testing.T) {
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Bash("b1", "rm -rf memories/tasks/infra/setup-ci"),
 		Write("w1", taskPath, strippedDoc),
-	))
+	).ThenCommit("Delete the dependency and strip it"))
 	if res.Refused() {
 		t.Fatalf("the delete-and-strip turn was refused at Pre:\n%s", res.Output)
 	}

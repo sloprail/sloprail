@@ -32,8 +32,7 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	// A file that already exists, so a write to it is an update; and none named
 	// "brand-new.md", so a write to that is a create.
 	e.WriteFile(proj, "existing.md", "old body\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "before the session")
+	e.CommitAll(proj, "before the session")
 
 	path := stageFileEventTree(t, proj,
 		userMsg("u1", "write some files"),

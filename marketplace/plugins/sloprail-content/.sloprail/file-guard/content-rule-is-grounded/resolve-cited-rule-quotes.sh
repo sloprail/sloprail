@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # prepare for stage 2 of content-rule-is-grounded: hand the judge the rule's
-# body as it will stand, for context. What the judge rules on — the change — and
-# the cited words need no preparing: judge-rule-body.md.j2 reads `change` and
-# `.event.citations` straight off its input.
+# bodies as they will stand, for context. What the judge rules on — the change —
+# and the cited words need no preparing: judge-rule-body.md.j2 reads `change` and
+# `changeset.citations` (the quotes the range's commits cite) straight off its input.
 #
 # THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge;
 # non-zero fails the check closed. Every read of the payload goes through
@@ -16,44 +16,29 @@ fail() {
 }
 
 event="$(cat)"
-printf '%s' "$event" | jq -e '.event | type == "object"' >/dev/null 2>&1 \
-  || fail "the check payload is not readable JSON with an .event object, so the cited words could not be assembled"
+printf '%s' "$event" | jq -e '.event.kind == "Changeset"' >/dev/null 2>&1 \
+  || fail "the check payload is not a readable Changeset, so the cited words could not be assembled"
 
-# field FILTER — one jq read of the payload; a jq error fails the prepare.
-field() {
-  local out
-  out="$(printf '%s' "$event" | jq -r "$1")" || fail "could not read $1 from the check payload"
-  printf '%s' "$out"
-}
+# body_of CONTENT — the prose after the frontmatter: check-rule-lib.sh's, the one
+# extraction every guard in this plugin uses. Sourcing it only defines functions.
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
+unset check_rule_lib_loaded
+. "$lib_dir/check-rule-lib.sh" || fail "check-rule-lib.sh could not be loaded, so the rule bodies could not be read"
+[ "${check_rule_lib_loaded:-}" = 1 ] || fail "check-rule-lib.sh did not load whole, so the rule bodies could not be read"
 
-# body_of CONTENT — the prose after the frontmatter, the same extraction every
-# guard in this plugin uses.
-body_of() {
-  printf '%s\n' "$1" | awk '
-    BEGIN { seen = 0 }
-    NR == 1 && $0 == "---" { seen = 1; next }
-    seen == 1 && $0 == "---" { seen = 2; next }
-    seen == 1 { next }
-    { print }
-  '
-}
+n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" \
+  || fail "could not read the changeset's files"
 
-kind="$(field '.event.kind // ""')" || exit 1
-content=""
-case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
-    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
-    # events.md): false when it could not read the settled file (a link to a
-    # FIFO or a device, or past the read cap). Then the quotes are unseen, so
-    # the prepare fails and the check fails closed.
-    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
-      fail "the settled rule file could not be read (not a regular file, or too large)"
-    content="$(field '.event.newContent // ""')" || exit 1
-    ;;
-  *)
-    fail "unexpected event kind '$kind'; this guard judges only settled rule creates and updates"
-    ;;
-esac
+bodies='[]'
+i=0
+while [ "$i" -lt "$n" ]; do
+  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" \
+    || fail "could not read file $i of the changeset"
+  content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" \
+    || fail "could not read $path from the changeset"
+  i=$((i + 1))
+  bodies="$(printf '%s' "$bodies" | jq -c --arg path "$path" --arg body "$(body_of "$content")" '. + [{path: $path, body: $body}]')" \
+    || fail "could not assemble the body of $path"
+done
 
-jq -n --arg body "$(body_of "$content")" '{additionalContext: {body: $body}}'
+jq -n --argjson bodies "$bodies" '{additionalContext: {bodies: $bodies}}'

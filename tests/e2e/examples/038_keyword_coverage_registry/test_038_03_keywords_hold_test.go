@@ -25,8 +25,7 @@ func keywordsProject(t *testing.T) (*harness.Env, string) {
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
 	e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 	return e, proj
 }
 
@@ -52,7 +51,7 @@ func TestT038_08_UncitedKeywordDropRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-038-08", "search for guardrail work", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", narrowedScanner),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() {
 		t.Fatalf("an uncited keyword drop was not refused:\n%s", res.Output)
 	}
@@ -74,7 +73,7 @@ func TestT038_09_AddedKeywordNeedsNothing(t *testing.T) {
 
 	res := e.Run(proj, "s-038-09", "search for guardrail work", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner+"  - eval\n"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() || res.Saw("SR038 the judge ran") {
 		t.Fatalf("adding a keyword was refused or judged:\n%s", res.Output)
 	}
@@ -105,7 +104,7 @@ func TestT038_11_DropCitingUnrelatedWordsRefused(t *testing.T) {
 	const ask = "search GitHub for guardrail projects"
 	res := e.Run(proj, "s-038-11", ask, Turns("done",
 		srWriteScanner("b1", narrowedScanner, ask),
-	))
+	).ThenCommit("narrow the scanner", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited drop:\n%s", res.Output)
 	}
@@ -123,13 +122,12 @@ func TestT038_12_NestedScannerIsStillChecked(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-038-12"
 	e.Run(proj, sess, "declare a scanner but never search", Turns("done",
 		Write("w1", ".claude/scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:.claude/scanners/mine"]; !ok {
 		t.Fatalf("a scanner declared under .claude/scanners/ was not logged")
 	}

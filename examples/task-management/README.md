@@ -52,10 +52,11 @@ Two natures, both named `ask-is-human-authored`:
   citation requirement and the judge, and first refuses a write whose
   resulting bytes cannot be computed (`sed -i`), because a gate does not fail
   closed on that by itself and the judge reads those bytes.
-- **The file-guard** is the after-check: at Stop it holds the settled
+- **The file-guard** is the after-check: at Stop it holds the committed
   `ASK.md` to the same requirement and judge, the backstop for a write the
-  gate could not see. A file-guard only acts on what settled; it never sees
-  the write before it lands.
+  gate could not see. It judges commits — uncommitted changes to an `ASK.md`
+  refuse the Stop with "commit these" — over the range from where it last passed
+  to `HEAD`, and never sees the write before it lands.
 
 ## What the requirement and the judge divide
 
@@ -72,10 +73,13 @@ ASK
 1. **`require: [{citation: {source_types: [user]}}]` (first, no model):** the
    engine resolves every `--cite:user` quote against the session's record, and
    a write carrying none that resolves (a Write or Edit tool call, a shell
-   redirect, a quote the user never said) is refused before any check runs.
-   Unconditional, because ASK.md holds nothing but the ask.
+   redirect, a quote the user never said) is refused before any check runs. The
+   file-guard reads the same grounding from the commits of its range: a
+   `Sloprail-Cites-User: <exact words>` trailer per message, resolved the same
+   way, and a range whose commits cite nothing is refused. Unconditional,
+   because ASK.md holds nothing but the ask.
 2. **Judge (no prepare):** the judge template reads the resolved citations
-   straight off `event.citations` — each cited quote, the whole message it was
+   straight off `event.citations` (the file-guard's, `changeset.citations`) — each cited quote, the whole message it was
    taken from, and where it sits in the record — beside the change to ASK.md.
    It answers what existence cannot: is the ask TRUE to those words, and does
    it hold **that and nothing else**? The "and nothing
