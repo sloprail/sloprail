@@ -69,9 +69,6 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	if reason := natureDispatchPreTool(cmd, p, reg, store); reason != "" {
 		return deny(cmd, reason)
 	}
-	if reason := pushGate(cmd, p, reg, store); reason != "" {
-		return deny(cmd, reason)
-	}
 	return nil
 }
 

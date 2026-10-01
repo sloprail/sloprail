@@ -372,3 +372,20 @@ checks:
 	require.Len(t, loaded.Contexts, 1)
 	assert.True(t, loaded.Contexts[0].Origin.FromPlugin())
 }
+
+// A gate that ships off (`enabled: false`) is inert until the project lists it under
+// `enabled:` in its config.
+func TestNewWithPlugins_AGateShippedOffNeedsTheProjectToEnableIt(t *testing.T) {
+	gate := "enabled: false\non:\n  - event: PreCommandInvoke\nchecks:\n  - script: ./c.sh\n"
+	plugin := pluginRoot(t, map[string]string{"gate/judge/gate.yaml": gate, "gate/judge/c.sh": "exit 0\n"})
+
+	off := NewWithPlugins(projectDotDir(t, map[string]string{}), []Origin{{Plugin: "acme", Root: plugin}})
+	loaded, err := off.Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, loaded.Gates, "a gate shipped off was on without the project enabling it")
+
+	on := NewWithPlugins(projectDotDir(t, map[string]string{"config.yaml": "enabled:\n  - acme/gate/judge\n"}), []Origin{{Plugin: "acme", Root: plugin}})
+	loaded, err = on.Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Len(t, loaded.Gates, 1, "the project enabled it")
+}

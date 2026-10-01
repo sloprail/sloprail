@@ -45,23 +45,20 @@ type config struct {
 	// is told apart from an explicit 0 (no cap). See StopHookBlockCap.
 	StopHookBlockCap *int `yaml:"stop_hook_block_cap"`
 
-	// PushGate switches on the push gate: `git push` and `gh pr create` are refused
-	// while a file-guard refuses the commits that would leave. Off unless set true.
-	PushGate bool `yaml:"push_gate"`
+	// Enabled names the declarations this project switches ON that ship disabled by
+	// default (`enabled: false` in the declaration), by qualified name. The mirror of
+	// Disabled; a declaration that does not ship disabled is unaffected by it.
+	Enabled []string `yaml:"enabled"`
 }
 
-// PushGate reads the project's `push_gate` from the config in root (a `.sloprail`
-// directory): whether `git push` / `gh pr create` are judged before they run. Opt-in:
-//
-//	push_gate: true
-//
-// Absent or false means a push is not gated (the Stop still judges every commit).
-func PushGate(root string) (bool, error) {
-	c, err := loadConfig(root)
-	if err != nil {
-		return false, err
+// isEnabled reports whether the project switched the named default-off declaration on.
+func (c config) isEnabled(qualified string) bool {
+	for _, name := range c.Enabled {
+		if name == qualified {
+			return true
+		}
 	}
-	return c.PushGate, nil
+	return false
 }
 
 // DefaultStopHookBlockCap mirrors Claude Code's own CLAUDE_CODE_STOP_HOOK_BLOCK_CAP

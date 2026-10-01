@@ -102,9 +102,11 @@ runs history-moving git commands in outside its own tree (`git -C <dir> commit`,
 `cd <dir> && git commit`, merge, rebase, pull, push, `git worktree add <dir>`) is registered
 as an ad-hoc folder before the command runs, started at its `HEAD` then, and judged at Stop
 under THAT repository's own `.sloprail` plus the session's plugins. `git push` and
-`gh pr create` can be gated too, **opt-in** with `push_gate: true` in `.sloprail/config.yaml`
-(off by default): every file-guard is then evaluated over what the agent committed in the
-target repository first, and a refusal blocks the command.
+`gh pr create` can be gated too by the plugin's `judge-before-push` gate, which ships **off**
+and is turned on with `enabled: [sloprail/gate/judge-before-push]` in `.sloprail/config.yaml`
+([gate.md](gate.md)): before the command runs it calls `sr-session judge` (every file-guard
+over HEAD and each recorded ref of the target repository, as Stop would) and a refusal blocks
+the command.
 A branch the user genuinely dropped is abandoned with
 `sr-session refs abandon --ref <branch> --cite-user '<exact quote>'`: the quote must resolve
 to a USER message of the session (never an assistant's or a tool's). It is abandoned at its

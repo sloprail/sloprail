@@ -274,6 +274,10 @@ type Gate struct {
 	// Require.
 	Checks []Check `yaml:"checks"`
 
+	// Enabled, when false, ships the gate OFF: it is inert until the project lists its
+	// qualified name under `enabled:` in `.sloprail/config.yaml`. Absent means on.
+	Enabled *bool `yaml:"enabled"`
+
 	// Dir is the gate's own folder. Not a YAML field.
 	Dir string `yaml:"-"`
 

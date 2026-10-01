@@ -25,7 +25,7 @@ func pushSetup(t *testing.T, config string) (*Env, string, func() bool) {
 	}
 }
 
-// T003_41: the push gate is OPT-IN (`push_gate: true` in .sloprail/config.yaml). Off, a
+// T003_41: the push gate is OPT-IN (`enabled: [sloprail/gate/judge-before-push]` in .sloprail/config.yaml). Off, a
 // push goes through (the Stop still judges the commits). On, commits a file-guard refuses
 // do not leave the machine; once fixed, the same push goes through.
 func TestT003_41_ThePushGateIsOffByDefault(t *testing.T) {
@@ -43,7 +43,7 @@ func TestT003_41_ThePushGateIsOffByDefault(t *testing.T) {
 }
 
 func TestT003_41_APushOfRefusedCommitsIsBlockedThenAllowedOnceFixedWhenEnabled(t *testing.T) {
-	e, proj, pushed := pushSetup(t, "push_gate: true\n")
+	e, proj, pushed := pushSetup(t, "enabled:\n  - sloprail/gate/judge-before-push\n")
 	e.Run(proj, "s-003-41b", "commit and push", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
 		Bash("p1", "git push -q origin HEAD:refs/heads/work"),
