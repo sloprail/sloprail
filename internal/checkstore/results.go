@@ -277,6 +277,12 @@ func (s *store) CachedCheck(subject, kind, fingerprint string) (CachedCheck, boo
 // no longer one the live run holds is an orphan — the files it judged have left
 // the range — and stays a failure forever unless it is cleared. It becomes skip,
 // with the reason, and is no longer outstanding.
+//
+// A check without a fingerprint (a requirement, a script) has no input identity to
+// compare, so its identity is (subject, kind): it stays failing while the live run
+// refuses it again, or has not evaluated that kind at all (an earlier check
+// refused first); it is stale once the live run passes it, or evaluates the kind
+// for other subjects only (its subject left the range).
 func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -293,8 +299,13 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 		                   AND json_extract(metadata, '$.state') = 'complete')
 		  AND NOT EXISTS (SELECT 1 FROM checks live
 		                  WHERE live.run_id = ? AND live.subject = checks.subject
-		                    AND live.kind = checks.kind AND live.fingerprint = checks.fingerprint)`,
-		stamp(), rule, ruleHash, liveRunID, liveRunID)
+		                    AND live.kind = checks.kind AND live.fingerprint = checks.fingerprint)
+		  AND NOT (checks.fingerprint IS NULL AND (
+		        EXISTS (SELECT 1 FROM checks live
+		                WHERE live.run_id = ? AND live.subject = checks.subject AND live.kind = checks.kind
+		                  AND live.status IN ('fail', 'error', 'interrupted'))
+		        OR NOT EXISTS (SELECT 1 FROM checks live WHERE live.run_id = ? AND live.kind = checks.kind)))`,
+		stamp(), rule, ruleHash, liveRunID, liveRunID, liveRunID, liveRunID)
 	if err != nil {
 		return 0, fmt.Errorf("checkstore: resolve stale for %q: %w", rule, err)
 	}
