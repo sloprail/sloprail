@@ -26,9 +26,12 @@ func TestT003_42_ASquashMergedBranchIsNotJudgedAndAPartlyLandedOneIs(t *testing.
 
 	e.Run(proj, "s-003-42", "branches", Turns("done",
 		Bash("b1", "git switch -q -c landed"),
-		harness.CommitFile("c1", "docs/landed.md", "FORBIDDEN but reviewed upstream", "add landed"),
+		harness.CommitFile("c1", "docs/landed.md", "words that passed review", "add landed"),
 		Bash("b2", "rm notes/scratch.md && ln -s ../docs/seed.md notes/scratch.md && git add -A && git commit -q -m 'file to symlink'"),
 		Bash("b3", "git switch -q "+main),
+	))
+	// The Stop judged and passed it; only then does it land.
+	e.Run(proj, "s-003-42", "land it", Turns("done",
 		squashInto("s1", "landed", main),
 	))
 	if got := stopRefusals(e, proj, "s-003-42"); got != "" {

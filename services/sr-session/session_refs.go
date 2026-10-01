@@ -73,7 +73,7 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 		return nil
 	}
 	out := evaluateChangesetsAt(cmd, guards, p, scope, root, stopTip{}, contextMap, state, results)
-	for _, t := range stopTips(cmd, p, root) {
+	for _, t := range stopTips(cmd, p, root, guards, results) {
 		out = append(out, evaluateChangesetsAt(cmd, guards, p, scope, root, t, contextMap, state, results)...)
 	}
 	return out
@@ -82,7 +82,7 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 // stopTips records what the folder's reflog shows and returns the tips to judge besides
 // HEAD: every recorded ref of this agent in this folder, refreshed from the ref, minus
 // what HEAD contains and what another tip contains.
-func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
+func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declaration.FileGuard, results checkstore.Store) []stopTip {
 	warn := func(err error) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: the session's other branches were not read: %v\n", err)
 	}
@@ -158,9 +158,13 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 				tip = cur
 				_ = reg.RecordRef(sessionstate.Ref{SessionID: rs.ID, Folder: folder, Name: r.Name, Tip: cur, AgentID: r.AgentID})
 			} else if cur == "" {
-				// The ref is gone: its commits are judged only while something still holds them.
+				// The ref is gone: its commits are judged only while something still holds them,
+				// or while they are owed a judgement (a branch squash-merged and deleted before
+				// any rule passed it is nothing holds, and is still the session's unjudged work).
 				if ok, err := gitrepo.Reachable(root, tip); err != nil || !ok {
-					continue
+					if held, err := gitrepo.RefTip(root, tip); err != nil || held == "" || judgedByEvery(root, tip, guards, results) {
+						continue
+					}
 				}
 			}
 		}
@@ -180,8 +184,8 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 		} else if ok || tip == head.Commit {
 			continue // HEAD's own judgment covers it
 		}
-		if gitrepo.LandedUpstream(root, tip) {
-			continue // squash-merged: everything it changed is already upstream, reviewed
+		if gitrepo.LandedUpstream(root, tip) && judgedByEvery(root, tip, guards, results) {
+			continue // squash-merged AFTER a rule passed it: everything it changed is upstream, and was judged
 		}
 		start, _ := gitrepo.RefCreation(root, r.Name)
 		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start})
@@ -205,6 +209,34 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 		}
 	}
 	return out
+}
+
+// judgedByEvery reports whether every file-guard has a FINISHED PASSING run at tip or at a
+// descendant of it: the work up to tip was approved by each rule. Landing upstream
+// never substitutes for it: a recorded tip nobody passed stays owed even after its
+// branch was squash-merged. Anything not known (no store, a failed read) is false, so
+// the tip is judged.
+func judgedByEvery(root, tip string, guards []declaration.FileGuard, results checkstore.Store) bool {
+	if results == nil {
+		return false
+	}
+	for _, g := range guards {
+		heads, err := results.PassedHeads(g.Qualified())
+		if err != nil {
+			return false
+		}
+		covered := false
+		for _, h := range heads {
+			if ok, err := gitrepo.IsAncestor(root, tip, h); err == nil && ok {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
 }
 
 // sessionStartTime is when the session's record began, which bounds what the reflog is

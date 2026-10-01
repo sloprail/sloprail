@@ -1,5 +1,8 @@
 # Merging past an unresolved refusal is never legitimate: the refusal says the work
-# is wrong, and a merge lands it where the rule can no longer hold it. This gate
+# is wrong, and a merge lands it where the rule can no longer hold it. Neither is merging
+# a tip this session recorded that no rule has passed yet (no finished passing run for
+# every file-guard that ran): the hint tells the agent to END ITS TURN so Stop judges it
+# first, then merge in a later turn. This gate
 # refuses `gh pr merge` (any flags, --admin included) while the branch being merged
 # has open refusals recorded in THIS session's check results, judged at that
 # branch's tip (open-refusals.sh asks `sr-checks sql`; the policy is all here).

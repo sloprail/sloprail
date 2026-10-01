@@ -17,8 +17,11 @@ func TestT003_44_ALongMergedBranchIsSkippedAndAnUnmergedOneIsJudged(t *testing.T
 
 	e.Run(proj, "s-003-44", "merged then edited upstream", Turns("done",
 		Bash("b1", "git switch -q -c merged"),
-		harness.CommitFile("c1", "docs/m.md", "FORBIDDEN but reviewed", "add m"),
+		harness.CommitFile("c1", "docs/m.md", "words that passed review", "add m"),
 		Bash("b2", "git switch -q "+main),
+	))
+	// The Stop judged and passed it; only then does it land, and upstream edits it again.
+	e.Run(proj, "s-003-44", "land it", Turns("done",
 		squashInto("s1", "merged", main),
 		// Upstream edits the same file afterwards: equality with the tip no longer holds.
 		Bash("s2", "git switch -q -c tmp-edit refs/remotes/origin/main && printf '%s' 'edited later upstream' > docs/m.md && "+

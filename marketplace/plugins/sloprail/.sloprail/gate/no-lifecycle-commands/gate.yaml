@@ -1,0 +1,32 @@
+# The engine's lifecycle entry points are for the harness's hooks, never for the agent.
+# `sr-session start`, `stop`, `pre-tool` and `subagent-stop` are what Claude Code's hooks
+# run (hooks/hooks.json), outside any agent command, with the real session on stdin. An
+# agent that runs them itself invents a session (sub-agents were seen running `start` and
+# `stop` 23 times with made-up session ids) to record verdicts or get a judgement of its own:
+# a pass nobody earned, in a store the real session does not read. Judging is the engine's:
+# the Stop hook judges what was committed, and `sr-session judge` (called by shipped gates)
+# judges on demand under the real session.
+#
+# Only commands the AGENT runs reach this gate (PreCommandInvoke is the agent's Bash tool);
+# the hook wrapper invokes the binary itself, outside it. Read-only commands stay allowed:
+# `sr-session trajectory`, `refs list`, `state get/list`, `changeset`, `sr-checks status|sql`.
+# The one allowed use of `start` is the documented load check, `sr-session start < /dev/null`
+# (it reads no session and only reports which rules fail to load).
+#
+# On by default, like every shipped rule, and switched off by listing
+# `sloprail/gate/no-lifecycle-commands` under `disabled:` in .sloprail/config.yaml.
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations,
+        (.bin == "sr-session" and len(.argv) > 1 and
+          (.argv[1] == "stop" or .argv[1] == "pre-tool" or .argv[1] == "subagent-stop")) or
+        (.bin == "sr" and len(.argv) > 2 and .argv[1] == "session" and
+          (.argv[2] == "stop" or .argv[2] == "pre-tool" or .argv[2] == "subagent-stop")))
+      or
+      (any(event.invocations,
+        (.bin == "sr-session" and len(.argv) > 1 and .argv[1] == "start") or
+        (.bin == "sr" and len(.argv) > 2 and .argv[1] == "session" and .argv[2] == "start"))
+       and not (event.raw contains "/dev/null"))
+checks:
+  - script: ./refuse.sh
