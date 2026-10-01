@@ -587,7 +587,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 	}
 	reason := "a citation grounds only the commit it is in; an empty commit carrying only the trailer does not count. " +
 		"Not grounded by a citation in the commit that last changed it: " + strings.Join(failed, ", ") + ".\n" +
-		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe()) + "\n" + body + unresolvedNote(unresolved)
+		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe(), ev.recordedQuotes(failed, p.Citation.Pools())) + "\n" + body + unresolvedNote(unresolved)
 	return dispatchcore.Verdict{Refused: true, Reason: reason}, nil
 }
 
@@ -606,7 +606,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 // starts before the first commit has no commit to reset to). Undoing is `git revert`,
 // never `git reset --hard`.
 // Several quotes on one commit are fine.
-func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool) string {
+func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool, recorded []recordedQuote) string {
 	var b strings.Builder
 	b.WriteString("Last changed by:")
 	allHead := true
@@ -621,6 +621,15 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 		fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, tip))
 	}
 	line := trailer + ": <exact quote>"
+	if len(recorded) > 0 {
+		// The agent already cited these files (sr-file --cite): hand back the
+		// quote it found, as the exact trailer to paste, never a placeholder.
+		line = recorded[0].Trailer + ": " + recorded[0].Quote
+		b.WriteString("\nQuotes already recorded for these files this session (sr-file --cite), each the trailer line to paste into the commit message:")
+		for _, r := range recorded {
+			fmt.Fprintf(&b, "\n  %s: %s: %s", r.Path, r.Trailer, r.Quote)
+		}
+	}
 	quoted := make([]string, len(files))
 	for i, f := range files {
 		quoted[i] = "'" + f + "'"
@@ -632,12 +641,16 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 	fmt.Fprintf(&b, "\nRecommended: ground them with a FOLLOW-UP commit that changes each file and carries the trailer. "+
 		"If no change is needed, restate the file's content through a cited `sr-file write <file> --cite:%s '<exact quote>'`, "+
 		"or touch it minimally so the commit changes it. Then:\n"+
-		"  git add %s && git commit -m '<what changed>' -m '%s'", pool, strings.Join(quoted, " "), line)
+		"  git add %s && git commit -m '<what changed>' -m %s", pool, strings.Join(quoted, " "), shellQuote(line))
 	if allHead && amendSafe {
 		fmt.Fprintf(&b, "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:\n"+
-			"  git commit --amend --no-edit --trailer '%s'", line)
+			"  git commit --amend --no-edit --trailer %s", shellQuote(line))
 	}
-	b.WriteString("\nTo undo the change instead, use `git revert <commit>`; never `git reset --hard`, which destroys work.")
+	// Undoing the whole range is one command, and it needs no citation: the tree is
+	// then as it was at the base, so there is nothing to ground.
+	fmt.Fprintf(&b, "\nTo undo the whole range instead (the files are then as they were, so nothing is left to ground):\n"+
+		"  git revert --no-commit %s..HEAD && git commit --no-edit\n"+
+		"Never `git reset --hard`, which destroys work.", cs.Base)
 	return b.String()
 }
 

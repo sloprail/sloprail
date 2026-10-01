@@ -20,7 +20,7 @@ lib_init
 # (sed -i, an unresolvable sr-file line) is not admitted.
 known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
 if [ "$known" != "true" ]; then
-  jq -n '{reason: "This write carries an sr:moved-from marker but the bytes it would leave in the file cannot be worked out from the command, so it cannot be reconciled against its origin. Write the moved content directly (the whole file) instead of editing it in place."}'
+  jq -n '{reason: "This write carries an sr:moved-from marker but the bytes it would leave in the file cannot be worked out from the command, so it cannot be reconciled against its origin. Write the moved content directly (the whole file) instead of editing it in place. If you use sr-file, run it alone in its own Bash call, with nothing before or after it on the line: another command beside it (sr-file ...; cat X) is what makes the bytes unknowable, and the edit itself is allowed."}'
   exit 1
 fi
 

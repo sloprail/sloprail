@@ -93,7 +93,7 @@ lib_remedy
 # When the result is unknown the change is most likely harmless — a rename by
 # `sed -i` that keeps every pin — and needs no citation at all once it can be
 # checked. So the first advice is to make it checkable; citing comes second.
-unknown_result="what it would leave cannot be worked out before it runs (a shell command that edits it, or an sr-file call whose dry run failed — if sr-file said why, fix that first)"
+unknown_result="what it would leave cannot be worked out before it runs (a shell command that edits it, or an sr-file call whose dry run failed — if sr-file said why, fix that first; run sr-file alone in its own Bash call, with nothing before or after it on the line, since another command beside it (sr-file ...; cat X) makes the result unknowable and the edit itself is allowed)"
 unknown_remedy="Make this edit with Edit or Write, or with sr-file edit on its own in the command, so what it leaves can be checked first: no citation is needed when it keeps every pinned line and every pin. $remedy"
 
 case "$kind" in

@@ -18,7 +18,7 @@ case "$kind" in
   PreFileCreate | PreFileUpdate)
     known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
     if [ "$known" != "true" ]; then
-      jq -n '{reason: "This write to a scanner cannot be checked: the keywords it would leave in the file cannot be worked out from the command, so a dropped keyword could not be seen. Write the whole scanner.yaml directly (or with sr-file write), citing the user'\''s words with --cite:user if it drops a keyword."}'
+      jq -n '{reason: "This write to a scanner cannot be checked: the keywords it would leave in the file cannot be worked out from the command, so a dropped keyword could not be seen. Write the whole scanner.yaml directly (or with sr-file write), citing the user'\''s words with --cite:user if it drops a keyword. Run sr-file alone in its own Bash call, with nothing before or after it on the line: another command beside it (sr-file ...; cat X) is what makes the bytes unknowable, and the edit itself is allowed."}'
       exit 1
     fi
     ;;
