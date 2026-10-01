@@ -57,3 +57,26 @@ artifacts: ["src/file.py:3-7"]' \
 
 `artifacts` are repo-relative `file:lines` of what the work changed. A task
 must not be left in `to_do` or `in_progress` at the end of a turn.
+
+## Committing it
+
+Every change to TASK.md is also judged from the commits at the end of the turn,
+and the citations ride on the commit as trailers, never in the file. A commit
+that changes TASK.md carries the trailers for what that change needs: the user's
+words (`Sloprail-Cites-User:`) when it creates the task or changes its body, and
+the test output (`Sloprail-Cites-Tool:`) when it moves the task to `in_review`:
+
+```bash
+git add memories/tasks/<category>/<name>/TASK.md src tests
+git commit -m 'Fix the bug and hand the task in' \
+  --trailer 'Sloprail-Cites-User: <the same exact words>' \
+  --trailer 'Sloprail-Cites-Tool: <the same exact test-output line>'
+```
+
+- The trailers must be in the commit that last changed TASK.md. If you commit
+  the task more than once, each commit that touches it repeats the user's words,
+  and the one that moves it to `in_review` also carries the test output.
+- Trailers live in the LAST paragraph of the message. If you add a
+  `Co-Authored-By:` line, keep it in that same paragraph (`--trailer` for it
+  too): a `-m 'Co-Authored-By: …'` after a `-m 'Sloprail-Cites-…: …'` is a new
+  paragraph, and the citations stop counting.
