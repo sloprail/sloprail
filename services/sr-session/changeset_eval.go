@@ -331,15 +331,26 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 
 	// Two scopes of a recorded tip besides its range (the same for every tip):
 	//  - RULE AGE: a rule whose folder was never part of the tip's line of history (the tip
-	//    predates the rule) has nothing to judge there.
+	//    was cut before the rule) is in force on that line from the moment it was added:
+	//    commits made before that are not its debt, commits made after it are, judged
+	//    with the rule from the session's rule set. Only an empty range is "not in force".
 	//  - WHAT STILL STANDS: a tip already landed upstream is judged only on the paths whose
 	//    content upstream still holds as the tip left it; paths changed upstream since were
 	//    superseded by later commits, judged where they were made.
 	selector := changesetSelector(match, ev.context)
 	superseded, notInForce := 0, false
 	if ev.tip.Sha != "" {
-		notInForce = gitrepo.RuleAbsentFromLine(ev.root, ev.tip.Sha, repoRelative(ev.root, g.Dir))
-		if ev.tip.Landed && !notInForce {
+		folder := repoRelative(ev.root, g.Dir)
+		if gitrepo.RuleAbsentFromLine(ev.root, ev.tip.Sha, folder) {
+			notInForce = true
+			if since := gitrepo.RuleAddedAt(ev.root, folder); !since.IsZero() {
+				if r, err = gitrepo.RaiseBaseToTime(ev.root, r, since); err != nil {
+					return ev.fail(g, run, fmt.Errorf("its range is not computable: %w", err))
+				}
+				run.BaseRef = r.Base
+			}
+		}
+		if ev.tip.Landed {
 			up, inner := gitrepo.UpstreamRef(ev.root), selector
 			selector = func(s changeset.Scope) (bool, error) {
 				ok, err := inner(s)
@@ -354,16 +365,13 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 			}
 		}
 	}
-	cs := changeset.Changeset{}
-	if !notInForce {
-		cs, err = changeset.Build(ev.root, r, changeset.Options{
-			Deletions: changeset.DeletionMode(g.Deletions),
-			Scan:      changesetMarkers,
-			Select:    selector,
-		})
-		if err != nil {
-			return ev.fail(g, run, err)
-		}
+	cs, err := changeset.Build(ev.root, r, changeset.Options{
+		Deletions: changeset.DeletionMode(g.Deletions),
+		Scan:      changesetMarkers,
+		Select:    selector,
+	})
+	if err != nil {
+		return ev.fail(g, run, err)
 	}
 	if len(cs.Files) == 0 {
 		// Settled, and said why when it was not simply that nothing matched.
