@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
+	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -67,6 +69,12 @@ func pushGate(cmd *cobra.Command, p HookPayload, mods *module.Registry, store se
 	targets := pushTargets(p)
 	if len(targets) == 0 {
 		return ""
+	}
+	if on, err := declaration.PushGate(dotDir(p.Cwd)); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: push_gate not read, the push is not gated: %v\n", err)
+		return ""
+	} else if !on {
+		return "" // opt-in: `push_gate: true` in .sloprail/config.yaml
 	}
 	scope := natureHookScope(cmd, p)
 	var reasons []string

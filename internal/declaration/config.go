@@ -44,6 +44,24 @@ type config struct {
 	// the engine lets the turn end un-judged. A pointer so "absent" (the default)
 	// is told apart from an explicit 0 (no cap). See StopHookBlockCap.
 	StopHookBlockCap *int `yaml:"stop_hook_block_cap"`
+
+	// PushGate switches on the push gate: `git push` and `gh pr create` are refused
+	// while a file-guard refuses the commits that would leave. Off unless set true.
+	PushGate bool `yaml:"push_gate"`
+}
+
+// PushGate reads the project's `push_gate` from the config in root (a `.sloprail`
+// directory): whether `git push` / `gh pr create` are judged before they run. Opt-in:
+//
+//	push_gate: true
+//
+// Absent or false means a push is not gated (the Stop still judges every commit).
+func PushGate(root string) (bool, error) {
+	c, err := loadConfig(root)
+	if err != nil {
+		return false, err
+	}
+	return c.PushGate, nil
 }
 
 // DefaultStopHookBlockCap mirrors Claude Code's own CLAUDE_CODE_STOP_HOOK_BLOCK_CAP

@@ -102,8 +102,9 @@ runs history-moving git commands in outside its own tree (`git -C <dir> commit`,
 `cd <dir> && git commit`, merge, rebase, pull, push, `git worktree add <dir>`) is registered
 as an ad-hoc folder before the command runs, started at its `HEAD` then, and judged at Stop
 under THAT repository's own `.sloprail` plus the session's plugins. `git push` and
-`gh pr create` are themselves gated: every file-guard is evaluated over what the agent
-committed in the target repository first, and a refusal blocks the command.
+`gh pr create` can be gated too, **opt-in** with `push_gate: true` in `.sloprail/config.yaml`
+(off by default): every file-guard is then evaluated over what the agent committed in the
+target repository first, and a refusal blocks the command.
 Uncommitted work is a `commit-required` matter and
 stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
 
