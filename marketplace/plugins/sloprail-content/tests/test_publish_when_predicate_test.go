@@ -25,7 +25,7 @@ func TestPublish_WhenPredicateAppliesOnAPublishEvenWithoutAPath(t *testing.T) {
 	exitOf := func(t *testing.T, payload string) int {
 		t.Helper()
 		cmd := exec.Command("bash", pred)
-		cmd.Env = append(os.Environ(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		cmd.Env = append(harness.HostEnv(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
 		cmd.Stdin = strings.NewReader(payload)
 		out, err := cmd.CombinedOutput()
 		var ee *exec.ExitError

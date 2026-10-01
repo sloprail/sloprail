@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -75,7 +76,7 @@ func TestT026_07_EveryShippedHookPassesTheGrep(t *testing.T) {
 			}})
 			cmd := exec.Command("bash", check)
 			cmd.Dir = filepath.Dir(check)
-			cmd.Env = append(os.Environ(), "SR_WORKSPACE="+root)
+			cmd.Env = append(harness.HostEnv(), "SR_WORKSPACE="+root)
 			cmd.Stdin = strings.NewReader(string(payload))
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("authoring-slop refuses the shipped %s — it could never be edited again:\n%s", rel, out)
@@ -142,7 +143,7 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 			if tc.workspace != nil {
 				ws = tc.workspace(t)
 			}
-			cmd.Env = append(os.Environ(), "SR_GUARDRAIL=t", "SR_GUARDRAIL_DIR="+dir, "SR_WORKSPACE="+ws)
+			cmd.Env = append(harness.HostEnv(), "SR_GUARDRAIL=t", "SR_GUARDRAIL_DIR="+dir, "SR_WORKSPACE="+ws)
 			cmd.Stdin = strings.NewReader(string(payload))
 			out, err := cmd.Output()
 			code := 0

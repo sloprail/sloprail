@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -339,7 +340,7 @@ func runScript(t *testing.T, dir, script string, env []string, payload string) (
 	t.Helper()
 	cmd := exec.Command("bash", filepath.Join(dir, script))
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "SR_GUARDRAIL_DIR="+dir), env...)
+	cmd.Env = append(append(harness.HostEnv(), "SR_GUARDRAIL_DIR="+dir), env...)
 	cmd.Stdin = strings.NewReader(payload)
 	out, err := cmd.CombinedOutput()
 	if ee, ok := err.(*exec.ExitError); ok {

@@ -57,7 +57,7 @@ exports `CLAUDECODE` masks the gap CI does not have):
 ```
 cd marketplace/plugins/sloprail-tasks/tests
 go build ./...
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
+go test ./... -count=1
 ```
 
 ## Citations are resolved for real, not stubbed

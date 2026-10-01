@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/ambientenv"
 )
 
 // A multi-turn run: prompt.md is the first user turn; every later one is
@@ -158,7 +160,7 @@ func simulateUser(ctx context.Context, binDir, model, brief string, dialogue []e
 		"--prompt", buildUserPrompt(brief, dialogue),
 	)
 	c.Dir = cwd
-	c.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c.Env = append(ambientenv.Session(os.Environ()), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr

@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/ambientenv"
 )
 
 // score runs the fixture's scorer script and reports its verdict.
@@ -75,7 +77,7 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 
 	cmd := exec.CommandContext(ctx, fx.ScorePath())
 	cmd.Dir = fx.Dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(ambientenv.Session(os.Environ()),
 		"SR_EVAL_TRANSCRIPT="+transcriptPath,
 		"SR_EVAL_PROJECT_DIR="+ws.project,
 		"SR_EVAL_FIXTURE_DIR="+fx.Dir,

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/ambientenv"
 )
 
 // sloprailBinaries are the names whose presence in a directory makes that
@@ -173,6 +175,10 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 // state has to tell this run's work from what was already on disk itself —
 // research-rigor's depth gate counts only directories the run cloned.
 func baseAgentEnv(environ []string, home, tmp string, fresh bool) []string {
+	// The operator's own Claude Code session (CLAUDECODE, CLAUDE_CODE_SESSION_ID,
+	// CLAUDE_CODE_ENTRYPOINT, ...) is not the agent's: left in, the agent-under-test
+	// believes it is nested inside that session.
+	environ = ambientenv.Session(environ)
 	env := make([]string, 0, len(environ)+3)
 	for _, kv := range environ {
 		key, _, _ := strings.Cut(kv, "=")

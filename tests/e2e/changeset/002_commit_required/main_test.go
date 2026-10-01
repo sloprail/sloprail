@@ -11,9 +11,6 @@ import (
 // match selects refuses the turn — "commit these". Always on, never commits for
 // the agent, in the harness's real blocking form, only for an agent that owns the
 // tree, with a loop breaker in the spirit of stop_hook_block_cap.
-//
-// Run as `env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID go test ...`: an ambient
-// session id leaks into the mock.
 
 type Env = harness.Env
 

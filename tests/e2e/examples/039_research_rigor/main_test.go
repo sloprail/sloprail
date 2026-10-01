@@ -141,7 +141,7 @@ func sourceRepo(t *testing.T, e *harness.Env, name string) string {
 func staleClone(t *testing.T, src, dst string) {
 	t.Helper()
 	cmd := exec.Command("git", "clone", "-q", src, dst)
-	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE=2020-01-01T00:00:00Z")
+	cmd.Env = append(harness.HostEnv(), "GIT_COMMITTER_DATE=2020-01-01T00:00:00Z")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("stale clone: %v\n%s", err, out)
 	}

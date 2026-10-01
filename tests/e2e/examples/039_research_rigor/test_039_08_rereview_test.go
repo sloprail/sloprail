@@ -310,7 +310,7 @@ func runScore(t *testing.T, e *harness.Env, proj, sess, verdict string) (string,
 	cmd := exec.Command("sh", score)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), "SR_EVAL_TRANSCRIPT="+e.TranscriptPath(proj, sess),
+	cmd.Env = append(harness.HostEnv(), "SR_EVAL_TRANSCRIPT="+e.TranscriptPath(proj, sess),
 		"SR_EVAL_BIN_DIR="+bin, "SR_EVAL_PROJECT_DIR="+proj)
 	err := cmd.Run()
 	b, _ := os.ReadFile(prompt)
@@ -648,7 +648,7 @@ func TestT039_42_ProposalOwnersInTheRealLayout(t *testing.T) {
 			`"transcriptPath":` + jsonQuote(traj) + `,"currentContext":{"active":false,"payload":{}},"gates":{}}`
 		cmd := exec.Command("bash", enter)
 		cmd.Stdin = strings.NewReader(payload)
-		cmd.Env = append(os.Environ(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		cmd.Env = append(harness.HostEnv(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.Output()
 		return err == nil && strings.Contains(string(out), `"proposal"`)
 	}
@@ -1205,7 +1205,7 @@ func TestT039_53_ScheduledJobIsABackgroundWriter(t *testing.T) {
 				`"transcriptPath":` + jsonQuote(root) + `,"currentContext":{"active":false,"payload":{}},"gates":{}}`
 			cmd := exec.Command("bash", enter)
 			cmd.Stdin = strings.NewReader(payload)
-			cmd.Env = append(os.Environ(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+			cmd.Env = append(harness.HostEnv(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
 			out, err := cmd.Output()
 			opened := err == nil && strings.Contains(string(out), `"proposal"`)
 			if opened != tc.want {
@@ -1270,7 +1270,7 @@ func TestT039_54_ClockProbePlacement(t *testing.T) {
 			`"transcriptPath":` + jsonQuote(root) + `,"currentContext":{"active":false,"payload":{}},"gates":{}}`
 		cmd := exec.Command("bash", enter)
 		cmd.Stdin = strings.NewReader(payload)
-		cmd.Env = append(os.Environ(), "SR_WORKSPACE="+ws,
+		cmd.Env = append(harness.HostEnv(), "SR_WORKSPACE="+ws,
 			"PATH="+pathFirst+string(os.PathListSeparator)+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.Output()
 		return err == nil && strings.Contains(string(out), `"proposal"`)

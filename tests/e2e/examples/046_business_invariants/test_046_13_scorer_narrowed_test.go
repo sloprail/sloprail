@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +49,7 @@ func runScorer(t *testing.T, fixture, charge string) (string, int) {
 		}
 	})
 	c := exec.Command("sh", filepath.Join(repoRoot(t), "examples", "business-invariants", "eval", fixture, "score.sh"))
-	c.Env = append(os.Environ(),
+	c.Env = append(harness.HostEnv(),
 		"SR_EVAL_TRANSCRIPT="+tr, "SR_EVAL_PROJECT_DIR="+proj, "SR_EVAL_BIN_DIR="+bin,
 		"SR_EVAL_AGENT_HOME="+t.TempDir(), "SR_EVAL_VERDICT_OUT="+filepath.Join(t.TempDir(), "v.json"))
 	out, err := c.CombinedOutput()

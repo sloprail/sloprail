@@ -2,7 +2,7 @@ package e2e
 
 import (
 	"errors"
-	"os"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -17,7 +17,7 @@ func TestT049_25_AMissingContentFieldIsNotAPureAddition(t *testing.T) {
 	guard := filepath.Join(repoRoot(t), "examples", "no-unasked-deletion", ".sloprail", "file-guard", "preserves-unasked-content")
 	run := func(script, payload string) (string, int) {
 		cmd := exec.Command("bash", filepath.Join(guard, script))
-		cmd.Env = append(os.Environ(), "SR_GUARDRAIL_DIR="+guard)
+		cmd.Env = append(harness.HostEnv(), "SR_GUARDRAIL_DIR="+guard)
 		cmd.Stdin = strings.NewReader(payload)
 		out, err := cmd.Output()
 		var exit *exec.ExitError
