@@ -1,0 +1,34 @@
+# Measured seconds for scripts/e2e-shard.sh. "KEY SECONDS", KEY being the
+# package path below tests/e2e/ (or PKG:TestName for a test of a split package).
+# `split KEY` cuts a package test by test. Anything not listed gets a default
+# weight, so a stale or missing line costs balance, never coverage.
+split examples/046_business_invariants
+split examples/039_research_rigor
+examples/038_keyword_coverage_registry 141
+subagent/013_subagent_is_its_own_session 23
+subagent/015_subagent_own_cycle 10
+gate/032_gate_dispatch 7
+context/035_context_dispatch 8
+fileguard/034_fileguard_dispatch 12
+fileguard/035_new_format_from_plugins 6
+fileguard/036_killed_by_signal 3
+fileguard/037_fileguard_pure_require 3
+fileguard/038_fileguard_deletions 9
+fileguard/039_fileguard_pure_require_files 3
+fileguard/040_unreadable_committed_files 12
+changeset/001_changeset_command 6
+changeset/002_commit_required 8
+changeset/003_stop_evaluation 30
+changeset/004_context_seen 3
+changeset/005_stop_order 7
+changeset/006_stop_concurrency 17
+checks/001_sr_checks 4
+grounding/040_sr_file_grounded 4
+grounding/041_require_citation 31
+structure/033_structure_gate 5
+structure/052_structure_plugin_scopes 7
+proxy/025_proxy_equals_direct 2
+engine_repo_judges 19
+declarations/030_declarations_loader 2
+authoring/003_authoring_interface 3
+harness 3
