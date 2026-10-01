@@ -286,7 +286,7 @@ func claimsMove(root, recorded, cur string, atStart []string) bool {
 	return gitrepo.MadeByHead(root, cur)
 }
 
-var objectSha =regexp.MustCompile(`^[0-9a-f]{40}$`)
+var objectSha = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func newSessionRefsCmd() *cobra.Command {
 	cmd := &cobra.Command{

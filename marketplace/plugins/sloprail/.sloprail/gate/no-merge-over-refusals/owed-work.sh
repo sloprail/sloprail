@@ -59,7 +59,7 @@ owed_unique() {
 owed_load() {
   owed_error=""
   runs="$(cd "$ws" && sr-checks sql --family "
-    select r.check_id as rule, r.head_ref as head, r.run_at as run_at,
+    select r.check_id as rule, r.head_ref as head, r.run_at as run_at, coalesce(json_extract(r.metadata, '\$.ruleHash'), '') as rh,
            case when r.exit_code != 0 or exists (select 1 from checks c where c.run_id = r.id and c.status in ('fail', 'error'))
                 then 1 else 0 end as bad,
            case when r.exit_code = 0 and r.error is null and json_extract(r.metadata, '\$.state') = 'complete'
@@ -111,7 +111,13 @@ owed_related() {
 owed_evaluate() {
   refusal_listing=""
   owed_listing=""
-  local h rule kind at why g fixed t rname rtip rab hit b missing rules ok r recorded
+  local h rule kind at why g fixed t rname rtip rab hit b missing rules ok r recorded cur_rh
+
+  # A pass is claimed only under the rule definition the family last ran: each rule's newest
+  # run names the hash of its definition, and a pass recorded under another one (the rule
+  # changed since) is not a pass of the rule as it stands. Everything is matched by rule and
+  # judged commit sha, never by where a store lives.
+  cur_rh="$(printf '%s' "$runs" | jq -c 'group_by(.rule) | map({key: .[0].rule, value: (max_by(.run_at | tostring) | .rh)}) | from_entries')" || cur_rh="{}"
 
   # (1) refusals
   local heads_bad
@@ -127,7 +133,7 @@ owed_evaluate() {
       while IFS= read -r g; do
         [ -n "$g" ] || continue
         if git -C "$ws" merge-base --is-ancestor "$h" "$g" 2>/dev/null; then fixed=1; break; fi
-      done < <(printf '%s' "$runs" | jq -r --arg r "$rule" --arg at "$at" '.[] | select(.rule == $r and .good == 1 and .bad == 0 and (.run_at | tostring) > $at) | .head')
+      done < <(printf '%s' "$runs" | jq -r --arg r "$rule" --arg at "$at" --argjson cur "$cur_rh" '.[] | select(.rule == $r and .good == 1 and .bad == 0 and .rh == ($cur[$r] // "") and (.run_at | tostring) > $at) | .head')
       [ -n "$fixed" ] && continue
       refusal_listing="${refusal_listing:+$refusal_listing$'\n'}  - $rule ($kind) at ${h:0:12}: $(printf '%s' "$why" | head -n1 | cut -c1-200)"
     done < <(printf '%s' "$runs" | jq -r --arg h "$h" '.[] | select(.bad == 1 and .head == $h) | [.rule, .kind, (.run_at | tostring), .why] | @tsv')
@@ -163,7 +169,7 @@ owed_evaluate() {
         while IFS= read -r g; do
           [ -n "$g" ] || continue
           if git -C "$ws" merge-base --is-ancestor "$t" "$g" 2>/dev/null; then ok=1; break; fi
-        done < <(printf '%s' "$runs" | jq -r --arg r "$r" '.[] | select(.rule == $r and .good == 1) | .head')
+        done < <(printf '%s' "$runs" | jq -r --arg r "$r" --argjson cur "$cur_rh" '.[] | select(.rule == $r and .good == 1 and .rh == ($cur[$r] // "")) | .head')
         [ -n "$ok" ] || missing="${missing:+$missing$'\n'}  - $r"
       done <<<"$rules"
     fi
