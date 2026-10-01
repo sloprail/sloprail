@@ -11,7 +11,10 @@ treated as orphaned.
 
 - **Creating** `people/<name>.md`: in the same turn, make sure at least
   one file under `updates/` or `decisions/` mentions that person's name
-  (e.g. a short note about why they were added).
+  (e.g. a short note about why they were added). The match is on the
+  record's file stem: for `people/priya-patel.md` the note's name or link
+  must contain `priya-patel` (e.g. `[Priya Patel](../people/priya-patel.md)`).
+  Writing only "Priya Patel" does not count.
 - **Removing** `people/<name>.md`: in the same turn, make sure nothing
   under `updates/` or `decisions/` still mentions their name — clean up
   any references, or the deletion will be flagged as leaving dangling

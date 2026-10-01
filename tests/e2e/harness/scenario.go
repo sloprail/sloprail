@@ -671,3 +671,13 @@ func Background(id, name string, input map[string]string) Turn {
 func ReadLaunchedOutput(id string) Turn {
 	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
 }
+
+// ToolResultWithText returns ONE turn whose `user` record carries a tool_result
+// block AND a text block: an entry that is not purely a tool's output, so it still
+// holds words the person typed. The sibling of ToolResult for a check that must
+// treat a mixed entry differently from a pure tool_result one.
+func ToolResultWithText(id, result, text string) Turn {
+	return Turn{jsonl: fmt.Sprintf(
+		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s},{"type":"text","text":%s}]}}`,
+		id+"#r", "e2e-turn-"+id, id, jsonStr(result), jsonStr(text))}
+}
