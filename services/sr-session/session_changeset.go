@@ -17,7 +17,7 @@ import (
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
-	"github.com/sloprail/sloprail/internal/sessionpath"
+	"github.com/sloprail/sloprail/internal/repochecks"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -287,12 +287,7 @@ func openChangesetSession(p *HookPayload) (changesetSession, error) {
 	} else if !os.IsNotExist(statErr) {
 		return sess, statErr
 	}
-	checksPath, err := sessionpath.ChecksDB(p.stateCwd(), id)
-	if err != nil {
-		sess.close()
-		return changesetSession{}, err
-	}
-	switch sess.checks, err = checkstore.OpenReadOnly(checksPath); {
+	switch sess.checks, err = repochecks.OpenReadOnly(p.stateCwd(), id); {
 	case errors.Is(err, checkstore.ErrNoStore):
 		sess.checks = nil
 	case err != nil:

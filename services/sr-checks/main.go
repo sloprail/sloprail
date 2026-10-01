@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/checkstore"
+	"github.com/sloprail/sloprail/internal/repochecks"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/transcript"
 	"github.com/sloprail/sloprail/internal/version"
@@ -78,11 +79,7 @@ func openChecks() (checkstore.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sr-checks: session identity: %w", err)
 	}
-	path, err := sessionpath.ChecksDB(sessionpath.StateCwd(record, cwd), id.ID)
-	if err != nil {
-		return nil, err
-	}
-	store, err := checkstore.OpenReadOnly(path)
+	store, err := repochecks.OpenReadOnly(sessionpath.StateCwd(record, cwd), id.ID)
 	if err != nil {
 		if errors.Is(err, checkstore.ErrNoStore) {
 			return nil, err

@@ -3,6 +3,7 @@ package gitrepo
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -397,4 +398,25 @@ func untrackedPaths(dir string) ([]string, error) {
 		paths = append(paths, p)
 	}
 	return paths, nil
+}
+
+// CommonDir is the repository's git directory shared by all its worktrees, absolute and with
+// symlinks resolved: the same answer from the main checkout, from any linked worktree and from
+// any subdirectory, so it names the repository itself.
+func CommonDir(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	p := strings.TrimSpace(out)
+	if p == "" {
+		return "", fmt.Errorf("gitrepo: no common git directory for %s", dir)
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	return filepath.Clean(p), nil
 }

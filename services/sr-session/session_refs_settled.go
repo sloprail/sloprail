@@ -11,7 +11,7 @@ import (
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module/modules"
-	"github.com/sloprail/sloprail/internal/sessionpath"
+	"github.com/sloprail/sloprail/internal/repochecks"
 )
 
 // newSessionRefsSettledCmd answers, for the merge gate and anyone else who asks, whether every
@@ -45,17 +45,13 @@ line. A repository with no file-guard has nothing to pass: exit 0.`,
 			if err != nil || tree == "" {
 				return fmt.Errorf("sloprail: %s is not inside a git repository", ws)
 			}
-			checksPath, err := sessionpath.ChecksDB(ws, t.session)
-			if err != nil {
-				return err
-			}
 			mods, err := modules.Registry()
 			if err != nil {
 				return err
 			}
 			guards := newNatureDeclarations(cmd, filepath.Clean(tree), mods).FileGuards
 			var results checkstore.Store
-			if store, err := checkstore.OpenReadOnly(checksPath); err == nil {
+			if store, err := repochecks.OpenReadOnly(ws, t.session); err == nil {
 				results = newFamilyResults(store)
 				defer results.Close()
 			} else if !errors.Is(err, checkstore.ErrNoStore) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ import (
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
-	"github.com/sloprail/sloprail/internal/sessionpath"
+	"github.com/sloprail/sloprail/internal/repochecks"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -224,7 +225,7 @@ func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p 
 // branch, and the session. Best effort — an unreadable one is left empty rather
 // than costing the evaluation.
 func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
-	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID, AgentID: ev.p.AgentID}
+	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID, AgentID: ev.p.AgentID, Folder: filepath.Clean(ev.root)}
 	if root, err := gitrepo.RootCommit(ev.root); err == nil {
 		id.RepoID = root
 	}
@@ -897,23 +898,21 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 	if scope.SessionID == "" {
 		return nil
 	}
-	// One database per session family: the root's, written by every agent of it.
-	path, err := sessionpath.ChecksDB(p.stateCwd(), scope.SessionID)
+	// The repository's database, scoped to the session family: the root's, written by every
+	// agent of it.
+	family, cwd := scope.SessionID, p.stateCwd()
 	rs, rsErr := resolveRootSession(p)
 	if p.IsSubagent() && rsErr == nil {
-		path, err = familyChecksPath(rs), nil
+		family, cwd = rs.ID, rs.Cwd
 	}
-	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
-		return nil
-	}
-	store, err := checkstore.Open(path)
-	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
-		return nil
-	}
+	var extra []checkstore.Legacy
 	if !p.IsSubagent() && rsErr == nil {
-		importFamily(cmd, store, p, rs)
+		extra = subagentLegacy(p, rs)
+	}
+	store, err := repochecks.Open(cwd, family, cmd.ErrOrStderr(), extra...)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: check results unavailable:", err)
+		return nil
 	}
 	return newFamilyResults(store)
 }

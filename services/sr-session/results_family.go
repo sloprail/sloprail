@@ -1,13 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/sessionpath"
@@ -15,7 +12,7 @@ import (
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
-// ONE CHECK-RESULTS DATABASE PER SESSION FAMILY.
+// ONE CHECK-RESULTS DATABASE PER REPOSITORY, SCOPED TO THE SESSION FAMILY.
 //
 // What a file-guard concluded is keyed by the rule's version and a commit range: a statement
 // about bytes, not about any one agent's working tree. So the root session's checks.db is the
@@ -29,7 +26,7 @@ import (
 // why: it holds working-tree state, which is one agent's own).
 //
 // Sub-agents of an older engine kept their results in databases of their own: the root imports
-// them into the family's, once (importFamily), and leaves the old files where they are.
+// them into the family's (subagentLegacy), and leaves the old files where they are.
 
 // familyResults is the family's check results with each rule's passed heads remembered for the
 // length of one evaluation (any write drops it): the query every range and every owed tip asks
@@ -45,10 +42,13 @@ func newFamilyResults(s checkstore.Store) *familyResults {
 	return &familyResults{Store: s, heads: map[string][]string{}}
 }
 
-// familyChecksPath is where the family's check results are: beside the ROOT session's state
-// database, whichever agent is asking.
-func familyChecksPath(rs rootSession) string {
-	return filepath.Join(filepath.Dir(rs.Path), "checks.db")
+// SiblingRunRefs is the other session families' runs of the same working tree, when the store
+// under this one is the repository's (an unshared store has none).
+func (f *familyResults) SiblingRunRefs(rule, folder string) (checkstore.RunRefs, error) {
+	if s, ok := f.Store.(checkstore.SiblingRefs); ok {
+		return s.SiblingRunRefs(rule, folder)
+	}
+	return checkstore.RunRefs{}, nil
 }
 
 // PassedHeads is the rule's passed heads, any agent's, remembered until something is written.
@@ -95,25 +95,23 @@ func (f *familyResults) ResolveStale(rule, ruleHash, liveRunID string) (int, err
 	return f.Store.ResolveStale(rule, ruleHash, liveRunID)
 }
 
-func importedKey(path string) string { return "checks_imported:" + path }
-
-// importFamily brings the check results an older engine kept in each sub-agent's own database
-// into the family's, once per database (remembered in the root's state), tagged with the agent.
-// A sub-agent's database is found two ways: by the record of each agent dispatched under the
+// subagentLegacy is the check-results databases an older engine kept in each sub-agent's own
+// directory, tagged with the agent, for the repository's database to import (checkstore
+// .ImportLegacy: once per change of the old file, the old files left as they are). A
+// sub-agent's database is found two ways: by the record of each agent dispatched under the
 // root's record (its own session, in the tree it began in), and by the folders registered for
 // the family's agents. Best effort: whatever cannot be read is left, and costs a judgement made
 // again.
-func importFamily(cmd *cobra.Command, store checkstore.Store, p HookPayload, rs rootSession) {
+func subagentLegacy(p HookPayload, rs rootSession) []checkstore.Legacy {
 	if _, err := os.Stat(rs.Path); err != nil {
-		return
+		return nil
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return
+		return nil
 	}
 	defer reg.Close()
-	own := store.Path()
-	candidates := map[string]string{} // checks.db path -> agent id
+	candidates := map[string]checkstore.Legacy{}
 	if record, err := p.sessionRecord(); err == nil && record != "" {
 		recs, _ := filepath.Glob(filepath.Join(strings.TrimSuffix(record, ".jsonl"), "subagents", "agent-*.jsonl"))
 		for _, rec := range recs {
@@ -127,7 +125,7 @@ func importFamily(cmd *cobra.Command, store checkstore.Store, p HookPayload, rs 
 				continue
 			}
 			if path, err := sessionpath.ChecksDB(cwd, id.ID); err == nil {
-				candidates[path] = agent
+				candidates[path] = checkstore.Legacy{Path: path, Family: rs.ID, Agent: agent, Folder: sessionpath.WorkspaceAnchor(cwd)}
 			}
 		}
 	}
@@ -143,25 +141,14 @@ func importFamily(cmd *cobra.Command, store checkstore.Store, p HookPayload, rs 
 			paths, _ := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(probe)), "*", "checks.db"))
 			for _, path := range paths {
 				if _, known := candidates[path]; !known {
-					candidates[path] = f.AgentID
+					candidates[path] = checkstore.Legacy{Path: path, Family: rs.ID, Agent: f.AgentID, Folder: sessionpath.WorkspaceAnchor(f.Path)}
 				}
 			}
 		}
 	}
-	for path, agent := range candidates {
-		if path == own {
-			continue
-		}
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		if done, _, _ := reg.Meta(importedKey(path)); done == "1" {
-			continue
-		}
-		if _, err := checkstore.Import(store, path, agent); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: a sub-agent's check results were not imported (%s): %v\n", path, err)
-			continue
-		}
-		_ = reg.SetMeta(importedKey(path), "1")
+	out := make([]checkstore.Legacy, 0, len(candidates))
+	for _, l := range candidates {
+		out = append(out, l)
 	}
+	return out
 }

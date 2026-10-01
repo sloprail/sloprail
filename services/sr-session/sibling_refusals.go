@@ -28,12 +28,6 @@ func outstandingRefusalBases(root, rule string, own checkstore.Store) ([]string,
 		return nil, nil
 	}
 	ownPath := own.Path()
-	paths, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(ownPath)), "*", "checks.db"))
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(paths)
-
 	type ref = checkstore.RunRef
 	var failed, passed []ref
 	mine, err := own.RunRefs(rule)
@@ -41,6 +35,23 @@ func outstandingRefusalBases(root, rule string, own checkstore.Store) ([]string,
 		return nil, err
 	}
 	passed = append(passed, mine.Passed...)
+	var paths []string
+	if sib, shared := own.(checkstore.SiblingRefs); shared && isRepoStore(ownPath) {
+		// The repository's one database: the siblings are the other session families that
+		// judged in this working tree.
+		refs, err := sib.SiblingRunRefs(rule, filepath.Clean(root))
+		if err != nil {
+			return nil, fmt.Errorf("the check results of another session of this worktree could not be read: %w", err)
+		}
+		failed = append(failed, refs.Failed...)
+		passed = append(passed, refs.Passed...)
+	} else {
+		paths, err = filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(ownPath)), "*", "checks.db"))
+		if err != nil {
+			return nil, err
+		}
+		sort.Strings(paths)
+	}
 	for _, p := range paths {
 		if p == ownPath {
 			continue
@@ -95,6 +106,12 @@ func outstandingRefusalBases(root, rule string, own checkstore.Store) ([]string,
 		}
 	}
 	return bases, nil
+}
+
+// isRepoStore says a check-results file is the repository's database (sessionpath.RepoChecksDB),
+// not a session's own.
+func isRepoStore(path string) bool {
+	return filepath.Base(filepath.Dir(filepath.Dir(path))) == "repos"
 }
 
 func readSibling(path, rule string) (checkstore.RunRefs, error) {

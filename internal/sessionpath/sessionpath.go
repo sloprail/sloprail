@@ -12,6 +12,8 @@
 package sessionpath
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -342,4 +344,54 @@ func StateCwd(record, cwd string) string {
 		return start
 	}
 	return cwd
+}
+
+// RepoChecksDB is where the check results of EVERY session of a repository are kept:
+//
+//	{data home}/sloprail/repos/{repo id}/checks.db
+//
+// keyed by the repository itself (a hash of its git common directory, the same from the main
+// checkout, from any linked worktree and from any subdirectory), not by the session or the tree
+// a hook stood in. Each run carries the session family, agent and folder that made it, so what a
+// session was refused for stays its own while a pass on exactly the same input can stand for
+// every session. ChecksDB is where an older engine kept a session's results: they are imported
+// into this one (see internal/repochecks) and the old files are left as they are.
+//
+// A directory that is not in a repository is its own repository: keyed by its workspace anchor.
+func RepoChecksDB(cwd string) (string, error) {
+	root, err := DataHome()
+	if err != nil {
+		return "", err
+	}
+	key := WorkspaceAnchor(cwd)
+	if dir, err := gitrepo.CommonDir(cwd); err == nil && dir != "" {
+		key = dir
+	}
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(root, AppName, "repos", hex.EncodeToString(sum[:])[:16], "checks.db"), nil
+}
+
+// FamilyID is the session family a record belongs to: the stable id of the ROOT session. A
+// sub-agent's record is nested under the session that dispatched it, whose own record is the
+// family's identity; any other record is its own.
+func FamilyID(record, cwd string) (string, error) {
+	if sessionDir := transcript.SessionDirOfSubagent(record); sessionDir != "" {
+		root := sessionDir + ".jsonl"
+		if _, err := os.Stat(root); err == nil {
+			start, err := transcript.StartCwd(root)
+			if err != nil || start == "" {
+				start = cwd
+			}
+			id, err := StableIdentity(root, start)
+			if err != nil {
+				return "", err
+			}
+			return id.ID, nil
+		}
+	}
+	id, err := StableIdentity(record, cwd)
+	if err != nil {
+		return "", err
+	}
+	return id.ID, nil
 }
