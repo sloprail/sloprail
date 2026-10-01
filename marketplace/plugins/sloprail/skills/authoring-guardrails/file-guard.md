@@ -280,6 +280,11 @@ rules follow from it:
   commits it fixes. A stored failure whose input has left the range is cleared as
   stale, not left standing.
 
+**Stop order.** Context enters → commit-required → file-guards → gates → context
+exits. A `match` or `when` that reads `context["<name>"].active` therefore sees a
+context entered in this very turn, and one that exits at this Stop is still active
+for it (see [context.md](context.md#the-stop-order)).
+
 A file-guard has no `seen`: it is handed a changeset, not Post events. `seen`
 remains on the Post events a **context** binds.
 

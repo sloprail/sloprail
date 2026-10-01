@@ -23,25 +23,32 @@ import (
 //
 // # The order, and why it is load-bearing
 //
-//	1. file-guards: each rule evaluated over its changeset of commits
-//	     — every run recorded in the check results, a failing judge replayed
-//	       until its input changes; refusals block the turn. (Before it, commit
-//	       required: uncommitted work on a guarded path is refused first.)
-//	2. context ENTERS on the cycle's Post events
+//	0. context ENTERS on the cycle's Post events
 //	     — a context that recognises itself only from settled content
 //	       (a goal.yaml whose active:true exists once the write landed) enters
-//	       here, populating context[] BEFORE any gate reads it.
+//	       here, populating context[] BEFORE anything reads it: a file-guard's
+//	       match, `when` and checks, commit-required's match, and the gates all
+//	       read context[], and each must see this turn's enters, not the last
+//	       turn's state.
+//	1. commit required
+//	     — uncommitted work on a path some file-guard selects (its match may read
+//	       context[]) is refused first.
+//	2. file-guards: each rule evaluated over its changeset of commits
+//	     — every run recorded in the check results, a failing judge replayed
+//	       until its input changes; refusals block the turn.
 //	3. Stop GATES
 //	     — a gate bound to Stop reads context[]/gates[] and blocks the turn on a
-//	       refusal. It must see the contexts from step 2 already active.
+//	       refusal. It must see the contexts from step 0 already active.
 //	4. context EXITS
 //	     — pure lifecycle (the reversal): each active context's exit runs AFTER
-//	       the gates decided, so a gate requiring a context read it still open;
-//	       then the context closes for the next cycle. Never blocks the turn.
+//	       the file-guards and gates decided, so a rule requiring or matching on a
+//	       context read it still open; then the context closes for the next
+//	       cycle. Never blocks the turn.
 //
-// Steps 1–3 can each contribute a turn block; step 4 cannot. All the maps are
-// loaded once and threaded through, so a context that entered in step 2 is the
-// same one a gate reads in step 3 and that closes in step 4.
+// Steps 1–3 can each contribute a turn block; steps 0 and 4 cannot. All the maps
+// are loaded once and threaded through, so a context that entered in step 0 is the
+// same one commit-required, the file-guards and the gates read and that closes in
+// step 4.
 
 // dispatchNatureStop runs the new-format end-of-cycle dispatch and reports the
 // text to block the turn with (or "" to let it end).
@@ -97,7 +104,12 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 
 	var refusals []string
 
-	// 0. commit required: a file-guard judges commits, so uncommitted work on a
+	// 0. context enters on the Post file events AND the tag events, populating
+	//    context[] before commit-required, the file-guards and the gates read it. Never blocks.
+	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
+	runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
+
+	// 1. commit required: a file-guard judges commits, so uncommitted work on a
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
 	commitOwed := false
@@ -106,7 +118,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		commitOwed = true
 	}
 
-	// 1. file-guards: each rule is evaluated once, over the changeset of commits it
+	// 2. file-guards: each rule is evaluated once, over the changeset of commits it
 	//    has not yet passed, and every run is recorded (changeset_eval.go). Not while
 	//    work is owed a commit: judging HEAD would judge an incomplete set, and the
 	//    agent has a commit to make first. And only for an agent that owns the
@@ -119,11 +131,6 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		}
 	}
 
-	// 2. context enters on the Post file events AND the tag events, populating
-	//    context[] before gates read it. Never blocks.
-	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
-	runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
-
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
 	//    the subjectless one cyclemod produces. Refusals block the turn.
 	stop := cyclemod.Event()
@@ -133,7 +140,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		}
 	}
 
-	// 4. context exits, AFTER gates decided. Pure lifecycle: flips active/inactive,
+	// 4. context exits, AFTER file-guards and gates decided. Pure lifecycle: flips active/inactive,
 	//    never blocks the turn.
 	runContextExits(cmd, loaded.Contexts, stop, scope, store, contextMap, gatesMap)
 
