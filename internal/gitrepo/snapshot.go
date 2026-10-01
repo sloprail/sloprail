@@ -32,10 +32,9 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: snapshot directory: %w", err)
 	}
-	// The checkout's directory name is the worktree's registration name in git's metadata:
-	// a fixed "tree" made every snapshot of every process contend for one name. The
-	// temporary directory's own name is unique.
-	s := &Snapshot{Path: filepath.Join(root, filepath.Base(root)), repo: dir, root: root}
+	// The directory is named "tree" under the unique temporary root: callers (and the judge's
+	// --add-dir) rely on that shape. Git numbers colliding registration names itself.
+	s := &Snapshot{Path: filepath.Join(root, "tree"), repo: dir, root: root}
 	_, err = run(dir, "worktree", "add", "--detach", "--force", s.Path, commit)
 	if err != nil {
 		// A registration a dead process left behind (its directory gone), or a half-made one

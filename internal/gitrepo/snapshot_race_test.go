@@ -39,8 +39,9 @@ func TestSnapshot_ConcurrentSnapshotsDoNotCollide(t *testing.T) {
 	}
 }
 
-// Two live snapshots never share a registration name (the checkout directory's base name).
-func TestSnapshot_NamesAreUnique(t *testing.T) {
+// The checkout is always `<unique root>/tree` (the judge's --add-dir depends on it), and
+// two live snapshots of one commit coexist.
+func TestSnapshot_TwoLiveSnapshotsKeepTheTreeShape(t *testing.T) {
 	dir := initRepo(t)
 	head := commit(t, dir, "a.txt", "x")
 	a, err := AddSnapshot(dir, t.TempDir(), head)
@@ -48,7 +49,11 @@ func TestSnapshot_NamesAreUnique(t *testing.T) {
 	b, err := AddSnapshot(dir, t.TempDir(), head)
 	require.NoError(t, err)
 	t.Cleanup(func() { a.Remove(); b.Remove() })
-	assert.NotEqual(t, filepath.Base(a.Path), filepath.Base(b.Path))
+	assert.Equal(t, "tree", filepath.Base(a.Path))
+	assert.Equal(t, "tree", filepath.Base(b.Path))
+	assert.NotEqual(t, a.Path, b.Path)
+	assert.DirExists(t, a.Path)
+	assert.DirExists(t, b.Path)
 }
 
 // A registration left by a process that died (its directory gone) must not stand in the way.
