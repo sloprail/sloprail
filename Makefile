@@ -266,9 +266,13 @@ test-e2e: mock
 # grew past the CI runner's per-job wall-clock as the corpus of use-case e2e
 # expanded, so CI runs it as a matrix: several jobs, each -p 1 (disk stays low),
 # each a disjoint slice of ./tests/... . SHARD names the slice; the union of the
-# slices below is exactly `go list ./tests/...`, so nothing is dropped. Keep this
-# list and the workflow matrix in lockstep — a package matching no slice would
-# silently never run in CI.
+# slices below is exactly `go list ./tests/...`, so nothing is dropped.
+# examples..examples6 split ./tests/e2e/examples/... by scripts/examples-shard.sh,
+# which DISCOVERS the packages with `go list` (and the tests of the few packages
+# it slices with -run), so nothing new is ever dropped, and balances them by
+# greedy bin packing. Keep this list and the workflow matrix in lockstep; the
+# guard in tests/repo fails when a package or test is in no shard, or when they
+# differ.
 #
 #   make test-e2e-shard SHARD=session
 test-e2e-shard: mock
@@ -280,7 +284,12 @@ test-e2e-shard: mock
 	              ./tests/e2e/session/029_trajectory_cite/... \
 	              ./tests/e2e/session/031_trajectory_normalize/... ;; \
 	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/pre_tool/... ;; \
-	  examples) go test -p 1 -count=1 -timeout 30m ./tests/e2e/examples/... ;; \
+	  examples)  scripts/examples-shard.sh 1 6 run ;; \
+	  examples2) scripts/examples-shard.sh 2 6 run ;; \
+	  examples3) scripts/examples-shard.sh 3 6 run ;; \
+	  examples4) scripts/examples-shard.sh 4 6 run ;; \
+	  examples5) scripts/examples-shard.sh 5 6 run ;; \
+	  examples6) scripts/examples-shard.sh 6 6 run ;; \
 	  rest)     go test -p 1 -count=1 -timeout 30m \
 	              ./tests/e2e/subagent/... \
 	              ./tests/e2e/gate/... \
@@ -296,7 +305,7 @@ test-e2e-shard: mock
 	              ./tests/e2e/authoring/... \
 	              ./tests/e2e/harness/... ;; \
 	  plugins)  $(MAKE) test-plugins-e2e ;; \
-	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|rest|plugins)" >&2; exit 2 ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|examples2|examples3|examples4|examples5|examples6|rest|plugins)" >&2; exit 2 ;; \
 	esac
 
 # Plugin-local e2e modules. Each marketplace plugin that ships its own tests/ Go
