@@ -45,6 +45,19 @@ session began lists it (`internal/declaration` `trustProtected`): neither the wo
 nor the agent's own commits switch it off. To turn it off, commit the entry first, in an
 earlier session.
 
+A project's own `.sloprail/<nature>/grounded-rule-changes` never takes this rule's place: the
+plugin's claims its name first and the project's is reported as shadowed.
+
+## Out of scope
+
+- `.claude/settings.json` (`enabledPlugins` set to false for sloprail) turns off the whole
+  plugin, hooks and every rule, not this rule. That is Claude Code's own permission
+  surface, and covering it here would make every settings change (a permission, a model)
+  need a citation. It takes effect from the next session, not the running one.
+- `stop_hook_block_cap` in `config.yaml` lowers how often a refused Stop is replayed, for
+  every rule. Writes to `config.yaml` are gated and judged like any other change to it; a
+  writer no gate models is only seen at Stop.
+
 ## The gate
 
 A file-guard judges commits at Stop, against the config the commit itself wrote, so a

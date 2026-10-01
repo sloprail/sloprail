@@ -136,11 +136,18 @@ func protectedDisable(qualified string) bool {
 	return strings.HasPrefix(qualified, "sloprail/") && strings.HasSuffix(qualified, "/grounded-rule-changes")
 }
 
+// protectedPlugin reports whether a declaration is a protected rule shipped by a plugin
+// (see protectedDisable): the load lets it claim its name ahead of a project's.
+func protectedPlugin(o Origin, nature Nature, name string) bool {
+	return o.FromPlugin() && protectedDisable(o.Plugin+"/"+string(nature)+"/"+name)
+}
+
 // trustProtected drops from cfg every protectedDisable entry the TRUSTED config does not
-// also list. The trusted config is the one committed at rev (the commit the session began
-// at, so the agent's own commits are not trusted either), or at HEAD when rev is empty. If
-// it cannot be read (no repository, no such commit, no such file) nothing protected is
-// honoured: a rule that could not be checked stays on.
+// also list. The trusted config is the one committed at rev, the commit the session began
+// at, so the agent's own commits are not trusted either. With no known rev (no baseline
+// recorded, or one taken at a sub-agent's Stop) or a config that cannot be read (no
+// repository, no such commit, no such file), nothing protected is honoured: a rule that
+// could not be checked stays on.
 func trustProtected(cfg config, root, rev string) config {
 	has := false
 	for _, n := range cfg.Disabled {
@@ -152,13 +159,12 @@ func trustProtected(cfg config, root, rev string) config {
 	if !has {
 		return cfg
 	}
-	if rev == "" {
-		rev = "HEAD"
-	}
 	var trusted config
-	out, err := exec.Command("git", "-C", root, "show", rev+":./"+configFile).Output()
-	if err == nil && yaml.Unmarshal(out, &trusted) != nil {
-		trusted = config{}
+	if rev != "" {
+		out, err := exec.Command("git", "-C", root, "show", rev+":./"+configFile).Output()
+		if err == nil && yaml.Unmarshal(out, &trusted) != nil {
+			trusted = config{}
+		}
 	}
 	kept := make([]string, 0, len(cfg.Disabled))
 	for _, n := range cfg.Disabled {

@@ -48,6 +48,8 @@ func TestTrustProtected(t *testing.T) {
 
 	// A user who committed it before the session began did switch it off.
 	assert.Contains(t, trustProtected(cfg, root, "HEAD").Disabled, protectedName)
+	// With no known session start nothing protected is honoured, even if HEAD lists it.
+	assert.NotContains(t, trustProtected(cfg, root, "").Disabled, protectedName)
 
 	// Not a repository: nothing protected is honoured.
 	assert.NotContains(t, trustProtected(cfg, t.TempDir(), "").Disabled, protectedName)

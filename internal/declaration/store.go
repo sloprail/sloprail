@@ -556,6 +556,21 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	// -- 3. resolve precedence; a displaced declaration is Shadowed, not loaded --
 	var out Loaded
 	out.Invalid = invalid
+	// A protected plugin rule is claimed first, so a project declaration of the same
+	// nature and name is the one displaced (and reported as Shadowed): a project
+	// cannot override the rule that judges its own changes to its rules.
+	sort.SliceStable(soundFileGuards, func(i, j int) bool {
+		return protectedPlugin(soundFileGuards[i].Origin, NatureFileGuard, soundFileGuards[i].Name) &&
+			!protectedPlugin(soundFileGuards[j].Origin, NatureFileGuard, soundFileGuards[j].Name)
+	})
+	sort.SliceStable(soundGates, func(i, j int) bool {
+		return protectedPlugin(soundGates[i].Origin, NatureGate, soundGates[i].Name) &&
+			!protectedPlugin(soundGates[j].Origin, NatureGate, soundGates[j].Name)
+	})
+	sort.SliceStable(soundContexts, func(i, j int) bool {
+		return protectedPlugin(soundContexts[i].Origin, NatureContext, soundContexts[i].Name) &&
+			!protectedPlugin(soundContexts[j].Origin, NatureContext, soundContexts[j].Name)
+	})
 	resolveFileGuards(&out, soundFileGuards)
 	resolveGates(&out, soundGates)
 	resolveContexts(&out, soundContexts)
