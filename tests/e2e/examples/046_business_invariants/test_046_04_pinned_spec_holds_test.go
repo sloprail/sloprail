@@ -62,6 +62,9 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 		!res.Saw("refused again if you send it again with the same words") {
 		t.Errorf("the refusal does not say what to cite, which lines are pinned, or what to do instead:\n%s", res.Output)
 	}
+	if !res.Saw("must ask to CHANGE THAT RULE") || !res.Saw("a request for the feature the rule blocks does not count") {
+		t.Errorf("the refusal does not say the citation must ask to change that rule:\n%s", res.Output)
+	}
 	if !res.Saw("sr-file edit SPEC.md") {
 		t.Errorf("the refusal carries no runnable sr-file command:\n%s", res.Output)
 	}

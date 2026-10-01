@@ -84,7 +84,7 @@ while IFS= read -r ref; do
 done <<< "$all_message_refs"
 
 if [ -n "$residue" ]; then
-  echo "These user messages are not mapped to any task, and none was marked skip: to skip one, write a message containing '#skip <line-number>' naming its 1-based line in the transcript (not a direct sr-session state set call — that needs the hook environment your shell does not have; the skip-declared context reads your #skip tag for you):$residue" >&2
+  echo "These user messages are not mapped to any task, and none was marked skip. A message is mapped only by a task FILE under tasks/ (tasks/<name>.md or tasks/<name>/<file>.md) whose text contains the message's reference in parentheses, as (<transcript>:L-L), exactly as listed below. Native TaskCreate/TodoWrite entries do NOT count as mapping a message. To skip one instead, write a message containing '#skip <line-number>' naming its 1-based line in the transcript (not a direct sr-session state set call — that needs the hook environment your shell does not have; the skip-declared context reads your #skip tag for you):$residue" >&2
   exit 1
 fi
 

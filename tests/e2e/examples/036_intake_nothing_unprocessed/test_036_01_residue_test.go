@@ -59,6 +59,13 @@ func TestT036_01_UnaccountedMessageRefused(t *testing.T) {
 	if !strings.Contains(joined, residueReason) {
 		t.Errorf("the gate's residue refusal reason did not reach the agent:\n%s", joined)
 	}
+	// It says exactly what maps a message: the tasks/*.md file shape, the
+	// (<transcript>:L-L) reference, and that native task tools do not count.
+	for _, want := range []string{"tasks/<name>.md", "(<transcript>:L-L)", "Native TaskCreate/TodoWrite entries do NOT count"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, joined)
+		}
+	}
 	// The refusal must name this gate, so the agent can attribute it.
 	if !strings.Contains(joined, "verify-intake-complete") {
 		t.Errorf("the refusal did not name the gate:\n%s", joined)
