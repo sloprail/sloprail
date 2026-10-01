@@ -118,20 +118,21 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 	if err := observeRefs(reg, rs.ID, folder, root, p.AgentID); err != nil {
 		warn(err)
 	}
+	// What every branch held when the session began: not the session's work.
+	var atStart []string
+	if v, had, err := reg.Meta(sessionstate.MetaRefsAtStart); err == nil && had {
+		var m map[string]string
+		if json.Unmarshal([]byte(v), &m) == nil {
+			for _, sha := range m {
+				atStart = append(atStart, sha)
+			}
+		}
+	}
 	// Backfill: the commits this folder made since the session began, from the reflog.
 	if since, ok := sessionStartTime(p); ok {
 		derived, err := gitrepo.ReflogTips(root, since)
 		if err != nil {
 			warn(err)
-		}
-		var atStart []string
-		if v, had, err := reg.Meta(sessionstate.MetaRefsAtStart); err == nil && had {
-			var m map[string]string
-			if json.Unmarshal([]byte(v), &m) == nil {
-				for _, sha := range m {
-					atStart = append(atStart, sha)
-				}
-			}
 		}
 		for _, t := range derived {
 			if held, err := gitrepo.InHistoryOf(root, t.Sha, atStart); err == nil && held {
@@ -167,6 +168,12 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 			if err != nil {
 				warn(err)
 				continue
+			}
+			if cur != "" && cur != r.Tip && !claimsMove(root, r.Tip, cur, atStart) {
+				// The ref was moved onto commits this folder never made (`git branch -f`,
+				// an update-ref, a reset onto somebody else's branch): a move is not a
+				// commit, so the name does not claim them. What was recorded stays owed.
+				cur = r.Tip
 			}
 			if cur != "" && cur != r.Tip {
 				tip = cur
@@ -263,6 +270,20 @@ func sessionStartTime(p HookPayload) (t time.Time, ok bool) {
 	}
 	t, err = transcript.StartTime(record)
 	return t, err == nil && !t.IsZero()
+}
+
+// claimsMove reports whether a recorded ref that now points at cur, not at the tip it was
+// recorded at, still points at the session's own work: cur builds on the recorded tip (a
+// commit on top of it), or this folder's HEAD reflog shows cur being made by a commit-type
+// action (an amend, a rebase, a merge). A ref merely moved onto some other commit is not.
+func claimsMove(root, recorded, cur string, atStart []string) bool {
+	if ok, err := gitrepo.IsAncestor(root, recorded, cur); err != nil || ok {
+		return true // on top of it, or not known: the ref's own tip is judged, as before
+	}
+	if held, err := gitrepo.InHistoryOf(root, cur, atStart); err == nil && held {
+		return false // what a branch held when the session began is nobody's work of this session
+	}
+	return gitrepo.MadeByHead(root, cur)
 }
 
 var objectSha = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -371,7 +392,7 @@ func newSessionRefsListCmd() *cobra.Command {
 	var t refsTarget
 	cmd := &cobra.Command{
 		Use:   "list --session <id>",
-		Short: "The refs recorded for a session, one per line: folder, ref, tip, agent",
+		Short: "The refs recorded for a session, one per line: folder, ref, tip, agent, abandoned-at tip (empty when not)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := t.open()
@@ -384,7 +405,7 @@ func newSessionRefsListCmd() *cobra.Command {
 				return err
 			}
 			for _, r := range rows {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", r.Folder, r.Name, r.Tip, r.AgentID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", r.Folder, r.Name, r.Tip, r.AgentID, r.Abandoned)
 			}
 			return nil
 		},

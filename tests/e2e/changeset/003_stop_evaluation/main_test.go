@@ -126,7 +126,11 @@ func seededProject(t *testing.T, ruleYAML string, seed map[string]string, check 
 
 // New is harness.New with the plugin's authoring file-guards switched off: this package
 // is about other rules, and the authoring guards would judge the rules' own files.
-func New(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
+func New(t *testing.T) *Env {
+	// The destroying gate would refuse the very deletions, resets and prunes these tests
+	// perform to prove the engine still judges what the hooks recorded.
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutShipped("sloprail/gate/no-destroying-owed-work"))
+}
 
 // stopBlocks is how many times a session's Stop has refused and been gone past so
 // far. Every refusal counts, the same words or not (BlockingErrors de-duplicates).
