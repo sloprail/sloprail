@@ -22,5 +22,5 @@ if [ "$rc" -eq 1 ] && printf '%s' "$out" | jq -e 'has("waived")' >/dev/null 2>&1
   exit 0
 fi
 path="$(printf '%s' "$payload" | jq -r '.event.path // ""' 2>/dev/null)"
-jq -n --arg p "$path" '{reason: ("What this write leaves in " + $p + " cannot be worked out before it runs (a shell command that edits it, or an sr-file call whose dry run failed), so it cannot be checked against the rules code pins. Write the file with Edit or Write, or with sr-file on its own in the command, so the result can be checked; if sr-file said why its dry run failed, fix that first.")}'
+jq -n --arg p "$path" '{reason: ("What this write leaves in " + $p + " cannot be worked out before it runs (a shell command that edits it, or an sr-file call whose dry run failed), so it cannot be checked against the rules code pins. Write the file with Edit or Write, or with sr-file on its own in the command, so the result can be checked; if sr-file said why its dry run failed, fix that first. Run sr-file alone in its own Bash call, with nothing before or after it on the line: another command beside it (sr-file ...; cat X) is what makes the result unknowable, and the edit itself is allowed.")}'
 exit 1

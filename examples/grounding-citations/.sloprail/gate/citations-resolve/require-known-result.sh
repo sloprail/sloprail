@@ -9,5 +9,5 @@ set -uo pipefail
 
 known="$(jq -r '.event.resultKnown // false' 2>/dev/null)"
 [ "$known" = "true" ] && exit 0
-echo '{"reason":"What this write leaves in the markdown file cannot be worked out before it runs (a shell command that writes it, or an sr-file call whose dry run failed), so its claims cannot be checked against the cited output. Write the file content directly with sr-file write ... --cite:tool_result on its own in the command, so the result can be checked; if sr-file said why its dry run failed, fix that first."}'
+echo '{"reason":"What this write leaves in the markdown file cannot be worked out before it runs (a shell command that writes it, or an sr-file call whose dry run failed), so its claims cannot be checked against the cited output. Write the file content directly with sr-file write ... --cite:tool_result on its own in the command, so the result can be checked; if sr-file said why its dry run failed, fix that first. Run sr-file alone in its own Bash call, with nothing before or after it on the line: another command beside it (sr-file ...; cat X) is what makes the result unknowable, and the edit itself is allowed."}'
 exit 1

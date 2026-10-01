@@ -103,7 +103,12 @@ own call.
   it minimally so the commit changes it. (2) An amend (`git commit --amend --no-edit
   --trailer 'Sloprail-Cites-User: <exact quote>'`) is offered ONLY when every such
   file's last commit is HEAD, HEAD is unpushed (no remote branch contains it) and the
-  tree is clean. `git reset --soft` is never suggested, and to undo a change the refusal says `git revert`, never `git reset --hard`. An empty commit carrying only
+  tree is clean. `git reset --soft` is never suggested. When the session already recorded
+  quotes for the files (`sr-file --cite`, also by a sub-agent in the shared tree), the
+  refusal lists them as the exact trailer lines to paste and builds its commands from the
+  first. To undo the whole range it gives one command, `git revert --no-commit <base>..HEAD
+  && git commit --no-edit`, never `git reset --hard`; a range whose net change is nil needs
+  no citation (the file is as at the base, so nothing is left to ground). An empty commit carrying only
   the trailer does not count: the trailer grounds the commit it is in, and that commit
   must be the one that changed the file. Several quotes on one commit are fine.
 - A cited call that failed, was denied, or
