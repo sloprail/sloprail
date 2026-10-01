@@ -27,14 +27,23 @@ misfire, and never disable, loosen or delete a rule to get unstuck.
 
 ## What it leaves alone
 
-A file **added** in the range needs no grounding (`needs-grounding.sh`): setting rules up
-first, a new rule, a new structure, weakens nothing, and the plugin's rules-first hook asks
+A file the agent **added in this session** needs no grounding (`needs-grounding.sh`; it did
+not exist at `$SR_SESSION_START`, so fixing a rule written earlier in the session is free
+too): setting rules up first, a new rule, a new structure, weakens nothing, and the plugin's rules-first hook asks
 for exactly that. A rule-authoring session, the onboarding flow and a user who asked for
 rules all pass. The judge is skipped for such a range. `.sloprail/config.yaml` is the
 exception: a new one can carry `disabled:`.
 
-Fixing a rule you wrote earlier in the session, after it passed, is a change to what
-stands. The proof-it-fires step produces the tool output to cite.
+A rename is judged by the path it came from: moving a rule out of `.sloprail/` removes it.
+
+## It cannot disable itself
+
+The engine reads `disabled:` from the working-tree `config.yaml`, which any writer no gate
+models (a script, `yq -i`, `git apply`) can edit. So a `disabled:` entry naming
+`sloprail/*/grounded-rule-changes` is honoured only when the config committed when the
+session began lists it (`internal/declaration` `trustProtected`): neither the working tree
+nor the agent's own commits switch it off. To turn it off, commit the entry first, in an
+earlier session.
 
 ## The gate
 
@@ -54,8 +63,8 @@ no gate models (a script, say) still reaches the file-guard.
 Working on sloprail's own repo, which edits `.sloprail/` often: amend the commit with
 `git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'`.
 
-Turn it off from the project's `.sloprail/config.yaml` (a change that itself needs the
-user's request):
+Turn it off from the project's `.sloprail/config.yaml`, committed before the session starts
+(a change that itself needs the user's request):
 
     disabled:
       - sloprail/file-guard/grounded-rule-changes

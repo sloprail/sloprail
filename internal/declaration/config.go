@@ -3,7 +3,9 @@ package declaration
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -122,4 +124,49 @@ func (c config) isDisabled(qualified string) bool {
 		}
 	}
 	return false
+}
+
+// protectedDisable reports whether the qualified name is a rule a project cannot switch
+// off by writing its working-tree config. `sloprail/<nature>/grounded-rule-changes` is the
+// plugin's rule that refuses a change to the project's own rules, so a `disabled:` entry
+// naming it is the cheapest way out of its refusal: written by any writer no gate models
+// (a script, `yq -i`, `git apply`), the working-tree config would turn the rule off
+// before it could judge the very change that did it.
+func protectedDisable(qualified string) bool {
+	return strings.HasPrefix(qualified, "sloprail/") && strings.HasSuffix(qualified, "/grounded-rule-changes")
+}
+
+// trustProtected drops from cfg every protectedDisable entry the TRUSTED config does not
+// also list. The trusted config is the one committed at rev (the commit the session began
+// at, so the agent's own commits are not trusted either), or at HEAD when rev is empty. If
+// it cannot be read (no repository, no such commit, no such file) nothing protected is
+// honoured: a rule that could not be checked stays on.
+func trustProtected(cfg config, root, rev string) config {
+	has := false
+	for _, n := range cfg.Disabled {
+		if protectedDisable(n) {
+			has = true
+			break
+		}
+	}
+	if !has {
+		return cfg
+	}
+	if rev == "" {
+		rev = "HEAD"
+	}
+	var trusted config
+	out, err := exec.Command("git", "-C", root, "show", rev+":./"+configFile).Output()
+	if err == nil && yaml.Unmarshal(out, &trusted) != nil {
+		trusted = config{}
+	}
+	kept := make([]string, 0, len(cfg.Disabled))
+	for _, n := range cfg.Disabled {
+		if protectedDisable(n) && !trusted.isDisabled(n) {
+			continue
+		}
+		kept = append(kept, n)
+	}
+	cfg.Disabled = kept
+	return cfg
 }

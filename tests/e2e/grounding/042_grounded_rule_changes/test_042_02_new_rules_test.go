@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T042_07: setting rules up needs no grounding. A rule ADDED in the session (a new folder,
@@ -41,5 +43,9 @@ func TestT042_08_NewConfigYamlStillNeedsGrounding(t *testing.T) {
 	).ThenCommit("disable"))
 	if got, out := blocked(e, proj, "s-042-08"); !got {
 		t.Fatalf("a newly added config.yaml with a disabled: entry was not refused:\n%s", out)
+	}
+	e.Run(proj, "s-042-08", "cite it", Turns("done", harness.AmendLast("amend", "disable", harness.CitesUser("turn off the invoices rule"))))
+	if got, out := blocked(e, proj, "s-042-08"); got {
+		t.Fatalf("the config.yaml was still refused once its commit cited the user:\n%s", out)
 	}
 }

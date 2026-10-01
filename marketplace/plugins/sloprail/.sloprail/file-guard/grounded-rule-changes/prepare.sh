@@ -6,6 +6,7 @@ set -uo pipefail
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset needs_grounding_lib_loaded
 . "$lib_dir/needs-grounding-lib.sh" || exit 2
+[ "${needs_grounding_lib_loaded:-}" = 1 ] || exit 2
 
 payload="$(cat)"
 # paths: the files that need grounding, one per line. diff: their parts of the squashed

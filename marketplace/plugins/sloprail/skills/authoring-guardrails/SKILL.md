@@ -254,7 +254,8 @@ working), nor does a generic "please continue", nor a misfire of a different rul
 A refusal never justifies loosening the rule that gave it: ask the user, or fix your
 work.
 
-Setting rules up needs none of this. A rule or structure **added** in the session
+Setting rules up needs none of this. A rule or structure **added** in the session, and
+any later fix to it in the same session,
 weakens nothing, so a rules-first session passes without a citation. The one
 exception is `.sloprail/config.yaml`, where even a new file can switch rules off.
 `config.yaml` writes are also refused before they land, since a file-guard at Stop

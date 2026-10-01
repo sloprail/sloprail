@@ -34,6 +34,24 @@ import (
 var errSessionStartNotKept = errors.New("this session did not keep the commit it began at (it began before that was recorded), " +
 	"so which commits are new cannot be told; start a new session")
 
+// sessionStartOf is the HEAD the session FIRST began at (never the re-taken baseline, which
+// an amend or a branch switch moves), or "" when none was kept: no state, or a session that
+// began before it was kept. Checks read it as SR_SESSION_START, and the declaration load
+// reads it as the commit whose config.yaml may switch off a protected rule.
+func sessionStartOf(state sessionstate.Store) string {
+	if state == nil {
+		return ""
+	}
+	start, ok, err := state.Meta(sessionstate.MetaSessionStart)
+	if err != nil || !ok {
+		return ""
+	}
+	if start == sessionstate.SessionStartUnborn {
+		return gitrepo.EmptyTree
+	}
+	return start
+}
+
 func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
 	var watermark, dropped, sessionStart string
 	if results != nil {
