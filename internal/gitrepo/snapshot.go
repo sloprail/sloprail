@@ -32,9 +32,20 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: snapshot directory: %w", err)
 	}
+	// The directory is named "tree" under the unique temporary root: callers (and the judge's
+	// --add-dir) rely on that shape. Git numbers colliding registration names itself.
 	s := &Snapshot{Path: filepath.Join(root, "tree"), repo: dir, root: root}
-	if _, err := run(dir, "worktree", "add", "--detach", "--force", s.Path, commit); err != nil {
+	_, err = run(dir, "worktree", "add", "--detach", "--force", s.Path, commit)
+	if err != nil {
+		// A registration a dead process left behind (its directory gone), or a half-made one
+		// from this very attempt, is what git trips over: prune, clear the attempt, once more.
+		_, _ = run(dir, "worktree", "prune")
+		_ = os.RemoveAll(s.Path)
+		_, err = run(dir, "worktree", "add", "--detach", "--force", s.Path, commit)
+	}
+	if err != nil {
 		os.RemoveAll(root)
+		_, _ = run(dir, "worktree", "prune") // the failed attempt must not leave its registration
 		return nil, fmt.Errorf("gitrepo: snapshot of %s: %w", short(commit), err)
 	}
 	if err := setWritable(s.Path, false); err != nil {

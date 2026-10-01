@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# `when` of no-destroying-owed-work: exit 0 when the command would destroy commits that are
-# owed a judgement or a fix, so the user-citation requirement applies; exit 1 otherwise.
-# Prints {"hint": "..."} on stdout. What "owed" means is the merge gate's (owed-work.sh).
+# The check of no-destroying-owed-work: exit 1 with {"reason": "..."} when the command would
+# destroy commits that are owed a judgement or a fix; exit 0 otherwise. Facts only: no user
+# citation lifts it. What "owed" means is the merge gate's (owed-work.sh).
 #
 # FAIL CLOSED where it matters: a target the script cannot determine is refused when
 # anything at all is owed, and passes when nothing is.
@@ -17,9 +17,9 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unset owed_work_loaded
 . "$lib_dir/owed-work.sh" || owed_work_loaded=""
 if [ "${owed_work_loaded:-}" != 1 ]; then
-  # A partly loaded helper decides nothing: apply the requirement (exit 1 would waive it).
-  jq -n '{hint: "the gate'"'"'s own helper (owed-work.sh) did not load, so the gate cannot tell what it destroys; it asks for the user'"'"'s words instead."}'
-  exit 0
+  # A partly loaded helper decides nothing: refuse (exit 0 would wave it through).
+  jq -n '{reason: "the gate'"'"'s own helper (owed-work.sh) did not load, so the gate cannot tell what this command destroys. Reinstall the sloprail plugin or fix the helper; until then end your turn so the Stop judges the work, and name the target literally."}'
+  exit 1
 fi
 owed_setup
 
@@ -53,12 +53,14 @@ handle_git() {
   while IFS= read -r a; do argv+=("$a"); done
 
   # Where it runs.
-  local dir="$ws"
+  # The invocation's cwd is the command parser's own tracking of `cd` (relative to the
+  # workspace until a `cd` goes absolute; "" when a `cd` could not be followed, e.g. `cd ~/x`
+  # or `cd "$VAR"`). An unknown directory only matters to what is named relative to it: an
+  # absolute `-C`, or an absolute worktree path, does not need it.
+  local dir="$ws" dirunknown=""
   case "$cwd" in
     ".") ;;
-    "")
-      unresolved+=("the directory a \`cd\` moved the command to cannot be told")
-      ;;
+    "") dirunknown=1 ;;
     /*) dir="$cwd" ;;
     *) dir="$ws/$cwd" ;;
   esac
@@ -69,7 +71,7 @@ handle_git() {
     case "$a" in
       -C)
         i=$((i + 1))
-        case "${argv[$i]:-}" in /*) dir="${argv[$i]}" ;; *) dir="$dir/${argv[$i]:-}" ;; esac
+        case "${argv[$i]:-}" in /*) dir="${argv[$i]}" dirunknown="" ;; *) dir="$dir/${argv[$i]:-}" ;; esac
         ;;
       -c | --exec-path | --namespace) i=$((i + 1)) ;;
       -*) ;;
@@ -82,6 +84,21 @@ handle_git() {
     i=$((i + 1))
   done
   [ -n "$sub" ] || return 0
+  if [ -n "$dirunknown" ]; then
+    # Only these do not depend on where the command runs.
+    local indep=""
+    case "$sub" in gc | prune | reflog) indep=1 ;; esac
+    if [ "$sub" = worktree ] && [ "${args[0]:-}" = remove ]; then
+      for a in "${args[@]:1}"; do
+        case "$a" in /*) indep=1 ;; esac
+      done
+    fi
+    if [ -z "$indep" ]; then
+      unresolved+=("the directory a \`cd\` moved the command to cannot be told (spell the path absolute: \`git -C /abs/dir ...\`, \`git worktree remove /abs/path\`)")
+      what='`git '"$sub"'`'
+      return 0
+    fi
+  fi
   local cur
   cur="$(git -C "$dir" branch --show-current 2>/dev/null || true)"
 
@@ -265,11 +282,11 @@ if dynamic_git_segment; then
   unresolved+=("the command line expands a shell variable, substitution or glob where a ref or path is named")
 fi
 
-[ "${#tips[@]}" -gt 0 ] || [ "${#unresolved[@]}" -gt 0 ] || [ -n "$global" ] || exit 1
+[ "${#tips[@]}" -gt 0 ] || [ "${#unresolved[@]}" -gt 0 ] || [ -n "$global" ] || exit 0
 
 if ! owed_load; then
-  jq -n --arg m "${what:-This command} is refused: the check results of this session and its sub-agents could not be read ($owed_error), so the gate cannot tell whether it destroys work that was never judged. $owed_cite_hint" '{hint: $m}'
-  exit 0
+  jq -n --arg m "${what:-This command} is refused: the check results of this session and its sub-agents could not be read ($owed_error), so the gate cannot tell whether it destroys work that was never judged. Fix the store (\`sr-checks sql --family 'select 1'\` shows the error) and retry." '{reason: $m}'
+  exit 1
 fi
 
 if [ "${#unresolved[@]}" -gt 0 ] || [ -n "$global" ]; then
@@ -279,7 +296,7 @@ else
   owed_unique
 fi
 owed_evaluate
-[ -n "$refusal_listing" ] || [ -n "$owed_listing" ] || exit 1
+[ -n "$refusal_listing" ] || [ -n "$owed_listing" ] || exit 0
 
 msg="${what:-This command} is refused: it would destroy "
 if [ "${#unresolved[@]}" -gt 0 ]; then
@@ -294,8 +311,7 @@ fi
 msg+=":"$'\n'
 [ -n "$refusal_listing" ] && msg+="refused and not fixed:"$'\n'"$refusal_listing"$'\n'
 [ -n "$owed_listing" ] && msg+="not judged yet:"$'\n'"$owed_listing"$'\n'
-msg+="STOP: end your turn now, without running it, so the Stop hook judges the work (a sub-agent's work is judged when it finishes); delete in a later turn once it passed, or name the exact branch if you did not. "
-msg+="If the USER wants it dropped, ask them; their words drop a branch from what is owed (\`sr-session refs abandon --ref <branch> --folder <dir> --cite-user '<their exact words>'\`), or cite them in the same command. "
-msg+="$owed_cite_hint"
-jq -n --arg m "$msg" '{hint: $m}'
-exit 0
+msg+="Fix the work or end your turn now, without running it, so the Stop hook judges it (a sub-agent's work is judged when it finishes); delete in a later turn once it passed, or name the exact branch or path literally. "
+msg+="No user citation lifts this refusal. If the USER wants the work dropped, ask them: only \`sr-session refs abandon --ref <branch> --folder <dir> --cite-user '<their exact words>'\` drops a branch from what is owed. "
+jq -n --arg m "$msg" '{reason: $m}'
+exit 1

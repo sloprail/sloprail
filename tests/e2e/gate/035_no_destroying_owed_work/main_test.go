@@ -70,7 +70,7 @@ func TestT035_01_DeletingAnUnjudgedBranchIsRefusedThenAllowedOnceJudged(t *testi
 
 	turns := append(leaveBranch("feat", "clean words"), Bash("d1", "git branch -D feat"))
 	res := e.Run(proj, sess, "do the work and drop it", Turns("done", turns...))
-	if !refusedByGate(res) || !res.Saw("end your turn") || !res.Saw("trajectory cite") {
+	if !refusedByGate(res) || !res.Saw("end your turn") || res.Saw("trajectory cite") {
 		t.Fatalf("deleting a branch no rule had judged was not refused with the way forward:\n%s", res.Output)
 	}
 	if e.Git(proj, "branch", "--list", "feat") == "" {
@@ -88,8 +88,9 @@ func TestT035_01_DeletingAnUnjudgedBranchIsRefusedThenAllowedOnceJudged(t *testi
 }
 
 // T035_02: a branch a rule REFUSED stays owed after Stop: deleting it is refused until the
-// user's words say so, which a citation in the same command carries.
-func TestT035_02_DeletingARefusedBranchNeedsTheUsersWords(t *testing.T) {
+// user abandons it through `sr-session refs abandon`: a citation in the delete command
+// itself does not lift it.
+func TestT035_02_ACitationDoesNotUnlockDeletingARefusedBranch(t *testing.T) {
 	const sess = "s-035-02"
 	e, proj := project(t)
 
@@ -102,8 +103,42 @@ func TestT035_02_DeletingARefusedBranchNeedsTheUsersWords(t *testing.T) {
 	const said = "yes, delete the bad branch, I do not want it"
 	res = e.Run(proj, sess, said, Turns("done",
 		Bash("d2", "sr-session trajectory cite '"+said+"' && git branch -D bad")))
+	if !refusedByGate(res) || e.Git(proj, "branch", "--list", "bad") == "" {
+		t.Fatalf("a delete citing the user's words destroyed a refused branch:\n%s", res.Output)
+	}
+}
+
+// T035_06: `cd <dir> && git worktree remove <abs>` and a worktree named absolute under a `cd`
+// the parser cannot follow are told apart from "cannot tell": the owed worktree is named in
+// the refusal, and a worktree that holds nothing owed goes through.
+func TestT035_06_WorktreeRemoveUnderACdIsResolved(t *testing.T) {
+	const sess = "s-035-06"
+	e, proj := project(t)
+	wt := t.TempDir() + "/wt"
+
+	turns := leaveBranch("feat", "clean words")
+	turns = append(turns, Bash("w1", "git worktree add -q "+wt+" feat"))
+	e.Run(proj, sess, "leave a branch with a worktree", Turns("done", turns...))
+
+	for i, cmd := range []string{
+		"cd " + proj + " && git worktree remove --force " + wt,
+		`cd "$HOME" && git worktree remove --force ` + wt,
+		"cd ~ && git worktree remove --force " + wt,
+	} {
+		more := Turns("done",
+			Bash("x"+string(rune('a'+i)), "git -C "+wt+" commit -q --allow-empty -m more"),
+			Bash("y"+string(rune('a'+i)), cmd),
+		)
+		res := e.Run(proj, sess, "remove it", more)
+		if !refusedByGate(res) || res.Saw("cannot be told") || !res.Saw("feat") || res.Saw("trajectory cite") {
+			t.Fatalf("%q was not refused on the facts (the owed branch), or was refused as unresolvable:\n%s", cmd, res.Output)
+		}
+	}
+
+	// Judged at the end of that turn; nothing is owed, and the same removal goes through.
+	res := e.Run(proj, sess, "now remove it", Turns("done", Bash("z", `cd "$HOME" && git worktree remove --force `+wt)))
 	if res.Saw("no-destroying-owed-work") {
-		t.Fatalf("a delete citing the user's words was refused:\n%s", res.Output)
+		t.Fatalf("the removal was refused after the branch was judged and passed:\n%s", res.Output)
 	}
 }
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# `when` of no-merge-over-refusals: exit 0 when the command lands work that is owed a
-# refusal, so the user-citation requirement applies; exit 1 when it lands nothing of the
-# kind. Prints {"hint": "..."} on stdout: the refusal's own advice.
+# The check of no-merge-over-refusals: exit 1 with {"reason": "..."} when the command lands
+# work that is owed (a refusal nobody fixed, or commits no rule has judged), or lands what
+# it cannot tell; exit 0 when it lands nothing of the kind. Facts only: no user citation
+# lifts it.
 #
 # What lands work, and so is looked at: `gh pr merge` (any flags, --admin included), a
 # `gh api` call that merges a pull request, and a `git push` whose destination is the
@@ -10,8 +11,8 @@
 #
 # It FAILS CLOSED: when it cannot tell what a command lands (a shell variable, loop,
 # substitution or glob in the command, a flag it does not know, a pull request gh cannot
-# look up), it asks for a user citation as it does for a refusal, and says to name the PR
-# literally. Nothing here exits 1 for "could not tell" on a merge.
+# look up), it refuses as it does for a refusal, and says to name the PR literally.
+# Nothing here exits 0 for "could not tell" on a merge.
 #
 # Known gap: a `git push` whose refspec is built by the shell is not followed; the
 # judge-before-push gate is the one that looks at pushes in general.
@@ -32,9 +33,9 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unset owed_work_loaded
 . "$lib_dir/owed-work.sh" || owed_work_loaded=""
 if [ "${owed_work_loaded:-}" != 1 ]; then
-  # A partly loaded helper decides nothing: apply the requirement (exit 1 would waive it).
-  jq -n '{hint: "the gate'"'"'s own helper (owed-work.sh) did not load, so the gate cannot tell what lands; it asks for the user'"'"'s words instead."}'
-  exit 0
+  # A partly loaded helper decides nothing: refuse (exit 0 would wave it through).
+  jq -n '{reason: "the gate'"'"'s own helper (owed-work.sh) did not load, so the gate cannot tell what this command lands. Reinstall the sloprail plugin or fix the helper; until then name the pull request literally and let the Stop judge the branch first."}'
+  exit 1
 fi
 owed_setup
 
@@ -228,36 +229,33 @@ if dynamic_merge_segment; then
   what="${what:-\`gh pr merge\`}"
   unresolved+=("the command line expands a shell variable, substitution or glob where the pull request is named")
 fi
-[ "${#tips[@]}" -gt 0 ] || [ "${#unresolved[@]}" -gt 0 ] || exit 1
-
-cite_hint="${owed_cite_hint//go ahead anyway/land it anyway}"
+[ "${#tips[@]}" -gt 0 ] || [ "${#unresolved[@]}" -gt 0 ] || exit 0
 
 # --- fail closed: what lands cannot be told ---------------------------------------------
 if [ "${#unresolved[@]}" -gt 0 ]; then
   msg="${what:-This command} is refused: the gate cannot tell which commits it would land, so it cannot tell whether they were refused or are still unjudged:"$'\n'
   for u in "${unresolved[@]}"; do msg+="  - $u"$'\n'; done
   msg+="Name the pull request literally: one \`gh pr merge <number> --squash\` per command, a number, URL or branch, no shell variable, loop, substitution or glob, only the flags \`--admin --auto --squash --merge --rebase --delete-branch --repo --body\`, and make sure \`gh pr view <number>\` works. "
-  msg+="$cite_hint"
-  jq -n --arg m "$msg" '{hint: $m}'
-  exit 0
+  jq -n --arg m "$msg" '{reason: $m}'
+  exit 1
 fi
 
 owed_unique
 
 # --- what is owed: every store of the session family -----------------------------------
 if ! owed_load; then
-  jq -n --arg m "${what:-This command} is refused: the check results of this session and its sub-agents could not be read ($owed_error), so the gate cannot tell whether what lands was refused. $cite_hint" '{hint: $m}'
-  exit 0
+  jq -n --arg m "${what:-This command} is refused: the check results of this session and its sub-agents could not be read ($owed_error), so the gate cannot tell whether what lands was refused. Fix the store (\`sr-checks sql --family 'select 1'\` shows the error) and retry." '{reason: $m}'
+  exit 1
 fi
 owed_evaluate
 
-[ -n "$refusal_listing" ] || [ -n "$owed_listing" ] || exit 1
+[ -n "$refusal_listing" ] || [ -n "$owed_listing" ] || exit 0
 
 branch_label="${branches[0]:-the commits}"
 msg="${what:-\`gh pr merge\`} is refused: $branch_label "
 if [ -n "$refusal_listing" ]; then
   msg+="has refusals this session (or one of its sub-agents) recorded and nobody resolved:"$'\n'"$refusal_listing"$'\n'
-  msg+="Landing past a refusal is never legitimate. Fix what the rule refused (commit the fix and let the Stop judge the new tip), then merge. "
+  msg+="Landing past a refusal is never legitimate, whoever asks. Fix what the rule refused (commit the fix and let the Stop judge the new tip), then merge. "
 fi
 if [ -n "$owed_listing" ]; then
   [ -n "$refusal_listing" ] && msg+=$'\n'"It also has commits this session made that no rule has judged yet: "
@@ -266,6 +264,5 @@ if [ -n "$owed_listing" ]; then
   msg+="STOP: end your turn now, without merging, so the Stop hook judges the branch (a sub-agent's work is judged when it finishes); merge in a later turn once it passed. Merging first lands the work where the rules can no longer hold it. "
   msg+="Judging is the engine's: never run \`sr-session start\` / \`sr-session stop\` or write a judge of your own to get a pass. "
 fi
-msg+="$cite_hint"
-jq -n --arg m "$msg" '{hint: $m}'
-exit 0
+jq -n --arg m "$msg" '{reason: $m}'
+exit 1

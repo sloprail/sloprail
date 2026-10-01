@@ -24,9 +24,6 @@
 #   owed_all        every recorded, non-abandoned tip and every refused head, for a
 #                   command that endangers everything at once
 #   owed_unique     de-duplicates tips[] and branches[]
-#   owed_cite_hint  the way past, in words
-
-owed_cite_hint="Only the user can say to go ahead anyway: cite their exact words, as one command, \`sr-session trajectory cite '<their exact words>' && <the command>\`."
 
 owed_setup() {
   defbr=""
@@ -54,13 +51,17 @@ owed_unique() {
   branches=(${b2[@]+"${b2[@]}"})
 }
 
-# Each rule's latest run per judged head, per store: bad = a failing check or an engine
-# failure; good = a finished, passing run.
+# Each rule's latest run per judged head, per store: bad = a failing check (a refusal of the
+# work); good = a finished, passing run. An ENGINE failure (a run with an error and no failing
+# check: a snapshot that could not be made, a store that could not be written) is neither: it
+# is not the agent's refusal, so it is never listed as work to fix. The head it left unjudged
+# is owed a judgement (listing 2) and the next Stop gives it one: a failed run never moves a
+# watermark.
 owed_load() {
   owed_error=""
   runs="$(cd "$ws" && sr-checks sql --family "
     select r.check_id as rule, r.head_ref as head, r.run_at as run_at, coalesce(json_extract(r.metadata, '\$.ruleHash'), '') as rh,
-           case when r.exit_code != 0 or exists (select 1 from checks c where c.run_id = r.id and c.status in ('fail', 'error'))
+           case when (r.exit_code != 0 and r.error is null) or exists (select 1 from checks c where c.run_id = r.id and c.status in ('fail', 'error'))
                 then 1 else 0 end as bad,
            case when r.exit_code = 0 and r.error is null and json_extract(r.metadata, '\$.state') = 'complete'
                      and not exists (select 1 from checks c where c.run_id = r.id

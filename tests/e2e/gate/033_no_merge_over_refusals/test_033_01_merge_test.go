@@ -45,8 +45,11 @@ func TestT033_01_RefusedThenFixedThenAllowed(t *testing.T) {
 	e, proj := refusedProject(t, sess)
 
 	res := e.Run(proj, sess, "merge it", Turns("done", Bash("m1", "gh pr merge --admin --squash")))
-	if !res.Refused() || !res.Saw("file-guard/docs") || !res.Saw("trajectory cite") {
-		t.Fatalf("a merge over an open refusal was not refused with the rule and the way past it:\n%s", res.Output)
+	if !res.Refused() || !res.Saw("file-guard/docs") || !res.Saw("Fix what the rule refused") {
+		t.Fatalf("a merge over an open refusal was not refused with the rule and the fix:\n%s", res.Output)
+	}
+	if res.Saw("trajectory cite") || res.Saw("must cite") {
+		t.Fatalf("the refusal leads the agent to a user citation, which cannot lift it:\n%s", res.Output)
 	}
 
 	e.Run(proj, sess, "fix it", Turns("fixed", harness.CommitFile("c2", "docs/a.md", "clean", "fix a")))
@@ -56,16 +59,18 @@ func TestT033_01_RefusedThenFixedThenAllowed(t *testing.T) {
 	}
 }
 
-// T033_02: the user's own words let the merge through despite the open refusal.
-func TestT033_02_AUserCitationAllowsIt(t *testing.T) {
+// T033_02: the user's own words do NOT let the merge through: the gate refuses on facts
+// (the open refusal), and a citation cannot wash them away.
+func TestT033_02_AUserCitationDoesNotUnlockIt(t *testing.T) {
 	const sess = "s-033-02"
 	e, proj := refusedProject(t, sess)
+	setPR(t, e, "5", e.Git(proj, "branch", "--show-current"))
 
 	const said = "merge it anyway, I accept the refusal"
 	res := e.Run(proj, sess, said, Turns("done",
 		Bash("m1", "sr-session trajectory cite '"+said+"' && gh pr merge 5 --admin"),
 	))
-	if res.Saw("no-merge-over-refusals") {
-		t.Fatalf("a merge citing the user's words was refused:\n%s", res.Output)
+	if !res.Refused() || !res.Saw("no-merge-over-refusals") || !res.Saw("file-guard/docs") {
+		t.Fatalf("a merge citing the user's words got past the open refusal:\n%s", res.Output)
 	}
 }

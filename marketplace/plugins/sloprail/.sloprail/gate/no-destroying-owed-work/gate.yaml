@@ -5,7 +5,8 @@
 # while the ref they would destroy holds commits this session (or one of its sub-agents)
 # has not had judged, or that a rule refused and nobody fixed.
 #
-# What it watches (git, however it is spelled: env prefixes, bash -c, `git -C <dir>`):
+# What it watches (git, however it is spelled: env prefixes, bash -c, `cd <dir> &&`,
+# `git -C <dir>`):
 #   branch -d/-D/--delete, branch -f <existing>, checkout -B / switch -C <existing>,
 #   push <remote> --delete <b> or :<b>, update-ref -d, worktree remove [--force],
 #   reset --hard (--keep, --merge) to a commit that does not contain the branch's tip
@@ -14,15 +15,15 @@
 # `gh pr merge --delete-branch` is no-merge-over-refusals' (it refuses the same merge).
 #
 # "Owed" is the same notion as the merge gate's (owed-work.sh, shared): read from every
-# store of the session family, `sr-checks sql --family`. A command whose target cannot be
-# told (a shell variable, a ref that does not resolve) is refused when ANYTHING is owed
-# at all, and passes when nothing is: destroying nothing that is owed harms nothing.
+# store of the session family, `sr-checks sql --family`. Engine failures are not refusals
+# of the agent's work and are never listed as such. A command whose target cannot be told
+# (a shell variable, a ref that does not resolve) is refused when ANYTHING is owed at all,
+# and passes when nothing is: destroying nothing that is owed harms nothing.
 #
-# The way forward is to end the turn so Stop (a sub-agent's Stop, for its work) judges the
-# branch, then delete. The way past is the user's own words, cited in the same command:
-#   sr-session trajectory cite '<their words>' && git branch -D <b>
-# and `sr-session refs abandon --ref <b> --folder <dir> --cite-user '<their words>'` drops a
-# branch from what is owed for good.
+# It refuses on FACTS: no user citation lifts it. The way forward is to end the turn so Stop
+# (a sub-agent's Stop, for its work) judges the branch, then delete, or to name the target
+# literally. Dropping owed work stays the user's, through the grounded path:
+#   sr-session refs abandon --ref <b> --folder <dir> --cite-user '<their exact words>'
 #
 # On by default, like every shipped rule; switch it off with `disabled:` in
 # .sloprail/config.yaml (a change to that file is itself gated by grounded-rule-changes).
@@ -34,6 +35,5 @@ on:
         any(.argv, # == "worktree") or any(.argv, # == "reset") or any(.argv, # == "checkout") or
         any(.argv, # == "switch") or any(.argv, # == "gc") or any(.argv, # == "prune") or
         any(.argv, # == "reflog")))
-require:
-  - citation: {source_types: [user]}
-    when: ./destroys-owed.sh
+checks:
+  - script: ./destroys-owed.sh

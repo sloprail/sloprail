@@ -35,13 +35,14 @@ func TestT033_04_AMergeWhoseTargetCannotBeToldIsRefused(t *testing.T) {
 		t.Fatalf("a literal merge of a clean PR was refused:\n%s", res.Output)
 	}
 
-	// The user's own words still let a command the gate cannot follow through.
+	// The user's own words do not make a command the gate cannot follow acceptable, and the
+	// refusal does not lead with a citation.
 	const said = "merge whatever is in n, I know"
 	res = e.Run(proj, sess, said, Turns("done",
 		Bash("c", "n=5; sr-session trajectory cite '"+said+"' && gh pr merge $n --squash"),
 	))
-	if res.Saw("no-merge-over-refusals") {
-		t.Fatalf("a merge citing the user's words was refused:\n%s", res.Output)
+	if !res.Refused() || !res.Saw("no-merge-over-refusals") || !res.Saw("literally") || res.Saw("must cite") {
+		t.Fatalf("a citation unlocked a merge the gate cannot follow, or the refusal led with it:\n%s", res.Output)
 	}
 }
 
@@ -60,7 +61,7 @@ func TestT033_05_OtherWaysToLandAreRefusedLikewise(t *testing.T) {
 		"git push origin HEAD:master",
 	} {
 		res := e.Run(proj, sess, "land it", Turns("done", Bash("l"+string(rune('a'+i)), cmd)))
-		if !res.Refused() || !res.Saw("file-guard/docs") || !res.Saw("trajectory cite") {
+		if !res.Refused() || !res.Saw("file-guard/docs") || res.Saw("trajectory cite") {
 			t.Fatalf("%q landed work a rule refused:\n%s", cmd, res.Output)
 		}
 	}
@@ -94,14 +95,14 @@ func subRefusedProject(t *testing.T, sess string) (*harness.Env, string) {
 }
 
 // T033_06: the open refusal a SUB-AGENT's Stop recorded (in its own store) blocks the
-// coordinator's merge; the user's words override it; fixed on top and judged, the merge
+// coordinator's merge; the user's words do not lift it; fixed on top and judged, the merge
 // goes through.
 func TestT033_06_ASubagentsOpenRefusalBlocksTheCoordinatorsMerge(t *testing.T) {
 	const sess = "s-033-06"
 	e, proj := subRefusedProject(t, sess)
 
 	res := e.Run(proj, sess, "merge 7", Turns("done", Bash("m1", "gh pr merge 7 --squash --admin")))
-	if !res.Refused() || !res.Saw("file-guard/docs") || !res.Saw("trajectory cite") {
+	if !res.Refused() || !res.Saw("file-guard/docs") || res.Saw("trajectory cite") {
 		t.Fatalf("the coordinator merged over a refusal its sub-agent recorded:\n%s", res.Output)
 	}
 
@@ -109,8 +110,8 @@ func TestT033_06_ASubagentsOpenRefusalBlocksTheCoordinatorsMerge(t *testing.T) {
 	res = e.Run(proj, sess, said, Turns("done",
 		Bash("m2", "sr-session trajectory cite '"+said+"' && gh pr merge 7 --squash --admin"),
 	))
-	if res.Saw("no-merge-over-refusals") {
-		t.Fatalf("a merge citing the user's words was refused:\n%s", res.Output)
+	if !res.Refused() || !res.Saw("no-merge-over-refusals") {
+		t.Fatalf("a merge citing the user's words got past the sub-agent's refusal:\n%s", res.Output)
 	}
 
 	// The fix lands on top of the refused tip and is judged: the PR is now that branch.

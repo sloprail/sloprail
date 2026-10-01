@@ -9,6 +9,12 @@
 # and every sub-agent's, which keep their own stores) for refusals at the landing commits,
 # found by branch name AND by the PR head's oid; the policy is all in that script.
 #
+# It refuses on FACTS and nothing else: open refusals, unjudged commits, or a target it
+# cannot determine. No user citation lifts it (a user's word is not a reason to land work a
+# rule refused, and an agent could wash an old instruction into one); the remedy is to fix
+# the work, let the Stop judge the new tip, or name the pull request literally. Engine
+# failures (a run that errored without refusing anything) are not refusals of the work.
+#
 # It FAILS CLOSED: a command whose target the script cannot determine (a shell variable
 # or loop in place of the PR number, an unknown flag, a PR gh cannot look up) is refused
 # with the advice to name the pull request literally.
@@ -16,12 +22,6 @@
 # On by default, like every shipped rule, and switched off the same way: list
 # `sloprail/gate/no-merge-over-refusals` under `disabled:` in .sloprail/config.yaml
 # (a change to that file is itself gated by grounded-rule-changes).
-#
-# The one way past it is the user's own words: `when` applies the citation requirement
-# only when there is something to refuse (open refusals, unjudged commits, or a target it
-# cannot determine), and then needs a user citation (the user said to land it anyway):
-#   sr-session trajectory cite '<their words>' && gh pr merge ...
-# Fixing is the other way: commit the fix, let the Stop judge the new tip, merge.
 on:
   - event: PreCommandInvoke
     match: >
@@ -29,6 +29,5 @@ on:
         (.bin == "gh" and any(.argv, # == "pr") and any(.argv, # == "merge")) or
         (.bin == "gh" and any(.argv, # == "api")) or
         (.bin == "git" and any(.argv, # == "push")))
-require:
-  - citation: {source_types: [user]}
-    when: ./open-refusals.sh
+checks:
+  - script: ./open-refusals.sh
