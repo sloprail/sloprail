@@ -437,7 +437,7 @@ guardrail_fired_check() {
     # The sub-agents' records too: a rule refusing inside a sub-agent (at its
     # SubagentStop, or a tool call it made) is written there, not in the root.
     count="$({ cat "$SR_EVAL_TRANSCRIPT"; cat_subagent_records; } 2>/dev/null \
-      | grep -oE "(^|[^/A-Za-z0-9_.-])([a-z0-9-]+/)?(file-guard|gate)/$name([^/A-Za-z0-9_.-]|$)|\\\\?\"$name\\\\?\"" | wc -l | tr -d ' ')"
+      | grep -oE "(^|[^/A-Za-z0-9_.-])([a-z0-9-]+/)?(file-guard|gate)/$name([^/A-Za-z0-9_.-]|\\.([^A-Za-z0-9_]|$)|$)|\\\\?\"$name\\\\?\"" | wc -l | tr -d ' ')"
   fi
   GF_COUNT="$count"
   if [ "$count" -gt 0 ]; then
