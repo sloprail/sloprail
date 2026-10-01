@@ -87,12 +87,23 @@ own call.
   commits carried it (`commits`, SHAs) and which selected files those commits
   changed (`files`); the list as a whole stays the range's, for a judge. The rest
   of this list describes a gate's events. A `require: citation` on a file-guard is
-  satisfied **per selected file**: a file is grounded only by a citation whose
-  trailer is in the commit that last changed THAT file, so one commit citing one
-  file grounds nothing else in the range, an uncited change on top of a cited one
-  leaves the file uncited, and a cited commit on top of an uncited one grounds the
-  file as it now stands. A refusal names every file that is not grounded. Its
-  `when` reads the whole `Changeset` payload.
+  satisfied **per subject**, and the default subject is one selected file
+  ([events.md](events.md#changeset--what-a-file-guards-checks-receive)): a file is
+  grounded only by a citation whose trailer is in the commit that last changed THAT
+  file, so one commit citing one file grounds nothing else in the range, an uncited
+  change on top of a cited one leaves the file uncited, and a cited commit on top of
+  an uncited one grounds the file as it now stands. Its `when` runs once per
+  subject, on a payload whose `subject.files` is that file (the whole `Changeset`
+  stays in the payload as context), and the requirement applies only to the files
+  whose `when` applies. A refusal names every file that is not grounded, and says
+  the one command that grounds them: when each such file was last changed by HEAD,
+  `git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'`;
+  when one was changed by an earlier commit, squash the range into one commit
+  carrying the quote(s) (`git reset --soft <base> && git commit -m '<what changed>'
+  -m 'Sloprail-Cites-User: <exact quote>'`; repeat the trailer for each quote, the
+  earlier commits' messages are replaced). An empty commit carrying only the trailer
+  does not count: the trailer grounds the commit it is in, and that commit must be the
+  one that changed the file. Several quotes on one commit are fine.
 - A cited call that failed, was denied, or
   never ran grounds nothing. A citation grounds only the change it rode on, and
   only for a requirement whose pools it resolved in (a `--cite:tool_result`
@@ -176,8 +187,9 @@ require:
 ```
 
 ```bash
-# removes-content.sh, a gate's `when` (a file-guard's loops .changeset.files[],
-# see examples/no-unasked-deletion): exit 0 when a line present before is gone after.
+# removes-content.sh, a gate's `when` (a file-guard's decides for .subject.files, one
+# file, and reads the rest of .changeset only as context; see
+# examples/no-unasked-deletion): exit 0 when a line present before is gone after.
 input="$(cat)"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
 new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
@@ -197,8 +209,8 @@ so a refusal always carries a command the agent can run.
 
 A transition such as "status became `published`" reads the same on the gate
 (`event.oldContent` to `event.newContent`) and on the file-guard beside it
-(`oldContent` at the range's base to `newContent` at `head`, per
-`.changeset.files[]`). A change whose result the engine could not compute
+(`oldContent` at the range's base to `newContent` at `head`, per file of
+`.subject.files`). A change whose result the engine could not compute
 (`resultKnown: false`) is an unknown result: a `require: citation` gate is checked
 first, and a content-dependent check after it must refuse an unknown result
 itself ([file-guard.md](file-guard.md), "The resultKnown discipline"). The

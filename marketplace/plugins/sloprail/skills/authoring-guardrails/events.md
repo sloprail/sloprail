@@ -270,7 +270,7 @@ re-judged rather than skipped.
 ### `Changeset` — what a file-guard's checks receive
 
 Not a kind a gate or a context binds to: a file-guard binds to no event, and its
-checks are handed one `Changeset` per rule per range. `event` is always
+checks are handed one `Changeset` per rule per range (per **subject**, below). `event` is always
 `{"kind": "Changeset"}`; the `.event.path`, `.event.newContent` and
 `.event.oldContent` of a file event do not exist for a file-guard — loop over
 `.changeset.files[]`.
@@ -300,7 +300,20 @@ checks are handed one `Changeset` per rule per range. `event` is always
 - `others` — the rest of the range, `{path, status}` only.
 - `citations` — the range's resolved `Sloprail-Cites-*` quotes
   ([grounding.md](grounding.md)); empty outside a session.
-- `subject` — the unit judged; `transcriptPath` and `context` as everywhere.
+- `subject` — the unit being decided: `{id, files}`, where `files` are paths in
+  `changeset.files`. The rest of the changeset stays in the payload as context. It
+  depends on what is asking:
+  - a **requirement** (`require:` and its `when`) is evaluated once per subject, and the
+    default subject is **one selected file**: `{"id": "<path>", "files": ["<path>"]}`.
+    A `when` script decides for `.subject.files` and reads the rest of the
+    changeset only as context; the requirement applies to the files whose `when`
+    applies.
+  - a **check** (a script or a judge) has ONE subject by default, the whole
+    changeset: `{"id": "changeset", "files": [<every selected file>]}`.
+
+  A future `subjects:` key will supply the list, for requirements and checks alike,
+  in this same shape. A gate's payload has no `subject`: it has `.event`.
+  `transcriptPath` and `context` as everywhere.
 
 ### `Stop` — a work cycle ended
 
