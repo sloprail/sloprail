@@ -96,7 +96,15 @@ the engine did not see can be recorded by hand:
 (`sr-session refs list` shows the rows; without `--agent` the row belongs to the root session,
 with it to that sub-agent). A tip starts at its ref's creation point (the oldest reflog entry),
 so upstream commits merged before a branch was cut are not blamed on the agent, and a tip
-already inside a branch's history when the session began is not the session's work. Uncommitted work is a `commit-required` matter and
+already inside a branch's history when the session began is not the session's work. The refs are recorded from a snapshot taken at every hook (each branch checked out in the
+folder, and a detached `HEAD`), the reflog being only a backfill. A repository the agent
+runs history-moving git commands in outside its own tree (`git -C <dir> commit`,
+`cd <dir> && git commit`, merge, rebase, pull, push, `git worktree add <dir>`) is registered
+as an ad-hoc folder before the command runs, started at its `HEAD` then, and judged at Stop
+under THAT repository's own `.sloprail` plus the session's plugins. `git push` and
+`gh pr create` are themselves gated: every file-guard is evaluated over what the agent
+committed in the target repository first, and a refusal blocks the command.
+Uncommitted work is a `commit-required` matter and
 stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
 
 A rule's identity is its whole `.sloprail` root — its own folder, every other rule,
