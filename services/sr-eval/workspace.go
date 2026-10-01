@@ -452,5 +452,54 @@ func (w *workspace) snapshotMarketplace(repoRoot string) (string, error) {
 			return "", err
 		}
 	}
+	if err := localizePluginSources(filepath.Join(dst, ".claude-plugin", "marketplace.json")); err != nil {
+		return "", err
+	}
 	return dst, nil
+}
+
+// localizePluginSources rewrites every plugin's source in a marketplace.json to
+// the relative path of that plugin inside the marketplace root. The shipped
+// manifest pins each plugin to a release tag (a git-subdir source with a ref),
+// which would make `marketplace add` install the RELEASED plugin from GitHub
+// and test the wrong rules; the snapshot must point back at its own copy. A
+// source that is already a relative path is left alone; an object source
+// becomes "./<its path>", falling back to ./marketplace/plugins/<name>.
+func localizePluginSources(manifest string) error {
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		return err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("parse %s: %w", manifest, err)
+	}
+	var plugins []map[string]json.RawMessage
+	if err := json.Unmarshal(doc["plugins"], &plugins); err != nil {
+		return fmt.Errorf("parse plugins of %s: %w", manifest, err)
+	}
+	for _, p := range plugins {
+		var name, asString string
+		_ = json.Unmarshal(p["name"], &name)
+		if json.Unmarshal(p["source"], &asString) == nil && asString != "" {
+			continue
+		}
+		var obj struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal(p["source"], &obj)
+		rel := obj.Path
+		if rel == "" {
+			rel = "marketplace/plugins/" + name
+		}
+		p["source"], _ = json.Marshal("./" + strings.TrimPrefix(rel, "./"))
+	}
+	if doc["plugins"], err = json.Marshal(plugins); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(manifest, append(out, '\n'), 0o644)
 }
