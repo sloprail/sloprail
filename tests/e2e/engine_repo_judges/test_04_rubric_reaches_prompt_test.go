@@ -168,20 +168,23 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 		t.Fatalf("the recording shim captured no claude argv (was the judge invoked?): %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
-	ws := resolved(t, proj)
+	realWs := resolved(t, proj)
 
-	// Readable: the workspace is one of the --add-dir working directories.
+	// Readable: the project is one of the --add-dir working directories. A file-guard
+	// judges commits, so the project is the read-only snapshot of the committed tip
+	// (.../sr-tree-*/tree), never the folder's checked-out working tree.
 	dirs := flagValues(lines, "--add-dir")
-	// The engine passes the workspace as `--add-dir:readonly`; sr-agent adds the
+	// The engine passes it as `--add-dir:readonly`; sr-agent adds the
 	// answer folder after it as one more (writable) dir, through the same path.
-	if len(dirs) != 2 || resolved(t, dirs[0]) != ws {
-		t.Fatalf("--add-dir must carry the workspace %s then the answer dir; got %q; argv:\n%s", ws, dirs, string(argv))
+	if len(dirs) != 2 || filepath.Base(dirs[0]) != "tree" || !strings.Contains(dirs[0], "sr-tree-") || strings.HasPrefix(dirs[0], realWs) {
+		t.Fatalf("--add-dir must carry the tip's tree snapshot then the answer dir; got %q (workspace %s); argv:\n%s", dirs, realWs, string(argv))
 	}
+	ws := dirs[0]
 	answerDir := dirs[1]
 
 	// Not writable: every spelling of the workspace is denied to the Edit family.
 	deny := flagValues(lines, "--disallowed-tools")
-	if !contains(deny, "Edit(/"+ws+"/**)") {
+	if !contains(deny, "Edit(/"+ws+"/**)") && !contains(deny, "Edit(/"+resolvedLoose(ws)+"/**)") {
 		t.Errorf("the workspace %s is not denied to file-writing tools; --disallowed-tools %q; argv:\n%s", ws, deny, string(argv))
 	}
 
@@ -200,7 +203,7 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 	}
 	// And the answer dir is outside the readonly workspace, or its deny would
 	// block the verdict (sr-agent places it outside every readonly dir).
-	if strings.HasPrefix(resolved(t, filepath.Dir(answerDir))+string(filepath.Separator), ws+string(filepath.Separator)) {
+	if strings.HasPrefix(resolved(t, filepath.Dir(answerDir))+string(filepath.Separator), resolvedLoose(ws)+string(filepath.Separator)) {
 		t.Errorf("the answer dir %s lies inside the workspace %s", answerDir, ws)
 	}
 
@@ -287,4 +290,13 @@ func TestEmptyRulesIsRefusalNotFailOpen(t *testing.T) {
 	if !sawRefusal(e.BlockingErrors(proj, "s-erj-emptyrules"), "no standard to judge") {
 		t.Fatalf("an empty (no-enforced-rule) rules/ did not refuse — the empty-rules asymmetry was lost:\n%v", e.BlockingErrors(proj, "s-erj-emptyrules"))
 	}
+}
+
+// resolvedLoose resolves symlinks in the longest existing prefix of p (a snapshot
+// the engine already removed has no path of its own to resolve).
+func resolvedLoose(p string) string {
+	if r, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		return filepath.Join(r, filepath.Base(p))
+	}
+	return p
 }
