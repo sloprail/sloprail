@@ -125,6 +125,14 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 // than HEAD: every ancestry question is asked of head. It is how a branch the working
 // tree has left, or a detached-HEAD commit, is judged by the same logic as HEAD.
 func ResolveRangeAt(dir, head, folder, rule, watermark, sessionStart string, refusedBases ...string) (Range, error) {
+	r, err := resolveRangeAt(dir, head, folder, rule, watermark, sessionStart, refusedBases...)
+	if err != nil {
+		return Range{}, err
+	}
+	return ExcludeUpstream(dir, r)
+}
+
+func resolveRangeAt(dir, head, folder, rule, watermark, sessionStart string, refusedBases ...string) (Range, error) {
 	r := Range{Head: head}
 	if watermark != "" {
 		ok, err := IsAncestor(dir, watermark, head)
