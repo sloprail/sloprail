@@ -17,8 +17,10 @@ import (
 // sloprailBinaries are the names whose presence in a directory makes that
 // directory part of an existing sloprail install. A fresh machine's PATH
 // keeps none of them: the agent must find sloprail absent, the way a
-// stranger's machine has it.
-var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval"}
+// stranger's machine has it. It is also what buildRelease stages, so it must be
+// everything install.sh copies (TestSloprailBinaries_CoverEverythingInstallShCopies):
+// a missing one made install.sh fail on `cp` and sloprail never ran.
+var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval", "sr-checks"}
 
 // agentEnv is how an agent-under-test is launched: its HOME, the environment
 // it runs in, and where its harness keeps transcripts. releaseURL is set only

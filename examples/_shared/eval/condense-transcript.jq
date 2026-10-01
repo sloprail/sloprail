@@ -19,10 +19,24 @@
 # harness records it as an attachment of type hook_blocking_error. Dropping it
 # (as this did until 2026-09-27) hid every end-of-turn refusal from the judge,
 # which then could not tell a refused turn from a finished one.
+#
+# The harness also records each Stop hook run as a system entry of subtype
+# stop_hook_summary. Dropping those (as this did until 2026-10-01) left the
+# judge unable to see that the FINAL Stop passed: it read a run whose last Stop
+# hook ran clean as one that "ends mid-stream" (_sloprail-tasks fix-and-review).
+# Each is kept as one line, STOP_HOOK: pass or STOP_HOOK: refuse. It is NOT a
+# HOOK_REFUSAL line (the refusal's text is the attachment's, above it), so a
+# refused Stop is not counted twice by the scorer's refusal section.
 select(.type == "user" or .type == "assistant"
-  or (.type == "attachment" and .attachment.type? == "hook_blocking_error")) |
+  or (.type == "attachment" and .attachment.type? == "hook_blocking_error")
+  or (.type == "system" and .subtype? == "stop_hook_summary")) |
 (.message // {}) as $m |
-if .type == "attachment" then
+if .type == "system" then
+  "STOP_HOOK: "
+    + (if ((.hookErrors // []) | length) > 0 or (.preventedContinuation // false)
+       then "refuse (the agent was sent back to work)"
+       else "pass (the turn was allowed to end)" end)
+elif .type == "attachment" then
   "HOOK_REFUSAL (" + (.attachment.hookEvent // "?") + "): "
     + ((.attachment.blockingError.blockingError // .attachment.blockingError // "") | tostring | .[0:600])
 elif $m.role == "user" and ($m.content | type) == "array" then
