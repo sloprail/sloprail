@@ -64,10 +64,16 @@ func (e *Env) RecordCheckRun(projDir, sessionID string, run checkstore.CheckRun,
 // range a rule has NOT yet been judged over must not inherit.
 func (e *Env) RemoveCheckResults(projDir, sessionID string) {
 	e.t.Helper()
-	path := e.checksDBPath(projDir, sessionID)
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
-			e.t.Fatalf("harness: remove check results: %v", err)
+	// The session's own database of an older layout, and the repository's (every session's
+	// results live in one, keyed by the repository: this Env's data home holds only its own).
+	paths := []string{e.checksDBPath(projDir, sessionID)}
+	repoDBs, _ := filepath.Glob(filepath.Join(dataHome(e.home), "sloprail", "repos", "*", "checks.db"))
+	paths = append(paths, repoDBs...)
+	for _, path := range paths {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+				e.t.Fatalf("harness: remove check results: %v", err)
+			}
 		}
 	}
 }
