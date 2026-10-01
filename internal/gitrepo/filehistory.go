@@ -98,7 +98,7 @@ func fileTouches(dir, base, head string, files []FileRef) (map[string][]fileTouc
 	if base == EmptyTree {
 		rng = head
 	}
-	out, err := run(dir, "log", "--topo-order", "-M", "--cc", "--name-status", "-z", "--no-ext-diff", "--format=%x01%H", rng)
+	out, err := run(dir, "log", "--topo-order", "-M", "--cc", "--name-status", "-z", "--no-ext-diff", "--format=%x01%H %P", rng)
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: file history %s..%s: %w", short(base), short(head), err)
 	}
@@ -134,6 +134,9 @@ func fileTouches(dir, base, head string, files []FileRef) (map[string][]fileTouc
 					}
 				}
 			}
+			if touch != nil && len(c.parents) == 2 && touch.status == 'M' && cleanMergeOf(dir, c, touch.path) {
+				touch = nil // a clean merge only carries what its sides changed
+			}
 			if touch != nil {
 				newestFirst = append(newestFirst, *touch)
 			}
@@ -147,6 +150,32 @@ func fileTouches(dir, base, head string, files []FileRef) (map[string][]fileTouc
 	return result, nil
 }
 
+// cleanMergeOf reports whether merge commit c, for path, is exactly what the automatic
+// merge of its two parents produces: it carried the two sides' changes and resolved
+// nothing, so it did not change the file (the side commits did). A merge whose file
+// differs from that (a conflict resolved by hand, an evil merge) did change it. Anything
+// that cannot be established (an old git without `merge-tree --write-tree`, a conflicted
+// automatic merge, a failed read) is false, so the merge still counts as the change.
+func cleanMergeOf(dir string, c logCommit, path string) bool {
+	out, err := run(dir, "merge-tree", "--write-tree", "--no-messages", c.parents[0], c.parents[1])
+	if err != nil {
+		return false
+	}
+	tree := strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
+	if !isObjectName(tree) {
+		return false
+	}
+	auto, err := run(dir, "rev-parse", "--verify", "-q", tree+":"+path)
+	if err != nil {
+		return false
+	}
+	merged, err := run(dir, "rev-parse", "--verify", "-q", c.sha+":"+path)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(auto) == strings.TrimSpace(merged)
+}
+
 type logEntry struct {
 	status  byte
 	path    string
@@ -155,6 +184,7 @@ type logEntry struct {
 
 type logCommit struct {
 	sha     string
+	parents []string
 	entries []logEntry
 }
 
@@ -168,10 +198,11 @@ func parseNameStatusLog(out string) ([]logCommit, error) {
 			continue
 		}
 		fields := strings.Split(chunk, "\x00")
-		if !isObjectName(fields[0]) {
+		names := strings.Fields(fields[0]) // the commit, then its parents
+		if len(names) == 0 || !isObjectName(names[0]) {
 			return nil, fmt.Errorf("gitrepo: unreadable commit name %q in the file history", fields[0])
 		}
-		c := logCommit{sha: fields[0]}
+		c := logCommit{sha: names[0], parents: names[1:]}
 		for i := 1; i < len(fields); {
 			status := strings.TrimPrefix(fields[i], "\n")
 			if status == "" {
