@@ -21,7 +21,7 @@ import (
 //
 //   - a tests/ package is in no shard (a new folder under tests/e2e/**, a new
 //     example package),
-//   - a test of a package that scripts/examples-shard.sh slices with -run is in
+//   - a test of a package that scripts/e2e-shard.sh slices with -run is in
 //     no slice,
 //   - a nested Go module (a plugin's tests/ module) is not one that
 //     `make test-plugins-e2e` discovers, or
@@ -37,7 +37,7 @@ func TestEveryTestPackageIsInACIShard(t *testing.T) {
 	if n := len(shardPaths(makefile)); n < 10 {
 		t.Fatalf("found only %d ./tests/ paths in the Makefile — the parse is wrong", n)
 	}
-	extra, problems := exampleShardCoverage(t, root, makefile)
+	extra, problems := shardScriptCoverage(t, root, makefile)
 	problems = append(problems, coverageProblems(t, root, makefile, extra)...)
 	for _, p := range problems {
 		t.Error(p)
@@ -124,7 +124,12 @@ func TestGuardFiresOnATestInNoSlice(t *testing.T) {
 
 var shardPathRE = regexp.MustCompile(`\./tests/[A-Za-z0-9_./-]*`)
 
-func shardPaths(makefile string) []string { return shardPathRE.FindAllString(makefile, -1) }
+// shardPaths are the ./tests/ paths the Makefile's cases hand to go test,
+// ignoring variable definitions: a path in an unused variable runs nothing.
+func shardPaths(makefile string) []string {
+	_, text := makeVars(makefile)
+	return shardPathRE.FindAllString(text, -1)
+}
 
 // coverageProblems reports every package under root/tests holding a test that no
 // path in the Makefile (or in extra) covers, and every nested Go module that
@@ -183,29 +188,66 @@ func coverageProblems(t *testing.T, root, makefile string, extra []string) []str
 	return problems
 }
 
-// exampleShardCoverage runs scripts/examples-shard.sh for each `INDEX COUNT`
-// the Makefile calls it with. It returns the ./tests/... paths those shards
-// cover, plus problems: indices not exactly 1..COUNT, a package in two shards,
-// a package in none, a test of a sliced package in no slice.
-func exampleShardCoverage(t *testing.T, root, makefile string) (covered, problems []string) {
-	t.Helper()
-	calls := regexp.MustCompile(`scripts/examples-shard\.sh (\d+) (\d+)`).FindAllStringSubmatch(makefile, -1)
-	if len(calls) == 0 {
-		return nil, []string{"the Makefile never calls scripts/examples-shard.sh — the examples are in no shard"}
+// makeVars returns the Makefile's `NAME := ...` variables (continuation lines
+// joined), and the Makefile with those definitions removed.
+func makeVars(makefile string) (vars map[string]string, rest string) {
+	vars = map[string]string{}
+	lines := strings.Split(makefile, "\n")
+	var keep []string
+	def := regexp.MustCompile(`^([A-Z_][A-Z0-9_]*) :=\s*(.*)$`)
+	for i := 0; i < len(lines); i++ {
+		m := def.FindStringSubmatch(lines[i])
+		if m == nil {
+			keep = append(keep, lines[i])
+			continue
+		}
+		val := m[2]
+		for strings.HasSuffix(val, `\`) && i+1 < len(lines) {
+			i++
+			val = strings.TrimSuffix(val, `\`) + " " + strings.TrimSpace(lines[i])
+		}
+		vars[m[1]] = val
 	}
-	count, _ := strconv.Atoi(calls[0][2])
-	idx := map[int]bool{}
+	return vars, strings.Join(keep, "\n")
+}
+
+// shardScriptCoverage checks every `scripts/e2e-shard.sh INDEX COUNT run PATTERN...`
+// the Makefile makes. Calls with the same COUNT and PATTERNs form one group,
+// which must cover indices 1..COUNT exactly once and, run through the script,
+// partition exactly the packages `go list PATTERN...` finds. It returns the
+// ./tests/... paths the groups cover, plus problems: a missing index, a package
+// in two shards or none, a test of a sliced package in no slice.
+func shardScriptCoverage(t *testing.T, root, makefile string) (covered, problems []string) {
+	t.Helper()
+	vars, text := makeVars(makefile)
+	calls := regexp.MustCompile(`scripts/e2e-shard\.sh (\d+) (\d+) run ([^;\\\n]*?) ;;`).FindAllStringSubmatch(text, -1)
+	if len(calls) == 0 {
+		return nil, []string{"the Makefile never calls scripts/e2e-shard.sh — the sharded packages are in no shard"}
+	}
+	type group struct {
+		count    int
+		patterns []string
+		idx      map[int]bool
+	}
+	groups := map[string]*group{}
+	var order []string
 	for _, c := range calls {
-		if c[2] != calls[0][2] {
-			return nil, []string{"the Makefile calls examples-shard.sh with different shard counts"}
+		patterns := strings.Fields(regexp.MustCompile(`\$\(([A-Z_][A-Z0-9_]*)\)`).ReplaceAllStringFunc(c[3], func(s string) string {
+			return vars[s[2:len(s)-1]]
+		}))
+		key := c[2] + " " + strings.Join(patterns, " ")
+		g := groups[key]
+		if g == nil {
+			n, _ := strconv.Atoi(c[2])
+			g = &group{count: n, patterns: patterns, idx: map[int]bool{}}
+			groups[key] = g
+			order = append(order, key)
 		}
 		i, _ := strconv.Atoi(c[1])
-		idx[i] = true
-	}
-	for i := 1; i <= count; i++ {
-		if !idx[i] {
-			problems = append(problems, "no Makefile case runs examples-shard.sh shard "+strconv.Itoa(i)+" of "+calls[0][2])
+		if g.idx[i] {
+			problems = append(problems, "the Makefile runs e2e-shard.sh shard "+c[1]+" of "+c[2]+" twice for "+strings.Join(patterns, " "))
 		}
+		g.idx[i] = true
 	}
 
 	run := func(args ...string) []string {
@@ -215,35 +257,42 @@ func exampleShardCoverage(t *testing.T, root, makefile string) (covered, problem
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
-		return strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+		return strings.Fields(strings.ReplaceAll(string(out), "\t", "\x00"))
 	}
 	// The module path, so import paths can become ./tests/... paths.
 	modPath := strings.TrimSpace(run("go", "list", "-m")[0]) + "/"
-	owner := map[string]int{}
-	regexes := map[string][]string{}
-	for i := 1; i <= count; i++ {
-		for _, line := range run("scripts/examples-shard.sh", strconv.Itoa(i), calls[0][2]) {
-			if line == "" {
-				continue
+	for _, key := range order {
+		g := groups[key]
+		label := strings.Join(g.patterns, " ")
+		for i := 1; i <= g.count; i++ {
+			if !g.idx[i] {
+				problems = append(problems, "no Makefile case runs e2e-shard.sh shard "+strconv.Itoa(i)+" of "+strconv.Itoa(g.count)+" for "+label)
 			}
-			pkg, re, sliced := strings.Cut(line, "\t")
-			if sliced {
-				regexes[pkg] = append(regexes[pkg], re)
-			} else if prev, dup := owner[pkg]; dup {
-				problems = append(problems, pkg+" is in example shards "+strconv.Itoa(prev)+" and "+strconv.Itoa(i))
+		}
+		owner := map[string]int{}
+		regexes := map[string][]string{}
+		for i := 1; i <= g.count; i++ {
+			args := append([]string{"scripts/e2e-shard.sh", strconv.Itoa(i), strconv.Itoa(g.count), "list"}, g.patterns...)
+			for _, line := range run(args...) {
+				pkg, re, sliced := strings.Cut(line, "\x00")
+				if sliced {
+					regexes[pkg] = append(regexes[pkg], re)
+				} else if prev, dup := owner[pkg]; dup {
+					problems = append(problems, pkg+" is in shards "+strconv.Itoa(prev)+" and "+strconv.Itoa(i))
+				}
+				owner[pkg] = i
+				covered = append(covered, "./"+strings.TrimPrefix(pkg, modPath))
 			}
-			owner[pkg] = i
-			covered = append(covered, "./"+strings.TrimPrefix(pkg, modPath))
 		}
-	}
-	for _, pkg := range run("go", "list", "./tests/e2e/examples/...") {
-		if _, ok := owner[pkg]; !ok {
-			problems = append(problems, pkg+" is in no example shard (scripts/examples-shard.sh)")
+		for _, pkg := range run(append([]string{"go", "list"}, g.patterns...)...) {
+			if _, ok := owner[pkg]; !ok {
+				problems = append(problems, pkg+" is in no shard of scripts/e2e-shard.sh ("+label+")")
+			}
 		}
-	}
-	for pkg, res := range regexes {
-		dir := filepath.Join(root, strings.TrimPrefix(pkg, modPath))
-		problems = append(problems, sliceProblems(pkg, topLevelTests(t, dir), res)...)
+		for pkg, res := range regexes {
+			dir := filepath.Join(root, strings.TrimPrefix(pkg, modPath))
+			problems = append(problems, sliceProblems(pkg, topLevelTests(t, dir), res)...)
+		}
 	}
 	return covered, problems
 }
