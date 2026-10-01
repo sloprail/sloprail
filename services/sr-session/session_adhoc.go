@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,19 +266,30 @@ func evaluateAdHocFolders(cmd *cobra.Command, p HookPayload, scope hookScope, mo
 	contextMap map[string]natures.ContextState, state sessionstate.Store) []fileGuardResult {
 	rs, err := resolveRootSession(p)
 	if err != nil {
-		return nil
+		return nil // no session identity, so no registry to read
+	}
+	// A registry that exists but cannot be read is a refusal naming the error, not "no
+	// other repositories": those repositories' commits would go unjudged and nothing
+	// would say so.
+	unread := func(err error) []fileGuardResult {
+		return []fileGuardResult{{Name: "file-guards", Attribution: "file-guards", Refused: true,
+			Reason: fmt.Sprintf("the repositories this session worked in outside its own tree could not be read, so they were not judged: %v; "+
+				"refusing because a registry that could not be read must not be read as 'nothing else was committed'", err)}}
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return unread(err)
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return nil
+		return unread(err)
 	}
 	folders, err := reg.Folders(rs.ID)
 	reg.Close()
 	if err != nil {
-		return nil
+		return unread(err)
 	}
 	var out []fileGuardResult
 	var results = openChecksStore(cmd, p, scope)

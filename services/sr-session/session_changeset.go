@@ -157,7 +157,14 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	rule := g.Qualified()
-	r, err := resolveRuleRangeIn(root, g, sess.checks, store, sessionFolderFor(p, root))
+	folder, ferr := sessionFolderFor(p, root)
+	if ferr != nil {
+		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, ferr)
+	}
+	if rerr := repairSessionStart(store, p, root); rerr != nil {
+		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, rerr)
+	}
+	r, err := resolveRuleRangeIn(root, g, sess.checks, store, folder)
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, err)
 	}
@@ -269,7 +276,7 @@ func openChangesetSession(p *HookPayload) (changesetSession, error) {
 	if err != nil {
 		return sess, err
 	}
-	statePath, err := sessionDBPath(p.Cwd, id)
+	statePath, err := sessionDBPath(p.stateCwd(), id)
 	if err != nil {
 		return sess, err
 	}
@@ -280,7 +287,7 @@ func openChangesetSession(p *HookPayload) (changesetSession, error) {
 	} else if !os.IsNotExist(statErr) {
 		return sess, statErr
 	}
-	checksPath, err := sessionpath.ChecksDB(p.Cwd, id)
+	checksPath, err := sessionpath.ChecksDB(p.stateCwd(), id)
 	if err != nil {
 		sess.close()
 		return changesetSession{}, err

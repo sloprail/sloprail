@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"github.com/sloprail/sloprail/internal/transcript"
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/checkstore"
@@ -31,11 +31,6 @@ import (
 // reported on the returned range as DroppedWatermark, so a range that widened
 // says why. gitrepo.ErrNoCommits is returned as itself: nothing is committed, so
 // nothing can be judged.
-// errSessionStartNotKept: the session recorded a baseline but not the HEAD it first
-// began at, so the baseline (re-taken whenever the tree leaves its history) cannot stand
-// in for it.
-var errSessionStartNotKept = errors.New("this session did not keep the commit it began at (it began before that was recorded), " +
-	"so which commits are new cannot be told; start a new session")
 
 // sessionStartOf is the HEAD the session FIRST began at (never the re-taken baseline, which
 // an amend or a branch switch moves), or "" when none was kept: no state, or a session that
@@ -53,6 +48,56 @@ func sessionStartOf(state sessionstate.Store) string {
 		return gitrepo.EmptyTree
 	}
 	return start
+}
+
+// repairSessionStart derives the commit the session began at when the store has a
+// baseline but never kept it (a session begun before it was kept, or a store reached
+// after the baseline alone was re-taken), and keeps it. Without it every file-guard
+// range fails closed on every Stop, forever (errSessionStartNotKept).
+//
+// The start is HEAD as the folder's reflog shows it at the session record's first
+// timestamp (or, when the reflog begins later, what HEAD held before its oldest entry).
+// A no-op when the start is kept, when there is no baseline (no error path), or with no
+// store. Only when the reflog cannot say does it refuse, with a recovery that works.
+func repairSessionStart(state sessionstate.Store, p HookPayload, root string) error {
+	if state == nil {
+		return nil
+	}
+	if _, ok, err := state.Meta(sessionstate.MetaSessionStart); err != nil || ok {
+		return err
+	}
+	if baseline, had, err := state.Meta(sessionstate.MetaBaselineCommit); err != nil || !had || baseline == "" {
+		return err
+	}
+	derived := func() (string, bool) {
+		record, err := p.record()
+		if err != nil || record == "" {
+			return "", false
+		}
+		since, err := transcript.StartTime(record)
+		if err != nil || since.IsZero() {
+			return "", false
+		}
+		sha, unborn, found, err := gitrepo.HeadAt(root, since)
+		if err != nil || !found {
+			return "", false
+		}
+		if unborn {
+			return sessionstate.SessionStartUnborn, true
+		}
+		return sha, true
+	}
+	if v, ok := derived(); ok {
+		return state.SetMeta(sessionstate.MetaSessionStart, v)
+	}
+	// The reflog cannot say: fall back, deterministically and wide, to where HEAD leaves the
+	// remote default branch, so everything not on it is judged. Never "unborn", never a
+	// wedge, no step for anyone to take. With no default branch known the range resolves its
+	// own remote anchor (resolveRuleRangeAt).
+	if mb, ok, err := gitrepo.MergeBaseWithUpstream(root); err == nil && ok {
+		return state.SetMeta(sessionstate.MetaSessionStart, mb)
+	}
+	return nil
 }
 
 func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
@@ -126,13 +171,9 @@ func resolveRuleRangeAt(root, tip, tipStart string, g declaration.FileGuard, res
 		if sessionStart == sessionstate.SessionStartUnborn {
 			sessionStart = gitrepo.EmptyTree // began before the first commit
 		}
-		if !ok {
-			if baseline, had, err := state.Meta(sessionstate.MetaBaselineCommit); err != nil {
-				return gitrepo.Range{}, err
-			} else if had && baseline != "" {
-				return gitrepo.Range{}, errSessionStartNotKept
-			}
-		}
+		// Not kept (and not derivable, see repairSessionStart): the start stays empty and the
+		// range resolves its own remote anchor. The re-taken baseline is never the start.
+		_ = ok
 		// A baseline first taken at a sub-agent's own Stop is where its work ENDED, not
 		// where it began: not a floor. Without another, the range fails closed.
 		if _, atStop, err := state.Meta(sessionstate.MetaBaselineAtStop); err != nil {

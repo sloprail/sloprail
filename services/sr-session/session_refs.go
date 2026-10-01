@@ -87,7 +87,14 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 		return nil
 	}
 	out := evaluateChangesetsAt(cmd, guards, p, scope, root, stopTip{}, contextMap, state, results)
-	for _, t := range stopTips(cmd, p, root, guards, results) {
+	tips, err := stopTips(cmd, p, root, guards, results)
+	if err != nil {
+		// Fail closed: branches the session committed on were not judged, and nothing
+		// may say they were.
+		out = append(out, fileGuardResult{Name: "file-guards", Attribution: "file-guards", Refused: true, Reason: err.Error() +
+			"; refusing because a registry that could not be read must not be read as 'nothing else was committed'"})
+	}
+	for _, t := range tips {
 		out = append(out, evaluateChangesetsAt(cmd, guards, p, scope, root, t, contextMap, state, results)...)
 	}
 	return out
@@ -96,27 +103,36 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 // stopTips records what the folder's reflog shows and returns the tips to judge besides
 // HEAD: every recorded ref of this agent in this folder, refreshed from the ref, minus
 // what HEAD contains and what another tip contains.
-func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declaration.FileGuard, results checkstore.Store) []stopTip {
-	warn := func(err error) {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: the session's other branches were not read: %v\n", err)
+//
+// An error is returned, never swallowed into "no other tips": a registry or a ref that
+// cannot be read means branches the session committed on went unjudged, and that is a
+// refusal naming the error, not a pass. Only the absence of any session registry (no
+// session identity, or no store yet) is "nothing recorded".
+func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declaration.FileGuard, results checkstore.Store) ([]stopTip, error) {
+	warn := func(err error) error {
+		return fmt.Errorf("the session's other branches could not be read, so they were not judged: %w", err)
 	}
 	rs, err := resolveRootSession(p)
 	if err != nil {
-		return nil // no session to record in (a bare payload)
+		// No identity to find a registry under (a bare payload): there is none to read.
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: the session's other branches were not read: %v\n", err)
+		return nil, nil
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, warn(err)
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		warn(err)
-		return nil
+		return nil, warn(err)
 	}
 	defer reg.Close()
 	folder := filepath.Clean(root)
 
 	if err := observeRefs(reg, rs.ID, folder, root, p.AgentID); err != nil {
-		warn(err)
+		return nil, warn(err)
 	}
 	// What every branch held when the session began: not the session's work.
 	var atStart []string
@@ -132,7 +148,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 	if since, ok := sessionStartTime(p); ok {
 		derived, err := gitrepo.ReflogTips(root, since)
 		if err != nil {
-			warn(err)
+			return nil, warn(err)
 		}
 		for _, t := range derived {
 			if held, err := gitrepo.InHistoryOf(root, t.Sha, atStart); err == nil && held {
@@ -145,7 +161,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 				}
 			}
 			if err := reg.RecordRef(sessionstate.Ref{SessionID: rs.ID, Folder: folder, Name: t.Ref, Tip: tip, AgentID: p.AgentID}); err != nil {
-				warn(err)
+				return nil, warn(err)
 			}
 		}
 	}
@@ -153,8 +169,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 	// Judge: every recorded ref of this agent.
 	rows, err := reg.Refs(rs.ID, folder)
 	if err != nil {
-		warn(err)
-		return nil
+		return nil, warn(err)
 	}
 	head, _ := gitrepo.Head(root)
 	var cands []stopTip
@@ -166,8 +181,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 		if strings.HasPrefix(r.Name, "refs/") {
 			cur, err := gitrepo.RefTip(root, r.Name)
 			if err != nil {
-				warn(err)
-				continue
+				return nil, warn(err)
 			}
 			if cur != "" && cur != r.Tip && !claimsMove(root, r.Tip, cur, atStart) {
 				// The ref was moved onto commits this folder never made (`git branch -f`,
@@ -200,8 +214,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 			_ = reg.SetRefAbandoned(rs.ID, folder, r.Name, "")
 		}
 		if ok, err := gitrepo.IsAncestor(root, tip, "HEAD"); err != nil {
-			warn(err)
-			continue
+			return nil, warn(err)
 		} else if ok || tip == head.Commit {
 			continue // HEAD's own judgment covers it
 		}
@@ -218,8 +231,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 	}
 	maximal, err := gitrepo.Maximal(root, shas)
 	if err != nil {
-		warn(err)
-		return nil
+		return nil, warn(err)
 	}
 	var out []stopTip
 	for _, sha := range maximal {
@@ -230,7 +242,7 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // judgedByEvery reports whether every file-guard has a FINISHED PASSING run at tip or at a

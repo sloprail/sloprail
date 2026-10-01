@@ -78,7 +78,7 @@ func openChecks() (checkstore.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sr-checks: session identity: %w", err)
 	}
-	path, err := sessionpath.ChecksDB(cwd, id.ID)
+	path, err := sessionpath.ChecksDB(sessionpath.StateCwd(record, cwd), id.ID)
 	if err != nil {
 		return nil, err
 	}

@@ -48,7 +48,7 @@ func openSessionState() (sessionstate.Store, string, error) {
 	if guardrail == "" {
 		return nil, "", fmt.Errorf("sloprail: no guardrail in scope — %s is set by the engine when it runs a hook", GuardrailEnv)
 	}
-	path, err := sessionDBPath(os.Getenv(WorkspaceEnv), os.Getenv(SessionEnv))
+	path, err := sessionDBPath(hookStateCwd(), os.Getenv(SessionEnv))
 	if err != nil {
 		return nil, "", err
 	}
@@ -73,7 +73,7 @@ func openEngineState(p HookPayload) (sessionstate.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, err := sessionDBPath(p.Cwd, id)
+	path, err := sessionDBPath(p.stateCwd(), id)
 	if err != nil {
 		return nil, err
 	}

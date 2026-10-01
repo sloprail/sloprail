@@ -50,12 +50,12 @@ func TestSubagentStopNeverBlocksOnAnUnplaceableCycle(t *testing.T) {
 		{
 			name:    "a sub-agent whose record cannot be read",
 			payload: `{"transcript_path":"/nowhere/session.jsonl","agent_id":"abc","agent_transcript_path":"/nowhere/subagents/agent-abc.jsonl"}`,
-			wants:   "went unjudged",
+			wants:   "judging its folder without state",
 		},
 		{
 			name:    "an agent id that is not a name",
 			payload: `{"transcript_path":"/nowhere/session.jsonl","agent_id":"../../elsewhere"}`,
-			wants:   "went unjudged",
+			wants:   "judging its folder without state",
 		},
 		{
 			name:    "nothing at all",

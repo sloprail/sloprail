@@ -51,7 +51,7 @@ func resolveRootSession(p HookPayload) (rootSession, error) {
 		if err != nil {
 			return rs, err
 		}
-		path, err := sessionDBPath(p.Cwd, id)
+		path, err := sessionDBPath(p.stateCwd(), id)
 		if err != nil {
 			return rs, err
 		}
@@ -229,22 +229,33 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 // one (nothing registered it, or the registry cannot be read — the caller then falls
 // back to the agent's own start, which is what it used before there was a registry).
 // root is the git root the range is computed in.
-func sessionFolderFor(p HookPayload, root string) *sessionstate.Folder {
+//
+// A registry that EXISTS but cannot be read is an error, not "no folder": the caller then
+// falls back to the agent's own start, which for a sub-agent's worktree is the wrong
+// (wider) range, and nothing would say so. Only a session with no identity or no store
+// yet is "not registered".
+func sessionFolderFor(p HookPayload, root string) (*sessionstate.Folder, error) {
 	rs, err := resolveRootSession(p)
 	if err != nil {
-		return nil
+		return nil, nil // no session identity, so no registry to read
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
-		return nil // a lookup never creates the root's store
+		if os.IsNotExist(err) {
+			return nil, nil // a lookup never creates the root's store
+		}
+		return nil, fmt.Errorf("the session's folder registry could not be read: %w", err)
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("the session's folder registry could not be read: %w", err)
 	}
 	defer reg.Close()
 	f, found, err := reg.Folder(rs.ID, filepath.Clean(root))
-	if err != nil || !found || f.BaseRef == "" {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("the session's folder registry could not be read: %w", err)
 	}
-	return &f
+	if !found || f.BaseRef == "" {
+		return nil, nil
+	}
+	return &f, nil
 }
