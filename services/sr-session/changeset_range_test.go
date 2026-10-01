@@ -121,3 +121,53 @@ func TestRecordBaselineBeforeTool_AFailedRecordingFailsClosedToTheEmptyTree(t *t
 	require.True(t, had, "a start that could not be recorded is still recorded as unknown")
 	assert.Equal(t, sessionstate.SessionStartUnborn, got)
 }
+
+// An agent that owns its tree is judged from the folder's own start. The agent store
+// here still holds the PARENT session's start (old, before commits B and C that
+// main gained since); the registered folder says its tree began at C. The folder wins,
+// so B and C are not in the range.
+func TestResolveRuleRangeIn_ASessionFoldersStartIsTheStartNotTheParents(t *testing.T) {
+	repo := initRepo(t)
+	parentStart := commitFile(t, repo, "a.txt", "A")
+	commitFile(t, repo, "b.txt", "B")
+	c := commitFile(t, repo, "c.txt", "C")
+	d := commitFile(t, repo, "d.txt", "D")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()} // no folder floor
+
+	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaSessionStart, parentStart))
+
+	r, err := resolveRuleRange(repo, plugin, nil, state)
+	require.NoError(t, err)
+	assert.Equal(t, parentStart, r.Base, "premise: without a folder the recorded start is used")
+
+	folder := &sessionstate.Folder{Path: repo, Role: sessionstate.FolderSubagentWorktree, BaseRef: c}
+	r, err = resolveRuleRangeIn(repo, plugin, nil, state, folder)
+	require.NoError(t, err)
+	assert.Equal(t, c, r.Base)
+	assert.Equal(t, d, r.Head)
+	assert.Equal(t, gitrepo.FromSessionStart, r.Origin)
+}
+
+// A folder whose repository had no commit when work began starts at the empty tree,
+// the same answer a root session that began unborn gets.
+func TestResolveRuleRangeIn_AnUnbornFolderStartsAtTheEmptyTree(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "a.txt", "A")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+
+	folder := &sessionstate.Folder{Path: repo, Role: sessionstate.FolderSubagentWorktree, BaseRef: sessionstate.FolderBaseUnborn}
+	r, err := resolveRuleRangeIn(repo, plugin, nil, nil, folder)
+	require.NoError(t, err)
+	assert.Equal(t, gitrepo.EmptyTree, r.Base)
+}
+
+// With no folder and no recorded start the range fails closed, as for the root.
+func TestResolveRuleRangeIn_NoFolderAndNoStartFailsClosed(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "a.txt", "A")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+
+	_, err := resolveRuleRangeIn(repo, plugin, nil, openStore(t), nil)
+	assert.ErrorIs(t, err, gitrepo.ErrNoSessionStart)
+}

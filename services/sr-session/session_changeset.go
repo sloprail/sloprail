@@ -146,7 +146,7 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	rule := g.Qualified()
-	r, err := resolveRuleRange(root, g, sess.checks, store)
+	r, err := resolveRuleRangeIn(root, g, sess.checks, store, sessionFolderFor(p, root))
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, err)
 	}
