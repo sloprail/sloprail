@@ -133,11 +133,12 @@ a sub-agent's worktree is removed (the harness fires `WorktreeRemove`, which the
 held and marking it removed; or the path simply no longer exists), or rows are recorded under a
 folder that is not a folder of the session at all, the **root agent's next Stop judges them**:
 each tip on its own tree, in the repository it belongs to, with that repository's rules. A
-live sub-agent's folder is never claimed. The refusal opens with `You now own this:
-sub-agent <id> in <path> is gone and its work at <sha> was never judged`. For work that already
+live sub-agent's folder is never claimed. The refusal opens by saying
+so plainly (you now own this: the sub-agent is gone and its work at that commit was never
+judged). For work that already
 landed on the default branch (its branch deleted or not) it says which commit carries it, that
-the place to fix it is a **new branch from the default branch** (the exact `git worktree add
-<path> -b fix/<name> origin/<default>` command), and that a finding that is only a missing
+the place to fix it is a **new branch from the default branch** (it gives the exact worktree
+command to create one), and that a finding that is only a missing
 citation is for the user to decide NOW with `AskUserQuestion` ("keep it" / "revert it"), never
 parked; once the default branch no longer holds the refused content the work is settled as
 `superseded`. For work on a branch that is gone and did not land it names the command that

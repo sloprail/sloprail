@@ -64,6 +64,13 @@ func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
 	return cmd
 }
 
+// ChecksDBs lists every check-results database the engine wrote under the harness's data home,
+// one per session family (the root's), never one per sub-agent.
+func (e *Env) ChecksDBs() []string {
+	paths, _ := filepath.Glob(filepath.Join(dataHome(e.home), "sloprail", "sessions", "*", "*", "checks.db"))
+	return paths
+}
+
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the
 // harness honours.
 func Blocked(r Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }

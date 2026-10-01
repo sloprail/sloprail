@@ -27,6 +27,10 @@ func TestT003_61_RewritingAnUnjudgedViolationHidesNothing(t *testing.T) {
 		{"branch renamed", "git branch -m side renamed", "renamed", ""},
 		{"cherry-pick to a new branch, old one deleted", "git switch -q -c moved main && git cherry-pick side && git switch -q main && git branch -D side", "moved", "side"},
 		{"checkout -B onto a copy", "git checkout -q -B copy side && git branch -f side main", "copy", ""},
+		// Nothing but the engine remembers the commit: the branch is reset away, the reflog
+		// expired, and a branch is recreated at the SHA the agent noted.
+		{"reset away, reflog expired, branch recreated at the old SHA",
+			"git rev-parse HEAD > .git/old-tip && git reset -q --hard main && git reflog expire --expire=now --all && git branch copy $(cat .git/old-tip)", "copy", ""},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

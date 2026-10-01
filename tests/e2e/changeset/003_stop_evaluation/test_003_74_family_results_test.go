@@ -31,6 +31,12 @@ func TestT003_74_ASubagentsPassIsReusedByTheRootAndItsBranchMerges(t *testing.T)
 	if rows := e.ChecksSQL(proj, sess, "select agent_id, check_id from check_runs where agent_id <> ''"); !strings.Contains(rows.Output, "file-guard/docs") {
 		t.Fatalf("the sub-agent's run is not in the family's database, tagged with its agent:\n%s", rows.Output)
 	}
+	_, agent := subagentFolder(t, e, proj, sess)
+	for _, db := range e.ChecksDBs() {
+		if strings.Contains(db, "agent-"+agent) {
+			t.Fatalf("the sub-agent kept check results of its own (%s) instead of writing the family's", db)
+		}
+	}
 
 	// The root's merge of the sub-agent's branch is not held up by a pass it cannot see.
 	if r := e.Run(proj, sess, "merge it", Turns("done", Bash("m1", "gh pr merge sub-ok --squash"))); r.Saw("no-merge-over-refusals") {
