@@ -96,7 +96,23 @@ the engine did not see can be recorded by hand:
 (`sr-session refs list` shows the rows; without `--agent` the row belongs to the root session,
 with it to that sub-agent). A tip starts at its ref's creation point (the oldest reflog entry),
 so upstream commits merged before a branch was cut are not blamed on the agent, and a tip
-already inside a branch's history when the session began is not the session's work. Uncommitted work is a `commit-required` matter and
+already inside a branch's history when the session began is not the session's work. The refs are recorded from a snapshot taken at every hook (each branch checked out in the
+folder, and a detached `HEAD`), the reflog being only a backfill. A repository the agent
+runs history-moving git commands in outside its own tree (`git -C <dir> commit`,
+`cd <dir> && git commit`, merge, rebase, pull, push, `git worktree add <dir>`) is registered
+as an ad-hoc folder before the command runs, started at its `HEAD` then, and judged at Stop
+under THAT repository's own `.sloprail` plus the session's plugins. `git push` and
+`gh pr create` can be gated too by the plugin's `judge-before-push` gate, which ships **off**
+and is turned on with `enabled: [sloprail/gate/judge-before-push]` in `.sloprail/config.yaml`
+([gate.md](gate.md)): before the command runs it calls `sr-session judge` (every file-guard
+over HEAD and each recorded ref of the target repository, as Stop would) and a refusal blocks
+the command.
+A branch the user genuinely dropped is abandoned with
+`sr-session refs abandon --ref <branch> --cite-user '<exact quote>'`: the quote must resolve
+to a USER message of the session (never an assistant's or a tool's). It is abandoned at its
+current tip, and judged again if the tip moves or the commit is pushed or merged; deleting
+a branch is not an abandon, its recorded tip is still judged.
+Uncommitted work is a `commit-required` matter and
 stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
 
 A rule's identity is its whole `.sloprail` root — its own folder, every other rule,

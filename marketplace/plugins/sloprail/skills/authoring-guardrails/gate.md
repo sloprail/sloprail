@@ -284,5 +284,16 @@ disabled:
   - <plugin-or-project>/gate/<name>
 ```
 
+A gate can also **ship off**: `enabled: false` in its `gate.yaml` makes it inert until the
+project switches it on, by qualified name, in the same config:
+
+```yaml
+enabled:
+  - sloprail/gate/judge-before-push
+```
+
+(The plugin's `judge-before-push` gate is the example: it runs `sr-session judge` before a
+`git push` / `gh pr create` and refuses while a file-guard refuses the commits that would leave.)
+
 The nature is part of the key — `.../gate/<name>` — because a gate and a context
 may share a bare name. Keep the sibling prose that records why the gate exists.

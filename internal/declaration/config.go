@@ -44,6 +44,21 @@ type config struct {
 	// the engine lets the turn end un-judged. A pointer so "absent" (the default)
 	// is told apart from an explicit 0 (no cap). See StopHookBlockCap.
 	StopHookBlockCap *int `yaml:"stop_hook_block_cap"`
+
+	// Enabled names the declarations this project switches ON that ship disabled by
+	// default (`enabled: false` in the declaration), by qualified name. The mirror of
+	// Disabled; a declaration that does not ship disabled is unaffected by it.
+	Enabled []string `yaml:"enabled"`
+}
+
+// isEnabled reports whether the project switched the named default-off declaration on.
+func (c config) isEnabled(qualified string) bool {
+	for _, name := range c.Enabled {
+		if name == qualified {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultStopHookBlockCap mirrors Claude Code's own CLAUDE_CODE_STOP_HOOK_BLOCK_CAP

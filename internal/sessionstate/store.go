@@ -101,6 +101,8 @@ type Store interface {
 	// FirstTip, later ones move Tip). Refs lists them, one folder or all.
 	RecordRef(r Ref) error
 	Refs(sessionID, folder string) ([]Ref, error)
+	// SetRefAbandoned marks a recorded ref abandoned at a tip ("" clears it).
+	SetRefAbandoned(sessionID, folder, name, tip string) error
 
 	// Close releases the database.
 	Close() error

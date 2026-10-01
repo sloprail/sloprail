@@ -74,7 +74,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(),
-		newSessionTrajectoryCmd(), newSessionChangesetCmd(), newSessionRefsCmd(),
+		newSessionTrajectoryCmd(), newSessionChangesetCmd(), newSessionRefsCmd(), newSessionJudgeCmd(),
 	)
 	return root
 }

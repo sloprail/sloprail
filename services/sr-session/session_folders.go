@@ -137,7 +137,17 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	}
 	path, role, ok := folderToRegister(p, rs)
 	if !ok {
-		return nil
+		// Not a folder this agent starts in, but a command it runs may still move
+		// history in another repository.
+		if _, err := os.Stat(rs.Path); err != nil {
+			return nil
+		}
+		reg, err := sessionstate.Open(rs.Path)
+		if err != nil {
+			return err
+		}
+		defer reg.Close()
+		return registerCommandFolders(reg, rs, p)
 	}
 	var start string
 	if own != nil {
@@ -208,7 +218,11 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 			}
 		}
 	}
-	return nil
+	if err := registerCommandFolders(reg, rs, p); err != nil {
+		return err
+	}
+	// What this agent has touched in the folder so far, at every hook.
+	return observeRefs(reg, rs.ID, path, path, f.AgentID)
 }
 
 // sessionFolderFor is the registered folder a hook's tree is, or nil when it is not

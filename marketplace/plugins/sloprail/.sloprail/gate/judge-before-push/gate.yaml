@@ -1,0 +1,18 @@
+# Commits leave the machine at `git push` and `gh pr create`, and a pull request merges what
+# was pushed. A file-guard otherwise judges only at Stop, so a branch pushed and opened as a
+# PR mid-turn can merge before anything has judged it. This gate runs the file-guards over
+# what the session committed in the repository the command names (HEAD and every other
+# branch it recorded there) BEFORE the command runs, through `sr-session judge`, and refuses
+# the command while a rule refuses those commits.
+#
+# OFF by default: a project turns it on in .sloprail/config.yaml with
+#   enabled:
+#     - sloprail/gate/judge-before-push
+enabled: false
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, (.bin == "git" and any(.argv, # == "push")) or
+        (.bin == "gh" and any(.argv, # == "pr") and any(.argv, # == "create")))
+checks:
+  - script: ./judge.sh

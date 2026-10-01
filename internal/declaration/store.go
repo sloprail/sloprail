@@ -925,6 +925,16 @@ func shadowOf(nature Nature, name string, loser Origin, loserDir string, winner 
 // no way to silence. This is guardrail.Store.Resolve's disable step, applied to
 // every nature.
 func applyDisable(out *Loaded, cfg config) {
+	// A gate that ships off (`enabled: false`) is inert unless the project enabled it.
+	offGates := out.Gates[:0]
+	for _, g := range out.Gates {
+		if g.Enabled != nil && !*g.Enabled && !cfg.isEnabled(g.Qualified()) {
+			continue
+		}
+		offGates = append(offGates, g)
+	}
+	out.Gates = offGates
+
 	if len(cfg.Disabled) == 0 {
 		return
 	}
