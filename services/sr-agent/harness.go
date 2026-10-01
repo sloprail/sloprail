@@ -159,10 +159,20 @@ var claudeCodeSpec = harnessSpec{
 	},
 	argsFlag: "--claude-args",
 
-	// The isolation settings sr-agent ALWAYS gives Claude Code. Empty
-	// hooks/mcpServers/enabledPlugins means the launched agent carries none of the
-	// caller's session wiring: no sloprail hooks fire inside it, no plugins load,
-	// no MCP servers connect. This is what the hand-rolled judge scripts passed as
+	// The isolation settings sr-agent ALWAYS gives Claude Code: the launched agent
+	// carries none of the caller's session wiring — no hooks fire inside it, no
+	// plugins load, no MCP servers connect.
+	//
+	// `disableAllHooks:true` is what stops the hooks; the empty `hooks:{}` /
+	// `enabledPlugins:{}` do NOT. Measured 2026-10-01 (claude 2.1.285, haiku, `claude
+	// -p` in a project whose .claude/settings.json had Stop and UserPromptSubmit
+	// hooks appending to a marker file): with `--settings '{"hooks":{},"mcpServers":{},
+	// "enabledPlugins":{}}'` both markers were written — --settings is merged over the
+	// project and user settings, and an empty object overrides nothing, so a judge
+	// session ran the project's (and any enabled plugin's) Stop hooks, nesting a
+	// judge inside a judge; with `"disableAllHooks":true` added, no marker was
+	// written. The same held for a plugin's hooks (`--plugin-dir` with a hooks.json
+	// Stop hook): fired under the old settings, silent with disableAllHooks. This is what the hand-rolled judge scripts passed as
 	// `--settings '{"hooks":{},"mcpServers":{},"enabledPlugins":{}}'` before the
 	// judge-check migration — lifted here so a judge check gets the isolation for
 	// free rather than every rule restating it. Without it a judge that is itself
@@ -177,7 +187,7 @@ var claudeCodeSpec = harnessSpec{
 	// refused. (The readonly project's deny held either way; under
 	// `acceptEdits` nothing outside was writable.) A caller that wants another
 	// mode says so in --claude-args, which comes later and wins.
-	baseArgs: []string{"--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`, "--permission-mode", "default"},
+	baseArgs: []string{"--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{},"disableAllHooks":true}`, "--permission-mode", "default"},
 
 	// The file access a run gets. Every line of this was MEASURED against the real
 	// CLI (claude 2.1.282, haiku, `claude -p` in a clean environment, 2026-09-27)

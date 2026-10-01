@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -151,7 +152,7 @@ func TestBuildInvocation_PromptIsLastAndPositional(t *testing.T) {
 // judge carries none of the caller's session wiring and cannot recurse. Named here
 // so the invocation tests assert against the same string the spec ships rather than
 // re-spelling the JSON, and a change to the spec's settings updates one place.
-const claudeIsolationSettings = `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`
+const claudeIsolationSettings = `{"hooks":{},"mcpServers":{},"enabledPlugins":{},"disableAllHooks":true}`
 
 // claudeSettingsArg is how the isolation settings render in Invocation.String() /
 // --dry-run output: the JSON contains quotes, so String() runs it through
@@ -248,6 +249,16 @@ func indexOf(args []string, want string) int {
 // const (or vice-versa) fails here rather than letting the two disagree.
 func TestBaseArgs_IsolationSettingsMatchTheConst(t *testing.T) {
 	assert.Equal(t, []string{"--settings", claudeIsolationSettings, "--permission-mode", "default"}, claudeCodeSpec.baseArgs)
+}
+
+// The isolation settings must disable hooks outright. Empty hooks/enabledPlugins
+// objects do not: --settings is merged over the project and user settings, so a
+// judge session would still run their Stop hooks and nest a judge inside a judge
+// (measured against the real CLI; see claudeCodeSpec.baseArgs).
+func TestBaseArgs_IsolationSettingsDisableAllHooks(t *testing.T) {
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal([]byte(claudeCodeSpec.baseArgs[1]), &settings))
+	assert.Equal(t, true, settings["disableAllHooks"], "a judge session must not run any hook")
 }
 
 // The isolation --settings is ALWAYS present, whatever else the caller passed —
