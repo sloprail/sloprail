@@ -82,6 +82,13 @@ guardrail_fired_check "tag-required"
 tag_gate_status="$GF_STATUS"
 guardrail_fired_check "verify-artifact-produced"
 artifact_gate_status="$GF_STATUS"
+# verify-artifact-produced acts only once a tag is declared (its context is
+# active) and passes when the artifact exists. Silent on a pass, so a run that
+# declared a tag, wrote the artifact and ended on a passing Stop RAN the gate:
+# that is not "never-fired".
+tag_active="no"
+[ "$tag_used" != "none" ] && [ "$artifact_written" = "yes" ] && tag_active="yes"
+artifact_gate_status="$(gate_ran_and_passed "$artifact_gate_status" "$tag_active")"
 
 if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
   jq -n \

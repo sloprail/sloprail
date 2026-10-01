@@ -447,6 +447,35 @@ guardrail_fired_check() {
   fi
 }
 
+# last_stop_passed: did the transcript's LAST Stop-hook outcome pass — a
+# hook_success after any refusal, not a hook_blocking_error. A gate leaves no
+# record of its own when it runs and passes (gates write no rows; a pass is
+# silent), so this is the only evidence a scorer has that the gates matching a
+# Stop evaluated and let the turn end. Prints yes or no.
+last_stop_passed() {
+  if [ -f "${SR_EVAL_TRANSCRIPT:-/nonexistent}" ] && jq -s -e '[.[] | .attachment? // empty
+      | select(.hookEvent == "Stop" and (.type == "hook_success" or .type == "hook_blocking_error"))]
+      | length > 0 and (last | .type == "hook_success")' "$SR_EVAL_TRANSCRIPT" >/dev/null 2>&1; then
+    echo yes
+  else
+    echo no
+  fi
+}
+
+# gate_ran_and_passed <fired-status> <active-yes-no>: sharpens guardrail_fired_check
+# for a gate that only acts when its context is active. "never-fired" means it
+# never REFUSED; a gate whose trigger held (<active> = yes) and whose Stop then
+# passed ran and let the turn through, which is not the same as never running.
+# Prints the status to report: fired stays fired, a gate that ran and passed is
+# "ran-passed (never refused)", anything else stays never-fired.
+gate_ran_and_passed() {
+  if [ "$1" = "never-fired" ] && [ "$2" = "yes" ] && [ "$(last_stop_passed)" = "yes" ]; then
+    echo "ran-passed (never refused)"
+  else
+    echo "$1"
+  fi
+}
+
 # file_guard_judge_ran: did the named file-guard's judge reach a verdict on THIS
 # run's change to <file>? A file-guard's results are rows in the run's checks.db
 # (internal/checkstore), beside the session's state under the data home. A judge

@@ -127,37 +127,39 @@ fi
 
 # The session's recorded baseline, against the commit the session began on.
 #
-# The commit the session began on is sr-eval's own harness-setup commit, the
-# last one made before the agent starts; searched with --all because an agent
-# may reset its branch afterwards. The store is found the way the engine finds
-# it: the agent's data home (its HOME is the isolated one sr-eval gives it), the
-# project's git root encoded, and the conversation's stable id, which
-# `sr-session id` derives from the transcript exactly as the hooks did.
+# The commit the session began on is the last one sr-eval made before the agent
+# started: the rules commit when the run had rules, else the seed commit. Both
+# shas are handed to the scorer, so nothing is found by commit message.
+#
+# The store is the one the run ACTUALLY used. The agent's data home is the
+# isolated HOME sr-eval gave it (SR_EVAL_AGENT_HOME), holding only this run's
+# sessions, and the session folder's name is whatever the engine keyed it by —
+# not something to re-derive from the transcript (sr-session id reads a
+# transcript path the archive may have moved, and the engine's folder naming has
+# changed under this script before). So every session store under that home is
+# read, and the one that recorded a baseline answers.
 baseline="unreadable"
-setup_commit="$(git -C "$SR_EVAL_PROJECT_DIR" log --all --format=%H \
-  --grep='^sr-eval: harness setup' -1 2>/dev/null || true)"
+setup_commit="${SR_EVAL_RULES_COMMIT:-${SR_EVAL_SEED_COMMIT:-}}"
 agent_home="${SR_EVAL_AGENT_HOME:-$HOME}"
 case "$(uname -s)" in
   Darwin) data_home="$agent_home/Library/Application Support" ;;
-  *) data_home="$agent_home/.local/share" ;;
+  *) data_home="${XDG_DATA_HOME:-$agent_home/.local/share}" ;;
 esac
-root="$(git -C "$SR_EVAL_PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-session_id="$(jq -n --arg t "$SR_EVAL_TRANSCRIPT" --arg c "$SR_EVAL_PROJECT_DIR" \
-  '{transcript_path: $t, cwd: $c}' | sr-session id 2>/dev/null || true)"
-if [ -n "$root" ] && [ -n "$session_id" ] && [ -n "$setup_commit" ] && command -v sqlite3 >/dev/null 2>&1; then
-  db="$data_home/sloprail/sessions/$(printf '%s' "$root" | sed 's/[^a-zA-Z0-9]/-/g')/$session_id/state.db"
-  if [ -f "$db" ]; then
+if [ -n "$setup_commit" ] && command -v sqlite3 >/dev/null 2>&1; then
+  baseline="unreadable (no session store under $data_home/sloprail/sessions)"
+  for db in "$data_home"/sloprail/sessions/*/*/state.db; do
+    [ -f "$db" ] || continue
     recorded="$(sqlite3 "$db" "select value from meta where key = 'baseline_commit'" 2>/dev/null || true)"
+    if [ -z "$recorded" ]; then
+      baseline="none recorded"
+      continue
+    fi
     if [ "$recorded" = "$setup_commit" ]; then
       baseline="setup commit"
-    elif [ -z "$recorded" ]; then
-      baseline="none recorded"
-    else
-      baseline="NOT the setup commit ($recorded; setup was $setup_commit)"
+      break
     fi
-  else
-    baseline="unreadable (no store at $db)"
-  fi
+    baseline="NOT the setup commit ($recorded; setup was $setup_commit)"
+  done
 fi
 
 if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then

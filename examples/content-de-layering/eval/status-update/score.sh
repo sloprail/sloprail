@@ -59,7 +59,13 @@ fi
 restated_preference="unknown"
 linked_to_person="unknown"
 if [ -n "$NEW_UPDATE" ] && [ -f "$NEW_UPDATE" ]; then
-  if grep -qi "written proposal before" "$NEW_UPDATE" 2>/dev/null; then
+  # A keyword heuristic, not a judgement: the preference (a written proposal
+  # before any live discussion) may be paraphrased — "proposal in writing
+  # first", "wants it written up before we talk" — so the pattern looks for the
+  # proposal tied to writing or to coming first, not for one exact phrase. It
+  # can still miss a rewording or flag an unrelated sentence, which is why the
+  # row is informational and says so.
+  if grep -Eqi "(written|in writing|writ(e|ing) (it )?up).{0,60}(proposal|before|first|ahead|prior)|proposal.{0,60}(in writing|written|before|first|ahead of|prior to|in advance)" "$NEW_UPDATE" 2>/dev/null; then
     restated_preference="yes"
   else
     restated_preference="no"
@@ -86,7 +92,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     '{subject: $subject, status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $status, reasoning: $th_reason},
        {check_id: "INFO-001-update_written", status: "info", reasoning: ("new update file written: " + $written)},
-       {check_id: "INFO-002-restated_preference_inline", status: "info", reasoning: ("Priya'"'"'s preference restated inline: " + $restated)},
+       {check_id: "INFO-002-restated_preference_inline", status: "info", reasoning: ("Priya'"'"'s preference restated inline (keyword heuristic, tolerant of paraphrase, may miss or over-match; informational only, not judged): " + $restated)},
        {check_id: "INFO-003-linked_to_person_file", status: "info", reasoning: ("linked to people/priya-patel.md: " + $linked)},
        {check_id: "INFO-004-guardrail_fired", status: "info", reasoning: ("one-fact-one-home: " + $fg)}
      ]}' > "$SR_EVAL_VERDICT_OUT"

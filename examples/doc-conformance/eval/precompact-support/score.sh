@@ -63,7 +63,11 @@ if grep -qF 'sr:docs' "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
 fi
 
 webfetch_used="no"
-if grep -qF '"WebFetch"' "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
+# A tool_use block NAMING WebFetch: the bare word also sits in the harness's
+# deferred_tools_delta tool list on every run, used or not.
+if jq -e -s '[.[] | select(.type == "assistant") | .message.content[]?
+      | select(.type == "tool_use" and .name == "WebFetch")] | length > 0' \
+    "$SR_EVAL_TRANSCRIPT" >/dev/null 2>&1; then
   webfetch_used="yes"
 fi
 

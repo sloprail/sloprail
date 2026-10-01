@@ -146,10 +146,17 @@ task_test="fail"
 [ -n "$test_file" ] && task_test="pass"
 
 # --- Informational rows. ---
-own_refusals="$(grep -Eo '(file-guard|gate) \\?"[a-z0-9-]+\\?"' "$T" 2>/dev/null | sort -u | tr '\n' ' ')"
+# Only a REFUSAL names a rule here: a hook_blocking_error attachment, or a tool
+# result the harness marked as an error (a PreToolUse denial). The same
+# `gate "x"` text also sits in the Stop pass output (hook_success) and in docs
+# the agent read; counting those reported rules that never refused anything.
+own_refusals="$(jq -r -s '.[] | (.attachment? // empty | select(.type == "hook_blocking_error") | .blockingError | tostring),
+    (.message.content? | arrays | .[] | select(.type == "tool_result" and .is_error == true) | .content | tostring)' "$T" 2>/dev/null |
+  grep -Eo '(file-guard|gate) \\?"[a-z0-9-]+\\?"' | sort -u | tr '\n' ' ' || true)"
 # Measured against the harness's setup commit, so what the agent COMMITTED
 # counts the same as what it left lying around.
-setup="$(git -C "$P" rev-list --max-parents=0 HEAD 2>/dev/null | tail -1)"
+setup="${SR_EVAL_RULES_COMMIT:-${SR_EVAL_SEED_COMMIT:-}}"
+[ -n "$setup" ] || setup="$(git -C "$P" rev-list --max-parents=0 HEAD 2>/dev/null | tail -1)"
 changed="$( { git -C "$P" diff --name-only "$setup" 2>/dev/null; git -C "$P" ls-files --others --exclude-standard 2>/dev/null; } | sort -u)"
 stray="$(printf '%s\n' "$changed" |
   grep -Ev '^(src/|test/|\.sloprail/|\.claude/|prisma/|node_modules/|package(-lock)?\.json$|tsconfig\.json$|vitest\.config\.|README\.md$|$)' | tr '\n' ' ')"
