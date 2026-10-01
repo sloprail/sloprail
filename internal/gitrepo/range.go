@@ -77,8 +77,12 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //     commit, and earlier history is grandfathered. The parent, not the commit, so the
 //     commit that adds the rule is itself judged by it. For a rule that existed at
 //     session start (also when the start is unknown or unborn, which fails closed to
-//     "existed"), sessionStart: the HEAD recorded when the session began, NEVER earlier
-//     and never later. The floor does not matter for it: a rule last changed long before
+//     "existed"), sessionStart: the HEAD recorded when the session began, never later, and
+//     earlier only by refusedBases: the bases of ranges an EARLIER session of the same
+//     worktree was refused for and never fixed (the caller reads them from the sibling
+//     sessions' check stores), so a refusal does not vanish when a second session
+//     starts. History that passed or was never checked stays grandfathered. The floor
+//     does not matter for it: a rule last changed long before
 //     the session must not re-judge every commit merged since, and touching .sloprail
 //     mid-session cannot move the base past the session's own work. With no session
 //     start recorded the floor is used, and with neither the result is ErrNoSessionStart.
@@ -106,7 +110,7 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 // counts as unreachable; one git could not be asked about is an error. With no watermark,
 // no committed definition and no session start recorded the result is
 // ErrNoSessionStart, never a guess.
-func ResolveRange(dir, folder, rule, watermark, sessionStart string) (Range, error) {
+func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBases ...string) (Range, error) {
 	head, err := headSHA(dir)
 	if err != nil {
 		return Range{}, err
@@ -182,6 +186,29 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string) (Range, err
 	}
 	if start != "" {
 		r.Base, r.Origin = start, FromSessionStart
+		// Extended backwards over every range an earlier session of this worktree was
+		// refused for and never fixed: nothing it refused may fall out of sight.
+		for _, rb := range refusedBases {
+			if rb != "" && rb != EmptyTree {
+				ok, err := Contains(dir, rb)
+				if err != nil {
+					return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", rb, err)
+				}
+				if !ok {
+					if rb, err = reanchorSessionStart(dir, rb, head); err != nil {
+						return Range{}, err
+					}
+				}
+			}
+			if rb == "" {
+				continue
+			}
+			early, err := earlier(dir, r.Base, rb)
+			if err != nil {
+				return Range{}, err
+			}
+			r.Base = early
+		}
 	} else {
 		r.Base, r.Origin = floor, FromFloor
 	}
@@ -209,6 +236,42 @@ func existedAt(dir, sessionStart, folder string) bool {
 		return true
 	}
 	return strings.TrimSpace(out) != ""
+}
+
+// IsAncestor reports whether a is an ancestor of b (or b itself). A commit git does
+// not have is "not an ancestor"; any other git failure is an error.
+func IsAncestor(dir, a, b string) (bool, error) {
+	_, err := run(dir, "merge-base", "--is-ancestor", a, b)
+	if err == nil {
+		return true, nil
+	}
+	if exitCode(err) == 1 {
+		return false, nil
+	}
+	if _, verr := run(dir, "rev-parse", "--verify", "-q", a+"^{commit}"); verr != nil && exitCode(verr) == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// earlier is whichever of two commits (or the empty tree) comes first in ancestry;
+// for two that are not one another's ancestors, their merge base.
+func earlier(dir, a, b string) (string, error) {
+	if a == b {
+		return a, nil
+	}
+	if a == EmptyTree || b == EmptyTree {
+		return EmptyTree, nil
+	}
+	out, err := run(dir, "merge-base", a, b)
+	if err != nil {
+		return "", fmt.Errorf("gitrepo: merge base of %s and %s: %w", short(a), short(b), err)
+	}
+	base := strings.TrimSpace(out)
+	if !isObjectName(base) {
+		return "", fmt.Errorf("gitrepo: merge base resolved to %q, not an object name", base)
+	}
+	return base, nil
 }
 
 // headSHA is HEAD's full object name, or ErrNoCommits on an unborn HEAD.

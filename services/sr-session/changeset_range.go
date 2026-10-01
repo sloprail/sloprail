@@ -20,8 +20,10 @@ import (
 // HEAD. Without one, for a rule that was absent from the session-start tree it is the
 // parent of the last commit touching the rule's whole .sloprail root alone (the
 // rule applies from the commit that added it); for a rule that existed at session
-// start it is the HEAD recorded when the session began, never earlier, so nothing
-// made in this session is skipped and nothing before it is re-judged. results and state may be nil (nothing
+// start it is the HEAD recorded when the session began, extended back only over
+// ranges an earlier session of the same worktree was refused for and never fixed
+// (outstandingRefusalBases), so nothing made in this session is skipped, no refusal
+// is lost, and nothing else before the session is re-judged. results and state may be nil (nothing
 // recorded yet); any failure of either, or of git, is an error and no range.
 //
 // A watermark that had to be passed over — an amend or a rebase orphaned the
@@ -131,7 +133,14 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 			sessionStart = ""
 		}
 	}
-	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Root()), repoRelative(root, g.Dir), watermark, sessionStart)
+	var refused []string
+	if watermark == "" {
+		var err error
+		if refused, err = outstandingRefusalBases(root, g.Qualified(), results); err != nil {
+			return gitrepo.Range{}, err
+		}
+	}
+	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Root()), repoRelative(root, g.Dir), watermark, sessionStart, refused...)
 	if err != nil {
 		return gitrepo.Range{}, err
 	}

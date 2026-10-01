@@ -313,6 +313,64 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 	return int(n), nil
 }
 
+// RunRef is one run's range and when it ran (RunAt is a fixed-width UTC stamp, so
+// stamps from different databases compare as strings).
+type RunRef struct {
+	Base, Head, RunAt string
+}
+
+// RunRefs is a rule's refused and passed runs, at any rule hash. Failed holds a run
+// that is an engine failure or holds a failing check (a failure that went stale is
+// not one); Passed holds a COMPLETE run with no failing check and no engine error. A
+// run with no recorded range is in neither.
+type RunRefs struct {
+	Failed, Passed []RunRef
+}
+
+func (s *store) RunRefs(rule string) (RunRefs, error) {
+	db, err := s.conn()
+	if err != nil {
+		return RunRefs{}, err
+	}
+	var out RunRefs
+	collect := func(query string, into *[]RunRef) error {
+		rows, err := db.Query(query, rule)
+		if err != nil {
+			return fmt.Errorf("checkstore: run refs for %q: %w", rule, err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r RunRef
+			if err := rows.Scan(&r.Base, &r.Head, &r.RunAt); err != nil {
+				return err
+			}
+			*into = append(*into, r)
+		}
+		return rows.Err()
+	}
+	if err := collect(`
+		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM check_runs cr
+		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''
+		  AND (cr.error IS NOT NULL OR cr.exit_code <> 0
+		       OR EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
+		                  AND c.status IN ('fail', 'error', 'interrupted')))
+		ORDER BY cr.run_at`, &out.Failed); err != nil {
+		return RunRefs{}, err
+	}
+	if err := collect(`
+		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM check_runs cr
+		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''
+		  AND cr.exit_code = 0 AND cr.error IS NULL
+		  AND json_extract(cr.metadata, '$.state') = 'complete'
+		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
+		                  AND (c.status IN ('fail', 'error', 'interrupted')
+		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
+		ORDER BY cr.run_at`, &out.Passed); err != nil {
+		return RunRefs{}, err
+	}
+	return out, nil
+}
+
 // PassedHeads is a10n's EffectiveBase, kept as a list so the caller can skip the
 // heads a rebase has orphaned. A run passed when it is not an engine failure and
 // holds no failing check — including one whose failure was later resolved as

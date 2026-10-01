@@ -53,9 +53,14 @@ empty tree). A rule that did **not exist at session start**
 commit that added it**: the floor alone, earlier history grandfathered, so adding a
 rule mid-session does not judge the whole session. A rule that **existed at session
 start** (including one deleted and re-added in the session) takes **the HEAD recorded
-when the session began**, never earlier and never later: a rule last changed long
-before the session does not re-judge every commit merged since, and a violating commit
-followed by a commit under `.sloprail` is still judged. When the session start is
+when the session began**, never later and earlier only as below: a rule last changed
+long before the session does not re-judge every commit merged since, and a violating
+commit followed by a commit under `.sloprail` is still judged. The base is **extended
+backwards over any range an earlier session of the same worktree was refused for and
+never fixed** (read, read-only, from that worktree's other sessions' check stores: a
+refusal with no later pass at a descendant of its head, whose head is still an ancestor
+of `HEAD`), so a refusal does not vanish when a second session starts; what passed or
+was never checked stays grandfathered, and a store that cannot be read fails the range. When the session start is
 unknown or unborn the rule counts as existing (unborn: the whole history). For a
 plugin's rule, whose `.sloprail` root is in the plugin cache, the base is the session
 start. Every base is a SHA, checked with

@@ -54,8 +54,10 @@ A file-guard judges commits. Its range runs from a base to HEAD, and the base is
   commit's tree) uses the root floor alone: it applies from the commit that added
   it, and earlier history is grandfathered. A rule that existed then (also one
   deleted and re-added; also when the start is unknown or unborn) uses the session
-  start, never earlier: a rule changed long before the session does not re-judge
-  what was merged since, and nothing made in this session is skipped.
+  start, extended back only over ranges an earlier session of this worktree was
+  refused for and never fixed (from its check results): a rule changed long before the
+  session does not re-judge what was merged since, a refusal does not vanish when a
+  second session starts, and nothing made in this session is skipped.
 
 The watermark is not stored on its own: it is the newest run of the rule that
 passed and whose head is still an ancestor of HEAD, read from the session's check
