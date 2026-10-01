@@ -1182,6 +1182,28 @@ func (e *Env) sessionDBPath(projDir, sessionID string) string {
 		encodeProjectDir(resolveWorkDir(projDir)), stableID, "state.db")
 }
 
+// StateDBPath is where the engine keeps a session's state, for a test that damages it.
+func (e *Env) StateDBPath(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.sessionDBPath(projDir, sessionID)
+}
+
+// SessionStoreDirs is every per-workspace directory under the engine's sessions
+// directory that holds a store for the session's identity: one for a session keyed by
+// where it began, more when something keyed it by where a hook happened to stand.
+func (e *Env) SessionStoreDirs(projDir, sessionID string) []string {
+	e.t.Helper()
+	id := e.SessionIdentity(projDir, sessionID)
+	if id == "" {
+		e.t.Fatalf("harness: no identity for session %s", sessionID)
+	}
+	matches, err := filepath.Glob(filepath.Join(dataHome(e.home), "sloprail", "sessions", "*", id))
+	if err != nil {
+		e.t.Fatalf("harness: list session stores: %v", err)
+	}
+	return matches
+}
+
 // transcriptPath is where the harness's transcript for a session sits.
 func (e *Env) transcriptPath(projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
