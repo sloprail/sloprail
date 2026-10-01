@@ -26,8 +26,13 @@ as a trailer, never inside the file, or the turn is refused:
 
 ```bash
 git add memories/tasks/<category>/<short-name>/ASK.md
-git commit -m 'Record the ask' -m 'Sloprail-Cites-User: <the same exact quote>'
+git commit -m 'Record the ask' --trailer 'Sloprail-Cites-User: <the same exact quote>'
 ```
+
+The trailer must be in the LAST paragraph of the commit message, and in the commit
+that last changed ASK.md. If you add a `Co-Authored-By:` line, keep it in that same
+paragraph (`--trailer` for it too): a `-m 'Co-Authored-By: …'` after a
+`-m 'Sloprail-Cites-User: …'` is a new paragraph, and the citation stops counting.
 
 Once the work is done, write
 `memories/tasks/<category>/<short-name>/RESULT.md` describing what was

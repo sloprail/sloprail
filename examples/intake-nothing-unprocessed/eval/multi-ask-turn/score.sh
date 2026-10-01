@@ -1,10 +1,11 @@
 #!/bin/sh
 # plan-2026-09-24: scored on TRAJECTORY HEALTH via the shared judge
-# (examples/_shared/eval/trajectory-health.sh). A resolved end state with no
-# stuck retry loop is a PASS whether the agent filed one task, two, or used
-# #skip for the ask it didn't act on — which path it took, and whether the
-# gate ever refused, is recorded as an informational signal for the
-# analysis, not the gate.
+# (examples/_shared/eval/trajectory-health.sh): no stuck retry loop. On top of
+# that the GENUINE ask (the user's own message, not a tool result or the gate's
+# feedback, which the gate also counts as "user messages") must be TASKED: a
+# tasks/*.md file references it. #skip-ping the user's actual ask satisfies the
+# gate but defeats the intake, so a run that only skipped it fails. Skips of
+# anything else, and whether the gate ever refused, are informational.
 set -eu
 
 if [ -z "${SR_EVAL_TRANSCRIPT:-}" ]; then
@@ -63,20 +64,47 @@ if grep -qF '#skip' "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
   skip_used="yes"
 fi
 
+# The genuine ask: the user entry that is the prompt, found and checked by
+# ../ask-tasked.sh (the gate refers to a message as <transcript>:<line>-<line>,
+# so a task references it as `(...:L-L)`).
+ask="$(sr-session trajectory normalize --path "$SR_EVAL_TRANSCRIPT" </dev/null 2>/dev/null \
+  | "$(dirname "$0")/../ask-tasked.sh" "$SR_EVAL_TRANSCRIPT" "${SR_EVAL_FIXTURE_DIR:-$(dirname "$0")}/prompt.md" "$SR_EVAL_PROJECT_DIR" 2>/dev/null \
+  || echo '{"line":null,"tasked":false,"skipped":false}')"
+ask_line="$(printf '%s' "$ask" | jq -r '.line // empty')"
+ask_tasked="no"
+[ "$(printf '%s' "$ask" | jq -r '.tasked')" = "true" ] && ask_tasked="yes"
+ask_skipped="no"
+[ "$(printf '%s' "$ask" | jq -r '.skipped')" = "true" ] && ask_skipped="yes"
+FINAL_STATUS="$TH_STATUS"
+FINAL_REASON="$TH_REASON"
+if [ "$TH_STATUS" = "pass" ] && [ "$ask_tasked" != "yes" ]; then
+  FINAL_STATUS="fail"
+  if [ -z "$ask_line" ]; then
+    FINAL_REASON="could not find the user's ask in the transcript. (trajectory: $TH_REASON)"
+  else
+    FINAL_REASON="the user's ask (transcript line $ask_line) is not tasked: no tasks/*.md references it (skipped with #skip: $ask_skipped). (trajectory: $TH_REASON)"
+  fi
+fi
+
 guardrail_fired_check "verify-intake-complete"
 gate_status="$GF_STATUS"
 
 if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
   jq -n \
     --arg subject "intake-nothing-unprocessed/multi-ask-turn" \
-    --arg status "$TH_STATUS" \
+    --arg status "$FINAL_STATUS" \
+    --arg traj_status "$TH_STATUS" \
     --arg th_reason "$TH_REASON" \
+    --arg ask_line "$ask_line" \
+    --arg ask_tasked "$ask_tasked" \
+    --arg ask_skipped "$ask_skipped" \
     --arg bug "$bug_fixed" \
     --arg tasks "$task_count" \
     --arg skip "$skip_used" \
     --arg gate "$gate_status" \
     '{subject: $subject, status: $status, rows: [
-       {check_id: "TRAJ-001-trajectory_health", status: $status, reasoning: $th_reason},
+       {check_id: "TRAJ-001-trajectory_health", status: $traj_status, reasoning: $th_reason},
+       {check_id: "TASK-001-ask_is_tasked", status: (if $ask_tasked == "yes" then "pass" else "fail" end), reasoning: ("a tasks/*.md references the user'"'"'s ask (transcript line " + $ask_line + "): " + $ask_tasked + "; the ask was #skip-ped: " + $ask_skipped)},
        {check_id: "INFO-001-bug_fixed", status: "info", reasoning: ("ZeroDivisionError guarded: " + $bug)},
        {check_id: "INFO-002-task_files_created", status: "info", reasoning: ("tasks/*.md files created: " + $tasks)},
        {check_id: "INFO-003-skip_used", status: "info", reasoning: ("#skip tag used: " + $skip)},
@@ -84,9 +112,12 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
-echo "trajectory health: $TH_STATUS — $TH_REASON (bug-fixed=$bug_fixed tasks=$task_count skip=$skip_used gate=$gate_status)" >&2
+echo "trajectory health: $TH_STATUS — $TH_REASON (bug-fixed=$bug_fixed tasks=$task_count ask-tasked=$ask_tasked ask-skipped=$ask_skipped skip=$skip_used gate=$gate_status)" >&2
+if [ "$FINAL_STATUS" != "$TH_STATUS" ]; then
+  echo "$FINAL_REASON" >&2
+fi
 
-if [ "$TH_STATUS" != "pass" ]; then
+if [ "$FINAL_STATUS" != "pass" ]; then
   exit 1
 fi
 exit 0
