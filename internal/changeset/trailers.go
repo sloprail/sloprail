@@ -2,6 +2,8 @@ package changeset
 
 import (
 	"net/textproto"
+	"regexp"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -33,9 +35,41 @@ func commitsOf(in []gitrepo.Commit) []Commit {
 			key := textproto.CanonicalMIMEHeaderKey(t.Key)
 			trailers[key] = append(trailers[key], t.Value)
 		}
+		addBodyCitations(trailers, c.Body)
 		out = append(out, Commit{SHA: c.SHA, Subject: c.Subject, Body: c.Body, Trailers: trailers})
 	}
 	return out
+}
+
+// citeLine is a citation trailer written as a line of the message body: at the
+// start of the line, one of our own two keys.
+var citeLine = regexp.MustCompile(`(?mi)^(` + TrailerCitesUser + `|` + TrailerCitesTool + `):[ \t]*(.*\S)[ \t]*$`)
+
+// addBodyCitations adds the citation trailers git did not parse. git reads only the
+// LAST paragraph of a message as trailers, and an agent that writes
+// `-m 'Sloprail-Cites-User: …' -m 'Co-Authored-By: …'` puts its citation in a
+// paragraph of its own, in front of another. The line is plainly ours (anchored,
+// our key, nothing else loosened), so it is read from any paragraph. One git already
+// parsed — its value is the same, or the same unfolded — is not added twice.
+func addBodyCitations(trailers map[string][]string, body string) {
+	for _, m := range citeLine.FindAllStringSubmatch(body, -1) {
+		key, value := textproto.CanonicalMIMEHeaderKey(m[1]), strings.TrimSpace(m[2])
+		if continuesAny(trailers[key], value) {
+			continue
+		}
+		trailers[key] = append(trailers[key], value)
+	}
+}
+
+// continuesAny reports whether one of the values is value or continues it (a folded
+// trailer's first line is value, git having unfolded the rest onto it).
+func continuesAny(values []string, value string) bool {
+	for _, v := range values {
+		if strings.HasPrefix(v, value) {
+			return true
+		}
+	}
+	return false
 }
 
 // TrailerScope is the `trailers` a rule's match sees: each trailer key mapped to
