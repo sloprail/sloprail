@@ -242,9 +242,13 @@ model only on that sentinel. So:
 Some answers are decided, and waive:
 
 - **Not a git work tree:** a pin names `<repo>@<sha>`, so nothing can be pinned.
-- **A marker without a pin's shape** — a placeholder in a skill's example, a
-  sha that is not hex, a range that is not `1 <= start <= end` — pins nothing:
-  it cannot pass `pinned-invariant`.
+- **A marker without a pin's shape** — a sha that is not hex, a range that is
+  not `1 <= start <= end` — pins nothing: it cannot pass `pinned-invariant`.
+  The exception is a placeholder in a doc example: markdown under
+  `.claude/skills/`, `.claude/commands/` or `.claude/agents/` is outside
+  `pinned-invariant`'s match, so a skill that teaches the marker is not judged as
+  a pin. The same placeholder in code, a hook under `.claude/hooks/` included, is
+  still refused.
 
 **What happens only at Stop.** An edit the engine does not see as a write at
 all (a script rewriting the file) is caught by the file-guard once it is committed

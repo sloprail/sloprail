@@ -18,7 +18,15 @@ cat >/dev/null
 echo run >> '` + ledger + `'
 if [ ! -e '` + flag + `' ]; then
   : > '` + flag + `'
-  kill -9 $PPID
+  # The evaluation is the ancestor named sr-session. $PPID is it only where sh
+  # execs a single command (bash, as /bin/sh on macOS); under dash it is the
+  # wrapper shell, and killing that makes the check fail instead of crashing the
+  # evaluation. So walk up to sr-session.
+  p=$PPID
+  while [ -n "$p" ] && [ "$(basename "$(ps -o comm= -p "$p" | tr -d ' ')")" != "sr-session" ]; do
+    p="$(ps -o ppid= -p "$p" | tr -d ' ')"
+  done
+  kill -9 "$p"
   sleep 30
 fi
 exit 0

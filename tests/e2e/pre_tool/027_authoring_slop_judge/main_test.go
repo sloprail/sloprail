@@ -148,7 +148,7 @@ func runGrepDirectEnv(t *testing.T, projDir, scriptBody string, extraEnv ...stri
 	}
 	cmd := exec.Command("bash", filepath.Join(guardDir, "check-rules.sh"))
 	cmd.Stdin = strings.NewReader(string(payload))
-	cmd.Env = append(append(os.Environ(),
+	cmd.Env = append(append(harness.HostEnv(),
 		"SR_GUARDRAIL_DIR="+guardDir,
 		"SR_WORKSPACE="+projDir,
 	), extraEnv...)

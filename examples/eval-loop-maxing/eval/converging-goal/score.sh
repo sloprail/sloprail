@@ -64,9 +64,14 @@ if [ "$final_accuracy" != "unknown" ]; then
   fi
 fi
 
+# The agent names its own goal (the prompt does not), so read the name from the
+# run: whichever goal/<name>/goal.yaml it declared.
 goal_declared="no"
-if [ -f "$SR_EVAL_PROJECT_DIR/goal/accuracy-target/goal.yaml" ]; then
+goal_name=""
+goal_file="$(find "$SR_EVAL_PROJECT_DIR/goal" -mindepth 2 -maxdepth 2 -name goal.yaml 2>/dev/null | sort | head -1)"
+if [ -n "$goal_file" ]; then
   goal_declared="yes"
+  goal_name="$(basename "$(dirname "$goal_file")")"
 fi
 
 run_count=0
@@ -87,6 +92,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg accuracy "$final_accuracy" \
     --arg target_met "$target_met" \
     --arg goal "$goal_declared" \
+    --arg goal_name "$goal_name" \
     --arg runs "$run_count" \
     --arg goal_gate "$goal_gate_status" \
     --arg recording_gate "$recording_gate_status" \
@@ -94,7 +100,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "TRAJ-001-trajectory_health", status: $status, reasoning: $th_reason},
        {check_id: "INFO-001-final_accuracy", status: "info", reasoning: ("last recorded accuracy: " + $accuracy)},
        {check_id: "INFO-002-target_met", status: "info", reasoning: ("accuracy >= 0.75: " + $target_met)},
-       {check_id: "INFO-003-goal_declared", status: "info", reasoning: ("goal/accuracy-target/goal.yaml written: " + $goal)},
+       {check_id: "INFO-003-goal_declared", status: "info", reasoning: ("goal/<name>/goal.yaml written: " + $goal + (if $goal_name != "" then " (goal/" + $goal_name + ")" else "" end))},
        {check_id: "INFO-004-eval_run_count", status: "info", reasoning: ("./eval runs recorded: " + $runs)},
        {check_id: "INFO-005-goal_verify_fired", status: "info", reasoning: ("goal-verify: " + $goal_gate)},
        {check_id: "INFO-006-recording_verify_fired", status: "info", reasoning: ("recording-verify: " + $recording_gate)}

@@ -259,7 +259,7 @@ func TestT038_42_NothingIsRecordedWithoutTheUsersWords(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("bash", script)
-			cmd.Env = append(os.Environ(),
+			cmd.Env = append(harness.HostEnv(),
 				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"SR_GUARDRAIL_DIR="+filepath.Dir(script))
 			cmd.Stdin = strings.NewReader(`{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"D","path":"scanners/mine/scanner.yaml","oldContent":""}],"citations":` + tc.citations + `}}`)

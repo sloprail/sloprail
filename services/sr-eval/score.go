@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/ambientenv"
 )
 
 // score runs the fixture's scorer script and reports its verdict.
@@ -44,6 +46,9 @@ import (
 //	                      so a scorer can run `sr-session query` against the
 //	                      transcript without guessing where those binaries are
 //	SR_EVAL_AGENT_HOME    the isolated HOME the agent ran in
+//	SR_EVAL_SEED_COMMIT   sha of the commit sr-eval made of the seed and overlay
+//	SR_EVAL_RULES_COMMIT  sha of the commit sr-eval made of .sloprail alone
+//	                      (empty when the run had no rules)
 //	SR_EVAL_VERDICT_OUT   a path the scorer may write a verdict JSON to — see
 //	                      verdict.go for the shape
 //
@@ -75,14 +80,15 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 
 	cmd := exec.CommandContext(ctx, fx.ScorePath())
 	cmd.Dir = fx.Dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(ambientenv.Session(os.Environ()),
 		"SR_EVAL_TRANSCRIPT="+transcriptPath,
 		"SR_EVAL_PROJECT_DIR="+ws.project,
 		"SR_EVAL_FIXTURE_DIR="+fx.Dir,
 		"SR_EVAL_BIN_DIR="+binDir,
 		"SR_EVAL_VERDICT_OUT="+verdictPath,
 	)
-	cmd.Env = append(cmd.Env, "SR_EVAL_AGENT_HOME="+agentHome)
+	cmd.Env = append(cmd.Env, "SR_EVAL_AGENT_HOME="+agentHome,
+		"SR_EVAL_SEED_COMMIT="+ws.seedCommit, "SR_EVAL_RULES_COMMIT="+ws.rulesCommit)
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +47,7 @@ func TestT038_32_ThePrepareSkipsOnlyOnADecidedNoDrop(t *testing.T) {
 	run := func(t *testing.T, dir string) string {
 		t.Helper()
 		cmd := exec.Command("bash", prepare)
-		cmd.Env = append(os.Environ(), "SR_GUARDRAIL_DIR="+dir)
+		cmd.Env = append(harness.HostEnv(), "SR_GUARDRAIL_DIR="+dir)
 		cmd.Stdin = strings.NewReader(payload)
 		out, err := cmd.Output()
 		if err != nil {
@@ -181,7 +182,7 @@ func TestT038_33_TheScorerClaimsOnlyTheCoverageItChecked(t *testing.T) {
 			}
 
 			cmd := exec.Command("sh", exampleFile(t, "eval/security-scan/score.sh"))
-			cmd.Env = append(os.Environ(),
+			cmd.Env = append(harness.HostEnv(),
 				"SR_EVAL_TRANSCRIPT="+transcript,
 				"SR_EVAL_BIN_DIR="+bin,
 				"SR_EVAL_PROJECT_DIR="+proj,

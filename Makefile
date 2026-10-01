@@ -286,6 +286,8 @@ test-e2e-shard: mock
 	              ./tests/e2e/gate/... \
 	              ./tests/e2e/context/... \
 	              ./tests/e2e/fileguard/... \
+	              ./tests/e2e/changeset/... \
+	              ./tests/e2e/checks/... \
 	              ./tests/e2e/grounding/... \
 	              ./tests/e2e/structure/... \
 	              ./tests/e2e/proxy/... \

@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,6 +57,16 @@ func TestT037_05_CreatedButUnlinkedRefused(t *testing.T) {
 	}
 	if !strings.Contains(joined, "verify-linked") {
 		t.Errorf("the refusal did not name the gate:\n%s", joined)
+	}
+	// The refusal gives the remedy: the link must contain the file stem.
+	if !strings.Contains(joined, "must contain the stem") || !strings.Contains(joined, "priya-patel") {
+		t.Errorf("the unlinked refusal did not say the name or link must contain the stem:\n%s", joined)
+	}
+	// And so does the skill the eval fixture ships.
+	skill, err := os.ReadFile(filepath.Join(repoRoot(t), "examples", "interlinking", "eval", "new-hire-record",
+		"overlay", ".claude", "skills", "link-people", "SKILL.md"))
+	if err != nil || !strings.Contains(string(skill), "priya-patel") {
+		t.Errorf("the link-people skill does not state the stem requirement (err=%v)", err)
 	}
 }
 

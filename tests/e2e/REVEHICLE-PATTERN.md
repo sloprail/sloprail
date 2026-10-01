@@ -220,14 +220,13 @@ and the gate e2e dirs for gate idioms.
 
 ```sh
 go build ./... && go vet ./tests/... && gofmt -l tests/      # all clean
-env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT \
-  go test -count=1 ./tests/e2e/session/<dir>/...              # green
+go test -count=1 ./tests/e2e/session/<dir>/...              # green
 ```
 
-The `env -u …` is not optional: a class of these e2e passes locally only via a dev's
-ambient `CLAUDECODE=1` (a judge's `sr-agent --verify` refuses with `ErrNoHarness`
-when neither `CLAUDECODE` nor `CLAUDE_CODE_ENTRYPOINT` is set, and the mock's own env
-sets them for the SESSION but a bare `go test` inherits the dev's). Stripping both is
-the CI-faithful run. To prove a re-vehicled test is NON-VACUOUS, temporarily break its
+No `env -u …` prefix is needed: the harness strips the enclosing Claude Code session's
+variables (CLAUDECODE, CLAUDE_CODE_*, CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT, CLAUDE_CONFIG_DIR,
+SLOPRAIL_*, SR_*) from every process it spawns (`harness.HostEnv()`), so a run from inside
+a live session equals CI. Any new test helper that spawns a process starts from
+`harness.HostEnv()`, never a bare `os.Environ()`. To prove a re-vehicled test is NON-VACUOUS, temporarily break its
 `match` (e.g. `match: "nonexistent/**"`) and confirm the arrival assertion fails — 015
 was validated this way.

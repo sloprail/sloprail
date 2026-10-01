@@ -10,13 +10,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/ambientenv"
 )
 
 // sloprailBinaries are the names whose presence in a directory makes that
 // directory part of an existing sloprail install. A fresh machine's PATH
 // keeps none of them: the agent must find sloprail absent, the way a
-// stranger's machine has it.
-var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval"}
+// stranger's machine has it. It is also what buildRelease stages, so it must be
+// everything install.sh copies (TestSloprailBinaries_CoverEverythingInstallShCopies):
+// a missing one made install.sh fail on `cp` and sloprail never ran.
+var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval", "sr-checks"}
 
 // agentEnv is how an agent-under-test is launched: its HOME, the environment
 // it runs in, and where its harness keeps transcripts. releaseURL is set only
@@ -173,6 +177,10 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 // state has to tell this run's work from what was already on disk itself —
 // research-rigor's depth gate counts only directories the run cloned.
 func baseAgentEnv(environ []string, home, tmp string, fresh bool) []string {
+	// The operator's own Claude Code session (CLAUDECODE, CLAUDE_CODE_SESSION_ID,
+	// CLAUDE_CODE_ENTRYPOINT, ...) is not the agent's: left in, the agent-under-test
+	// believes it is nested inside that session.
+	environ = ambientenv.Session(environ)
 	env := make([]string, 0, len(environ)+3)
 	for _, kv := range environ {
 		key, _, _ := strings.Cut(kv, "=")

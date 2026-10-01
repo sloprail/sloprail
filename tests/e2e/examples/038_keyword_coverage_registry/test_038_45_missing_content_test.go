@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,7 @@ func TestT038_45_AMissingContentFieldIsNotADecidedNoDrop(t *testing.T) {
 	}
 	run := func(payload string) (string, int) {
 		cmd := exec.Command("bash", filepath.Join(guard, "drops-keywords.sh"))
-		cmd.Env = append(os.Environ(), "SR_GUARDRAIL_DIR="+guard, "PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+		cmd.Env = append(harness.HostEnv(), "SR_GUARDRAIL_DIR="+guard, "PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 		cmd.Stdin = strings.NewReader(payload)
 		out, err := cmd.Output()
 		var exit *exec.ExitError
