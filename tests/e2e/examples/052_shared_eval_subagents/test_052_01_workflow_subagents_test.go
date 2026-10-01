@@ -10,6 +10,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,7 +65,7 @@ guardrail_fired_check guarded-thing
 printf '\nFIRED=%s COUNT=%s\n' "$GF_STATUS" "$GF_COUNT"
 `
 	cmd := exec.Command("sh", "-c", script)
-	cmd.Env = append(os.Environ(), "SHARED="+shared, "SR_EVAL_TRANSCRIPT="+session)
+	cmd.Env = append(harness.HostEnv(), "SHARED="+shared, "SR_EVAL_TRANSCRIPT="+session)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("sh: %v\n%s", err, out)
@@ -123,7 +124,7 @@ wc -c < "$root" >&2
 trajectory_condense "$SHARED/condense-transcript.jq" "$root"
 `
 	cmd := exec.Command("sh", "-c", script)
-	cmd.Env = append(os.Environ(), "SHARED="+shared, "SR_EVAL_TRANSCRIPT="+session)
+	cmd.Env = append(harness.HostEnv(), "SHARED="+shared, "SR_EVAL_TRANSCRIPT="+session)
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

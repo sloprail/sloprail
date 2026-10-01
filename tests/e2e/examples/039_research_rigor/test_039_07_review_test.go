@@ -408,7 +408,7 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("sh", score)
-			cmd.Env = append(os.Environ(), "SR_EVAL_TRANSCRIPT="+e.TranscriptPath(proj, sess),
+			cmd.Env = append(harness.HostEnv(), "SR_EVAL_TRANSCRIPT="+e.TranscriptPath(proj, sess),
 				"SR_EVAL_BIN_DIR="+bin, "SR_EVAL_PROJECT_DIR="+proj)
 			// The verdict itself is T039_39's subject; here, what the judge is told.
 			out, _ := cmd.CombinedOutput()

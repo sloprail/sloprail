@@ -134,3 +134,28 @@ func TestBaseAgentEnv_FreshDropsInstallPointers(t *testing.T) {
 		}
 	}
 }
+
+// The operator's own Claude Code session must not leak into the agent: its
+// identity variables go, while credential selectors and the rest stay.
+func TestBaseAgentEnv_DropsAmbientSession(t *testing.T) {
+	got := baseAgentEnv([]string{
+		"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=x", "CLAUDE_CODE_ENTRYPOINT=cli",
+		"CLAUDE_CODE_EXECPATH=/bin/claude", "CLAUDE_PROJECT_DIR=/p",
+		"CLAUDE_CODE_OAUTH_TOKEN=t", "KEEP=1",
+	}, "/h", "/t", false)
+	seen := map[string]bool{}
+	for _, kv := range got {
+		key, _, _ := strings.Cut(kv, "=")
+		seen[key] = true
+	}
+	for _, k := range []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_PROJECT_DIR"} {
+		if seen[k] {
+			t.Errorf("%s leaked into the agent env: %v", k, got)
+		}
+	}
+	for _, k := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "KEEP"} {
+		if !seen[k] {
+			t.Errorf("%s was dropped: %v", k, got)
+		}
+	}
+}

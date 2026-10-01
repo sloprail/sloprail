@@ -6,6 +6,7 @@ package e2e
 // above the charge (goodwill-refund-commits, run 20260927T222449Z).
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"net"
 	"os"
 	"os/exec"
@@ -47,7 +48,7 @@ func bypassProbeFiles(t *testing.T, files map[string]string, env []string) strin
 	}
 	probe := filepath.Join(repoRoot(t), "examples", "business-invariants", "eval", "bypass-probe.sh")
 	c := exec.Command(probe, proj)
-	c.Env = append(os.Environ(), env...)
+	c.Env = append(harness.HostEnv(), env...)
 	var stderr strings.Builder
 	c.Stderr = &stderr
 	out, err := c.Output()

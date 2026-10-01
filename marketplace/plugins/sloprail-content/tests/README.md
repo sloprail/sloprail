@@ -41,12 +41,12 @@ Each test:
    `e.Exists(...)` for whether a write landed, and `res.Saw(...)` for the
    reason reaching the agent.
 
-Run with the Claude Code session variables ambient-unset to reproduce CI:
+Run it as is; the harness scrubs the ambient Claude Code session variables, so a run inside a session equals CI:
 
 ```
 cd marketplace/plugins/sloprail-content/tests
 go build ./...
-env -u CLAUDE_CODE_SESSION_ID -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
+go test ./... -count=1
 ```
 
 ## Citations are grounded, not stubbed

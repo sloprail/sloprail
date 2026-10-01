@@ -182,6 +182,12 @@ go test -tags fts5 -race -v ./services/index-server/e2e/...                  # i
 go test -tags fts5 -race -v ./services/index-server/e2e/001_cold_build/      # one group
 ```
 
+Run them as is, from inside a Claude Code session too: no `env -u CLAUDECODE ...` prefix. The
+harness builds every spawned process's env from `harness.HostEnv()`, which strips the enclosing
+session's CLAUDECODE / CLAUDE_CODE_* / CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT / CLAUDE_CONFIG_DIR
+and any SLOPRAIL_* / SR_* the test did not set. A helper of your own that spawns a process must
+start from `harness.HostEnv()`, never a bare `os.Environ()`.
+
 ## Common Mistakes
 
 | Mistake | Fix |

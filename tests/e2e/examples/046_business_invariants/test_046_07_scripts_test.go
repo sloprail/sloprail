@@ -51,7 +51,7 @@ func runRuleScriptEnv(t *testing.T, dir, script, workspace, payload string, extr
 	c := exec.Command(filepath.Join(dir, script))
 	c.Dir = dir
 	c.Stdin = strings.NewReader(payload)
-	c.Env = append(append(os.Environ(), "SR_WORKSPACE="+workspace, "SR_GUARDRAIL_DIR="+dir), extra...)
+	c.Env = append(append(harness.HostEnv(), "SR_WORKSPACE="+workspace, "SR_GUARDRAIL_DIR="+dir), extra...)
 	var out bytes.Buffer
 	c.Stdout = &out
 	err := c.Run()

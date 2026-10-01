@@ -13,8 +13,6 @@ import (
 // file-guards -> gates -> context EXITS. A rule that reads context[] therefore
 // sees the contexts this turn entered (and the ones exiting at this very Stop),
 // never the previous turn's state.
-//
-// Run as `env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID go test ...`.
 
 type Env = harness.Env
 

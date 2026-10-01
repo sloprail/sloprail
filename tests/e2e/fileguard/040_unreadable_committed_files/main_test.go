@@ -12,8 +12,6 @@ import (
 // (/dev/zero), a file too large to hold in memory — must not hang the Stop, and
 // must not wave the range through: the rule is either handed what git holds or the
 // Stop is refused with the reason.
-//
-// Run as `env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID go test ...`.
 
 type Env = harness.Env
 

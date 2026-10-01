@@ -28,8 +28,17 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/ambientenv"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
+
+// HostEnv is the environment every process a test spawns starts from: the test
+// runner's own, minus the enclosing Claude Code session's identity (CLAUDECODE,
+// CLAUDE_CODE_*, CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT, CLAUDE_CONFIG_DIR) and
+// any SLOPRAIL_* / SR_* / SLOP_SUBBIN_DIR the test did not set itself. A suite run
+// from inside a live Claude Code session therefore behaves exactly as in CI, with
+// no `env -u ...` prefix. Callers append what they deliberately set, after it.
+func HostEnv() []string { return ambientenv.Hermetic(os.Environ()) }
 
 const (
 	marketplaceName = "sloprail-marketplace"
@@ -956,7 +965,7 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 	// run. They are already siblings, which subbin finds on its own, but naming
 	// it makes the test independent of that layout rather than quietly relying
 	// on it.
-	cmd.Env = append(os.Environ(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
 	// extraEnv is appended LAST so a caller-supplied variable wins over any
 	// ambient one — a test exercising cite's environment fallback sets
 	// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR this way.
@@ -1056,7 +1065,7 @@ func (e *Env) sessionDBPath(projDir, sessionID string) string {
 	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(payload)
-	cmd.Env = append(os.Environ(), "HOME="+e.home, "CLAUDE_CONFIG_DIR="+e.configDir)
+	cmd.Env = append(HostEnv(), "HOME="+e.home, "CLAUDE_CONFIG_DIR="+e.configDir)
 	out, err := cmd.Output()
 	if err != nil {
 		e.t.Fatalf("harness: resolve session id: %v", err)
@@ -1879,7 +1888,7 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(payload)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(HostEnv(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
 	)
@@ -2377,7 +2386,9 @@ func (e *Env) RunFrom(projDir, subRel, sessionID, prompt string, s Scenario) Res
 // mutually exclusive, and the property is the one that was reopened as P1.
 //
 // So the trade is made explicitly rather than by accident: the caller's real
-// environment is inherited, only the PATH is prepended so the plugin's hooks
+// environment is inherited (minus the enclosing Claude Code SESSION's identity,
+// ambientenv.Session — not Hermetic/HostEnv, which would drop CLAUDE_CONFIG_DIR
+// and the credentials the real claude needs), only the PATH is prepended so the plugin's hooks
 // reach the binaries under test, and the caller must opt in through an
 // environment variable because this spends money. No test may call this without
 // that gate.
@@ -2403,7 +2414,7 @@ func (e *Env) RunReal(projDir, prompt string) Result {
 		"--", prompt,
 	)
 	cmd.Dir = projDir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(ambientenv.Session(os.Environ()),
 		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	out, err := cmd.CombinedOutput()
@@ -2470,7 +2481,7 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 	args = append(args, prompt)
 	cmd := exec.Command(e.mock, args...)
 	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(HostEnv(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
@@ -2498,24 +2509,10 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 		"PATH="+e.shimDir+string(os.PathListSeparator)+
 			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
-	// CLAUDE_CODE_EXECPATH must NOT ride the append(os.Environ(), ...) above,
-	// unlike CLAUDECODE/CLAUDE_CODE_ENTRYPOINT which are harmless to inherit
-	// (the mock overrides both on every hook env regardless, per the comment
-	// above). This one the mock never sets at all, so an ambient value survives
-	// unmodified — and when a test process is ITSELF running nested inside a
-	// live Claude Code session (an author or CI running these tests from within
-	// one), the outer session's own CLAUDE_CODE_EXECPATH is sitting in
-	// os.Environ() and would ride straight through into the mock's environment.
-	// sr-agent's resolveBinary (services/sr-agent/invoke.go) treats a present
-	// CLAUDE_CODE_EXECPATH, once CLAUDECODE/CLAUDE_CODE_ENTRYPOINT are set, as
-	// the parent session's own binary and execs it directly — bypassing the
-	// shim dir entirely, since that lookup only happens for a bare "claude"
-	// resolved via PATH. That reaches the operator's actual, real claude
-	// binary from inside a mock-driven test, which is exactly what
-	// InstallClaudeShim exists to prevent. Scrubbed here, unconditionally, so
-	// the mock's environment reflects only what THIS harness constructs and
-	// never what happened to be running the test.
-	cmd.Env = append(cmd.Env, "CLAUDE_CODE_EXECPATH=")
+	// HostEnv above already dropped the outer session's CLAUDE_CODE_EXECPATH, which
+	// the mock never sets: left in, sr-agent's resolveBinary would exec the
+	// operator's real claude directly, bypassing the shim dir InstallClaudeShim
+	// puts first on PATH.
 	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
 	// last so it wins over any ambient value; omitted entirely when unset, leaving
 	// the mock's own default (8). See the stopBlockCap field's doc.

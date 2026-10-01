@@ -14,8 +14,6 @@ import (
 // of commits it has not yet passed, and every run is recorded in the session's
 // check results. Driven through the mock: the agent commits (or does not), the
 // Stop hook evaluates, and the refusal reaches the agent as a blocking error.
-//
-// Run as `env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID go test ...`.
 
 type Env = harness.Env
 
