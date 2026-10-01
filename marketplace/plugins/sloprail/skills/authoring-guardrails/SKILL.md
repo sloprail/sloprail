@@ -260,8 +260,8 @@ weakens nothing, so a rules-first session passes without a citation. The one
 exception is `.sloprail/config.yaml`, where even a new file can switch rules off.
 `config.yaml` writes are also refused before they land, since a file-guard at Stop
 reads a config the change has already rewritten. Cite the write with `sr-file`
-(grounding.md). Fixing a rule you wrote earlier in the session, after it passed, is a
-change to what stands: cite the output that showed it misfiring.
+(grounding.md). The rule cannot be switched off from the working tree: its `disabled:`
+entry counts only when the config committed at session start lists it.
 
 ## Turning one off
 
