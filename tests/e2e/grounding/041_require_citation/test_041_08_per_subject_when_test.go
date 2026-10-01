@@ -78,8 +78,7 @@ exit 1
 
 // T041_54: when the commit that changed the file is HEAD but HEAD is already pushed (a
 // remote branch contains it), rewriting it would diverge from what others have: the
-// refusal offers no amend and no squash. A later cited commit does not ground the pushed uncited
-// one, so the way out is the revert it prints (the net change is then nil).
+// refusal offers no amend and no squash, only the follow-up commit — which grounds it.
 func TestT041_54_APushedHeadIsNeverOfferedAnAmend(t *testing.T) {
 	const guard = `match: "memories/**"
 require:
@@ -112,8 +111,11 @@ require:
 	}
 	refused := len(e.StopContinuations(proj, sess))
 
-	e.Run(proj, sess, "undo it", Turns("done", harness.RefusalCommand(t, "undo", refusal, "git revert --no-commit", "")))
+	e.Run(proj, sess, "go on", Turns("done",
+		Write("w2", "memories/a.md", "# a changed\n"),
+		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
+	))
 	if got := len(e.StopContinuations(proj, sess)); got != refused {
-		t.Fatalf("the revert did not clear the refusal (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
+		t.Fatalf("the follow-up commit did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
