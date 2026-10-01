@@ -356,8 +356,10 @@ evaluated at the same time, on a pool of 6 (set `SLOPRAIL_STOP_CONCURRENCY` to
 change it; `1` is one rule at a time). Within a rule the checks still run in the
 order you declared them and the first refusal ends the rule. Across rules, every
 rule's `require` entries and script checks that precede its first judge run before
-any judge starts: a refusal from one of those is returned at once, and the other
-rules' judges are not run in that Stop; they are evaluated in the next. A Stop
+any of its judges starts. A refusal from one of those defers only THAT rule's own
+judges: each is recorded as a `skip` row with the reason (`sr-checks status` shows it)
+and runs in a later Stop once the cheap check passes. Every other rule's judges still
+run in the same Stop, so their refusals are reported beside the cheap one. A Stop
 reports each rule's time on stderr (`cheap checks`, `judges`, and the total).
 
 A file-guard has no `seen`: it is handed a changeset, not Post events. `seen`

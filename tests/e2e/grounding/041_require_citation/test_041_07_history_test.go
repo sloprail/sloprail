@@ -157,3 +157,44 @@ func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
 		t.Errorf("citing the second file was still refused (%d refusals, had %d):\n%s", n, seen, stopRefusal(e, proj, "s-041-53"))
 	}
 }
+
+// T041_70 (issue #134): a touch-commit does not wash a citation. An uncited
+// substantive commit X changes a file; a later whitespace-only commit Y carrying a
+// generic trailer grounds nothing, so the file stays uncited. A later commit that
+// makes a REAL change and cites grounds it; a whitespace-only commit after a cited
+// change takes nothing away.
+func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	e.Run(proj, "s-041-70", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\nthe decision\n"),
+		harness.Commit("x", "write the decision"),
+		Write("w2", "memories/a.md", "# log\n\nthe decision  \n"),
+		harness.Commit("y", "touch", harness.CitesUser("adopt a decision log")),
+	))
+	blocks := stopRefusal(e, proj, "s-041-70")
+	if !strings.Contains(blocks, noCitation) || !strings.Contains(blocks, "memories/a.md") {
+		t.Fatalf("a whitespace-only commit with a trailer washed the earlier uncited change:\n%s", blocks)
+	}
+
+	e2, proj2 := guarded(t, afterCitationGuard)
+	e2.Run(proj2, "s-041-70b", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\nthe decision\n"),
+		harness.Commit("x", "write the decision"),
+		Write("w2", "memories/a.md", "# log\nthe decision\nas asked\n"),
+		harness.Commit("z", "as asked", harness.CitesUser("adopt a decision log")),
+	))
+	if blocks := stopRefusal(e2, proj2, "s-041-70b"); blocks != "" {
+		t.Errorf("a real follow-up change that cites did not ground the file:\n%s", blocks)
+	}
+
+	e3, proj3 := guarded(t, afterCitationGuard)
+	e3.Run(proj3, "s-041-70c", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\nthe decision\n"),
+		harness.Commit("x", "write the decision", harness.CitesUser("adopt a decision log")),
+		Write("w2", "memories/a.md", "# log\n\nthe decision  \n"),
+		harness.Commit("y", "tidy whitespace"),
+	))
+	if blocks := stopRefusal(e3, proj3, "s-041-70c"); blocks != "" {
+		t.Errorf("a later whitespace-only commit un-grounded a cited change:\n%s", blocks)
+	}
+}

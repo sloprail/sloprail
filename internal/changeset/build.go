@@ -127,7 +127,12 @@ func attachCommits(dir string, r gitrepo.Range, cs *Changeset) error {
 	if err != nil {
 		return err
 	}
+	substantive, err := gitrepo.SubstantiveFileCommits(dir, r.Base, r.Head, refs)
+	if err != nil {
+		return err
+	}
 	for i := range cs.Files {
+		cs.Files[i].Substantive = substantive[cs.Files[i].Path]
 		commits := byPath[cs.Files[i].Path]
 		if len(commits) == 0 {
 			return fmt.Errorf("changeset: no commit of the range is found to have changed %q", cs.Files[i].Path)

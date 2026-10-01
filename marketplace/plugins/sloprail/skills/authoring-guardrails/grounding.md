@@ -90,7 +90,10 @@ own call.
   satisfied **per subject**, and the default subject is one selected file
   ([events.md](events.md#changeset--what-a-file-guards-checks-receive)): a file is
   grounded only by a citation whose trailer is in the commit that last changed THAT
-  file, so one commit citing one file grounds nothing else in the range, an uncited
+  file by more than whitespace (a whitespace-only or trailer-only commit grounds
+  nothing: it neither lends a citation to an earlier uncited change nor takes one
+  from a cited change; content is compared with whitespace stripped, and a file whose
+  every commit is whitespace-only is judged by its last commit), so one commit citing one file grounds nothing else in the range, an uncited
   change on top of a cited one leaves the file uncited, and a cited commit on top of
   an uncited one grounds the file as it now stands. Its `when` runs once per
   subject, on a payload whose `subject.files` is that file (the whole `Changeset`

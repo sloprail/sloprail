@@ -135,11 +135,10 @@ type ruleRun struct {
 //
 //  1. prepare every rule: its range, changeset and snapshot;
 //  2. the CHEAP checks of every rule: its requirements and the script checks that
-//     precede its first judge, in declared order. A refusal here is returned at once
-//     and the judges of the other rules are not waited on: their runs stay
-//     unfinished (so never a watermark) and the next Stop evaluates them;
-//  3. only when nothing refused, the rest of each rule (its judges and what follows)
-//     concurrently.
+//     precede its first judge, in declared order. A refusal here settles that rule
+//     alone: its own judges are recorded as skipped (with the reason);
+//  3. the rest of every rule that did not refuse (its judges and what follows)
+//     concurrently, so one rule's refusal never hides another rule's judges.
 //
 // Within a rule the declared order and first-refusal-ends are kept.
 func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p HookPayload, scope hookScope, root string, tip stopTip,
@@ -183,26 +182,13 @@ func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p 
 			ev.runCheap(runs[i])
 		}
 	})
-	cheapRefused := false
-	for _, o := range out {
-		if o != nil && o.settled && o.refused {
-			cheapRefused = true
+	// A refusal in one rule defers only that rule's own judges (runCheap records
+	// them as skipped); every other rule's judges still run.
+	forEach(len(runs), limit, func(i int) {
+		if runs[i] != nil && !runs[i].settled {
+			ev.runRest(runs[i])
 		}
-	}
-
-	if cheapRefused {
-		for _, rr := range runs {
-			if rr != nil && !rr.settled {
-				ev.abandon(rr)
-			}
-		}
-	} else {
-		forEach(len(runs), limit, func(i int) {
-			if runs[i] != nil && !runs[i].settled {
-				ev.runRest(runs[i])
-			}
-		})
-	}
+	})
 
 	var refusals []fileGuardResult
 	for _, o := range out {
@@ -427,6 +413,9 @@ func (ev *changesetEvaluation) runCheap(rr *ruleRun) {
 		}
 	}
 	if err != nil || v.Refused || rr.next >= len(rr.g.Checks) {
+		if err == nil && v.Refused {
+			ev.skipDeferred(rr)
+		}
 		ev.finish(rr, v, err)
 	}
 }
@@ -446,13 +435,23 @@ func (ev *changesetEvaluation) runRest(rr *ruleRun) {
 	ev.finish(rr, v, err)
 }
 
-// abandon drops a rule whose judges were not reached because another rule refused
-// on a cheap check. Its run stays unfinished — recorded RUNNING, so never a
-// watermark — and the next Stop evaluates it again.
-func (ev *changesetEvaluation) abandon(rr *ruleRun) {
-	fmt.Fprintf(ev.log(rr.g), "sloprail: file-guard %s: judges not run this Stop; another rule refused first\n", rr.g.Attribution())
-	ev.dropTree(rr.g, rr.tree, rr.head)
-	rr.settled = true
+// skipDeferred records, for a rule that refused on a cheap check, each judge it
+// did not reach as a skip row with the reason, so the store (and sr-checks status)
+// shows the judge was deferred rather than silently absent.
+func (ev *changesetEvaluation) skipDeferred(rr *ruleRun) {
+	for i := rr.next; i < len(rr.g.Checks); i++ {
+		c := rr.g.Checks[i]
+		if c.Judge == "" {
+			continue
+		}
+		reason := "judge deferred: this rule refused on a cheap check (" + rr.g.Qualified() + "); fix that and the judge runs next Stop"
+		fmt.Fprintf(ev.log(rr.g), "sloprail: file-guard %s: judge %q not run this Stop; the rule's own cheap check refused first\n", rr.g.Attribution(), c.Judge)
+		rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: checkstore.StatusSkip,
+			Metadata: map[string]any{"reasoning": reason, "model": c.Model}}
+		if err := ev.recordCheck(rr.runID, rec); err != nil {
+			fmt.Fprintln(ev.log(rr.g), "sloprail:", err)
+		}
+	}
 }
 
 // finish settles a rule: its run is finished and its stale failures resolved, and its
@@ -620,6 +619,9 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 		for _, f := range cs.Files {
 			if f.Path == path && len(f.Commits) > 0 {
 				tip = f.Commits[len(f.Commits)-1]
+				if len(f.Substantive) > 0 {
+					tip = f.Substantive[len(f.Substantive)-1] // whitespace-only commits ground nothing
+				}
 			}
 		}
 		allHead = allHead && tip != "" && tip == cs.Head

@@ -99,6 +99,10 @@ type File struct {
 	// Commits are the SHAs of the range's commits that changed this file, oldest
 	// first, a rename followed back to the name the file had before it.
 	Commits []string `json:"commits"`
+	// Substantive is the subset of Commits whose change to this file is more than
+	// whitespace. Not part of the wire form: it decides which commits must carry a
+	// citation (ForFile).
+	Substantive []string `json:"-"`
 }
 
 // Other is a file of the range the rule did not select.
@@ -204,16 +208,22 @@ func (cs Changeset) Change() string {
 	return b.String()
 }
 
-// ForFile is the citations that ground a file: those quoted by the commit that
-// last changed it. A citation grounds the change it rode on, so an uncited change
-// on top of a cited one leaves the file uncited, while a cited commit on top of an
-// uncited one grounds the file as it now stands — the same way `sr-file` cited the
-// whole file. A file no commit is known to have changed has no citations.
+// ForFile is the citations that ground a file: those quoted by the last commit of the
+// range that changed its content by more than whitespace. A citation grounds the
+// change it rode on, so an uncited real change on top of a cited one leaves the file
+// uncited, while a cited real change on top of an uncited one grounds the file as it
+// now stands. A whitespace-only commit (or an empty trailer-only one) grounds nothing
+// and is skipped: it can neither lend a citation to an earlier uncited change nor
+// take one away. A file whose every commit is whitespace-only is judged by the commit
+// that last changed it. A file no commit is known to have changed has no citations.
 func (cs Changeset) ForFile(f File) []Citation {
 	if len(f.Commits) == 0 {
 		return nil
 	}
 	tip := f.Commits[len(f.Commits)-1]
+	if len(f.Substantive) > 0 {
+		tip = f.Substantive[len(f.Substantive)-1]
+	}
 	var out []Citation
 	for _, c := range cs.Citations {
 		if slices.Contains(c.Commits, tip) {

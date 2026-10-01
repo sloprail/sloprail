@@ -1,0 +1,22 @@
+# Merging past an unresolved refusal is never legitimate: the refusal says the work
+# is wrong, and a merge lands it where the rule can no longer hold it. This gate
+# refuses `gh pr merge` (any flags, --admin included) while the branch being merged
+# has open refusals recorded in THIS session's check results, judged at that
+# branch's tip (open-refusals.sh asks `sr-checks sql`; the policy is all here).
+#
+# On by default, like every shipped rule, and switched off the same way: list
+# `sloprail/gate/no-merge-over-refusals` under `disabled:` in .sloprail/config.yaml
+# (a change to that file is itself gated by grounded-rule-changes).
+#
+# The one way past it is the user's own words: `when` applies the citation
+# requirement only when there ARE open refusals, so a merge with none is untouched,
+# and one with open refusals needs a user citation (the user said to merge anyway):
+#   sr-session trajectory cite '<their words>' && gh pr merge ...
+# Fixing is the other way: commit the fix, let the Stop judge the new tip, merge.
+on:
+  - event: PreCommandInvoke
+    match: >
+      any(event.invocations, .bin == "gh" and any(.argv, # == "pr") and any(.argv, # == "merge"))
+require:
+  - citation: {source_types: [user]}
+    when: ./open-refusals.sh

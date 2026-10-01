@@ -79,7 +79,7 @@ func TestT046_31_AnUncitedSpecChangeIsRefusedNamingOnlyTheSpec(t *testing.T) {
 		t.Fatalf("the refusal suggests squashing the range:\n%s", refusal)
 	}
 	e.Run(proj, sess, "go on", Turns("done",
-		Bash("touch", `printf '\n' >> SPEC.md`),
+		Bash("touch", `python3 -c "import pathlib; p=pathlib.Path('SPEC.md'); p.write_text(p.read_text().replace('goodwill refunds.', 'goodwill refunds (reviewed by hand).'))"`),
 		harness.RefusalCommand(t, "fix", refusal, "git add", changeRuleAsk),
 	))
 	refusals = e.AllBlockingErrorsFrom(proj, sess, "Stop")

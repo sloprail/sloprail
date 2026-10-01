@@ -31,6 +31,69 @@ type FileRef struct {
 // Any git failure, or output this does not understand, is an error: the answer
 // is complete or there is none.
 func FileCommits(dir, base, head string, files []FileRef) (map[string][]string, error) {
+	touches, err := fileTouches(dir, base, head, files)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string][]string, len(files))
+	for p, ts := range touches {
+		shas := make([]string, len(ts))
+		for i, t := range ts {
+			shas[i] = t.sha
+		}
+		result[p] = shas
+	}
+	return result, nil
+}
+
+// SubstantiveFileCommits is FileCommits keeping only the commits whose change to
+// the file is more than whitespace: the file's content, with all whitespace
+// stripped, differs from what it was in the commit's first parent. An added or
+// deleted file, a root commit, and anything that cannot be read count as
+// substantive (a change that cannot be shown to be whitespace is not waved
+// through). A commit that only touches whitespace changes nothing a citation could
+// ground, so it must neither need one nor lend one.
+func SubstantiveFileCommits(dir, base, head string, files []FileRef) (map[string][]string, error) {
+	touches, err := fileTouches(dir, base, head, files)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string][]string, len(files))
+	for p, ts := range touches {
+		shas := []string{}
+		for _, t := range ts {
+			if t.substantive(dir) {
+				shas = append(shas, t.sha)
+			}
+		}
+		result[p] = shas
+	}
+	return result, nil
+}
+
+// fileTouch is one commit's change to a file: its name in the commit and in the
+// commit's first parent.
+type fileTouch struct {
+	sha, path, parentPath string
+	status                byte
+}
+
+func (t fileTouch) substantive(dir string) bool {
+	if t.status == 'A' || t.status == 'D' {
+		return true
+	}
+	after, err := BlobAt(dir, t.sha, t.path)
+	if err != nil {
+		return true
+	}
+	before, err := BlobAt(dir, t.sha+"^1", t.parentPath)
+	if err != nil {
+		return true
+	}
+	return strings.Join(strings.Fields(before), "") != strings.Join(strings.Fields(after), "")
+}
+
+func fileTouches(dir, base, head string, files []FileRef) (map[string][]fileTouch, error) {
 	rng := base + ".." + head
 	if base == EmptyTree {
 		rng = head
@@ -44,38 +107,38 @@ func FileCommits(dir, base, head string, files []FileRef) (map[string][]string, 
 		return nil, err
 	}
 
-	result := make(map[string][]string, len(files))
+	result := make(map[string][]fileTouch, len(files))
 	for _, f := range files {
 		names := map[string]bool{f.Path: true}
 		if f.OldPath != "" {
 			names[f.OldPath] = true
 		}
-		var newestFirst []string
+		var newestFirst []fileTouch
 		for _, c := range commits {
-			touched := false
+			var touch *fileTouch
 			for _, e := range c.entries {
 				switch {
 				case e.status == 'R' || e.status == 'C':
 					if names[e.path] {
-						touched = true
+						touch = &fileTouch{sha: c.sha, status: e.status, path: e.path, parentPath: e.oldPath}
 						if e.status == 'R' {
 							delete(names, e.path)
 						}
 						names[e.oldPath] = true
 					}
 				case names[e.path]:
-					touched = true
+					touch = &fileTouch{sha: c.sha, status: e.status, path: e.path, parentPath: e.path}
 					if e.status == 'A' {
 						// Before it was added the file did not exist under this name.
 						delete(names, e.path)
 					}
 				}
 			}
-			if touched {
-				newestFirst = append(newestFirst, c.sha)
+			if touch != nil {
+				newestFirst = append(newestFirst, *touch)
 			}
 		}
-		oldest := make([]string, len(newestFirst))
+		oldest := make([]fileTouch, len(newestFirst))
 		for i, sha := range newestFirst {
 			oldest[len(newestFirst)-1-i] = sha
 		}
