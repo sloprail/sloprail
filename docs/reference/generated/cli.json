@@ -53,7 +53,7 @@
         "path": "sr-session changeset",
         "use": "changeset --rule <name>",
         "short": "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
-        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range runs from a base to HEAD, and the base is:\n\n  watermark      the latest head the rule passed, at ANY definition of the rule,\n                 while it is still an ancestor of HEAD (else its merge base with HEAD): work up\n                 to it was approved\n  otherwise\n    root floor     the PARENT of the last commit that touched the rule's whole\n                   .sloprail root (a rule that lives in this repository): the\n                   commit that adds or changes a rule, a schema or a shared lib is\n                   judged by it. A root commit's base is git's empty tree\n    session start  the HEAD recorded when this session began (the only candidate\n                   for a plugin's rule, whose root is outside this repository, or\n                   one not committed yet)\n  A rule that did NOT exist at session start (its folder is absent from that\n  commit's tree) applies from the commit that FIRST added its folder (never later than the root floor):\n  earlier history is grandfathered. A rule that existed then (also one\n  deleted and re-added; also when the start is unknown or unborn) uses the session\n  start, extended back only over ranges an earlier session of this worktree was\n  refused for and never fixed (from its check results): a rule changed long before the\n  session does not re-judge what was merged since, a refusal does not vanish when a\n  second session starts, and nothing made in this session is skipped.\n\nThe watermark is not stored on its own: it is the newest run of the rule that\npassed and whose head is still an ancestor of HEAD, read from the session's check\nresults (`sr-checks status` shows them).\n\nA watermark or session start the tree left (an amend, a rebase, a reset) is not\nskipped: it is re-anchored at its merge base with HEAD. A session start git no longer\nhas, or that shares no history with HEAD, falls to git's empty tree (everything is\njudged, the root commit included); so does a session that began before the first commit.\n\nIf none can be used — no watermark, no floor, and no session start recorded — the\ncommand fails rather than guess.\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified\nname as a refusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  origin              which base was used: watermark | floor | session-start\n  base, head          the range, as SHAs\n  droppedWatermark    a watermark that was offered and is no longer reachable\n                      (an amend or a rebase), when there was one\n  ruleHash            the hash of the rule's whole .sloprail root (its own folder,\n                      every other rule, schemas and shared scripts)\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits,\n                      files, others, citations — each with the commits that carried\n                      it and the files they changed), subject\n\nNothing is run and nothing is recorded. Where the session cannot be found from\nthe environment (no CLAUDE_CODE_SESSION_ID), there is no watermark and no\nsession start, and quotes are not resolved; the root floor still applies.",
+        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range runs from a base to HEAD, and the base is:\n\n  watermark      the latest head the rule passed, at ANY definition of the rule,\n                 while it is still an ancestor of HEAD (else its merge base with HEAD): work up\n                 to it was approved\n  otherwise\n    root floor     the PARENT of the last commit that touched the rule's whole\n                   .sloprail root (a rule that lives in this repository): the\n                   commit that adds or changes a rule, a schema or a shared lib is\n                   judged by it. A root commit's base is git's empty tree\n    session start  the HEAD recorded when this session began (the only candidate\n                   for a plugin's rule, whose root is outside this repository, or\n                   one not committed yet)\n  A rule that did NOT exist at session start (its folder is absent from that\n  commit's tree) applies from the commit that FIRST added its folder (never later than the root floor):\n  earlier history is grandfathered. A rule that existed then (also one\n  deleted and re-added; also when the start is unknown or unborn) uses the session\n  start, extended back only over ranges an earlier session of this worktree was\n  refused for and never fixed (from its check results): a rule changed long before the\n  session does not re-judge what was merged since, a refusal does not vanish when a\n  second session starts, and nothing made in this session is skipped.\n\nThe watermark is not stored on its own: it is the newest run of the rule that\npassed and whose head is still an ancestor of HEAD, read from the session's check\nresults (`sr-checks status` shows them).\n\nA watermark or session start the tree left (an amend, a rebase, a reset) is not\nskipped: it is re-anchored at its merge base with HEAD. A session start git no longer\nhas, or that shares no history with HEAD, falls to git's empty tree (everything is\njudged, the root commit included); so does a session that began before the first commit.\n\nIf none can be used — no watermark, no floor, and no session start recorded — the\ncommand fails rather than guess.\n\nThis shows HEAD's range. At Stop the rule is also judged over every other branch (and\ndetached-HEAD commit) the session committed on, each with the same logic and its own\nsnapshot; those tips are the session's recorded refs (`sr-session refs list`).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified\nname as a refusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  origin              which base was used: watermark | floor | session-start\n  base, head          the range, as SHAs\n  droppedWatermark    a watermark that was offered and is no longer reachable\n                      (an amend or a rebase), when there was one\n  ruleHash            the hash of the rule's whole .sloprail root (its own folder,\n                      every other rule, schemas and shared scripts)\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits,\n                      files, others, citations — each with the commits that carried\n                      it and the files they changed), subject\n\nNothing is run and nothing is recorded. Where the session cannot be found from\nthe environment (no CLAUDE_CODE_SESSION_ID), there is no watermark and no\nsession start, and quotes are not resolved; the root floor still applies.",
         "flags": [
           {
             "name": "rule",
@@ -65,6 +65,18 @@
         "path": "sr-session id",
         "use": "id",
         "short": "The identity this conversation keeps, whatever id the harness now reports"
+      },
+      {
+        "path": "sr-session judge",
+        "use": "judge [--dir <repository>]",
+        "short": "Run the file-guards over what the session committed in a repository, as Stop would",
+        "long": "Run every file-guard over what this session committed in a repository: HEAD and each\nother branch it recorded there (`sr-session refs list`), under that repository's own rules.\nVerdicts are recorded like a Stop's, so the Stop that follows finds a passed range already passed.\n\nRun from a hook script (it reads the session from SR_SESSION_ID and SR_TRANSCRIPT, and the\nrepository from --dir, else SR_WORKSPACE, else the current directory).\n\nExit 0 when nothing refuses. Otherwise the refusals are printed, one block per rule, and the\nexit status is 1.",
+        "flags": [
+          {
+            "name": "dir",
+            "usage": "a directory inside the repository to judge (default: the session workspace)"
+          }
+        ]
       },
       {
         "path": "sr-session pre-tool",
@@ -90,6 +102,85 @@
             "name": "whole-session",
             "default": "false",
             "usage": "Read the entire record, not just the part no cycle has judged yet"
+          }
+        ]
+      },
+      {
+        "path": "sr-session refs",
+        "use": "refs",
+        "short": "The refs a session committed on, which a file-guard judges at Stop",
+        "long": "The refs a session committed on, per folder (the session_refs table of the session's\nstore). At Stop every file-guard judges each recorded tip, not only HEAD, so a branch the\nagent left is still judged and its pull request cannot merge unchecked.\n\nThe engine records them itself from the folder's reflog; `refs add` writes one by hand,\nfor a ref the engine has not seen or a session begun before it did.",
+        "children": [
+          {
+            "path": "sr-session refs abandon",
+            "use": "abandon --ref <branch> --cite-user '<exact quote>'",
+            "short": "Drop a recorded branch the user said to abandon, so Stop no longer judges it",
+            "long": "Mark a recorded ref abandoned so it is no longer judged at Stop.\n\nAccepted only when --cite-user is an exact quote of the USER's own words in this session\n(the same resolver as `sr-session trajectory cite`, user pool only): ask the user whether the\nbranch should be dropped, then cite their answer. An assistant's or a tool's words do not count.\n\nThe ref is abandoned AT its current tip. If the tip later moves, or the commit is pushed\n(or merged), it is judged again. Deleting the branch does not abandon it.\n\n--folder is the repository's git root (default: the current directory's).",
+            "flags": [
+              {
+                "name": "cite-user",
+                "usage": "an exact quote of the user's own words dropping this branch"
+              },
+              {
+                "name": "folder",
+                "usage": "the repository's git root (default: the current directory's)"
+              },
+              {
+                "name": "path",
+                "usage": "which trajectory to resolve the quote in; defaults to the current session's"
+              },
+              {
+                "name": "ref",
+                "usage": "the branch (or detached/<sha12>) to abandon"
+              }
+            ]
+          },
+          {
+            "path": "sr-session refs add",
+            "use": "add --session <id> --folder <git root> --ref <name> --tip <sha>",
+            "short": "Record a ref the session committed on, so Stop judges its tip",
+            "long": "Record a ref the session committed on. At the session's next Stop every file-guard\njudges this tip as well as HEAD (the ref's CURRENT tip when it still exists, else --tip).\n\n--ref is a branch name ('feat-a' or 'refs/heads/feat-a'), or 'detached/<sha12>' for commits left\non a detached HEAD. --folder is the repository's git root (default: --workspace). --agent\nnames the sub-agent that owns the row (default: none, the session itself).",
+            "flags": [
+              {
+                "name": "agent",
+                "usage": "the sub-agent that owns the row (default: the session itself)"
+              },
+              {
+                "name": "folder",
+                "usage": "the repository's git root (default: --workspace)"
+              },
+              {
+                "name": "ref",
+                "usage": "the branch name, or detached/<sha12>"
+              },
+              {
+                "name": "session",
+                "usage": "the session's stable id (`sr-session id`)"
+              },
+              {
+                "name": "tip",
+                "usage": "the commit the ref points at (40 hex characters)"
+              },
+              {
+                "name": "workspace",
+                "usage": "the directory the session began in (default: the current directory)"
+              }
+            ]
+          },
+          {
+            "path": "sr-session refs list",
+            "use": "list --session <id>",
+            "short": "The refs recorded for a session, one per line: folder, ref, tip, agent",
+            "flags": [
+              {
+                "name": "session",
+                "usage": "the session's stable id (`sr-session id`)"
+              },
+              {
+                "name": "workspace",
+                "usage": "the directory the session began in (default: the current directory)"
+              }
+            ]
           }
         ]
       },
@@ -407,7 +498,14 @@
         "path": "sr-checks sql",
         "use": "sql '<select>'",
         "short": "Run a read-only SELECT over the check tables",
-        "long": "Run a read-only SELECT over the session's check results and print the rows as\na JSON array.\n\nOnly a SELECT (or a WITH ... SELECT) is accepted, and the connection is read-only\nbesides, so nothing a statement says can change the record. The tables are\ncheck_runs, checks and check_items — a10n's shape; a rule's identity is\ncheck_runs.check_id, its range base_ref..head_ref, and a check's outcome is\nchecks.status with its findings in checks.metadata (JSON).\n\nEXAMPLES:\n  sr-checks sql 'select check_id, head_ref, error from check_runs order by run_at desc'\n  sr-checks sql \"select subject, kind, status from checks where status = 'fail'\"\n  sr-checks sql \"select json_extract(metadata, '$.reasoning') as why from checks where status = 'fail'\"\n\nUnlike `status`, nothing recorded yet IS an error here: there are no tables to query."
+        "long": "Run a read-only SELECT over the session's check results and print the rows as\na JSON array.\n\nOnly a SELECT (or a WITH ... SELECT) is accepted, and the connection is read-only\nbesides, so nothing a statement says can change the record. The tables are\ncheck_runs, checks and check_items — a10n's shape; a rule's identity is\ncheck_runs.check_id, its range base_ref..head_ref, and a check's outcome is\nchecks.status with its findings in checks.metadata (JSON).\n\nEXAMPLES:\n  sr-checks sql 'select check_id, head_ref, error from check_runs order by run_at desc'\n  sr-checks sql \"select subject, kind, status from checks where status = 'fail'\"\n  sr-checks sql \"select json_extract(metadata, '$.reasoning') as why from checks where status = 'fail'\"\n\n--family runs the SELECT over every store of the session family — the root session's\nand those of its sub-agents, which keep their own stores under their own worktrees —\nand concatenates the rows, each with a \"_store\" field naming its database. A merge gate\nasks this: a refusal a sub-agent's Stop recorded is the coordinator's to respect. A store\nof the family that cannot be read is an error, never an empty answer.\n\nUnlike `status`, nothing recorded yet IS an error here: there are no tables to query.\n(With --family, no store at all is an empty list.)",
+        "flags": [
+          {
+            "name": "family",
+            "default": "false",
+            "usage": "Run over every store of the session family (root and sub-agents)"
+          }
+        ]
       },
       {
         "path": "sr-checks status",

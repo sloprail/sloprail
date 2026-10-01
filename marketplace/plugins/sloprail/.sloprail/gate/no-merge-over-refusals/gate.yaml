@@ -1,25 +1,34 @@
-# Merging past an unresolved refusal is never legitimate: the refusal says the work
-# is wrong, and a merge lands it where the rule can no longer hold it. Neither is merging
-# a tip this session recorded that no rule has passed yet (no finished passing run for
-# every file-guard that ran): the hint tells the agent to END ITS TURN so Stop judges it
-# first, then merge in a later turn. This gate
-# refuses `gh pr merge` (any flags, --admin included) while the branch being merged
-# has open refusals recorded in THIS session's check results, judged at that
-# branch's tip (open-refusals.sh asks `sr-checks sql`; the policy is all here).
+# Landing work past an unresolved refusal is never legitimate: the refusal says the work
+# is wrong, and landing it puts it where the rule can no longer hold it. Neither is landing
+# a tip this session (or one of its sub-agents) recorded that no rule has passed yet: the
+# hint tells the agent to END ITS TURN so Stop judges it first, then merge in a later turn.
+#
+# What it watches: `gh pr merge` (any flags, --admin included, -R/--repo), `gh api` calls
+# that merge a pull request, and `git push` to the default branch. open-refusals.sh asks
+# the whole session family's check results (`sr-checks sql --family`: the root session's
+# and every sub-agent's, which keep their own stores) for refusals at the landing commits,
+# found by branch name AND by the PR head's oid; the policy is all in that script.
+#
+# It FAILS CLOSED: a command whose target the script cannot determine (a shell variable
+# or loop in place of the PR number, an unknown flag, a PR gh cannot look up) is refused
+# with the advice to name the pull request literally.
 #
 # On by default, like every shipped rule, and switched off the same way: list
 # `sloprail/gate/no-merge-over-refusals` under `disabled:` in .sloprail/config.yaml
 # (a change to that file is itself gated by grounded-rule-changes).
 #
-# The one way past it is the user's own words: `when` applies the citation
-# requirement only when there ARE open refusals, so a merge with none is untouched,
-# and one with open refusals needs a user citation (the user said to merge anyway):
+# The one way past it is the user's own words: `when` applies the citation requirement
+# only when there is something to refuse (open refusals, unjudged commits, or a target it
+# cannot determine), and then needs a user citation (the user said to land it anyway):
 #   sr-session trajectory cite '<their words>' && gh pr merge ...
 # Fixing is the other way: commit the fix, let the Stop judge the new tip, merge.
 on:
   - event: PreCommandInvoke
     match: >
-      any(event.invocations, .bin == "gh" and any(.argv, # == "pr") and any(.argv, # == "merge"))
+      any(event.invocations,
+        (.bin == "gh" and any(.argv, # == "pr") and any(.argv, # == "merge")) or
+        (.bin == "gh" and any(.argv, # == "api")) or
+        (.bin == "git" and any(.argv, # == "push")))
 require:
   - citation: {source_types: [user]}
     when: ./open-refusals.sh

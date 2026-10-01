@@ -11,6 +11,7 @@ import (
 func unjudgedProject(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e := harness.New(t, harness.WithoutShippedFileGuards())
+	fakeGH(t, e, nil)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
