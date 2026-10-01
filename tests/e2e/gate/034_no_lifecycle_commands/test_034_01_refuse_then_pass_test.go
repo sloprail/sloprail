@@ -17,7 +17,7 @@ func lifecycleProject(t *testing.T) (*harness.Env, string) {
 }
 
 // T034_01: an agent running the hook entry points itself is refused, with the way forward;
-// the read-only commands, and the documented load check, are not.
+// the read-only commands are not. The load check is refused too: load errors reach the agent on their own.
 func TestT034_01_LifecycleCommandsAreRefusedAndReadOnlyOnesAreNot(t *testing.T) {
 	const sess = "s-034-01"
 	e, proj := lifecycleProject(t)
@@ -27,6 +27,7 @@ func TestT034_01_LifecycleCommandsAreRefusedAndReadOnlyOnesAreNot(t *testing.T) 
 		`sr-session stop < /dev/null`,
 		`cd . && sr-session subagent-stop`,
 		`sr session pre-tool`,
+		`sr-session start < /dev/null`,
 	} {
 		res := e.Run(proj, sess, "run it", Turns("done", Bash("l"+string(rune('a'+i)), cmd)))
 		if !res.Refused() || !res.Saw("no-lifecycle-commands") || !res.Saw("Stop hook judges") {
@@ -35,7 +36,6 @@ func TestT034_01_LifecycleCommandsAreRefusedAndReadOnlyOnesAreNot(t *testing.T) 
 	}
 
 	for i, cmd := range []string{
-		"sr-session start < /dev/null",
 		"sr-session refs list --session nothing; sr-session trajectory describe --help",
 		"sr-checks status",
 	} {

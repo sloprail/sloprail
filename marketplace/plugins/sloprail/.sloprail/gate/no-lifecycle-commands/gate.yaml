@@ -10,8 +10,8 @@
 # Only commands the AGENT runs reach this gate (PreCommandInvoke is the agent's Bash tool);
 # the hook wrapper invokes the binary itself, outside it. Read-only commands stay allowed:
 # `sr-session trajectory`, `refs list`, `state get/list`, `changeset`, `sr-checks status|sql`.
-# The one allowed use of `start` is the documented load check, `sr-session start < /dev/null`
-# (it reads no session and only reports which rules fail to load).
+# `start` is refused too, even as `sr-session start < /dev/null`: load errors are reported to
+# the agent at every hook and at Stop, so an agent never needs to run it.
 #
 # On by default, like every shipped rule, and switched off by listing
 # `sloprail/gate/no-lifecycle-commands` under `disabled:` in .sloprail/config.yaml.
@@ -20,13 +20,8 @@ on:
     match: >-
       any(event.invocations,
         (.bin == "sr-session" and len(.argv) > 1 and
-          (.argv[1] == "stop" or .argv[1] == "pre-tool" or .argv[1] == "subagent-stop")) or
+          (.argv[1] == "start" or .argv[1] == "stop" or .argv[1] == "pre-tool" or .argv[1] == "subagent-stop")) or
         (.bin == "sr" and len(.argv) > 2 and .argv[1] == "session" and
-          (.argv[2] == "stop" or .argv[2] == "pre-tool" or .argv[2] == "subagent-stop")))
-      or
-      (any(event.invocations,
-        (.bin == "sr-session" and len(.argv) > 1 and .argv[1] == "start") or
-        (.bin == "sr" and len(.argv) > 2 and .argv[1] == "session" and .argv[2] == "start"))
-       and not (event.raw contains "/dev/null"))
+          (.argv[2] == "start" or .argv[2] == "stop" or .argv[2] == "pre-tool" or .argv[2] == "subagent-stop")))
 checks:
   - script: ./refuse.sh

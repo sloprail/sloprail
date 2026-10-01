@@ -286,7 +286,7 @@ if [ "$subcommand" = "start" ]; then
   problems="$(grep -v ' owns \|no baseline recorded\|rules loaded\|^sloprail: identity:' "$report" 2>/dev/null || true)"
   if [ -n "$problems" ]; then
     echo
-    echo "sloprail load check: what follows is NOT in force until fixed (the sloprail:authoring-guardrails skill has the format; re-check with: sr-session start < /dev/null)"
+    echo "sloprail load check: what follows is NOT in force until fixed (the sloprail:authoring-guardrails skill has the format; it is re-checked automatically at the next hook)"
     printf '%s\n' "$problems"
   fi
   rm -f "$report"
