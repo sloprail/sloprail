@@ -159,3 +159,20 @@ func TestBaseAgentEnv_DropsAmbientSession(t *testing.T) {
 		}
 	}
 }
+
+// Two runs never share a temp root: each agent's TMPDIR is its own workspace's,
+// so a clone made through $TMPDIR or mktemp cannot collide with an earlier run's.
+func TestBaseAgentEnv_TMPDIRIsPerRun(t *testing.T) {
+	tmpOf := func(root string) string {
+		for _, kv := range baseAgentEnv([]string{"TMPDIR=/tmp"}, root+"/home", root+"/tmp", false) {
+			if v, ok := strings.CutPrefix(kv, "TMPDIR="); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	a, b := tmpOf("/ws/run-a"), tmpOf("/ws/run-b")
+	if a == "" || b == "" || a == b || a == "/tmp" || b == "/tmp" {
+		t.Errorf("want distinct per-run TMPDIRs, got %q and %q", a, b)
+	}
+}

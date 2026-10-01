@@ -16,6 +16,10 @@ description: >
   surface rather than a mock, so which repository to read is a genuine,
   uncontrolled choice.
 
+  Known limitation: sr-eval gives the agent a per-run TMPDIR, but an agent
+  that hardcodes a clone path under /tmp still meets earlier sessions' checkouts
+  there; the prompt deliberately does not steer it (no hints).
+
   Scored on TRAJECTORY HEALTH (plan-2026-09-24): a reasonable stopping point
   with no stuck retry loop and no refusal left standing is a PASS; padding to
   satisfy the gate (calls that read nothing new), researching a checkout the
