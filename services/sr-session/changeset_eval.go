@@ -254,9 +254,28 @@ func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checks
 	if _, recErr := ev.record(run); recErr != nil {
 		fmt.Fprintln(ev.log(g), "sloprail:", recErr) // already refusing
 	}
-	return refusal(g, fmt.Sprintf(
+	return refusal(g, namingFiles(fmt.Sprintf(
 		"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
-		g.Name, err)), true
+		g.Name, err), ev.workingFiles())), true
+}
+
+// workingFiles are the files an engine failure names when no range could be computed:
+// the working tree's uncommitted changes, else what the HEAD commit changed.
+func (ev *changesetEvaluation) workingFiles() []changeset.File {
+	var files []changeset.File
+	if changes, err := gitrepo.UncommittedChanges(ev.root); err == nil {
+		for _, c := range changes {
+			files = append(files, changeset.File{Path: c.Path})
+		}
+	}
+	if len(files) == 0 {
+		if paths, err := gitrepo.HeadChangedPaths(ev.root); err == nil {
+			for _, p := range paths {
+				files = append(files, changeset.File{Path: p})
+			}
+		}
+	}
+	return files
 }
 
 // record stores a run, returning its id ("" when there is no store to record in).
@@ -471,7 +490,7 @@ func namingFiles(reason string, files []changeset.File) string {
 		more = fmt.Sprintf(" (and %d more)", len(paths)-maxNamedFiles)
 		paths = paths[:maxNamedFiles]
 	}
-	return reason + "\nThe files this refusal is about (the changeset the rule judged): " + strings.Join(paths, ", ") + more
+	return reason + "\nThe files this refusal is about: " + strings.Join(paths, ", ") + more
 }
 
 // runRequires runs a rule's `require` entries in order, recording each and stopping

@@ -88,7 +88,9 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 		// where it began: not a floor. Without another, the range fails closed.
 		if _, atStop, err := state.Meta(sessionstate.MetaBaselineAtStop); err != nil {
 			return gitrepo.Range{}, err
-		} else if atStop {
+		} else if atStop && sessionStart != gitrepo.EmptyTree {
+			// (A session recorded as begun before the first commit keeps its empty-tree
+			// start: that is where the work began, wherever the Stop first looked.)
 			sessionStart = ""
 		}
 	}

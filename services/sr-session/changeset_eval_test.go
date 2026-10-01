@@ -19,6 +19,7 @@ import (
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -481,4 +482,19 @@ func TestNamingFiles(t *testing.T) {
 	assert.Contains(t, got, "f00.md")
 	assert.NotContains(t, got, fmt.Sprintf("f%02d.md", maxNamedFiles))
 	assert.Contains(t, got, "(and 3 more)")
+}
+
+// An engine failure (no range could be computed) still names the files it is about.
+func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, "x")) // no kept start
+	ev := f.newEvaluation(f.results)
+	ev.state = state
+
+	r, refused := ev.evaluate(f.guard)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "could not be evaluated")
+	assert.Contains(t, r.Reason, "docs/a.md")
 }

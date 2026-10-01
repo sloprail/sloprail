@@ -214,7 +214,7 @@ func TestT003_33_ASessionWithoutAKeptStartFailsClosed(t *testing.T) {
 	e.CommitAll(proj, "add a")
 
 	r := e.StopNow(proj, sess, false)
-	if !harness.Blocked(r) || !strings.Contains(r.Output, "did not keep the commit it began at") {
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "did not keep the commit it began at") || !strings.Contains(r.Output, "docs/a.md") {
 		t.Fatalf("a session without a kept start did not fail closed with its reason:\n%s", r.Output)
 	}
 }
