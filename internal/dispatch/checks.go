@@ -178,7 +178,7 @@ func (r Runner) Judge(req Request, c declaration.Check, p Prepared) (Verdict, er
 		LaunchedBy:      req.LaunchedBy,
 		AllowedTools:    c.AllowedTools,
 		DisallowedTools: c.DisallowedTools,
-		Workspace:       req.Workspace,
+		Workspace:       req.judgeProject(),
 		Env:             req.Env,
 	})
 }
@@ -467,4 +467,13 @@ func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\
 // asks one at a time.
 func (r Runner) CheckRequire(req Request) (Verdict, error) {
 	return r.withDefaults().checkRequire(req)
+}
+
+// judgeProject is the project tree a judge reads: the snapshot of the tip being judged
+// when the request carries one, else the workspace.
+func (req Request) judgeProject() string {
+	if req.ProjectRoot != "" {
+		return req.ProjectRoot
+	}
+	return req.Workspace
 }

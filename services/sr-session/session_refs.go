@@ -53,13 +53,24 @@ func (t stopTip) describe(folder string) string {
 	name := strings.TrimPrefix(strings.TrimPrefix(t.Ref, "refs/heads/"), "refs/remotes/")
 	drop := fmt.Sprintf("If the USER wants this branch dropped, ask them, then run `sr-session refs abandon --ref %s --folder %s "+
 		"--cite-user '<their exact words>'` citing what they said. ", shellQuote(name), shellQuote(folder))
+	// Never tell the agent to switch this folder's checkout: it is the coordination
+	// worktree, and the ref is judged on its own tree wherever it lives.
 	if strings.HasPrefix(t.Ref, "detached/") {
 		return fmt.Sprintf("On commits made on a detached HEAD and left (%s, in %s), which are not checked out: "+
-			"give them a branch (`git -C %s switch -c <name> %s`), fix there, commit, and stop again. %s",
-			short(t.Sha), folder, shellQuote(folder), short(t.Sha), drop)
+			"they are judged on their own tree. Give them a branch and a worktree of their own "+
+			"(`git -C %s branch <name> %s`, then `git -C %s worktree add <path> <name>`), fix there, commit, and stop again; "+
+			"do not switch this folder's checkout. %s",
+			short(t.Sha), folder, shellQuote(folder), short(t.Sha), shellQuote(folder), drop)
+	}
+	if other := gitrepo.CheckedOutAt(folder, t.Ref); other != "" {
+		return fmt.Sprintf("On branch %s, which is checked out in another worktree (%s): this session committed on it, "+
+			"so its commits are judged too, on that branch's own tree. Fix it in that worktree (`cd %s`), commit, and stop again; "+
+			"do not switch this folder (%s) to it. %s",
+			name, other, shellQuote(other), folder, drop)
 	}
 	return fmt.Sprintf("On branch %s (in %s), which is not checked out: this session committed on it, "+
-		"so its commits are judged too. Fix it there (`git -C %s switch %s`), commit, and stop again. %s",
+		"so its commits are judged too, on that branch's own tree. Fix it in a new worktree "+
+		"(`git -C %s worktree add <path> %s`), commit there, and stop again; do not switch this folder's checkout. %s",
 		name, folder, shellQuote(folder), shellQuote(name), drop)
 }
 
