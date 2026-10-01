@@ -48,6 +48,12 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		// dispatch without a store (gate and context state in memory for this cycle),
 		// and say so in the refusal if it refuses. Never a silent pass.
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: session state unavailable at Stop, judging without it:", err)
+		if p.Cwd == "" {
+			// No folder named: there is nothing to judge, and guessing the process's own
+			// directory would judge somebody else's tree. Plumbing, never a block.
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the payload names no working directory, so there is no folder to judge")
+			return nil
+		}
 		if reason := natureStopDispatch(cmd, p); reason != "" {
 			note := fmt.Sprintf("\n(sloprail's session state could not be opened, so this Stop was judged without it and the refusal-loop cap does not apply: %v)", err)
 			if berr := block(cmd, reason+note); berr != nil {
