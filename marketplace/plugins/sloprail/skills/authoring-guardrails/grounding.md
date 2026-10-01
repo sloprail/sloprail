@@ -220,11 +220,9 @@ file-guard's after-check still refuses a change that reached the tree without a
 citation (one `when` does not waive).
 `when` works on any prerequisite, on every nature.
 
-A change to the project's own rules is one that must be grounded. The plugin ships
-that as `sloprail/file-guard/grounded-rule-changes` (a `PreFileWrite` gate on
-`.sloprail/config.yaml` beside it): [SKILL.md](SKILL.md#changing-or-removing-a-rule-needs-a-ground)
-and its README there are a worked example of `require: citation` on a file-guard with a
-`when` and a judge.
+The plugin's `sloprail/file-guard/grounded-rule-changes` (with a `PreFileWrite` gate on
+`.sloprail/config.yaml`) is a worked example of `require: citation` on a file-guard with
+a `when` and a judge; its folder holds the files and a README.
 
 ## Judging it
 
