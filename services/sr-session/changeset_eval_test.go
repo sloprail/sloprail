@@ -19,7 +19,6 @@ import (
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/natures"
-	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -490,7 +489,7 @@ func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "docs/a.md", "clean")
 	state := openStore(t)
-	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, "x")) // no kept start
+	require.NoError(t, state.Close()) // a store that cannot be read: no range can be computed
 	ev := f.newEvaluation(f.results)
 	ev.state = state
 
