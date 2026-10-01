@@ -1,6 +1,6 @@
 ---
 name: cite-sources
-description: Use when writing any markdown file in this repo — every such file restates what other files say, so the write must cite the exact source output it comes from.
+description: Use when writing any markdown file in this repo — every such file restates what other files say, so the write must cite the exact source output it comes from, and the commit that lands it must cite it too.
 ---
 
 # Citing Sources in Markdown
@@ -24,6 +24,24 @@ EOF
 - Run `sr-file` on its own in the command (nothing else in the line but
   `sr-file` calls, `&&` and `echo`).
 - Say only what the cited output says — not a looser or sharper version of it.
+
+Then commit the file. The commit is judged at the end of the turn, and it carries
+the same quotes as `Sloprail-Cites-Tool:` trailers, one per quote:
+
+```bash
+git add MIGRATION.md
+git commit -m 'Add the migration note' \
+  --trailer 'Sloprail-Cites-Tool: <exact words from the source output>' \
+  --trailer 'Sloprail-Cites-Tool: <another exact fragment>'
+```
+
+- The trailers must be in the commit that last changed the file. An empty commit
+  carrying only trailers does not count.
+- Trailers live in the LAST paragraph of the message. If you add a
+  `Co-Authored-By:` line, keep it in that same paragraph as the trailers (use
+  `--trailer` for it too). A `-m 'Co-Authored-By: …'` after a
+  `-m 'Sloprail-Cites-Tool: …'` is a new paragraph, and the citations stop
+  counting.
 
 A markdown write without a citation is refused, and so is a claim the cited
 output does not support.

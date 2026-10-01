@@ -416,9 +416,10 @@ $es_facts"
 # guardrail_fired_check: a purely INFORMATIONAL signal (never gates the
 # overall verdict on its own under the new plan) — did the named guardrail
 # ever refuse anything in this transcript at all. Greps the transcript's own
-# tool_result content for the guardrail's attribution string, the same
-# `gate "<name>"` / `file-guard "<name>"` text nature_*.go appends to every
-# refusal.
+# content for the guardrail's attribution, which a refusal prints as
+# `[<plugin>/]file-guard/<name>` or `[<plugin>/]gate/<name>` (a path such as
+# `.sloprail/file-guard/<name>/…` is not one). The older quoted
+# `gate "<name>"` / `file-guard "<name>"` form still counts, as follows.
 #
 # The quote before/after the name may be a literal `"` or a JSON-escaped
 # `\"` — which one appears depends on how many times the refusal text itself
@@ -436,12 +437,67 @@ guardrail_fired_check() {
     # The sub-agents' records too: a rule refusing inside a sub-agent (at its
     # SubagentStop, or a tool call it made) is written there, not in the root.
     count="$({ cat "$SR_EVAL_TRANSCRIPT"; cat_subagent_records; } 2>/dev/null \
-      | grep -o "\\\\\{0,1\}\"$name\\\\\{0,1\}\"" | wc -l | tr -d ' ')"
+      | grep -oE "(^|[^/A-Za-z0-9_.-])([a-z0-9-]+/)?(file-guard|gate)/$name([^/A-Za-z0-9_.-]|$)|\\\\?\"$name\\\\?\"" | wc -l | tr -d ' ')"
   fi
   GF_COUNT="$count"
   if [ "$count" -gt 0 ]; then
     GF_STATUS="fired"
   else
     GF_STATUS="never-fired"
+  fi
+}
+
+# file_guard_judge_ran: did the named file-guard's judge actually reach a verdict
+# on the run's committed changes? A file-guard's results are rows in the run's
+# checks.db (internal/checkstore), beside the session's state under the data
+# home; a judge that was skipped (its prepare script found nothing to judge) is
+# recorded as `skip`, which is NOT a judgement, so a run whose rule never judged
+# anything cannot pass on that rule's behalf.
+#
+# The database is found by the project's directory, the way the engine keys its
+# state (symlinks resolved, every non-alphanumeric character becomes `-`). The
+# data home is the one the agent ran with: $XDG_DATA_HOME, else Library/
+# Application Support (macOS) or .local/share under SR_EVAL_AGENT_HOME, else the
+# same under the scorer's own HOME (a sandbox links ~/Library in).
+#
+# Usage: file_guard_judge_ran '<name>' ; # sets JUDGE_RAN (yes/no/unknown), JUDGE_DETAIL
+# unknown: no sqlite3, or no checks.db found at all (nothing to say either way).
+file_guard_judge_ran() {
+  fg_name="$1"
+  JUDGE_RAN="unknown"
+  JUDGE_DETAIL="no check-results database found for this run"
+  command -v sqlite3 >/dev/null 2>&1 || { JUDGE_DETAIL="sqlite3 is not installed"; return 0; }
+  fg_proj="${SR_EVAL_PROJECT_DIR:-}"
+  [ -n "$fg_proj" ] || return 0
+  fg_real="$(cd "$fg_proj" 2>/dev/null && pwd -P || printf '%s' "$fg_proj")"
+  fg_enc="$(printf '%s' "$fg_real" | sed 's/[^a-zA-Z0-9]/-/g')"
+  fg_n=0
+  fg_skipped=0
+  fg_found="no"
+  for fg_root in \
+    "${XDG_DATA_HOME:-}" \
+    "${SR_EVAL_AGENT_HOME:-/nonexistent}/Library/Application Support" \
+    "${SR_EVAL_AGENT_HOME:-/nonexistent}/.local/share" \
+    "${HOME:-/nonexistent}/Library/Application Support" \
+    "${HOME:-/nonexistent}/.local/share"; do
+    [ -n "$fg_root" ] || continue
+    for fg_db in "$fg_root/sloprail/sessions/$fg_enc"/*/checks.db; do
+      [ -f "$fg_db" ] || continue
+      fg_found="yes"
+      fg_q="from check_runs r join checks c on c.run_id = r.id where (r.check_id = '$fg_name' or r.check_id like '%/$fg_name') and c.kind like '%judge%'"
+      n="$(sqlite3 "$fg_db" "select count(*) $fg_q and c.status in ('pass','fail')" 2>/dev/null || echo 0)"
+      s="$(sqlite3 "$fg_db" "select count(*) $fg_q and c.status = 'skip'" 2>/dev/null || echo 0)"
+      fg_n=$((fg_n + n))
+      fg_skipped=$((fg_skipped + s))
+    done
+    [ "$fg_found" = "yes" ] && break
+  done
+  [ "$fg_found" = "yes" ] || return 0
+  if [ "$fg_n" -gt 0 ]; then
+    JUDGE_RAN="yes"
+    JUDGE_DETAIL="$fg_name's judge reached a verdict $fg_n time(s)"
+  else
+    JUDGE_RAN="no"
+    JUDGE_DETAIL="$fg_name's judge never reached a verdict (skipped $fg_skipped time(s))"
   fi
 }
