@@ -254,9 +254,28 @@ func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checks
 	if _, recErr := ev.record(run); recErr != nil {
 		fmt.Fprintln(ev.log(g), "sloprail:", recErr) // already refusing
 	}
-	return refusal(g, fmt.Sprintf(
+	return refusal(g, namingFiles(fmt.Sprintf(
 		"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
-		g.Name, err)), true
+		g.Name, err), ev.workingFiles())), true
+}
+
+// workingFiles are the files an engine failure names when no range could be computed:
+// the working tree's uncommitted changes, else what the HEAD commit changed.
+func (ev *changesetEvaluation) workingFiles() []changeset.File {
+	var files []changeset.File
+	if changes, err := gitrepo.UncommittedChanges(ev.root); err == nil {
+		for _, c := range changes {
+			files = append(files, changeset.File{Path: c.Path})
+		}
+	}
+	if len(files) == 0 {
+		if paths, err := gitrepo.HeadChangedPaths(ev.root); err == nil {
+			for _, p := range paths {
+				files = append(files, changeset.File{Path: p})
+			}
+		}
+	}
+	return files
 }
 
 // record stores a run, returning its id ("" when there is no store to record in).
@@ -430,7 +449,7 @@ func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict,
 	defer func() { rr.settled = true }()
 	ev.dropTree(rr.g, rr.tree, rr.head)
 	if failed != nil {
-		rr.result, rr.refused = refusal(g, failed.Error()), true
+		rr.result, rr.refused = refusal(g, namingFiles(failed.Error(), rr.payload.Changeset.Files)), true
 		return
 	}
 	if ev.results != nil && rr.runID != "" {
@@ -443,8 +462,35 @@ func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict,
 		}
 	}
 	if verdict.Refused {
-		rr.result, rr.refused = refusal(g, verdict.Reason), true
+		rr.result, rr.refused = refusal(g, namingFiles(verdict.Reason, rr.payload.Changeset.Files)), true
 	}
+}
+
+// maxNamedFiles bounds the files a refusal lists when its check named none.
+const maxNamedFiles = 10
+
+// namingFiles is a rule's refusal, guaranteed to name the file(s) it is about: a check
+// is free to word its reason as it likes, and one that names no file leaves the agent
+// guessing which of its files or commits was refused (and blaming its own commits). When
+// the reason already names a file of the changeset it is returned as it is; otherwise the
+// files the rule judged are listed after it.
+func namingFiles(reason string, files []changeset.File) string {
+	if len(files) == 0 {
+		return reason
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		if strings.Contains(reason, f.Path) {
+			return reason
+		}
+		paths = append(paths, f.Path)
+	}
+	more := ""
+	if len(paths) > maxNamedFiles {
+		more = fmt.Sprintf(" (and %d more)", len(paths)-maxNamedFiles)
+		paths = paths[:maxNamedFiles]
+	}
+	return reason + "\nThe files this refusal is about: " + strings.Join(paths, ", ") + more
 }
 
 // runRequires runs a rule's `require` entries in order, recording each and stopping
@@ -532,17 +578,26 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 	}
 	reason := "a citation grounds only the commit it is in; an empty commit carrying only the trailer does not count. " +
 		"Not grounded by a citation in the commit that last changed it: " + strings.Join(failed, ", ") + ".\n" +
-		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools())) + "\n" + body + unresolvedNote(unresolved)
+		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe()) + "\n" + body + unresolvedNote(unresolved)
 	return dispatchcore.Verdict{Refused: true, Reason: reason}, nil
 }
 
-// citeHowToFix says, for the files a citation does not ground, the ONE command that
-// grounds them. A trailer grounds the commit it is on, so it has to be on the commit
-// that last changed each file: when every such commit is HEAD that is an amend of
-// it; when one is earlier, the range is squashed into one commit (which also takes
-// the trailers of the commits it replaces, so each quote the range needs is written
-// again). Several quotes on one commit are fine.
-func citeHowToFix(cs changeset.Changeset, files []string, trailer string) string {
+// citeHowToFix says, for the files a citation does not ground, how to ground them.
+// A trailer grounds the commit it is on, so it has to be on the commit that last
+// changed each file. In order:
+//
+//  1. RECOMMENDED: a follow-up commit that changes each file and carries the trailer.
+//     The file has to change in that commit (an empty commit carrying only the
+//     trailer grounds nothing), so when no change is needed the content is restated
+//     through a cited `sr-file write`, or the file is touched minimally.
+//  2. An amend of HEAD, offered ONLY when it is safe to rewrite: every file's last
+//     commit is HEAD, HEAD is on no remote branch, and the working tree is clean.
+//
+// `git reset --soft` is never suggested (it rewrites the whole range, and a range that
+// starts before the first commit has no commit to reset to). Undoing is `git revert`,
+// never `git reset --hard`.
+// Several quotes on one commit are fine.
+func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool) string {
 	var b strings.Builder
 	b.WriteString("Last changed by:")
 	allHead := true
@@ -557,16 +612,36 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string) string
 		fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, tip))
 	}
 	line := trailer + ": <exact quote>"
-	if allHead {
-		fmt.Fprintf(&b, "\nGround them by amending HEAD, the commit that changed them:\n  git commit --amend --no-edit --trailer '%s'", line)
-	} else if cs.Base != "" {
-		fmt.Fprintf(&b, "\nGround them by squashing the range into one commit that carries the quote(s) (repeat the trailer, one per quote; "+
-			"the squash drops the earlier commits' messages, so write again the quotes they carried):\n"+
-			"  git reset --soft %s && git commit -m '<what changed>' -m '%s'", short(cs.Base), line)
-	} else {
-		fmt.Fprintf(&b, "\nGround them by making the next change to each file in a commit that carries the trailer `%s`.", line)
+	quoted := make([]string, len(files))
+	for i, f := range files {
+		quoted[i] = "'" + f + "'"
 	}
+	pool := "user"
+	if trailer == changeset.TrailerCitesTool {
+		pool = "tool_result"
+	}
+	fmt.Fprintf(&b, "\nRecommended: ground them with a FOLLOW-UP commit that changes each file and carries the trailer. "+
+		"If no change is needed, restate the file's content through a cited `sr-file write <file> --cite:%s '<exact quote>'`, "+
+		"or touch it minimally so the commit changes it. Then:\n"+
+		"  git add %s && git commit -m '<what changed>' -m '%s'", pool, strings.Join(quoted, " "), line)
+	if allHead && amendSafe {
+		fmt.Fprintf(&b, "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:\n"+
+			"  git commit --amend --no-edit --trailer '%s'", line)
+	}
+	b.WriteString("\nTo undo the change instead, use `git revert <commit>`; never `git reset --hard`, which destroys work.")
 	return b.String()
+}
+
+// amendSafe is whether rewriting HEAD is safe: it is on no remote branch and the
+// working tree is clean (an amend would sweep in staged work). Anything that
+// cannot be established reads as not safe: the amend is only ever an offer.
+func (ev *changesetEvaluation) amendSafe() bool {
+	pushed, err := gitrepo.HeadPushed(ev.root)
+	if err != nil || pushed {
+		return false
+	}
+	dirty, err := gitrepo.UncommittedChanges(ev.root)
+	return err == nil && len(dirty) == 0
 }
 
 func short(sha string) string {

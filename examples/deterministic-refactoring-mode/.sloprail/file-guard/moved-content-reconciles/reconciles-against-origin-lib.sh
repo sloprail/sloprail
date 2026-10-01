@@ -27,6 +27,9 @@ normalize() { grep -vE '^\s*(import|from)\b' | sed 's/[[:space:]]\+/ /g;s/^ //;s
 # always was. Marker lines of every comment style (// # --) are not code and are
 # dropped from the comparison.
 lib_reconcile() {
+# `path` is the file being reconciled (set by the caller, before the loop reuses the name):
+# every refusal names it, so an agent never has to guess which file the reason is about.
+file="${path:-the moved file}"
 count="$(printf '%s' "$markers" | jq -r '[.[] | select(.kind == "moved-from")] | length')"
 [ "$count" -gt 0 ] || return 0
 total="$(printf '%s\n' "$new" | wc -l | tr -d ' ')"
@@ -46,7 +49,7 @@ while [ "$k" -lt "$count" ]; do
 
   origin="$(git show "$sha:$path" 2>/dev/null | sed -n "${start},${end}p")" || {
     cat <<EOF
-{"reason":"moved-from origin '$fqn' names a commit or path this checkout does not have — a move cannot be verified against bytes that are not here."}
+{"reason":"$file: moved-from origin '$fqn' names a commit or path this checkout does not have — a move cannot be verified against bytes that are not here."}
 EOF
     exit 1
   }
@@ -58,7 +61,7 @@ EOF
 
   if [ "$moved_body" != "$origin_body" ]; then
     cat <<EOF
-{"reason":"Content marked moved-from '$fqn' does not reconcile against its origin — after dropping imports and whitespace, the bytes differ. A move must carry the origin's bytes, not regenerated ones."}
+{"reason":"$file: content marked moved-from '$fqn' does not reconcile against its origin — after dropping imports and whitespace, the bytes differ. A move must carry the origin's bytes, not regenerated ones."}
 EOF
     exit 1
   fi

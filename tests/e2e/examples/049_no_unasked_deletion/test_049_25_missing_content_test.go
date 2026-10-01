@@ -54,6 +54,13 @@ func TestT049_25_AMissingContentFieldIsNotAPureAddition(t *testing.T) {
 	if out, code := run("removes-content.sh", elsewhere); code != 1 {
 		t.Errorf("a deletion of another file decided the subject: exited %d (%s), want 1 (waived)", code, out)
 	}
+	// A subject that matches no file of the changeset decided nothing: it applies (exit 0),
+	// never waives. The control above and the `elsewhere` case prove a decided one still waives.
+	unmatched := `{"event":{"kind":"Changeset"},"subject":{"id":"memories/z.md","files":["memories/z.md"]},` +
+		`"changeset":{"files":[{"status":"M","path":"memories/x.md",` + oldc + "," + newc + `}]}}`
+	if out, code := run("removes-content.sh", unmatched); code != 0 {
+		t.Errorf("removes-content.sh with a subject matching no changed file exited %d (%s), want 0 (applies)", code, out)
+	}
 	for _, missing := range []string{oldc, newc} {
 		if out, code := run("removes-content.sh", file(missing)); code != 0 {
 			t.Errorf("removes-content.sh with %s only exited %d (%s), want 0 (applies)", missing, code, out)

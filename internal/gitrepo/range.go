@@ -26,11 +26,6 @@ var ErrNoCommits = errors.New("gitrepo: the repository has no commits yet")
 // range can start, and guessing another would silently change what is judged.
 var ErrNoSessionStart = errors.New("gitrepo: no watermark, no commit touching the rule's folder, and no session-start commit recorded")
 
-// ErrSessionStartUnreachable reports that the recorded session-start commit is
-// no longer an ancestor of HEAD (the tree left that history). Fail closed for the
-// same reason: the last resort cannot be used, and nothing else is left.
-var ErrSessionStartUnreachable = errors.New("gitrepo: the session-start commit is not an ancestor of HEAD")
-
 // EmptyTree is git's empty tree, the base of a range that starts before the first
 // commit. It is the same object in every repository, so it needs no lookup.
 const EmptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -88,12 +83,25 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //     forward, and for a rule with no committed definition "forward" starts where
 //     this session did.
 //
+// Every anchor is tested with `git merge-base --is-ancestor <anchor> HEAD` on every
+// run, and one that an amend, a rebase or a reset left is RE-ANCHORED at its merge base
+// with HEAD (the point where the rewritten line and HEAD's still agree), not skipped:
+//
+//   - an unreachable watermark becomes merge-base(watermark, HEAD): what was approved
+//     and survives stays approved, what was rewritten is judged again;
+//   - an unreachable sessionStart becomes merge-base(sessionStart, HEAD), and the
+//     empty tree (the whole history, root commit included) when git no longer has the commit (or shares no history
+//     with it): everything made since the session began is still inside the range. The
+//     folder floor alone would not do, because a later commit touching the rule's
+//     folder puts it AFTER in-session commits, which would then never be judged.
+//
 // head is HEAD, as a SHA. folder is relative to dir, or repository-relative.
 //
 // Any failure of git is returned as an error and produces no Range: it is never
 // read as "nothing changed". A candidate git does not have (gc'd after a rebase)
-// counts as unreachable; one git could not be asked about is an error. When even
-// the last floor is missing or unreachable the result is an error, never a guess.
+// counts as unreachable; one git could not be asked about is an error. With no watermark,
+// no committed definition and no session start recorded the result is
+// ErrNoSessionStart, never a guess.
 func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 	head, err := headSHA(dir)
 	if err != nil {
@@ -110,6 +118,14 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 			return r, nil
 		}
 		r.DroppedWatermark = watermark
+		mb, found, err := mergeBaseWithHead(dir, watermark, head)
+		if err != nil {
+			return Range{}, err
+		}
+		if found {
+			r.Base, r.Origin = mb, FromWatermark
+			return r, nil
+		}
 	}
 	// No watermark: the EARLIER of the folder floor and the session start, so nothing
 	// made in this session is skipped, while history from before both stays
@@ -141,18 +157,18 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 	}
 	start := ""
 	if sessionStart != "" {
-		ok, err := Contains(dir, sessionStart)
-		if err != nil {
-			return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
+		ok := sessionStart == EmptyTree // a session that began before the first commit
+		if !ok {
+			var err error
+			if ok, err = Contains(dir, sessionStart); err != nil {
+				return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
+			}
 		}
-		switch {
-		case ok:
+		if ok {
 			start = sessionStart
-		case floor == "":
-			return Range{}, fmt.Errorf("%w: %s", ErrSessionStartUnreachable, sessionStart)
+		} else if start, err = reanchorSessionStart(dir, sessionStart, head); err != nil {
+			return Range{}, err
 		}
-		// With a floor, a session start the tree has left is not needed: the floor
-		// is a usable base, and is at worst later than the session began.
 	}
 	switch {
 	case floor == "":
@@ -259,4 +275,68 @@ func parentOrEmptyTree(dir, commit string) (string, error) {
 		return "", fmt.Errorf("gitrepo: parent of %s resolved to %q, not an object name", short(commit), sha)
 	}
 	return sha, nil
+}
+
+// HeadPushed reports whether any remote-tracking branch contains HEAD: whether
+// HEAD (or a commit built on it) has been pushed, so that rewriting HEAD would
+// diverge from what others have.
+func HeadPushed(dir string) (bool, error) {
+	out, err := run(dir, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", "HEAD", "refs/remotes")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// reanchorSessionStart is where a session start the tree left (an amend, a rebase, a
+// reset) is measured from instead: its merge base with HEAD, or the empty tree when git
+// has no such commit or it shares no history with HEAD (an amended root commit is a
+// different root). The empty tree, not the root commit: the root's own content is judged
+// too, as parentOrEmptyTree does for a rule added in the root commit. Never later than
+// the work the session did.
+func reanchorSessionStart(dir, sessionStart, head string) (string, error) {
+	mb, found, err := mergeBaseWithHead(dir, sessionStart, head)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return mb, nil
+	}
+	return EmptyTree, nil
+}
+
+// mergeBaseWithHead is the merge base of commit and head. found is false when git has no
+// such commit (gc'd after a rewrite) or the two share no history: ordinary outcomes of a
+// rewrite, not faults. Anything else git says is an error.
+func mergeBaseWithHead(dir, commit, head string) (base string, found bool, err error) {
+	if _, err := run(dir, "rev-parse", "--verify", "-q", commit+"^{commit}"); err != nil {
+		if exitCode(err) == 1 {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	out, err := run(dir, "merge-base", commit, head)
+	if err != nil {
+		if exitCode(err) == 1 { // no common ancestor
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("gitrepo: merge base of %s and HEAD: %w", short(commit), err)
+	}
+	base = strings.TrimSpace(out)
+	if !isObjectName(base) {
+		return "", false, fmt.Errorf("gitrepo: merge base resolved to %q, not an object name", base)
+	}
+	return base, true, nil
+}
+
+// ReanchorWatermark is where a watermark the tree left (an amend, a rebase, a reset) is
+// measured from instead: its merge base with HEAD. found is false when git no longer has
+// the commit or it shares no history with HEAD, and the caller falls back to something
+// else it has.
+func ReanchorWatermark(dir, watermark string) (base string, found bool, err error) {
+	head, err := headSHA(dir)
+	if err != nil {
+		return "", false, err
+	}
+	return mergeBaseWithHead(dir, watermark, head)
 }

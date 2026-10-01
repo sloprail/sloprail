@@ -77,7 +77,8 @@ func TestT001_15_TheWatermarkIsTheNewestPassedRun(t *testing.T) {
 }
 
 // T001_16: an amend orphans the passed head. It is dropped — and reported as
-// dropped — and the range widens back to the floor instead of silently shrinking.
+// dropped — and the range re-anchors at its merge base with HEAD (the amended commit's
+// parent) instead of silently shrinking to the amended commit's successors.
 func TestT001_16_AnAmendedAwayWatermarkIsDropped(t *testing.T) {
 	e, proj, rule, hash, c1 := watermarkRepo(t)
 	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
@@ -87,8 +88,8 @@ func TestT001_16_AnAmendedAwayWatermarkIsDropped(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
-	if got.Origin != "floor" || got.DroppedWatermark != c1 {
-		t.Fatalf("origin %q dropped %q, want floor with %s dropped", got.Origin, got.DroppedWatermark, c1)
+	if got.Base != e.Git(proj, "rev-parse", "HEAD~1") || got.DroppedWatermark != c1 {
+		t.Fatalf("base %q dropped %q, want the amended commit's parent with %s dropped", got.Base, got.DroppedWatermark, c1)
 	}
 	if want := map[string]string{"docs/a.md": "M"}; !equal(filesOf(got), want) {
 		t.Fatalf("files = %v, want the whole range again: %v", filesOf(got), want)

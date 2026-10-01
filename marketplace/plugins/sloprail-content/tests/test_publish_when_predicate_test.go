@@ -64,3 +64,58 @@ func jsonString(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
 	return `"` + r.Replace(s) + `"`
 }
+
+// The file-guard entry is a `when` predicate too: a Changeset file that lacks the
+// content its status carries, or a subject matching no changed file, decided nothing, so
+// it APPLIES the approval (exit 0) instead of waiving it as "not entering publish". The
+// control, a decided draft edit, still waives.
+func TestPublish_FileGuardWhenAppliesOnAMissingFieldOrSubject(t *testing.T) {
+	e := harness.New(t)
+	pred := filepath.Join(pluginRoot(t), ".sloprail", "file-guard", "unit-publish-approved", "enters-published.sh")
+	draft := unitFrontmatter("status: drafting\n", "body")
+	published := unitFrontmatter("status: published\npublished_urls: [\"https://example.com/x\"]\n", "body")
+	unit := "memories/topics/t/units/u/UNIT.md"
+
+	exitOf := func(t *testing.T, subject, files string) int {
+		t.Helper()
+		payload := `{"event":{"kind":"Changeset"},"subject":{"id":"` + subject + `","files":["` + subject + `"]},"changeset":{"files":[` + files + `]}}`
+		cmd := exec.Command("bash", pred)
+		cmd.Env = append(os.Environ(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		cmd.Stdin = strings.NewReader(payload)
+		out, err := cmd.CombinedOutput()
+		var ee *exec.ExitError
+		switch {
+		case err == nil:
+			return 0
+		case errors.As(err, &ee):
+			return ee.ExitCode()
+		default:
+			t.Fatalf("the predicate could not run: %v\n%s", err, out)
+			return -1
+		}
+	}
+	file := func(status string, fields ...string) string {
+		return `{"status":"` + status + `","path":` + jsonString(unit) + `,` + strings.Join(fields, ",") + `}`
+	}
+	oldc, newDraft, newPub := `"oldContent":`+jsonString(draft), `"newContent":`+jsonString(draft), `"newContent":`+jsonString(published)
+
+	if got := exitOf(t, unit, file("M", oldc, newDraft)); got != 1 {
+		t.Fatalf("control: a draft edit exited %d, want 1 (waived); the cases below prove nothing", got)
+	}
+	if got := exitOf(t, unit, file("M", oldc, newPub)); got != 0 {
+		t.Errorf("control: drafting to published exited %d, want 0", got)
+	}
+	for name, files := range map[string]string{
+		"M with no newContent":  file("M", oldc),
+		"M with no oldContent":  file("M", newDraft),
+		"A with no newContent":  file("A"),
+		"M with a null content": file("M", oldc, `"newContent":null`),
+	} {
+		if got := exitOf(t, unit, files); got != 0 {
+			t.Errorf("%s exited %d, want 0 (applies)", name, got)
+		}
+	}
+	if got := exitOf(t, "memories/topics/t/units/other/UNIT.md", file("M", oldc, newDraft)); got != 0 {
+		t.Errorf("a subject matching no changed file exited %d, want 0 (applies)", got)
+	}
+}

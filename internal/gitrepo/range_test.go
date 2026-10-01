@@ -102,26 +102,43 @@ func TestResolveRange_WatermarkAtHeadIsAnEmptyRange(t *testing.T) {
 }
 
 // a10n #1: the watermark was a name or per attempt and never checked for
-// reachability, so an amend or a rebase silently shrank the diff.
-func TestResolveRange_AmendedAwayWatermarkFallsBackToTheFloor(t *testing.T) {
+// reachability, so an amend or a rebase silently shrank the diff. An unreachable
+// watermark is re-anchored at its merge base with HEAD: what survives stays approved,
+// what was rewritten is judged again.
+func TestResolveRange_AmendedAwayWatermarkIsReanchoredAtItsMergeBase(t *testing.T) {
 	dir := initRepo(t)
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
-	commit(t, dir, "a.go", "x")
-	passed := git(t, dir, "rev-parse", "HEAD")
+	before := commit(t, dir, "a.go", "x")
+	passed := commit(t, dir, "b.go", "y")
 	git(t, dir, "commit", "--amend", "-m", "amended")
 
 	r, err := ResolveRange(dir, ruleDir, passed, "")
 	require.NoError(t, err)
-	assert.Equal(t, EmptyTree, r.Base, "the amended-away head is no longer an ancestor, so the floor is used (here the rule was the root commit)")
-	assert.Equal(t, FromFloor, r.Origin)
+	assert.Equal(t, before, r.Base, "the amended-away head's merge base with HEAD: the amended commit is inside the range")
+	assert.Equal(t, FromWatermark, r.Origin)
 	assert.Equal(t, passed, r.DroppedWatermark)
 }
 
-func TestResolveRange_RebasedAwayWatermarkFallsBackToTheFloor(t *testing.T) {
+func TestResolveRange_ASoftResetWatermarkIsReanchoredAtItsMergeBase(t *testing.T) {
 	dir := initRepo(t)
-	commit(t, dir, "base.txt", "0")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	before := commit(t, dir, "a.go", "x")
+	commit(t, dir, "b.go", "y")
+	passed := commit(t, dir, "c.go", "z")
+	git(t, dir, "reset", "--soft", before)
+	git(t, dir, "commit", "-m", "squashed b and c")
+
+	r, err := ResolveRange(dir, ruleDir, passed, "")
+	require.NoError(t, err)
+	assert.Equal(t, before, r.Base)
+	assert.Equal(t, passed, r.DroppedWatermark)
+}
+
+func TestResolveRange_RebasedAwayWatermarkIsReanchoredAtItsMergeBase(t *testing.T) {
+	dir := initRepo(t)
+	fork := commit(t, dir, "base.txt", "0")
 	git(t, dir, "checkout", "-b", "feature")
-	floor := commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 	passed := commit(t, dir, "a.go", "x")
 	git(t, dir, "checkout", "main")
 	commit(t, dir, "main.txt", "m")
@@ -131,10 +148,8 @@ func TestResolveRange_RebasedAwayWatermarkFallsBackToTheFloor(t *testing.T) {
 
 	r, err := ResolveRange(dir, ruleDir, passed, "")
 	require.NoError(t, err)
-	assert.NotEqual(t, passed, r.Base)
-	assert.NotEqual(t, floor, r.Base)
-	assert.Equal(t, git(t, dir, "rev-parse", git(t, dir, "log", "-1", "--format=%H", "--", ruleDir)+"^"), r.Base,
-		"the floor is the parent of the REBASED rule commit")
+	assert.Equal(t, fork, r.Base, "the point the old line and the rebased one still share: main's new commit and the rebased commits are inside the range")
+	assert.Equal(t, FromWatermark, r.Origin)
 }
 
 func TestResolveRange_GarbageCollectedWatermarkIsUnreachableNotAnError(t *testing.T) {
@@ -233,14 +248,91 @@ func TestResolveRange_ARuleEditedAfterTheSessionBeganDoesNotSkipTheWorkBeforeThe
 	assert.Equal(t, start, r.Base, "the violation sits inside the range")
 }
 
-func TestResolveRange_AnUnreachableSessionStartIsNotNeededWhenThereIsAFloor(t *testing.T) {
+// An unreachable session start is re-anchored at its merge base with HEAD, never
+// replaced by the floor: a later commit touching the rule's folder puts the floor AFTER
+// in-session commits, which would then never be judged. Each way of rewriting it: an
+// amend, a soft reset that recommits, and a rebase onto new upstream work. The
+// violation sits between the rewrite and the commit that moves the floor.
+func TestResolveRange_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) {
+	violationInRange := func(t *testing.T, dir, start, want string) {
+		t.Helper()
+		commit(t, dir, "violation.go", "bad")
+		commitIn(t, dir, ".sloprail/lib/shared.sh", "touched") // the floor moves past the violation
+		floorBase := git(t, dir, "rev-parse", "HEAD~1")
+
+		r, err := ResolveRange(dir, ".sloprail", "", start)
+		require.NoError(t, err)
+		require.NotEqual(t, floorBase, want, "premise: the floor is after the violation")
+		assert.Equal(t, want, r.Base, "the base is before the rewritten session's work, so the violation is judged")
+		assert.Equal(t, FromSessionStart, r.Origin)
+	}
+
+	t.Run("amend", func(t *testing.T) {
+		dir := initRepo(t)
+		before := commit(t, dir, "a.go", "x")
+		start := commit(t, dir, "b.go", "y")
+		git(t, dir, "commit", "--amend", "-m", "amended")
+		violationInRange(t, dir, start, before)
+	})
+	t.Run("soft reset", func(t *testing.T) {
+		dir := initRepo(t)
+		before := commit(t, dir, "a.go", "x")
+		commit(t, dir, "b.go", "y")
+		start := commit(t, dir, "c.go", "z")
+		git(t, dir, "reset", "--soft", before)
+		git(t, dir, "commit", "-m", "squashed")
+		violationInRange(t, dir, start, before)
+	})
+	t.Run("rebase", func(t *testing.T) {
+		dir := initRepo(t)
+		fork := commit(t, dir, "base.txt", "0")
+		git(t, dir, "checkout", "-b", "feature")
+		start := commit(t, dir, "b.go", "y")
+		git(t, dir, "checkout", "main")
+		commit(t, dir, "main.txt", "m")
+		git(t, dir, "checkout", "feature")
+		git(t, dir, "rebase", "main")
+		violationInRange(t, dir, start, fork)
+	})
+}
+
+// A session start git no longer has (gc'd), or that shares no history with HEAD (the root
+// commit was amended, so it is a different root), is anchored at the EMPTY TREE: the whole
+// history is judged, the root commit's own content included, never guessed away.
+func TestResolveRange_ASessionStartGitHasNoMergeBaseForFallsToTheEmptyTree(t *testing.T) {
 	dir := initRepo(t)
-	before := commit(t, dir, "a.go", "x")
-	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
-	r, err := ResolveRange(dir, ruleDir, "", "0123456789012345678901234567890123456789")
+	commit(t, dir, "a.go", "x")
+	commit(t, dir, "b.go", "y")
+
+	r, err := ResolveRange(dir, ".sloprail", "", "0123456789012345678901234567890123456789")
 	require.NoError(t, err)
-	assert.Equal(t, before, r.Base)
-	assert.Equal(t, FromFloor, r.Origin)
+	assert.Equal(t, EmptyTree, r.Base)
+	assert.Equal(t, FromSessionStart, r.Origin)
+
+	// Unrelated history: a second root, with no merge base with HEAD.
+	git(t, dir, "checkout", "-q", "--orphan", "other")
+	git(t, dir, "rm", "-rfq", ".")
+	other := commit(t, dir, "o.txt", "o")
+	git(t, dir, "checkout", "-q", "main")
+	r, err = ResolveRange(dir, ".sloprail", "", other)
+	require.NoError(t, err)
+	assert.Equal(t, EmptyTree, r.Base)
+}
+
+// The root commit itself amended to carry a violation: the session start (the old root)
+// is unreachable and shares no history with the new one, so the range starts at the empty
+// tree and the amended root's content is inside it.
+func TestResolveRange_AnAmendedRootCommitIsJudgedFromTheEmptyTree(t *testing.T) {
+	dir := initRepo(t)
+	start := commit(t, dir, "a.go", "x")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "violation.go"), []byte("bad"), 0o644))
+	git(t, dir, "add", "violation.go")
+	git(t, dir, "commit", "--amend", "--no-edit")
+
+	r, err := ResolveRange(dir, "", "", start)
+	require.NoError(t, err)
+	assert.Equal(t, EmptyTree, r.Base)
+	assert.False(t, r.Empty())
 }
 
 func TestResolveRange_TheWatermarkOutranksBoth(t *testing.T) {
@@ -273,20 +365,6 @@ func TestResolveRange_NoFloorAndNoSessionStartFailsClosed(t *testing.T) {
 	r, err := ResolveRange(dir, ruleDir, "", "")
 	assert.ErrorIs(t, err, ErrNoSessionStart)
 	assert.Equal(t, Range{}, r)
-}
-
-func TestResolveRange_AnUnreachableSessionStartFailsClosed(t *testing.T) {
-	dir := initRepo(t)
-	commit(t, dir, "a.go", "x")
-	start := commit(t, dir, "b.go", "y")
-	git(t, dir, "commit", "--amend", "-m", "amended")
-
-	r, err := ResolveRange(dir, ruleDir, "", start)
-	assert.ErrorIs(t, err, ErrSessionStartUnreachable)
-	assert.Equal(t, Range{}, r)
-
-	_, err = ResolveRange(dir, ruleDir, "", "0123456789012345678901234567890123456789")
-	assert.ErrorIs(t, err, ErrSessionStartUnreachable, "a commit git has never heard of is unreachable too")
 }
 
 func TestRootCommit_IsTheFirstCommitWhateverTheBranch(t *testing.T) {

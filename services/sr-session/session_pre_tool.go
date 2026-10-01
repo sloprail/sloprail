@@ -77,6 +77,13 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 func recordBaselineBeforeTool(cmd *cobra.Command, store sessionstate.Store, p HookPayload) {
 	if _, err := ensureBaselineRecorded(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
+		// The start could not be recorded before this tool call, which may commit: left
+		// to the first Stop it would become that commit, and the agent's own commits
+		// would never be judged. Fail closed: with no start kept, a file-guard's range
+		// starts at the empty tree.
+		if _, had, e := store.Meta(sessionstate.MetaSessionStart); e == nil && !had {
+			_ = store.SetMeta(sessionstate.MetaSessionStart, sessionstate.SessionStartUnborn)
+		}
 	}
 }
 

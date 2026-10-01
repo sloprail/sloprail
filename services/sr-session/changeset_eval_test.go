@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +16,10 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -303,28 +306,56 @@ func TestRunRequirement_CitationPerFile(t *testing.T) {
 		assert.Contains(t, v.Reason, "an empty commit carrying only the trailer does not count")
 	})
 
-	t.Run("when every uncited file was last changed by HEAD the fix is one amend", func(t *testing.T) {
-		cs := changeset.Changeset{Base: "b0", Head: "c2",
+	followUp := func(file string) string {
+		return "git add '" + file + "' && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'"
+	}
+	headCs := func() changeset.Changeset {
+		return changeset.Changeset{Base: "b0", Head: "c2",
 			Commits:   []changeset.Commit{{SHA: "c1", Subject: "first"}, {SHA: "c2", Subject: "second"}},
 			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
 			Citations: []changeset.Citation{cite("c1")},
 		}
+	}
+	refuse := func(t *testing.T, cs changeset.Changeset, file string) string {
+		t.Helper()
 		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
 		require.NoError(t, err)
-		assert.Contains(t, v.Reason, "git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'")
-		assert.NotContains(t, v.Reason, "reset --soft")
+		require.True(t, v.Refused)
+		assert.NotContains(t, v.Reason, "reset --soft", "the squash is never suggested")
+		assert.NotContains(t, v.Reason, "reset --hard ", "a hard reset is never suggested")
+		assert.NotContains(t, v.Reason, "4b825dc", "a non-commit sha (the empty tree) is never suggested")
+		assert.Contains(t, v.Reason, "git revert", "undoing is a revert")
+		assert.Contains(t, v.Reason, "an empty commit carrying only the trailer does not count")
+		assert.Contains(t, v.Reason, followUp(file), "the recommended fix is a follow-up commit")
+		assert.Contains(t, v.Reason, "sr-file write", "no change needed: restate the content through a cited write")
+		return v.Reason
+	}
+	amend := "git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
+
+	t.Run("HEAD last changed the file, is unpushed and the tree is clean: a follow-up commit is recommended and the amend offered", func(t *testing.T) {
+		reason := refuse(t, headCs(), "b.md")
+		assert.Contains(t, reason, amend)
+		assert.Less(t, strings.Index(reason, followUp("b.md")), strings.Index(reason, amend), "the follow-up commit comes first")
 	})
 
-	t.Run("an uncited file last changed earlier is fixed by squashing the range", func(t *testing.T) {
-		cs := changeset.Changeset{Base: "b0", Head: "c2",
-			Commits:   []changeset.Commit{{SHA: "c1", Subject: "first"}, {SHA: "c2", Subject: "second"}},
-			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
-			Citations: []changeset.Citation{cite("c2")},
-		}
-		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
-		require.NoError(t, err)
-		assert.Contains(t, v.Reason, "git reset --soft b0 && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'")
-		assert.NotContains(t, v.Reason, "--amend")
+	t.Run("an uncited file last changed earlier gets the follow-up commit and no amend", func(t *testing.T) {
+		cs := headCs()
+		cs.Citations = []changeset.Citation{cite("c2")}
+		cs.Files = []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}}
+		reason := refuse(t, cs, "a.md")
+		assert.NotContains(t, reason, "--amend")
+	})
+
+	t.Run("HEAD is pushed: no amend is suggested", func(t *testing.T) {
+		runGit(t, f.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+		t.Cleanup(func() { runGit(t, f.repo, "update-ref", "-d", "refs/remotes/origin/main") })
+		assert.NotContains(t, refuse(t, headCs(), "b.md"), "--amend")
+	})
+
+	t.Run("the tree is dirty: no amend is suggested", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(filepath.Join(f.repo, "dirty.txt"), []byte("x"), 0o644))
+		t.Cleanup(func() { _ = os.Remove(filepath.Join(f.repo, "dirty.txt")) })
+		assert.NotContains(t, refuse(t, headCs(), "b.md"), "--amend")
 	})
 
 	t.Run("an uncited change on top of a cited one is uncited", func(t *testing.T) {
@@ -396,4 +427,74 @@ func (s failingStore) RecordCheck(runID string, c checkstore.CheckRecord) (strin
 
 func eventWithCitations(cs ...transcript.Citation) event.Event {
 	return event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(cs)}}
+}
+
+// The newest pass is rewritten while an older one survives: the range is re-anchored at the
+// newest pass's merge base with HEAD, which OVERRIDES the older pass on purpose. The merge
+// base is never earlier than the older pass, so the commit between the two passes (approved
+// by the newest pass, and still in history) is not judged again, while the rewritten commit
+// is. The dropped pass is reported.
+func TestResolveRuleRange_ARewrittenNewestPassOverridesASurvivingOlderOne(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	older := f.commitDoc(t, "docs/a.md", "clean")
+	_, refused := f.ev.evaluate(f.guard)
+	require.False(t, refused)
+	between := f.commitDoc(t, "docs/m.md", "clean")
+	newest := f.commitDoc(t, "docs/b.md", "clean")
+	_, refused = f.ev.evaluate(f.guard)
+	require.False(t, refused)
+	require.Equal(t, []string{newest, older}, f.passedHeads(t))
+	runGit(t, f.repo, "commit", "--amend", "-m", "b, reworded")
+
+	r, err := resolveRuleRange(f.repo, f.guard, f.results, nil)
+	require.NoError(t, err)
+	assert.Equal(t, between, r.Base, "the newest pass's merge base with HEAD, not the older surviving pass")
+	assert.NotEqual(t, older, r.Base)
+	assert.Equal(t, gitrepo.FromWatermark, r.Origin)
+	assert.Equal(t, newest, r.DroppedWatermark)
+}
+
+// Every Stop refusal of a file-guard names the file(s) it is about, whatever wording the
+// check gave its reason: a check that names none gets the files it judged listed, one
+// that names a file of the changeset is left as it is.
+func TestEvaluate_ARefusalAlwaysNamesTheFilesItIsAbout(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	f.commitDoc(t, "docs/b.md", "fine")
+
+	r, refused := f.ev.evaluate(f.guard)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words", "the check's own reason is kept")
+	assert.Contains(t, r.Reason, "docs/a.md")
+	assert.Contains(t, r.Reason, "docs/b.md")
+}
+
+func TestNamingFiles(t *testing.T) {
+	files := []changeset.File{{Path: "docs/a.md"}, {Path: "docs/b.md"}}
+	assert.Equal(t, "docs/b.md: wrong", namingFiles("docs/b.md: wrong", files), "a reason that names a file is not repeated")
+	assert.Equal(t, "wrong", namingFiles("wrong", nil))
+
+	var many []changeset.File
+	for i := 0; i < maxNamedFiles+3; i++ {
+		many = append(many, changeset.File{Path: fmt.Sprintf("f%02d.md", i)})
+	}
+	got := namingFiles("wrong", many)
+	assert.Contains(t, got, "f00.md")
+	assert.NotContains(t, got, fmt.Sprintf("f%02d.md", maxNamedFiles))
+	assert.Contains(t, got, "(and 3 more)")
+}
+
+// An engine failure (no range could be computed) still names the files it is about.
+func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, "x")) // no kept start
+	ev := f.newEvaluation(f.results)
+	ev.state = state
+
+	r, refused := ev.evaluate(f.guard)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "could not be evaluated")
+	assert.Contains(t, r.Reason, "docs/a.md")
 }

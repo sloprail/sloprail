@@ -124,6 +124,14 @@ func project(t *testing.T, e *harness.Env) string {
 // the test checks rather than assumes.
 func runGrepDirect(t *testing.T, projDir, scriptBody string) int {
 	t.Helper()
+	return runGrepDirectEnv(t, projDir, scriptBody, "SR_TREE="+projDir)
+}
+
+// runGrepDirectEnv is runGrepDirect with the environment a file-guard check is given
+// beyond SR_GUARDRAIL_DIR and SR_WORKSPACE: SR_TREE, the committed head's snapshot, is
+// the caller's to give or to leave out.
+func runGrepDirectEnv(t *testing.T, projDir, scriptBody string, extraEnv ...string) int {
+	t.Helper()
 	guardDir := filepath.Join(projDir, ".sloprail", "file-guard", "authoring-slop")
 	payload, err := json.Marshal(map[string]any{
 		"event": map[string]any{"kind": "Changeset"},
@@ -140,10 +148,10 @@ func runGrepDirect(t *testing.T, projDir, scriptBody string) int {
 	}
 	cmd := exec.Command("bash", filepath.Join(guardDir, "check-rules.sh"))
 	cmd.Stdin = strings.NewReader(string(payload))
-	cmd.Env = append(harness.HostEnv(),
+	cmd.Env = append(append(harness.HostEnv(),
 		"SR_GUARDRAIL_DIR="+guardDir,
 		"SR_WORKSPACE="+projDir,
-	)
+	), extraEnv...)
 	runErr := cmd.Run()
 	if runErr == nil {
 		return 0

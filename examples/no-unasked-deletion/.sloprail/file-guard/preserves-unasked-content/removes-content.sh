@@ -24,6 +24,8 @@ input="$(cat)"
 idxs="$(printf '%s' "$input" | jq -r '
   (.subject.files | if type == "array" then . else error("no subject") end) as $subj
   | [.changeset.files | to_entries[] | select(.value.path as $p | any($subj[]; . == $p)) | .key] | .[]' 2>/dev/null)" || exit 0
+# A subject that matches no file of the changeset decided nothing: apply, never waive.
+[ -n "$idxs" ] || exit 0
 
 total=0
 for idx in $idxs; do

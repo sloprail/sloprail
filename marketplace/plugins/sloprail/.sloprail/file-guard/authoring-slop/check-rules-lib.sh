@@ -39,6 +39,7 @@ MISSING
 # lib_init is the gate's: the pending write's own bytes.
 lib_init() {
 lib_setup
+lib_mode=gate
 
 event="$(cat)"
 
@@ -227,7 +228,19 @@ fi
 #    it for the CLI.
 prompt_files=""
 if [ -n "${path:-}" ]; then
-  _dir="${SR_TREE:-${SR_WORKSPACE:-.}}/$(dirname "$path")"
+  if [ "${lib_mode:-}" = gate ]; then
+    # The pre-write gate has no snapshot: the sibling prompt files are the working tree's.
+    _dir="${SR_WORKSPACE:-.}/$(dirname "$path")"
+  else
+    # A file-guard run reads the committed head from $SR_TREE, never the working tree.
+    # With it unset the sibling prompt files cannot be read as committed, so the DATA
+    # clause could be missed (or found in an uncommitted file): refuse, never fall back.
+    [ -n "${SR_TREE:-}" ] || {
+      echo "authoring-slop: SR_TREE is unset, so the hook's sibling prompt files could not be read as committed and it could not be checked" >&2
+      exit 1
+    }
+    _dir="$SR_TREE/$(dirname "$path")"
+  fi
   if [ -d "$_dir" ]; then
     # A judge's prompt is a RUBRIC.md or a `.md.j2` template — both are
     # searched, or a well-factored judge keeping its DATA clause in its

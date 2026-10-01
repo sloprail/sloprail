@@ -203,3 +203,19 @@ func readShippedDocs(t *testing.T) []harness.Turn {
 		ToolUse("r1b", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "check-template.sh")}),
 	}
 }
+
+// T027_09: a file-guard run reads the committed head from SR_TREE and never falls back to
+// the working tree (SR_WORKSPACE, or "."): with SR_TREE unset the grep refuses, it does
+// not check against whatever is on disk. With SR_TREE set the same payload is checked
+// (the control: the correct hook passes), so the refusal is the missing snapshot's.
+func TestT027_09_TheGrepRefusesWithoutASnapshotOfHead(t *testing.T) {
+	e := New(t)
+	proj := project(t, e)
+
+	if code := runGrepDirect(t, proj, correctDispatchHook); code != 0 {
+		t.Fatalf("control: with SR_TREE set the grep refused a correct hook with exit %d", code)
+	}
+	if code := runGrepDirectEnv(t, proj, correctDispatchHook); code == 0 {
+		t.Fatalf("with SR_TREE unset the grep fell back to the working tree and permitted the hook")
+	}
+}

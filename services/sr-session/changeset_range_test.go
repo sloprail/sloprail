@@ -24,6 +24,7 @@ func TestResolveRuleRange_ABaselineTakenAtTheSubagentsStopIsNotAFloor(t *testing
 	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()} // outside the repo: no folder floor
 
 	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaSessionStart, start))
 	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, start))
 
 	r, err := resolveRuleRange(repo, plugin, nil, state)
@@ -70,4 +71,53 @@ func TestResolveRuleRange_TheFloorIsTheParentOfTheLastCommitTouchingTheSloprailR
 	r, err = resolveRuleRange(repo, g, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ruleCommit, r.Base)
+}
+
+// A session that recorded a baseline but never kept its first start (it began before that
+// was recorded) fails closed: the baseline is re-taken whenever the tree leaves its
+// history, so reading it as the start would reopen the floor hole.
+func TestResolveRuleRange_ABaselineWithoutAKeptSessionStartFailsClosed(t *testing.T) {
+	repo := initRepo(t)
+	start := commitFile(t, repo, "a.txt", "one")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, start))
+
+	_, err := resolveRuleRange(repo, plugin, nil, state)
+	assert.ErrorIs(t, err, errSessionStartNotKept)
+}
+
+// A session (a sub-agent's included) that began in a repository with no commit starts at
+// git's empty tree: the commits it makes afterwards are judged, even when the baseline is
+// first taken at a Stop that finds them already committed.
+func TestResolveRuleRange_ASessionThatBeganUnbornStartsAtTheEmptyTree(t *testing.T) {
+	repo := initRepo(t)
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+	state := openStore(t)
+
+	_, err := ensureBaselineRecorded(state, repo) // the first tool call, before any commit
+	require.NoError(t, err)
+	commitFile(t, repo, "a.txt", "one")
+	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineAtStop, "1")) // a sub-agent's own Stop took the baseline
+
+	r, err := resolveRuleRange(repo, plugin, nil, state)
+	require.NoError(t, err)
+	assert.Equal(t, gitrepo.EmptyTree, r.Base)
+	assert.False(t, r.Empty())
+}
+
+// When the start cannot be recorded at the first tool call (git failed), which may go on to
+// commit, the start fails closed to the empty tree instead of becoming that commit at Stop.
+func TestRecordBaselineBeforeTool_AFailedRecordingFailsClosedToTheEmptyTree(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "a.txt", "one")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("garbage\n"), 0o644))
+	state := openStore(t)
+
+	recordBaselineBeforeTool(discard(), state, HookPayload{Cwd: repo})
+
+	got, had, err := state.Meta(sessionstate.MetaSessionStart)
+	require.NoError(t, err)
+	require.True(t, had, "a start that could not be recorded is still recorded as unknown")
+	assert.Equal(t, sessionstate.SessionStartUnborn, got)
 }

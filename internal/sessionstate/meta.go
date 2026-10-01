@@ -11,6 +11,18 @@ import (
 const (
 	// MetaBaselineCommit is where a cycle measures its difference from.
 	MetaBaselineCommit = "baseline_commit"
+	// MetaSessionStart is the HEAD the session FIRST began at, written once and never
+	// moved. MetaBaselineCommit is re-taken when the tree leaves its history (an amend,
+	// a rebase, a branch switch), which is right for the difference a context measures
+	// but wrong for a file-guard's range: re-taking it at the first Stop after an amend
+	// would put the start after the commits made in the session, and they would never
+	// be judged. A file-guard's range reads this one; when it is no longer reachable
+	// the range anchors on the remote instead (gitrepo.ResolveRange).
+	MetaSessionStart = "session_start_commit"
+	// SessionStartUnborn is MetaSessionStart's value for a session that began in a
+	// repository with no commit yet: its range starts at git's empty tree, so the commits
+	// the agent makes in its first turn are judged.
+	SessionStartUnborn = "unborn"
 	// MetaBaselineBranch is which line of history that point belongs to. Kept
 	// beside the commit because an agent may switch branches mid-session, and a
 	// point recorded on the line it left describes a history the tree no longer

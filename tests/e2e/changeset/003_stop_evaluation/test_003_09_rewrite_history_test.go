@@ -98,6 +98,55 @@ func TestT003_10_AnAmendedAwayWatermarkFallsBackToTheFloorAndIsJudgedAgain(t *te
 	if got := droppedWatermark(t, e, proj, "s-003-10"); !strings.Contains(got, passedHead) {
 		t.Fatalf("the run should record the watermark it had to drop (%s):\n%s", passedHead, got)
 	}
+
+	// Fixed (the new commit reverted, and a judge that now passes), the same range passes.
+	e.Git(proj, "revert", "--no-edit", "HEAD")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictPass)
+	if r := e.StopNow(proj, "s-003-10", false); harness.Blocked(r) {
+		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
+	}
+}
+
+// T003_30: the same through a soft reset that recommits (the usual "squash my commits"):
+// the passed head is orphaned, its merge base with HEAD is the floor, and the squashed
+// commit and the new one are judged again.
+func TestT003_30_ASoftResetWatermarkFallsBackToItsMergeBaseAndIsJudgedAgain(t *testing.T) {
+	e, proj := startedJudgeProject(t, "s-003-30", verdictPass)
+	floor := e.Git(proj, "rev-parse", "HEAD")
+
+	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
+	e.CommitAll(proj, "add a")
+	if r := e.StopNow(proj, "s-003-30", false); harness.Blocked(r) {
+		t.Fatalf("the passing judge refused:\n%s", r.Output)
+	}
+	passedHead := e.Git(proj, "rev-parse", "HEAD")
+
+	e.Git(proj, "reset", "-q", "--soft", floor)
+	e.Git(proj, "commit", "-q", "-m", "add a, squashed")
+	e.WriteFile(proj, "docs/b.md", "the release is Monday\n")
+	e.CommitAll(proj, "add b")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictFail)
+
+	r := e.StopNow(proj, "s-003-30", false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "JUDGE-SAYS-NO") {
+		t.Fatalf("the squashed range was not judged and refused:\n%s", r.Output)
+	}
+	prompt := e.JudgePrompt(proj, promptFile)
+	for _, want := range []string{"docs/a.md(A)", "docs/b.md(A)", "[add a, squashed]", "[add b]", "BASE=" + floor} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the range after the soft reset should start at the merge base; the prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	if got := droppedWatermark(t, e, proj, "s-003-30"); !strings.Contains(got, passedHead) {
+		t.Fatalf("the run should record the watermark it had to drop (%s):\n%s", passedHead, got)
+	}
+
+	// Fixed (the new commit reverted, and a judge that now passes), the same range passes.
+	e.Git(proj, "revert", "--no-edit", "HEAD")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictPass)
+	if r := e.StopNow(proj, "s-003-30", false); harness.Blocked(r) {
+		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
+	}
 }
 
 // T003_11: the same through a rebase. The passed head is rewritten onto new

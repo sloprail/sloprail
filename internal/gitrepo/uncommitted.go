@@ -78,3 +78,20 @@ func UncommittedChanges(dir string) ([]Uncommitted, error) {
 	}
 	return changes, nil
 }
+
+// HeadChangedPaths lists the paths the HEAD commit changed (a root commit: every path in
+// it). What a refusal names when no range could be computed, so it still says which files
+// it is about.
+func HeadChangedPaths(dir string) ([]string, error) {
+	out, err := run(dir, "show", "--name-only", "--format=", "-z", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}

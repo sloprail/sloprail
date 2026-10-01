@@ -28,10 +28,16 @@ lib_tree "$SR_TREE" "$SR_BASE"
 idxs="$(printf '%s' "$payload" | jq -r '
   (.subject.files | if type == "array" then . else error("no subject") end) as $subj
   | [.changeset.files | to_entries[] | select(.value.path as $p | any($subj[]; . == $p)) | .key] | .[]' 2>/dev/null)" || exit 0
+# A subject that matches no file of the changeset decided nothing: apply, never waive.
+[ -n "$idxs" ] || exit 0
 
 # One jq read per field, and any failure is undecidable: apply.
 fld() { printf '%s' "$payload" | jq -r --argjson i "$1" ".changeset.files[\$i]$2" 2>/dev/null; }
-mk() { printf '%s' "$payload" | jq -r --argjson i "$1" "[(.changeset.files[\$i].$2 // [])[] | select(.kind == \"invariant\") | .fqn] | join(\"\\n\")" 2>/dev/null; }
+# A field the payload does not carry is undecidable, never "empty": content or markers
+# absent (a file too large, binary, or unreadable) must APPLY the requirement, so these
+# read a field as a string / array or fail, and a failure exits 0 above.
+req() { printf '%s' "$payload" | jq -r --argjson i "$1" ".changeset.files[\$i].$2 | if type == \"string\" then . else error(\"missing $2\") end" 2>/dev/null; }
+mk() { printf '%s' "$payload" | jq -r --argjson i "$1" "[(.changeset.files[\$i].$2 | if type == \"array\" then . else error(\"missing $2\") end)[] | select(.kind == \"invariant\") | .fqn] | join(\"\\n\")" 2>/dev/null; }
 
 # A committed change has a known result, and "before" is the range's base: a created
 # file had nothing there, and a rename is the old path deleted and the new one created.
@@ -40,10 +46,14 @@ for i in $idxs; do
   status="$(fld "$i" '.status')" || exit 0
   path="$(fld "$i" '.path')" || exit 0
   oldpath="$(fld "$i" '.oldPath // ""')" || exit 0
-  oldc="$(fld "$i" '.oldContent // ""')" || exit 0
-  newc="$(fld "$i" '.newContent // ""')" || exit 0
-  old_f="$(mk "$i" oldMarkers)" || exit 0
-  new_f="$(mk "$i" newMarkers)" || exit 0
+  # Only what the status uses is read, and each of it is required: a missing field applies.
+  oldc="" newc="" old_f="" new_f=""
+  case "$status" in
+    A) newc="$(req "$i" newContent)" || exit 0; new_f="$(mk "$i" newMarkers)" || exit 0 ;;
+    M | R) oldc="$(req "$i" oldContent)" || exit 0; newc="$(req "$i" newContent)" || exit 0
+       old_f="$(mk "$i" oldMarkers)" || exit 0; new_f="$(mk "$i" newMarkers)" || exit 0 ;;
+    D) oldc="$(req "$i" oldContent)" || exit 0; old_f="$(mk "$i" oldMarkers)" || exit 0 ;;
+  esac
   [ -n "$path" ] || exit 0
 
   # Each file is judged on its own, so a refusal names every file the change moves
