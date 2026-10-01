@@ -70,6 +70,7 @@ type changesetEvaluation struct {
 	batch      string
 	runner     dispatchcore.Runner
 	snapshots  sync.Mutex // `git worktree add/remove` race on the worktree names
+	tip        stopTip    // the line of history judged; the zero value is HEAD
 }
 
 // StopConcurrencyEnv bounds how many file-guard rules are evaluated at once at Stop.
@@ -141,7 +142,7 @@ type ruleRun struct {
 //     concurrently.
 //
 // Within a rule the declared order and first-refusal-ends are kept.
-func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p HookPayload, scope hookScope, root string,
+func evaluateChangesetsAt(cmd *cobra.Command, guards []declaration.FileGuard, p HookPayload, scope hookScope, root string, tip stopTip,
 	contextMap map[string]natures.ContextState, state sessionstate.Store, results checkstore.Store) []fileGuardResult {
 	if len(guards) == 0 {
 		return nil
@@ -150,7 +151,7 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	ev := &changesetEvaluation{
 		cmd: cmd, diags: map[string]*bytes.Buffer{}, root: root, p: p, scope: scope, contextMap: contextMap,
 		context: contextMatchValue(contextMap), state: state, results: results,
-		batch: "stop-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		batch: "stop-" + strconv.FormatInt(time.Now().UnixNano(), 10), tip: tip,
 	}
 	ev.identity = ev.runIdentity()
 	limit := stopConcurrency()
@@ -206,7 +207,9 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	var refusals []fileGuardResult
 	for _, o := range out {
 		if o != nil && o.settled && o.refused {
-			refusals = append(refusals, o.result)
+			r := o.result
+			r.Reason = tip.describe(root) + r.Reason
+			refusals = append(refusals, r)
 		}
 	}
 	for _, o := range out {
@@ -235,7 +238,9 @@ func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
 	if root, err := gitrepo.RootCommit(ev.root); err == nil {
 		id.RepoID = root
 	}
-	if pos, err := gitrepo.Head(ev.root); err == nil {
+	if ev.tip.Sha != "" {
+		id.Branch = ev.tip.Ref
+	} else if pos, err := gitrepo.Head(ev.root); err == nil {
 		id.Branch = pos.Branch
 	}
 	return id
@@ -318,7 +323,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		return ev.fail(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
 
-	r, err := resolveRuleRangeIn(ev.root, g, ev.results, ev.state, sessionFolderFor(ev.p, ev.root))
+	r, err := resolveRuleRangeAt(ev.root, ev.tip.Sha, ev.tip.Start, g, ev.results, ev.state, sessionFolderFor(ev.p, ev.root))
 	if errors.Is(err, gitrepo.ErrNoCommits) {
 		return nil, fileGuardResult{}, false // nothing has been committed, so nothing can be judged
 	}
@@ -658,6 +663,9 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 // working tree is clean (an amend would sweep in staged work). Anything that
 // cannot be established reads as not safe: the amend is only ever an offer.
 func (ev *changesetEvaluation) amendSafe() bool {
+	if ev.tip.Sha != "" {
+		return false // HEAD is not the line being judged
+	}
 	pushed, err := gitrepo.HeadPushed(ev.root)
 	if err != nil || pushed {
 		return false

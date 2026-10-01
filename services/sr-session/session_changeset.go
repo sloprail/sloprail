@@ -71,6 +71,10 @@ judged, the root commit included); so does a session that began before the first
 If none can be used — no watermark, no floor, and no session start recorded — the
 command fails rather than guess.
 
+This shows HEAD's range. At Stop the rule is also judged over every other branch (and
+detached-HEAD commit) the session committed on, each with the same logic and its own
+snapshot; those tips are the session's recorded refs (` + "`sr-session refs list`" + `).
+
 --rule names the file-guard: its folder name (` + "`size-limit`" + `), or its qualified
 name as a refusal cites it (` + "`file-guard/size-limit`" + `, ` + "`plugin/file-guard/size-limit`" + `).
 

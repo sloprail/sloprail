@@ -97,6 +97,10 @@ type Store interface {
 	Folders(sessionID string) ([]Folder, error)
 	// SetFolderHead records the last HEAD seen in a registered folder.
 	SetFolderHead(sessionID, path, head string) error
+	// RecordRef records a ref a session committed on (the first sighting sets
+	// FirstTip, later ones move Tip). Refs lists them, one folder or all.
+	RecordRef(r Ref) error
+	Refs(sessionID, folder string) ([]Ref, error)
 
 	// Close releases the database.
 	Close() error

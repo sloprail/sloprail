@@ -36,6 +36,12 @@ const (
 	// position rather than a state, because a record only grows.
 	MetaTranscriptRead = "transcript_read"
 
+	// MetaRefsAtStart is every branch tip (local and remote-tracking) the root folder had
+	// when the session began, as a JSON object of ref name to commit. What a branch
+	// already held then is not the session's work: a tip inside that history is never
+	// judged as one the session committed on.
+	MetaRefsAtStart = "refs_at_start"
+
 	// MetaTranscriptOffered is how far the record had been read out to something
 	// that could judge it, before any cycle confirmed having judged it.
 	//
