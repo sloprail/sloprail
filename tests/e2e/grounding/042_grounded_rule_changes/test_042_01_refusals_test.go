@@ -93,7 +93,7 @@ func TestT042_04_MisfireToolOutputGrounds(t *testing.T) {
 func TestT042_05_OwnRefusalIsNoGround(t *testing.T) {
 	e := New(t)
 	proj := project(t, e)
-	use, res := harness.CallWithOutput("t1", "Bash", map[string]string{"command": "sr-session stop"},
+	use, res := harness.CallWithOutput("t1", "Bash", map[string]string{"command": "cat last-refusal.txt"},
 		"This change to the project's rules must be cited. (rule sloprail/file-guard/grounded-rule-changes from plugin sloprail)")
 	e.Run(proj, "s-042-05", "add the invoices note", Turns("done", append(editScript(t, "w1", ".sloprail/file-guard/demo/check.sh", demoLoosened), use, res)...))
 	e.Run(proj, "s-042-05", "commit it", Turns("done", harness.Commit("c1", "change the rule", harness.CitesTool("must be cited"))))
