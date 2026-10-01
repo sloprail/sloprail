@@ -49,6 +49,10 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	if store != nil {
 		defer store.Close()
 		recordBaselineBeforeTool(cmd, store, p)
+	} else {
+		// No store for this agent yet (its record is not written): the folder it began
+		// in is still registered, in the root's store.
+		registerStartFolderReporting(cmd, nil, p)
 	}
 
 	reg, err := modules.Registry()

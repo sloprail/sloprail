@@ -171,3 +171,31 @@ func TestResolveRuleRangeIn_NoFolderAndNoStartFailsClosed(t *testing.T) {
 	_, err := resolveRuleRangeIn(repo, plugin, nil, openStore(t), nil)
 	assert.ErrorIs(t, err, gitrepo.ErrNoSessionStart)
 }
+
+// A repository a sub-agent stood in (an ad-hoc folder) is judged from its HEAD when it
+// was first stood in: what was committed there before is never judged.
+func TestResolveRuleRangeIn_AnAdHocFolderStartsAtItsHeadWhenFirstTouched(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "old.txt", "old")
+	touched := commitFile(t, repo, "touched.txt", "when the sub-agent first stood here")
+	after := commitFile(t, repo, "after.txt", "its own work")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+
+	folder := &sessionstate.Folder{Path: repo, Role: sessionstate.FolderAdHoc, BaseRef: touched}
+	r, err := resolveRuleRangeIn(repo, plugin, nil, nil, folder)
+	require.NoError(t, err)
+	assert.Equal(t, touched, r.Base)
+	assert.Equal(t, after, r.Head)
+}
+
+// The session's own (root) folder does not supply a start: the root's range is unchanged.
+func TestResolveRuleRangeIn_TheRootFolderDoesNotSupplyAStart(t *testing.T) {
+	repo := initRepo(t)
+	first := commitFile(t, repo, "a.txt", "A")
+	commitFile(t, repo, "b.txt", "B")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+
+	folder := &sessionstate.Folder{Path: repo, Role: sessionstate.FolderRoot, BaseRef: first}
+	_, err := resolveRuleRangeIn(repo, plugin, nil, nil, folder)
+	assert.ErrorIs(t, err, gitrepo.ErrNoSessionStart)
+}

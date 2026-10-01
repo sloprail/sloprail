@@ -72,10 +72,11 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 			}
 		}
 	}
-	// Only a sub-agent's worktree supplies the start. The session's own (root) folder
-	// records the same HEAD its own start does, and the root's range is unchanged:
-	// it keeps reading its recorded start, so a session that lost it still fails closed.
-	if folder != nil && folder.Role == sessionstate.FolderSubagentWorktree && folder.BaseRef != "" {
+	// Only a sub-agent's folders supply the start (its worktree, or a repository it
+	// stood in). The session's own (root) folder records the same HEAD its own start
+	// does, and the root's range is unchanged: it keeps reading its recorded start, so
+	// a session that lost it still fails closed.
+	if folder != nil && (folder.Role == sessionstate.FolderSubagentWorktree || folder.Role == sessionstate.FolderAdHoc) && folder.BaseRef != "" {
 		sessionStart = folder.BaseRef
 		if sessionStart == sessionstate.FolderBaseUnborn {
 			sessionStart = gitrepo.EmptyTree // began before the first commit

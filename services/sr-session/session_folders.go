@@ -81,39 +81,54 @@ func resolveRootSession(p HookPayload) (rootSession, error) {
 	return rootSession{ID: id.ID, Cwd: cwd, Path: path}, nil
 }
 
-// folderToRegister is the folder a hook's first tool call defines, or "" and false
-// when it defines none: not a repository, a sub-agent that works in the root's own
-// tree (judged with the root, owns nothing), a sub-agent the harness did not name,
-// or a root that has since stood somewhere other than where it began (a repository
-// it merely touched).
+// folderToRegister is the folder a hook's first tool call defines, or false when it
+// defines none: not a repository, a sub-agent that works in the root's own tree
+// (judged with the root, owns nothing), a sub-agent the harness did not name, or a
+// root that has since stood somewhere other than where it began (a repository it
+// merely touched).
+//
+// A sub-agent's worktree is registered only when it is POSITIVELY a tree of its own:
+// both the root's starting tree and the sub-agent's can be read and they differ. Any
+// doubt registers nothing (unlike ownsTree, which gates on doubt) — a row is a claim
+// that a range may start there, and a guess would start one at the wrong place. With
+// no row the sub-agent's range fails closed.
 func folderToRegister(p HookPayload, rs rootSession) (path, role string, ok bool) {
 	tree, err := gitrepo.Root(p.Cwd)
 	if err != nil || tree == "" {
 		return "", "", false
 	}
+	rootTree, err := gitrepo.Root(rs.Cwd)
+	if err != nil || rootTree == "" {
+		return "", "", false
+	}
 	if p.IsSubagent() {
-		if p.AgentID == "" || !ownsTree(p) {
+		if p.AgentID == "" || sameDir(rootTree, tree) {
 			return "", "", false
 		}
 		return tree, sessionstate.FolderSubagentWorktree, true
 	}
-	rootTree, err := gitrepo.Root(rs.Cwd)
-	if err != nil || !sameDir(rootTree, tree) {
+	if !sameDir(rootTree, tree) {
 		return "", "", false
 	}
 	return tree, sessionstate.FolderRoot, true
 }
 
 // registerStartFolder records the folder this hook's agent began work in, with the
-// HEAD it began at, if it has not been recorded yet. Called on every tool call
-// right after the agent's own start is taken (ensureBaselineRecorded), and a no-op
-// from the second.
+// HEAD it began at, if it has not been recorded yet. Called on every tool call, and a
+// no-op once the agent's folder is there.
 //
-// The start is read back from the agent's own store rather than taken from git here:
-// a call that follows a failed first attempt would otherwise record a HEAD the
-// agent's own commits have since moved, and its range would start after them.
-// Failing to register is reported and never refuses the tool call, as the baseline's
-// own failure is: with no row the range falls back to the agent's own start.
+// A sub-agent's first folder is the worktree it was dispatched into. A later call from
+// another repository (the sub-agent cd'd) registers that repository as its own
+// ad-hoc folder, started at its HEAD at that call, so nothing from before the agent
+// touched it is ever judged. (Auto-registration of touched repositories, for
+// sub-agents.)
+//
+// The start is the agent's own recorded start when its store has one (a retry after a
+// failed first attempt would otherwise record a HEAD its own commits have since
+// moved), and the HEAD of the tree at this call otherwise. The registry does not
+// depend on the agent's own store: a call whose identity cannot be resolved yet (its
+// record is not written) still records where the agent began, in the root's store,
+// where the Stop finds it by the folder's path.
 func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	rs, err := resolveRootSession(p)
 	if err != nil {
@@ -123,12 +138,23 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if !ok {
 		return nil
 	}
-	start, had, err := own.Meta(sessionstate.MetaSessionStart)
-	if err != nil {
-		return err
+	var start string
+	if own != nil {
+		if v, had, err := own.Meta(sessionstate.MetaSessionStart); err != nil {
+			return err
+		} else if had {
+			start = v
+		}
 	}
-	if !had || start == "" {
-		return nil // nothing recorded as the start: leave the folder unregistered, so the range fails closed
+	pos, headErr := gitrepo.Head(p.Cwd)
+	if start == "" {
+		if headErr != nil {
+			return headErr
+		}
+		start = pos.Commit
+		if start == "" {
+			start = sessionstate.FolderBaseUnborn
+		}
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
@@ -136,13 +162,34 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	}
 	defer reg.Close()
 
+	if role == sessionstate.FolderSubagentWorktree {
+		folders, err := reg.Folders(rs.ID)
+		if err != nil {
+			return err
+		}
+		for _, f := range folders {
+			if f.AgentID == p.AgentID && f.Role == sessionstate.FolderSubagentWorktree {
+				// The agent's worktree is already registered, so this is some other
+				// repository it stood in: its own row, started at its HEAD now.
+				role = sessionstate.FolderAdHoc
+				if headErr != nil {
+					return headErr
+				}
+				start = pos.Commit
+				if start == "" {
+					start = sessionstate.FolderBaseUnborn
+				}
+				break
+			}
+		}
+	}
 	f := sessionstate.Folder{
 		SessionID: rs.ID, Path: path, Role: role, GitRoot: path, BaseRef: start, AgentID: p.AgentID,
 	}
 	if role == sessionstate.FolderRoot {
 		f.AgentID = ""
 	}
-	if pos, err := gitrepo.Head(p.Cwd); err == nil {
+	if headErr == nil {
 		f.Branch, f.HeadRef = pos.Branch, pos.Commit
 	}
 	if id, err := gitrepo.RootCommit(p.Cwd); err == nil {

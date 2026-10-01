@@ -14,6 +14,10 @@ const (
 	// FolderSubagentWorktree is a worktree of its own that the harness dispatched a
 	// sub-agent into.
 	FolderSubagentWorktree = "subagent-worktree"
+	// FolderAdHoc is a repository a sub-agent stood in after its own worktree (it
+	// cd'd there). Registered when first seen, its start is its HEAD at that moment:
+	// history from before the agent touched it is never judged.
+	FolderAdHoc = "ad-hoc"
 )
 
 // FolderBaseUnborn is a folder's BaseRef when its repository had no commit yet.
