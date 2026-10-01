@@ -78,6 +78,24 @@ evaluation **fails** and Stop refuses, rather than guess; a range where `match`
 selects nothing is a pass with no `files`, never the same as a range that could
 not be computed.
 
+**Every branch the session committed on is judged, not only `HEAD`.** The commits a
+session (or sub-agent) makes are recorded per folder as data (the `session_refs` table of
+the session's store: folder, ref, first and latest tip). At each Stop the engine reads the
+folder's `HEAD` reflog (a worktree has its own) for the commits made since the session
+began, on any branch or on a detached `HEAD`, and records every line of history still
+reachable from a ref (or left detached). The rule is then evaluated once for `HEAD` and
+once for each other recorded tip, each with the same range logic (a watermark reachable
+from *that tip*, else the floor or session start) and its own `SR_TREE` snapshot. A tip that
+`HEAD` or another tip contains is dropped, and a pass is a watermark for every tip that
+contains it, so a commit is judged once per rule. A refusal for a tip that is not checked
+out names the branch and folder (`git -C <folder> switch <branch>`, fix, commit); detached
+commits are named `detached/<sha>` and need a branch (`git switch -c <name> <sha>`). A
+branch that existed before the session and was not committed on is never judged. A ref
+the engine did not see can be recorded by hand:
+`sr-session refs add --session <id> --workspace <dir> --folder <git root> --ref <branch> --tip <sha>`
+(`sr-session refs list` shows the rows). Uncommitted work is a `commit-required` matter and
+stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
+
 A rule's identity is its whole `.sloprail` root — its own folder, every other rule,
 schemas and shared scripts, whichever of the project's or its plugin's it lives in.
 The rule hash covers all of it, so editing any file there changes the hash and

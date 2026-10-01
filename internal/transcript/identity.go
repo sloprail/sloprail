@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // The identity a conversation keeps.
@@ -488,6 +489,23 @@ func StartCwd(path string) (string, error) {
 	err := scanFile(path, func(rec claudeRecord) bool {
 		if rec.Cwd != "" {
 			found = rec.Cwd
+			return false
+		}
+		return true
+	})
+	return found, err
+}
+
+// StartTime is when the record's first timestamped entry was written: when the session
+// began. The zero time with a nil error when the record carries none.
+func StartTime(path string) (time.Time, error) {
+	var found time.Time
+	err := scanFile(path, func(rec claudeRecord) bool {
+		if rec.Timestamp == "" {
+			return true
+		}
+		if t, perr := time.Parse(time.RFC3339Nano, rec.Timestamp); perr == nil {
+			found = t
 			return false
 		}
 		return true

@@ -118,9 +118,16 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 	if err != nil {
 		return Range{}, err
 	}
+	return ResolveRangeAt(dir, head, folder, rule, watermark, sessionStart, refusedBases...)
+}
+
+// ResolveRangeAt is ResolveRange for the history ending at head (a commit SHA) rather
+// than HEAD: every ancestry question is asked of head. It is how a branch the working
+// tree has left, or a detached-HEAD commit, is judged by the same logic as HEAD.
+func ResolveRangeAt(dir, head, folder, rule, watermark, sessionStart string, refusedBases ...string) (Range, error) {
 	r := Range{Head: head}
 	if watermark != "" {
-		ok, err := Contains(dir, watermark)
+		ok, err := IsAncestor(dir, watermark, head)
 		if err != nil {
 			return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", watermark, err)
 		}
@@ -142,7 +149,7 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 	// that existed at session start judges from the session start.
 	var floor string
 	if strings.TrimSpace(folder) != "" {
-		last, err := folderFloor(dir, folder)
+		last, err := folderFloor(dir, head, folder)
 		if err != nil {
 			return Range{}, err
 		}
@@ -150,7 +157,7 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 			// `git log` on HEAD makes it reachable by construction; it is asked
 			// anyway, because "every run" is the rule and a cheap check is what
 			// keeps it true if that construction ever changes.
-			ok, err := Contains(dir, last)
+			ok, err := IsAncestor(dir, last, head)
 			if err != nil {
 				return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", last, err)
 			}
@@ -170,7 +177,7 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 		// touch of the root would move the base past violations committed after the rule
 		// was added. Never later than the floor.
 		base := floor
-		added, err := firstAddCommit(dir, sessionStart, firstNonEmpty(rule, folder))
+		added, err := firstAddCommit(dir, head, sessionStart, firstNonEmpty(rule, folder))
 		if err != nil {
 			return Range{}, err
 		}
@@ -194,14 +201,18 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 		ok := sessionStart == EmptyTree // a session that began before the first commit
 		if !ok {
 			var err error
-			if ok, err = Contains(dir, sessionStart); err != nil {
+			if ok, err = IsAncestor(dir, sessionStart, head); err != nil {
 				return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
 			}
 		}
 		if ok {
 			start = sessionStart
-		} else if start, err = reanchorSessionStart(dir, sessionStart, head); err != nil {
-			return Range{}, err
+		} else {
+			s, err := reanchorSessionStart(dir, sessionStart, head)
+			if err != nil {
+				return Range{}, err
+			}
+			start = s
 		}
 	}
 	if start != "" {
@@ -210,7 +221,7 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 		// refused for and never fixed: nothing it refused may fall out of sight.
 		for _, rb := range refusedBases {
 			if rb != "" && rb != EmptyTree {
-				ok, err := Contains(dir, rb)
+				ok, err := IsAncestor(dir, rb, head)
 				if err != nil {
 					return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", rb, err)
 				}
@@ -237,8 +248,8 @@ func ResolveRange(dir, folder, rule, watermark, sessionStart string, refusedBase
 
 // firstAddCommit is the OLDEST commit in sessionStart..HEAD that added a file under
 // folder, or "" when there is none.
-func firstAddCommit(dir, sessionStart, folder string) (string, error) {
-	out, err := run(dir, "log", "--reverse", "--diff-filter=A", "--format=%H", sessionStart+"..HEAD", "--", folder)
+func firstAddCommit(dir, head, sessionStart, folder string) (string, error) {
+	out, err := run(dir, "log", "--reverse", "--diff-filter=A", "--format=%H", sessionStart+".."+head, "--", folder)
 	if err != nil {
 		return "", err
 	}
@@ -332,8 +343,8 @@ func headSHA(dir string) (string, error) {
 
 // folderFloor is the last commit reachable from HEAD that touched folder, or ""
 // when none did.
-func folderFloor(dir, folder string) (string, error) {
-	out, err := run(dir, "log", "-1", "--format=%H", "HEAD", "--", folder)
+func folderFloor(dir, head, folder string) (string, error) {
+	out, err := run(dir, "log", "-1", "--format=%H", head, "--", folder)
 	if err != nil {
 		return "", err
 	}
@@ -442,5 +453,10 @@ func ReanchorWatermark(dir, watermark string) (base string, found bool, err erro
 	if err != nil {
 		return "", false, err
 	}
+	return mergeBaseWithHead(dir, watermark, head)
+}
+
+// ReanchorWatermarkAt is ReanchorWatermark for the history ending at head.
+func ReanchorWatermarkAt(dir, head, watermark string) (base string, found bool, err error) {
 	return mergeBaseWithHead(dir, watermark, head)
 }

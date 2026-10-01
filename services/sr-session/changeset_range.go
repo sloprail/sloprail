@@ -65,6 +65,13 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 // being judged over everything its PARENT session's start predates. With no folder
 // (nil) the agent's own recorded start is used, as before.
 func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store, folder *sessionstate.Folder) (gitrepo.Range, error) {
+	return resolveRuleRangeAt(root, "", g, results, state, folder)
+}
+
+// resolveRuleRangeAt is resolveRuleRangeIn for the line of history ending at tip (a
+// commit SHA), or at HEAD when tip is "": the watermark must be reachable from the tip,
+// else the start or floor applies, exactly as for HEAD.
+func resolveRuleRangeAt(root, tip string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store, folder *sessionstate.Folder) (gitrepo.Range, error) {
 	var watermark, dropped, sessionStart string
 	if results != nil {
 		heads, err := results.PassedHeads(g.Qualified())
@@ -72,6 +79,9 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 			return gitrepo.Range{}, err
 		}
 		if watermark, dropped, err = changeset.PickWatermark(heads, func(sha string) (bool, error) {
+			if tip != "" {
+				return gitrepo.IsAncestor(root, sha, tip)
+			}
 			return gitrepo.Contains(root, sha)
 		}); err != nil {
 			return gitrepo.Range{}, err
@@ -84,7 +94,7 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 		// the newest pass (or it shares no history with HEAD) there is nothing to
 		// re-anchor and the surviving older pass, or the floors, apply.
 		if dropped != "" {
-			mb, found, err := gitrepo.ReanchorWatermark(root, dropped)
+			mb, found, err := reanchorWatermark(root, tip, dropped)
 			if err != nil {
 				return gitrepo.Range{}, err
 			}
@@ -140,7 +150,13 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 			return gitrepo.Range{}, err
 		}
 	}
-	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Root()), repoRelative(root, g.Dir), watermark, sessionStart, refused...)
+	var r gitrepo.Range
+	var err error
+	if tip != "" {
+		r, err = gitrepo.ResolveRangeAt(root, tip, repoRelative(root, g.Root()), repoRelative(root, g.Dir), watermark, sessionStart, refused...)
+	} else {
+		r, err = gitrepo.ResolveRange(root, repoRelative(root, g.Root()), repoRelative(root, g.Dir), watermark, sessionStart, refused...)
+	}
 	if err != nil {
 		return gitrepo.Range{}, err
 	}
@@ -148,4 +164,11 @@ func resolveRuleRangeIn(root string, g declaration.FileGuard, results checkstore
 		r.DroppedWatermark = dropped
 	}
 	return r, nil
+}
+
+func reanchorWatermark(root, tip, watermark string) (string, bool, error) {
+	if tip != "" {
+		return gitrepo.ReanchorWatermarkAt(root, tip, watermark)
+	}
+	return gitrepo.ReanchorWatermark(root, watermark)
 }
