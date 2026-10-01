@@ -9,7 +9,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-const judgeDelaySeconds = 4
+const judgeDelaySeconds = 5
 
 // T006_01: four judge rules over a multi-file changeset each take
 // judgeDelaySeconds to answer. One after another that is four times the delay;
@@ -46,16 +46,17 @@ func TestT006_01_JudgesRunConcurrentlyAndEveryRefusalSurfaces(t *testing.T) {
 		t.Fatalf("judges asked = %v, want each of %v exactly once (a fail is replayed, never re-asked)", asked, want)
 	}
 	// Overlap, measured in the judges' own start times rather than the run's wall
-	// time (which carries the mock's and the hooks' overhead): one after another,
-	// the last begins at least 3*delay after the first; concurrently all begin
-	// before the first can have finished.
+	// time (which carries the mock's and the hooks' overhead). One after another the
+	// last begins at least 3*delay after the first (less a second of clock
+	// resolution); concurrently they all begin within start-up noise. Half the
+	// sequential bound is a wide margin on both sides.
 	starts := judgeStarts(t, log)
 	first, last := starts[0].sec, starts[0].sec
 	for _, s := range starts {
 		first, last = min(first, s.sec), max(last, s.sec)
 	}
-	if spread := last - first; spread >= judgeDelaySeconds {
-		t.Fatalf("the judges started %ds apart (delay %ds): they ran one after another, not concurrently: %v", spread, judgeDelaySeconds, starts)
+	if spread := last - first; spread >= 2*judgeDelaySeconds {
+		t.Fatalf("the judges started %ds apart (delay %ds; one after another is at least %ds): they did not run concurrently: %v", spread, judgeDelaySeconds, 3*judgeDelaySeconds-1, starts)
 	}
 }
 

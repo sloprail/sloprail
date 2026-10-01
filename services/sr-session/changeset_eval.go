@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +58,7 @@ import (
 // own writes, and stderr and git's worktree registry are guarded below.
 type changesetEvaluation struct {
 	cmd        *cobra.Command
-	errw       io.Writer // cmd's stderr, locked: rules write to it from several goroutines
+	diags      map[string]*bytes.Buffer // each rule's diagnostics, emitted in declaration order after the pool
 	root       string
 	p          HookPayload
 	scope      hookScope
@@ -84,18 +85,6 @@ func stopConcurrency() int {
 		}
 	}
 	return defaultStopConcurrency
-}
-
-// lockedWriter serialises writes so concurrent rules do not interleave a line.
-type lockedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (l *lockedWriter) Write(b []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(b)
 }
 
 // forEach runs fn(0..n-1) on at most limit goroutines and returns when all are done.
@@ -159,19 +148,22 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	}
 	start := time.Now()
 	ev := &changesetEvaluation{
-		cmd: cmd, errw: &lockedWriter{w: cmd.ErrOrStderr()}, root: root, p: p, scope: scope, contextMap: contextMap,
+		cmd: cmd, diags: map[string]*bytes.Buffer{}, root: root, p: p, scope: scope, contextMap: contextMap,
 		context: contextMatchValue(contextMap), state: state, results: results,
 		batch: "stop-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}
 	ev.identity = ev.runIdentity()
 	limit := stopConcurrency()
+	for _, g := range guards {
+		ev.diags[g.Qualified()] = &bytes.Buffer{} // filled before the pool: read-only map after
+	}
 
 	runs := make([]*ruleRun, len(guards)) // rules with checks still to run
 	out := make([]*ruleRun, len(guards))  // every rule's outcome, by declaration order
 	forEach(len(guards), limit, func(i int) {
 		g := guards[i]
 		if isLaunchedBy(os.Getenv, g.Name) {
-			fmt.Fprintf(ev.stderr(),
+			fmt.Fprintf(ev.log(g),
 				"sloprail: file-guard %q not enforced here — this session was launched by its own check (%s)\n",
 				g.Name, LaunchedByEnv)
 			return
@@ -219,11 +211,18 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	}
 	for _, o := range out {
 		if o != nil && o.tree != nil {
-			fmt.Fprintf(ev.stderr(), "sloprail: file-guard %s: cheap checks %s, judges %s\n", o.g.Attribution(),
+			fmt.Fprintf(ev.log(o.g), "sloprail: file-guard %s: cheap checks %s, judges %s\n", o.g.Attribution(),
 				o.cheap.Round(time.Millisecond), o.slow.Round(time.Millisecond))
 		}
 	}
-	fmt.Fprintf(ev.stderr(), "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
+	// Each rule's diagnostics, in declaration order: concurrent rules must not make
+	// the log's order depend on who finished first.
+	for _, g := range guards {
+		if b := ev.diags[g.Qualified()]; b != nil {
+			cmd.ErrOrStderr().Write(b.Bytes())
+		}
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
 		time.Since(start).Round(time.Millisecond), len(guards), limit)
 	return refusals
 }
@@ -250,10 +249,10 @@ func refusal(g declaration.FileGuard, reason string) fileGuardResult {
 // engineFailure records a run that failed as an engine — passing nothing, moving
 // nothing — and returns the refusal that holds the turn.
 func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checkstore.CheckRun, err error) (fileGuardResult, bool) {
-	fmt.Fprintf(ev.stderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
+	fmt.Fprintf(ev.log(g), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
 	run.ExitCode, run.Error, run.Complete = 1, err.Error(), true
 	if _, recErr := ev.record(run); recErr != nil {
-		fmt.Fprintln(ev.stderr(), "sloprail:", recErr) // already refusing
+		fmt.Fprintln(ev.log(g), "sloprail:", recErr) // already refusing
 	}
 	return refusal(g, fmt.Sprintf(
 		"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
@@ -359,7 +358,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 	// half-way must not be a watermark.
 	runID, err := ev.record(run)
 	if err != nil {
-		ev.dropTree(tree, r.Head)
+		ev.dropTree(g, tree, r.Head)
 		return ev.fail(g, run, err)
 	}
 	return &ruleRun{g: g, hash: hash, req: req, payload: payload, runID: runID, unresolved: unresolved, tree: tree, head: r.Head}, fileGuardResult{}, false
@@ -372,11 +371,11 @@ func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.Chec
 }
 
 // dropTree removes a rule's snapshot.
-func (ev *changesetEvaluation) dropTree(tree *gitrepo.Snapshot, head string) {
+func (ev *changesetEvaluation) dropTree(g declaration.FileGuard, tree *gitrepo.Snapshot, head string) {
 	ev.snapshots.Lock()
 	defer ev.snapshots.Unlock()
 	if err := tree.Remove(); err != nil {
-		fmt.Fprintf(ev.stderr(), "sloprail: snapshot of %s not removed: %v\n", head, err)
+		fmt.Fprintf(ev.log(g), "sloprail: snapshot of %s not removed: %v\n", head, err)
 	}
 }
 
@@ -418,8 +417,8 @@ func (ev *changesetEvaluation) runRest(rr *ruleRun) {
 // on a cheap check. Its run stays unfinished — recorded RUNNING, so never a
 // watermark — and the next Stop evaluates it again.
 func (ev *changesetEvaluation) abandon(rr *ruleRun) {
-	fmt.Fprintf(ev.stderr(), "sloprail: file-guard %s: judges not run this Stop; another rule refused first\n", rr.g.Attribution())
-	ev.dropTree(rr.tree, rr.head)
+	fmt.Fprintf(ev.log(rr.g), "sloprail: file-guard %s: judges not run this Stop; another rule refused first\n", rr.g.Attribution())
+	ev.dropTree(rr.g, rr.tree, rr.head)
 	rr.settled = true
 }
 
@@ -429,7 +428,7 @@ func (ev *changesetEvaluation) abandon(rr *ruleRun) {
 func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict, failed error) {
 	g := rr.g
 	defer func() { rr.settled = true }()
-	ev.dropTree(rr.tree, rr.head)
+	ev.dropTree(rr.g, rr.tree, rr.head)
 	if failed != nil {
 		rr.result, rr.refused = refusal(g, failed.Error()), true
 		return
@@ -440,7 +439,7 @@ func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict,
 			return
 		}
 		if _, err := ev.results.ResolveStale(g.Qualified(), rr.hash, rr.runID); err != nil {
-			fmt.Fprintln(ev.stderr(), "sloprail:", err)
+			fmt.Fprintln(ev.log(g), "sloprail:", err)
 		}
 	}
 	if verdict.Refused {
@@ -749,11 +748,12 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 	return store
 }
 
-// stderr is where a rule reports: the locked writer of a concurrent evaluation, or
-// the command's own when a single rule is evaluated on its own.
-func (ev *changesetEvaluation) stderr() io.Writer {
-	if ev.errw != nil {
-		return ev.errw
+// log is where a rule's diagnostics go: its own buffer during a concurrent
+// evaluation (flushed in declaration order), the command's stderr when a single rule
+// is evaluated on its own.
+func (ev *changesetEvaluation) log(g declaration.FileGuard) io.Writer {
+	if b, ok := ev.diags[g.Qualified()]; ok {
+		return b
 	}
 	return ev.cmd.ErrOrStderr()
 }

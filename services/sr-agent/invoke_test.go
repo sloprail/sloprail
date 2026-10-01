@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/internal/harness"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -152,7 +153,7 @@ func TestBuildInvocation_PromptIsLastAndPositional(t *testing.T) {
 // judge carries none of the caller's session wiring and cannot recurse. Named here
 // so the invocation tests assert against the same string the spec ships rather than
 // re-spelling the JSON, and a change to the spec's settings updates one place.
-const claudeIsolationSettings = `{"hooks":{},"mcpServers":{},"enabledPlugins":{},"disableAllHooks":true}`
+const claudeIsolationSettings = harness.IsolationSettings
 
 // claudeSettingsArg is how the isolation settings render in Invocation.String() /
 // --dry-run output: the JSON contains quotes, so String() runs it through
