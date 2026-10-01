@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -131,6 +132,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Comma-separated preferences, first match wins: size aliases (size-xs…size-xxl) and/or model names")
 	cmd.Flags().String("prompt", "",
 		"The prompt, when a positional would be awkward (from a file or a pipe)")
+	cmd.Flags().Bool("prompt-stdin", false,
+		"Read the prompt from standard input, for one too large for a command line (the OS bounds argv and environment together)")
 	cmd.Flags().String("harness", "",
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
 	cmd.Flags().String("claude-args", "",
@@ -194,6 +197,16 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if fromStdin, _ := cmd.Flags().GetBool("prompt-stdin"); fromStdin {
+		if len(args) > 0 || strings.TrimSpace(promptFlag) != "" {
+			return errors.New("--prompt-stdin reads the prompt from stdin; a positional or --prompt prompt as well would disagree with it, so pass only one")
+		}
+		body, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return fmt.Errorf("reading the prompt from stdin: %w", err)
+		}
+		promptFlag = string(body)
+	}
 	prompt, err := resolvePrompt(args, promptFlag)
 	if err != nil {
 		return err
@@ -420,6 +433,9 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 
 	proc := exec.CommandContext(parent, inv.Binary, inv.Args...)
 	proc.Stdin = cmd.InOrStdin()
+	if inv.Stdin != "" {
+		proc.Stdin = strings.NewReader(inv.Stdin)
+	}
 	proc.Stdout = cmd.OutOrStdout()
 	proc.Stderr = cmd.ErrOrStderr()
 	proc.Env = sanitizeChildEnv(os.Environ())
