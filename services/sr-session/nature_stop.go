@@ -60,6 +60,7 @@ import (
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
+	recordRulesSeen(cmd, store, loaded.FileGuards)
 	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
 		// The root declares nothing, but a repository the agent worked in outside it may:
 		// each is judged under its own rules.

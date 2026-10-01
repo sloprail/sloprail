@@ -187,6 +187,14 @@ func resolveRuleRangeAt(root, tip, tipStart string, g declaration.FileGuard, res
 	if r.DroppedWatermark == "" {
 		r.DroppedWatermark = dropped
 	}
+	// RULE AGE, for every tip alike: commits made before the rule came into force for this
+	// session (a plugin rule enabled mid-session, which no commit history dates) are not its
+	// debt. See rule_age.go.
+	if since := ruleInForceSince(state, g); !since.IsZero() {
+		if r, err = gitrepo.RaiseBaseToTime(root, r, since); err != nil {
+			return gitrepo.Range{}, err
+		}
+	}
 	return r, nil
 }
 

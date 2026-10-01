@@ -42,6 +42,9 @@ type stopTip struct {
 	// Start is where the ref was created (its oldest reflog entry), or "": a floor for
 	// the range so upstream commits merged before the branch was cut are not judged.
 	Start string
+	// Landed is true when the tip's changes are already upstream (squash-merged) yet it is
+	// still owed a judgement: only what still stands upstream is judged (see prepare).
+	Landed bool
 }
 
 // describe is what a refusal for this tip says first: which branch, in which folder,
@@ -195,11 +198,12 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string, guards []declarati
 		} else if ok || tip == head.Commit {
 			continue // HEAD's own judgment covers it
 		}
-		if gitrepo.LandedUpstream(root, tip) && judgedByEvery(root, tip, guards, results) {
+		landed := gitrepo.LandedUpstream(root, tip)
+		if landed && judgedByEvery(root, tip, guards, results) {
 			continue // squash-merged AFTER a rule passed it: everything it changed is upstream, and was judged
 		}
 		start, _ := gitrepo.RefCreation(root, r.Name)
-		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start})
+		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start, Landed: landed})
 	}
 	shas := make([]string, len(cands))
 	for i, c := range cands {

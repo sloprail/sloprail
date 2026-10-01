@@ -322,15 +322,49 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		run.Metadata["droppedWatermark"] = r.DroppedWatermark
 	}
 
-	cs, err := changeset.Build(ev.root, r, changeset.Options{
-		Deletions: changeset.DeletionMode(g.Deletions),
-		Scan:      changesetMarkers,
-		Select:    changesetSelector(match, ev.context),
-	})
-	if err != nil {
-		return ev.fail(g, run, err)
+	// Two scopes of a recorded tip besides its range (the same for every tip):
+	//  - RULE AGE: a rule whose folder was never part of the tip's line of history (the tip
+	//    predates the rule) has nothing to judge there.
+	//  - WHAT STILL STANDS: a tip already landed upstream is judged only on the paths whose
+	//    content upstream still holds as the tip left it; paths changed upstream since were
+	//    superseded by later commits, judged where they were made.
+	selector := changesetSelector(match, ev.context)
+	superseded, notInForce := 0, false
+	if ev.tip.Sha != "" {
+		notInForce = gitrepo.RuleAbsentFromLine(ev.root, ev.tip.Sha, repoRelative(ev.root, g.Dir))
+		if ev.tip.Landed && !notInForce {
+			up, inner := gitrepo.UpstreamRef(ev.root), selector
+			selector = func(s changeset.Scope) (bool, error) {
+				ok, err := inner(s)
+				if err != nil || !ok {
+					return ok, err
+				}
+				if !gitrepo.StandsUpstream(ev.root, ev.tip.Sha, up, s.Path, s.OldPath) {
+					superseded++
+					return false, nil
+				}
+				return true, nil
+			}
+		}
+	}
+	cs := changeset.Changeset{}
+	if !notInForce {
+		cs, err = changeset.Build(ev.root, r, changeset.Options{
+			Deletions: changeset.DeletionMode(g.Deletions),
+			Scan:      changesetMarkers,
+			Select:    selector,
+		})
+		if err != nil {
+			return ev.fail(g, run, err)
+		}
 	}
 	if len(cs.Files) == 0 {
+		// Settled, and said why when it was not simply that nothing matched.
+		if notInForce {
+			run.Metadata["reason"] = "rule-not-in-force"
+		} else if superseded > 0 {
+			run.Metadata["reason"] = "superseded"
+		}
 		// `match` selected nothing in a range that WAS computed: a pass, and the
 		// watermark advances to this head.
 		run.Complete = true
