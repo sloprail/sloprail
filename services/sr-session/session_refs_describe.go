@@ -121,8 +121,8 @@ func (t stopTip) describe(folder string) (head, remedy string) {
 		if c := gitrepo.CommitCarrying(folder, up, t.Sha); c != "" {
 			carrier = fmt.Sprintf(" (carried by %s)", c)
 		}
-		head = fmt.Sprintf("%sThe work on %s (tip %s, in %s) is already on %s%s, but no rule had judged it. "+
-			"Its branch is not the place to fix it any more: what main holds is what counts. ",
+		head = fmt.Sprintf("%sOn branch %s (tip %s, in %s), whose work is already on %s%s, but no rule had judged it. "+
+			"Its branch is not the place to fix it any more: what the default branch holds is what counts. ",
 			from, name, short(t.Sha), folder, up, carrier)
 		path := freshPath(folder, "fix-"+slug(name))
 		remedy = fmt.Sprintf("To fix it: create a branch from %s (`git -C %s worktree add %s -b fix/%s %s`), make the real fix to the files named above "+

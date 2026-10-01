@@ -46,9 +46,10 @@ func LocalBranchesContaining(dir, commit string) ([]string, error) {
 	return refs, nil
 }
 
-// CommitCarrying names (abbreviated SHA and subject) the newest commit on up that touches
-// the files tip changed since it diverged from up: the squash commit that landed a branch.
-// "" when there is none or it cannot be told.
+// CommitCarrying names (abbreviated SHA and subject) the OLDEST commit on up, since tip
+// diverged from it, that touches the files tip changed: the squash commit that landed a
+// branch (later commits that rewrote those files are not what carried it). "" when there is
+// none or it cannot be told.
 func CommitCarrying(dir, up, tip string) string {
 	if up == "" || tip == "" {
 		return ""
@@ -61,7 +62,7 @@ func CommitCarrying(dir, up, tip string) string {
 	if err != nil {
 		return ""
 	}
-	args := []string{"log", "-1", "--format=%h %s", up, "--"}
+	args := []string{"log", "--reverse", "--format=%h %s", mb + ".." + up, "--"}
 	n := 0
 	for _, p := range strings.Split(out, "\x00") {
 		if p == "" {
@@ -79,7 +80,8 @@ func CommitCarrying(dir, up, tip string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(log)
+	first, _, _ := strings.Cut(strings.TrimSpace(log), "\n")
+	return strings.TrimSpace(first)
 }
 
 // MergeBaseOf is the best common ancestor of two commits, or "" when they share none.
