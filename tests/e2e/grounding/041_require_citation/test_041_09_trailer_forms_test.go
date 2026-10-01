@@ -48,6 +48,11 @@ func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
 		Write("w1", "memories/a.md", "# a\n"),
 		commitOwnParagraph("c1", "note the decision", "Sloprail-Cites-User: words nobody said"),
 	))
+	// The precondition that makes this a test of OUR parsing: git itself reads no
+	// trailer from this message, because the citation is not in its last paragraph.
+	if got := e.Git(proj, "log", "-1", "--format=%(trailers:key=Sloprail-Cites-User)"); got != "" {
+		t.Fatalf("git parsed the citation as a trailer, so this would not test the paragraph rule: %q", got)
+	}
 	refused := citationRefusals(e, proj, "s-041-50")
 	if refused == 0 {
 		t.Fatalf("a citation that resolves nowhere passed at Stop:\n%q", e.AllBlockingErrorsFrom(proj, "s-041-50", "Stop"))
@@ -116,4 +121,38 @@ func TestT041_52_TheUsersWordsAndAGitLogGroundNoToolCitation(t *testing.T) {
 	if got := citationRefusals(e, proj, "s-041-52"); got != again {
 		t.Fatalf("a genuine output beside the git log did not ground it (%d refusals, had %d):\n%q", got, again, e.AllBlockingErrorsFrom(proj, "s-041-52", "Stop"))
 	}
+}
+
+// echoRefusedThenPassed: a quote whose only home is the agent's own commit message, printed
+// back by echoCmd, grounds nothing; once a tool genuinely printed it, the echo beside it
+// does no harm.
+func echoRefusedThenPassed(t *testing.T, sess, quote, echoCmd string) {
+	t.Helper()
+	e, proj := guarded(t, toolResultGuard)
+	e.Run(proj, sess, prompt, Turns("done",
+		Write("w1", "memories/a.md", "# a\n"),
+	).ThenCommit(quote, harness.CitesTool(quote)))
+	before := citationRefusals(e, proj, sess)
+	e.Run(proj, sess, "print it", Turns("done", Bash("l2", echoCmd)))
+	refused := citationRefusals(e, proj, sess)
+	if before == 0 || refused == before {
+		t.Fatalf("%s printing the commit message grounded a citation:\n%q", echoCmd, e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+	}
+	e.Run(proj, sess, "run it", Turns("done",
+		Bash("t1", "echo '"+quote+"'"),
+		Bash("l3", echoCmd),
+	))
+	if got := citationRefusals(e, proj, sess); got != refused {
+		t.Fatalf("a genuine output beside %s did not ground it (%d refusals, had %d):\n%q", echoCmd, got, refused, e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+	}
+}
+
+// T041_56: a wrapped `git log` is as much an echo as a bare one.
+func TestT041_56_AWrappedGitLogIsAnEcho(t *testing.T) {
+	echoRefusedThenPassed(t, "s-041-56", "WRAPPED-7701 all green", "sh -c 'git log -1'")
+}
+
+// T041_57: so is a ref listing that prints the messages.
+func TestT041_57_AForEachRefListingIsAnEcho(t *testing.T) {
+	echoRefusedThenPassed(t, "s-041-57", "FOREACH-7702 all green", "git for-each-ref --format='%(contents)' refs/heads")
 }

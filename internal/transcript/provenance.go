@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -124,14 +123,15 @@ func citableFor(path string, entries []LinedEntry) map[string]bool {
 	return citable
 }
 
-// echoCommand is a shell command that prints text the agent itself put there: one
-// that reads commit messages back (git log, show, ...) or one of sloprail's own
-// query tools, which print the quote they were asked about. Anchored on a command
-// boundary; `echo git log` is the one false alarm and it fails closed.
-var echoCommand = regexp.MustCompile("(?:^|[\\s;&|(`])(?:sr-session|sr-file|git(?:\\s+(?:-C|-c|--git-dir|--work-tree|--exec-path)(?:\\s+|=)\\S+|\\s+-{1,2}[\\w-]+(?:=\\S+)?)*\\s+(?:log|show|reflog|cat-file|shortlog|format-patch|whatchanged|notes|rev-list))(?:\\s|$|;|&|\\||\\))")
+// CommandEchoes decides whether a shell command prints the agent's own text back (git
+// log, sloprail's own tools, ...). It is a hook because the decision is made on the
+// parsed command line, and the package that parses it (commandmod) imports this one;
+// commandmod registers it at init, and every binary that resolves a citation links
+// commandmod. Unset, no command is an echo.
+var CommandEchoes func(command string) bool
 
 // echoesRecord reports whether a call's output is the agent's own text read back:
-// a Bash command of echoCommand. The agent's commit message carries the quote it
+// a Bash command CommandEchoes recognises. The agent's commit message carries the quote it
 // cites, so `git log` prints it, and so does `sr-session trajectory cite`; a quote
 // that matches an echo of itself would never be one match, and would be no source
 // either. The genuine source, a result that is not an echo, stays citable.
@@ -143,7 +143,7 @@ func echoesRecord(c recordCall) bool {
 		Command string `json:"command"`
 	}
 	_ = json.Unmarshal(c.Input, &in)
-	return echoCommand.MatchString(in.Command)
+	return CommandEchoes != nil && CommandEchoes(in.Command)
 }
 
 // readsTranscript reports whether a call's target is an agent's transcript: a
