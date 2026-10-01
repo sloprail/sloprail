@@ -244,3 +244,66 @@ func InHistoryOf(dir, commit string, tips []string) (bool, error) {
 	}
 	return strings.TrimSpace(out) == "0", nil
 }
+
+// upstreamRef is the remote branch work lands on: origin/HEAD's target, else origin/main,
+// "" when neither exists.
+func upstreamRef(dir string) string {
+	if out, err := run(dir, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			return ref
+		}
+	}
+	if sha, err := RefTip(dir, "refs/remotes/origin/main"); err == nil && sha != "" {
+		return "refs/remotes/origin/main"
+	}
+	return ""
+}
+
+// LandedUpstream reports whether every change of the branch ending at tip is already in
+// upstream (origin/HEAD, else origin/main): for each path changed between the merge base
+// of the two and tip, its content at upstream equals its content at tip, a deletion
+// included. That is how a squash-merged branch looks: its commits are not ancestors of
+// upstream, but nothing is left on it that upstream lacks. Any doubt (no upstream, a
+// git failure, one path differing) is false, so the branch is judged.
+func LandedUpstream(dir, tip string) bool {
+	up := upstreamRef(dir)
+	if up == "" {
+		return false
+	}
+	mbOut, err := run(dir, "merge-base", up, tip)
+	if err != nil {
+		return false
+	}
+	mb := strings.TrimSpace(mbOut)
+	if !isObjectName(mb) {
+		return false
+	}
+	if mb == tip {
+		return true
+	}
+	names, err := run(dir, "diff", "--name-only", "-z", "--no-renames", mb, tip)
+	if err != nil {
+		return false
+	}
+	blob := func(rev, path string) (string, bool) {
+		out, err := run(dir, "rev-parse", "--verify", "-q", rev+":"+path)
+		if err != nil {
+			if exitCode(err) == 1 {
+				return "", true // absent there
+			}
+			return "", false
+		}
+		return strings.TrimSpace(out), true
+	}
+	for _, path := range strings.Split(names, "\x00") {
+		if path == "" {
+			continue
+		}
+		a, ok1 := blob(up, path)
+		b, ok2 := blob(tip, path)
+		if !ok1 || !ok2 || a != b {
+			return false
+		}
+	}
+	return true
+}

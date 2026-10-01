@@ -165,6 +165,9 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 		} else if ok || tip == head.Commit {
 			continue // HEAD's own judgment covers it
 		}
+		if gitrepo.LandedUpstream(root, tip) {
+			continue // squash-merged: everything it changed is already upstream, reviewed
+		}
 		start, _ := gitrepo.RefCreation(root, r.Name)
 		cands = append(cands, stopTip{Sha: tip, Ref: r.Name, Start: start})
 	}
