@@ -49,7 +49,9 @@ func (ev *changesetEvaluation) recordedQuotes(files []string, pools []transcript
 // resolved in the user pool and the requirement accepts that pool, else the
 // tool's. ok is false when it resolved in none of the pools.
 func trailerOf(c transcript.Citation, pools []transcript.SourceType) (string, bool) {
-	has := func(p transcript.SourceType) bool { return slices.Contains(c.SourceTypes, p) && slices.Contains(pools, p) }
+	has := func(p transcript.SourceType) bool {
+		return slices.Contains(c.SourceTypes, p) && slices.Contains(pools, p)
+	}
 	switch {
 	case has(transcript.SourceUser):
 		return changeset.TrailerCitesUser, true
