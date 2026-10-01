@@ -205,10 +205,19 @@ func setupEnv(env []string, project string) []string {
 	)
 }
 
-// commitSetup commits every change sr-eval itself made to the tree (the
-// overlay, .claude/settings.json) as one commit, so the agent-under-test's
-// first turn starts on a clean tree — see the call site in run.go for why
-// this matters to the engine's own baseline diff.
+// commitSetup commits every change sr-eval itself made to the tree, so the
+// agent-under-test's first turn starts on a clean tree — see the call site in
+// run.go for why this matters to the engine's own baseline diff.
+//
+// Two commits, in this order: the project's own files (seed, the overlay's
+// non-rule files, .claude/settings.json, whatever a setup left), then .sloprail
+// alone. A file-guard judges committed changesets and a rule's range starts at
+// the parent of the commit that added the rule folder; one commit holding both
+// makes that parent the empty tree, so every seeded file is judged as the
+// agent's own addition (citations demanded on a seeded CHANGELOG, a template's
+// marker read as a real one, a removal that shows as status A). Mirrors the e2e
+// harness's Env.CommitSeedThenRules. The first commit may be empty so a fixture
+// that is only rules still has a seed commit to be that parent.
 //
 // No signing and no hooks, for the reason runSetup's setupEnv turns them off:
 // the operator's global config must not decide whether an eval can start.
@@ -219,16 +228,36 @@ func setupEnv(env []string, project string) []string {
 // configured anywhere, which would fail every fixture run on such a machine
 // for a reason that has nothing to do with the eval itself.
 func (w *workspace) commitSetup() error {
-	add := exec.Command("git", "-C", w.project, "add", "-A")
+	if err := w.commitPaths("sr-eval: seed and overlay (project files, .claude/settings.json)", true, ".", ":(exclude).sloprail"); err != nil {
+		return err
+	}
+	status := exec.Command("git", "-C", w.project, "status", "--porcelain", "--", ".sloprail")
+	out, err := status.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git status .sloprail: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil
+	}
+	return w.commitPaths("sr-eval: install the rules (.sloprail)", false, ".sloprail")
+}
+
+// commitPaths stages every change under the pathspecs and commits it.
+func (w *workspace) commitPaths(message string, allowEmpty bool, pathspecs ...string) error {
+	add := exec.Command("git", append([]string{"-C", w.project, "add", "-A", "--"}, pathspecs...)...)
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	commit := exec.Command("git",
+	args := []string{
 		"-c", "user.name=sr-eval",
 		"-c", "user.email=sr-eval@localhost",
 		"-c", "core.hooksPath=/dev/null",
 		"-C", w.project, "commit", "--quiet", "--no-gpg-sign", "--no-verify",
-		"-m", "sr-eval: harness setup (.claude/settings.json, overlay)")
+	}
+	if allowEmpty {
+		args = append(args, "--allow-empty")
+	}
+	commit := exec.Command("git", append(args, "-m", message)...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %w: %s", err, strings.TrimSpace(string(out)))
 	}

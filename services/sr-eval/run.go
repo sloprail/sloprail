@@ -37,10 +37,35 @@ could not be completed (nothing to score at all).`,
 	return cmd
 }
 
+// runFixture is runFixtureSteps with every failure that is not a scored verdict
+// turned into exit 2 and said, loudly, on BOTH streams. A run that could not
+// even start (no disk, a fixture that does not load, a build that fails, an
+// agent that wrote no transcript) is "could not be completed", not a failed
+// eval, and must never end silent: measured, runs that died on ENOSPC left
+// empty stdout and stderr and an exit status that read like an ordinary FAIL.
 func runFixture(cmd *cobra.Command, _ []string) error {
+	err := runFixtureSteps(cmd)
+	if err == nil {
+		return nil
+	}
+	if _, ok := err.(*evalFailure); ok {
+		return err
+	}
+	msg := fmt.Sprintf("sr-eval: ERROR (the run could not be completed; nothing was scored): %v", err)
+	// Best effort: the stream that is out of space may refuse the write, so
+	// both are tried, and the message is also the returned error.
+	fmt.Fprintln(cmd.OutOrStdout(), msg)
+	return &evalFailure{code: 2, msg: msg}
+}
+
+func runFixtureSteps(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	startedAt := time.Now()
+
+	if err := preflight(); err != nil {
+		return err
+	}
 
 	fixtureDir, _ := cmd.Flags().GetString("fixture")
 	modelOverride, _ := cmd.Flags().GetString("model")
@@ -219,9 +244,12 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 // scripting around this needs to tell "ran and failed" (1) apart from
 // "could not be run at all" (2), and collapsing both to a bare error loses
 // that distinction.
-type evalFailure struct{ code int }
+type evalFailure struct {
+	code int
+	msg  string // empty for a scored verdict, already reported on stdout
+}
 
-func (e *evalFailure) Error() string { return "" }
+func (e *evalFailure) Error() string { return e.msg }
 
 // exitCode is read by main() the same way sr-agent's is.
 func exitCode(err error) int {
