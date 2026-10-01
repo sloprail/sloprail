@@ -270,7 +270,7 @@ func TestEvaluateChangesets_EachRuleIsEvaluatedAndOnlyTheRefusalsReturn(t *testi
 
 // Citations are attributed per file: a file is grounded by a citation quoted in
 // the commit that last changed it, and every file that is not is named.
-func TestRequireCitationPerFile(t *testing.T) {
+func TestRunRequirement_CitationPerFile(t *testing.T) {
 	user := []transcript.SourceType{transcript.SourceUser}
 	cite := func(commit string) changeset.Citation {
 		return changeset.Citation{Citation: transcript.Citation{Quote: "q", SourceTypes: user, Path: "/t.jsonl", Line: 3}, Commits: []string{commit}}
@@ -284,7 +284,7 @@ func TestRequireCitationPerFile(t *testing.T) {
 			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
 			Citations: []changeset.Citation{cite("c1"), cite("c2")},
 		}
-		v, err := f.ev.requireCitationPerFile(req, prereq, cs)
+		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
 		require.NoError(t, err)
 		assert.False(t, v.Refused, v.Reason)
 	})
@@ -294,12 +294,37 @@ func TestRequireCitationPerFile(t *testing.T) {
 			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}, {Path: "c.md", Commits: []string{"c3"}}},
 			Citations: []changeset.Citation{cite("c1")},
 		}
-		v, err := f.ev.requireCitationPerFile(req, prereq, cs)
+		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
 		require.NoError(t, err)
 		require.True(t, v.Refused)
 		assert.Contains(t, v.Reason, "b.md, c.md")
 		assert.NotContains(t, v.Reason, "a.md")
 		assert.Contains(t, v.Reason, "Sloprail-Cites-User")
+		assert.Contains(t, v.Reason, "an empty commit carrying only the trailer does not count")
+	})
+
+	t.Run("when every uncited file was last changed by HEAD the fix is one amend", func(t *testing.T) {
+		cs := changeset.Changeset{Base: "b0", Head: "c2",
+			Commits:   []changeset.Commit{{SHA: "c1", Subject: "first"}, {SHA: "c2", Subject: "second"}},
+			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
+			Citations: []changeset.Citation{cite("c1")},
+		}
+		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
+		require.NoError(t, err)
+		assert.Contains(t, v.Reason, "git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'")
+		assert.NotContains(t, v.Reason, "reset --soft")
+	})
+
+	t.Run("an uncited file last changed earlier is fixed by squashing the range", func(t *testing.T) {
+		cs := changeset.Changeset{Base: "b0", Head: "c2",
+			Commits:   []changeset.Commit{{SHA: "c1", Subject: "first"}, {SHA: "c2", Subject: "second"}},
+			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1"}}, {Path: "b.md", Commits: []string{"c2"}}},
+			Citations: []changeset.Citation{cite("c2")},
+		}
+		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
+		require.NoError(t, err)
+		assert.Contains(t, v.Reason, "git reset --soft b0 && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'")
+		assert.NotContains(t, v.Reason, "--amend")
 	})
 
 	t.Run("an uncited change on top of a cited one is uncited", func(t *testing.T) {
@@ -307,7 +332,7 @@ func TestRequireCitationPerFile(t *testing.T) {
 			Files:     []changeset.File{{Path: "a.md", Commits: []string{"c1", "c2"}}},
 			Citations: []changeset.Citation{cite("c1")},
 		}
-		v, err := f.ev.requireCitationPerFile(req, prereq, cs)
+		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
 		require.NoError(t, err)
 		assert.True(t, v.Refused)
 	})
@@ -315,7 +340,7 @@ func TestRequireCitationPerFile(t *testing.T) {
 	t.Run("a citation in another pool grounds nothing", func(t *testing.T) {
 		tool := changeset.Citation{Citation: transcript.Citation{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceToolResult}, Path: "/t.jsonl", Line: 3}, Commits: []string{"c1"}}
 		cs := changeset.Changeset{Files: []changeset.File{{Path: "a.md", Commits: []string{"c1"}}}, Citations: []changeset.Citation{tool}}
-		v, err := f.ev.requireCitationPerFile(req, prereq, cs)
+		v, err := f.ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
 		require.NoError(t, err)
 		assert.True(t, v.Refused)
 	})

@@ -4,6 +4,7 @@ import (
 	"net/textproto"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // Trailer keys the engine reads.
@@ -11,6 +12,15 @@ const (
 	TrailerCitesUser = "Sloprail-Cites-User"
 	TrailerCitesTool = "Sloprail-Cites-Tool"
 )
+
+// TrailerFor is the trailer a citation in these pools is written as: the tool
+// trailer when tool output is the only source accepted, the user's otherwise.
+func TrailerFor(pools []transcript.SourceType) string {
+	if len(pools) == 1 && pools[0] == transcript.SourceToolResult {
+		return TrailerCitesTool
+	}
+	return TrailerCitesUser
+}
 
 // commitsOf converts git's commits to the payload's, with trailer keys in
 // canonical case. Git trailer keys are case-insensitive, and a rule writing

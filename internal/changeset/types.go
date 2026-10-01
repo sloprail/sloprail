@@ -116,11 +116,11 @@ type Marker struct {
 
 // Subject is one unit of evaluation and caching.
 //
-// Nothing produces anything but the whole-changeset subject yet. The shape is
-// here so that `subjects:` — a script returning several, each fingerprinted and
-// judged on its own, possibly over a per-commit sub-range — is a new producer of
-// this type and not a change to it or to the verdict key, which already carries
-// a subject id.
+// Subjects (by Role) produces them: one file per requirement, the whole changeset
+// per check. The shape is here so that `subjects:` — a script returning several,
+// each fingerprinted and judged on its own, possibly over a per-commit sub-range —
+// replaces that producer and changes neither this type nor the verdict key, which
+// already carries a subject id.
 type Subject struct {
 	ID    string   `json:"id"`
 	Files []string `json:"files"`
@@ -143,6 +143,35 @@ func Whole(cs Changeset) Subject {
 		files = append(files, f.Path)
 	}
 	return Subject{ID: DefaultSubjectID, Files: files, Context: map[string]any{}}
+}
+
+// Role is what a subject is for: a rule's requirements and its checks do not
+// default to the same unit.
+type Role int
+
+const (
+	// Requirement: the unit a `require` entry (and its `when`) is evaluated for.
+	// Without `subjects:` it is ONE SELECTED FILE, so a requirement applies to the
+	// files whose `when` applies and is named for each it fails on.
+	Requirement Role = iota
+	// Check: the unit a script or judge is handed. Without `subjects:` it is the
+	// whole changeset, judged once.
+	Check
+)
+
+// Subjects is the one place a rule's subjects come from. Today it is the default
+// for the role; `subjects:` will replace the body (a rule's script returning the
+// list) and nothing that calls it changes: every caller already takes a slice of
+// Subject and keys its results by Subject.ID.
+func Subjects(cs Changeset, role Role) []Subject {
+	if role == Check {
+		return []Subject{Whole(cs)}
+	}
+	out := make([]Subject, 0, len(cs.Files))
+	for _, f := range cs.Files {
+		out = append(out, Subject{ID: f.Path, Files: []string{f.Path}, Context: map[string]any{}})
+	}
+	return out
 }
 
 // NewPayload assembles what a check receives for one subject of a changeset.
@@ -189,6 +218,25 @@ func (cs Changeset) ForFile(f File) []Citation {
 	for _, c := range cs.Citations {
 		if slices.Contains(c.Commits, tip) {
 			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// ForSubject is the citations that ground a subject: those that ground each of
+// its files (see ForFile), without repeats. A subject naming no known file has none.
+func (cs Changeset) ForSubject(s Subject) []Citation {
+	var out []Citation
+	seen := map[string]bool{}
+	for _, f := range cs.Files {
+		if !slices.Contains(s.Files, f.Path) {
+			continue
+		}
+		for _, c := range cs.ForFile(f) {
+			if key := c.Quote + "\x00" + strings.Join(c.Commits, ","); !seen[key] {
+				seen[key] = true
+				out = append(out, c)
+			}
 		}
 	}
 	return out

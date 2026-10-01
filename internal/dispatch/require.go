@@ -761,10 +761,7 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 	case changeset.Kind:
 		// A changeset carries its grounding in the commits' messages, next to the
 		// change it grounds; there is no command to chain.
-		trailer := "Sloprail-Cites-User"
-		if len(pools) == 1 && pools[0] == transcript.SourceToolResult {
-			trailer = "Sloprail-Cites-Tool"
-		}
+		trailer := changeset.TrailerFor(pools)
 		how := fmt.Sprintf("Amend or add a commit in this range whose message carries a trailer quoting %s exactly:\n"+
 			"  %s: <exact quote>", what, trailer)
 		if hint != "" {
@@ -773,7 +770,7 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 		subject := "this change must cite " + what + ", and no commit in its range carries a citation that resolves."
 		if path != "" {
 			subject = path + " must cite " + what + " in the commit that last changed it, and that commit carries none that resolves."
-			how = fmt.Sprintf("Amend that commit, or add a commit that changes %s, with a trailer quoting %s exactly:\n  %s: <exact quote>", path, what, trailer)
+			how = fmt.Sprintf("The trailer must be on that commit, quoting %s exactly:\n  %s: <exact quote>", what, trailer)
 			if hint != "" {
 				how += "\n" + hint
 			}

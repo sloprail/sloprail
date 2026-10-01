@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -257,35 +258,9 @@ func (ev *changesetEvaluation) runRule(g declaration.FileGuard, hash string, req
 		}
 		seen[requireKind(p)]++
 
-		one := req
-		one.Require = []declaration.Prerequisite{p}
-		var v dispatchcore.Verdict
-		var err error
-		if p.Citation != nil {
-			v, err = ev.requireCitationPerFile(one, p, payload.Changeset)
-		} else {
-			v, err = ev.runner.CheckRequire(one)
-		}
-		rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: kind}
-		switch {
-		case err != nil:
-			rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
-			_ = ev.recordCheck(runID, rec) // already failing
-			return dispatchcore.Verdict{}, fmt.Errorf("the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval", g.Name, err)
-		case v.Refused:
-			rec.Status, rec.Metadata = checkstore.StatusFail, map[string]any{"reasoning": v.Reason}
-		default:
-			rec.Status = checkstore.StatusPass
-		}
-		if p.Citation != nil {
-			rec.Items = citationItems(req.Event, unresolved)
-			if v.Refused {
-				v.Reason += unresolvedNote(unresolved)
-				rec.Metadata["reasoning"] = v.Reason
-			}
-		}
-		if err := ev.recordCheck(runID, rec); err != nil {
-			return dispatchcore.Verdict{}, engineError(g, err)
+		v, err := ev.runRequirement(g, req, p, kind, payload, runID, unresolved)
+		if err != nil {
+			return dispatchcore.Verdict{}, err
 		}
 		if v.Refused {
 			return v, nil
@@ -304,39 +279,125 @@ func (ev *changesetEvaluation) runRule(g declaration.FileGuard, hash string, req
 	return dispatchcore.Verdict{}, nil
 }
 
-// requireCitationPerFile is `require: citation` on a changeset: each selected file
-// must be grounded by a citation quoted in the commit that last changed it, so a
-// commit that cites one file does not ground another, and an uncited change on top
-// of a cited one is refused. The prerequisite (its pools, its `when`) is asked once
-// per file, about that file's own citations; a `when` script still receives the
-// whole changeset. Every file that is not grounded is named.
-func (ev *changesetEvaluation) requireCitationPerFile(req dispatchcore.Request, p declaration.Prerequisite, cs changeset.Changeset) (dispatchcore.Verdict, error) {
-	var first dispatchcore.Verdict
-	var uncited []string
-	for _, f := range cs.Files {
+// runRequirement evaluates one `require` entry for every subject of the changeset
+// (changeset.Requirement: one selected file each, until `subjects:` supplies the
+// list) and records one row per subject, keyed by its id. A subject's `when` runs
+// on that subject's own payload — `subject.files` is what it is asked about, the
+// whole changeset only its context — and the requirement applies only to the
+// subjects whose `when` applies. A citation is read per subject: it must be quoted
+// in the commit that last changed the subject's files, so a commit that cites one
+// file does not ground another, and an uncited change on top of a cited one is
+// refused. Every subject that fails is named.
+func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispatchcore.Request, p declaration.Prerequisite,
+	kind string, whole changeset.Payload, runID string, unresolved []changeset.Unresolved) (dispatchcore.Verdict, error) {
+
+	cs := whole.Changeset
+	var failed, reasons []string
+	for _, s := range changeset.Subjects(cs, changeset.Requirement) {
+		payload := changeset.NewPayload(cs, s, whole.TranscriptPath, whole.Context)
 		one := req
+		one.Changeset = &payload
+		one.Require = []declaration.Prerequisite{p}
 		one.Event = event.Event{Kind: changeset.Kind, Fields: map[string]any{
-			"path":                   f.Path,
-			grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.ForFile(f))),
+			"path":                   s.ID,
+			grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.ForSubject(s))),
 		}}
 		v, err := ev.runner.CheckRequire(one)
-		if err != nil {
-			return dispatchcore.Verdict{}, err
+		rec := checkstore.CheckRecord{Subject: s.ID, Kind: kind}
+		switch {
+		case err != nil:
+			rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
+			_ = ev.recordCheck(runID, rec) // already failing
+			return dispatchcore.Verdict{}, engineError(g, err)
+		case v.Refused:
+			rec.Status, rec.Metadata = checkstore.StatusFail, map[string]any{"reasoning": v.Reason}
+		default:
+			rec.Status = checkstore.StatusPass
 		}
-		if !v.Refused {
-			continue
+		if p.Citation != nil {
+			rec.Items = citationItems(one.Event, unresolved)
+			if v.Refused {
+				rec.Metadata["reasoning"] = v.Reason + unresolvedNote(unresolved)
+			}
 		}
-		if len(uncited) == 0 {
-			first = v
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
 		}
-		uncited = append(uncited, f.Path)
+		if v.Refused {
+			failed = append(failed, s.ID)
+			if !slices.Contains(reasons, v.Reason) {
+				reasons = append(reasons, v.Reason)
+			}
+		}
 	}
-	if len(uncited) == 0 {
+	if len(failed) == 0 {
 		return dispatchcore.Verdict{}, nil
 	}
-	first.Reason = fmt.Sprintf("a citation grounds only the commit it is in. Not grounded by a citation in the commit that last changed it: %s.\n%s",
-		strings.Join(uncited, ", "), first.Reason)
-	return first, nil
+	// Each failed subject's own reason (what its `when` said about it), once.
+	body := strings.Join(reasons, "\n\n")
+	if p.Citation == nil {
+		return dispatchcore.Verdict{Refused: true, Reason: "Not met for: " + strings.Join(failed, ", ") + ".\n" + body}, nil
+	}
+	reason := "a citation grounds only the commit it is in; an empty commit carrying only the trailer does not count. " +
+		"Not grounded by a citation in the commit that last changed it: " + strings.Join(failed, ", ") + ".\n" +
+		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools())) + "\n" + body + unresolvedNote(unresolved)
+	return dispatchcore.Verdict{Refused: true, Reason: reason}, nil
+}
+
+// citeHowToFix says, for the files a citation does not ground, the ONE command that
+// grounds them. A trailer grounds the commit it is on, so it has to be on the commit
+// that last changed each file: when every such commit is HEAD that is an amend of
+// it; when one is earlier, the range is squashed into one commit (which also takes
+// the trailers of the commits it replaces, so each quote the range needs is written
+// again). Several quotes on one commit are fine.
+func citeHowToFix(cs changeset.Changeset, files []string, trailer string) string {
+	var b strings.Builder
+	b.WriteString("Last changed by:")
+	allHead := true
+	for _, path := range files {
+		tip := ""
+		for _, f := range cs.Files {
+			if f.Path == path && len(f.Commits) > 0 {
+				tip = f.Commits[len(f.Commits)-1]
+			}
+		}
+		allHead = allHead && tip != "" && tip == cs.Head
+		fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, tip))
+	}
+	line := trailer + ": <exact quote>"
+	if allHead {
+		fmt.Fprintf(&b, "\nGround them by amending HEAD, the commit that changed them:\n  git commit --amend --no-edit --trailer '%s'", line)
+	} else if cs.Base != "" {
+		fmt.Fprintf(&b, "\nGround them by squashing the range into one commit that carries the quote(s) (repeat the trailer, one per quote; "+
+			"the squash drops the earlier commits' messages, so write again the quotes they carried):\n"+
+			"  git reset --soft %s && git commit -m '<what changed>' -m '%s'", short(cs.Base), line)
+	} else {
+		fmt.Fprintf(&b, "\nGround them by making the next change to each file in a commit that carries the trailer `%s`.", line)
+	}
+	return b.String()
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
+func describeCommit(cs changeset.Changeset, sha string) string {
+	if sha == "" {
+		return "no commit of the range"
+	}
+	for _, c := range cs.Commits {
+		if c.SHA == sha {
+			where := "an earlier commit"
+			if sha == cs.Head {
+				where = "HEAD"
+			}
+			return fmt.Sprintf("%s (%s) %q", short(sha), where, c.Subject)
+		}
+	}
+	return short(sha)
 }
 
 // runCheck runs one check of a rule and records it. A judge is fingerprinted and
