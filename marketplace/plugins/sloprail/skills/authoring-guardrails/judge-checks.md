@@ -73,7 +73,7 @@ nested values come out as Go placeholders the judge cannot read. The engine's
 markdown code fence: a value with a fence line of its own would close it. A filter
 name the engine does not have (a typo like `| uppper`) is not rendered as garbage:
 the judge refuses, naming the template and the filter, and the load check
-(`sr-session start < /dev/null`) reports it before any rule runs.
+reports it to you at the next hook, before any rule runs.
 A rule grounded in citations judges `change` against them —
 [grounding.md](grounding.md).
 
