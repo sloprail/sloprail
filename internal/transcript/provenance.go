@@ -127,7 +127,13 @@ func citableFor(path string, entries []LinedEntry) map[string]bool {
 // log, sloprail's own tools, ...). It is a hook because the decision is made on the
 // parsed command line, and the package that parses it (commandmod) imports this one;
 // commandmod registers it at init, and every binary that resolves a citation links
-// commandmod. Unset, no command is an echo.
+// commandmod. FAILS CLOSED: unset, every Bash result is an echo and so not citable.
+//
+// Known holes (an echo the parser does not see, so its output stays citable): echo or
+// Read of a file the agent wrote itself; Read of a file under .git/ (only commands are
+// parsed); git aliases that print messages; paths built by $(...) or variables;
+// interpreters (python -c, node -e) that read the history; and `git branch -v`, which
+// prints subjects.
 var CommandEchoes func(command string) bool
 
 // echoesRecord reports whether a call's output is the agent's own text read back:
@@ -143,7 +149,7 @@ func echoesRecord(c recordCall) bool {
 		Command string `json:"command"`
 	}
 	_ = json.Unmarshal(c.Input, &in)
-	return CommandEchoes != nil && CommandEchoes(in.Command)
+	return CommandEchoes == nil || CommandEchoes(in.Command)
 }
 
 // readsTranscript reports whether a call's target is an agent's transcript: a
