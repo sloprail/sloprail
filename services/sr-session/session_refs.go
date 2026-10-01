@@ -392,7 +392,7 @@ func newSessionRefsListCmd() *cobra.Command {
 	var t refsTarget
 	cmd := &cobra.Command{
 		Use:   "list --session <id>",
-		Short: "The refs recorded for a session, one per line: folder, ref, tip, agent",
+		Short: "The refs recorded for a session, one per line: folder, ref, tip, agent, abandoned-at tip (empty when not)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := t.open()
@@ -405,7 +405,7 @@ func newSessionRefsListCmd() *cobra.Command {
 				return err
 			}
 			for _, r := range rows {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", r.Folder, r.Name, r.Tip, r.AgentID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", r.Folder, r.Name, r.Tip, r.AgentID, r.Abandoned)
 			}
 			return nil
 		},

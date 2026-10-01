@@ -6,14 +6,7 @@
 # What lands work, and so is looked at: `gh pr merge` (any flags, --admin included), a
 # `gh api` call that merges a pull request, and a `git push` whose destination is the
 # default branch. For each, the commits landing are the PR head (by branch name AND by
-# the head's oid) or the pushed commit.
-#
-# It lands work owed a refusal when, anywhere in the session FAMILY (the root session's
-# check results and every sub-agent's: `sr-checks sql --family`):
-#   - a rule refused one of those commits (or one of the branch's earlier commits not yet
-#     in the default branch) and no later pass at a descendant resolved it; or
-#   - the session recorded a commit on that branch that some file-guard has not passed
-#     yet, so the Stop that would judge it has not run.
+# the head's oid) or the pushed commit. What "owed" means is owed-work.sh's (sourced).
 #
 # It FAILS CLOSED: when it cannot tell what a command lands (a shell variable, loop,
 # substitution or glob in the command, a flag it does not know, a pull request gh cannot
@@ -35,26 +28,17 @@ branches=()    # branch names that land
 unresolved=()  # why a command could not be followed
 what=""        # the command, for the message
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=owed-work.sh
+. "$here/owed-work.sh"
+owed_setup
+
 add_tip() {
   local t
   t="$(git -C "$ws" rev-parse --verify -q "$1^{commit}" 2>/dev/null || true)"
   [ -n "$t" ] && tips+=("$t")
   return 0
 }
-
-# --- the default branch: what already landed is not owed anything -------------------------
-defbr=""
-for c in "$(git -C "$ws" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)" \
-  refs/remotes/origin/main refs/remotes/origin/master refs/heads/main refs/heads/master; do
-  [ -n "$c" ] || continue
-  if git -C "$ws" rev-parse --verify -q "$c^{commit}" >/dev/null 2>&1; then
-    defbr="$c"
-    break
-  fi
-done
-defnames="main master"
-[ -n "$defbr" ] && defnames="$defnames ${defbr##*/}"
-in_default() { [ -n "$defbr" ] && git -C "$ws" merge-base --is-ancestor "$1" "$defbr" 2>/dev/null; }
 
 # --- reading the command ----------------------------------------------------------------
 # A word the shell has to expand is dropped from argv by the parser, so the line itself is
@@ -241,7 +225,7 @@ if dynamic_merge_segment; then
 fi
 [ "${#tips[@]}" -gt 0 ] || [ "${#unresolved[@]}" -gt 0 ] || exit 1
 
-cite_hint="Only the user can say to land it anyway: cite their exact words, as one command, \`sr-session trajectory cite '<their exact words>' && <the command>\`."
+cite_hint="${owed_cite_hint//go ahead anyway/land it anyway}"
 
 # --- fail closed: what lands cannot be told ---------------------------------------------
 if [ "${#unresolved[@]}" -gt 0 ]; then
@@ -253,117 +237,14 @@ if [ "${#unresolved[@]}" -gt 0 ]; then
   exit 0
 fi
 
-# Distinct tips and branches.
-uniq_words() { printf '%s\n' "$@" | awk 'NF && !s[$0]++'; }
-t2=()
-while IFS= read -r x; do t2+=("$x"); done < <(uniq_words "${tips[@]}")
-tips=("${t2[@]}")
-b2=()
-while IFS= read -r x; do b2+=("$x"); done < <(uniq_words ${branches[@]+"${branches[@]}"})
-branches=(${b2[@]+"${b2[@]}"})
+owed_unique
 
-# related H: H is one of the landing commits, or an earlier commit of the same line of
-# work that the default branch does not hold yet.
-related() {
-  local h="$1" t
-  for t in "${tips[@]}"; do
-    [ "$h" = "$t" ] && return 0
-  done
-  in_default "$h" && return 1
-  for t in "${tips[@]}"; do
-    git -C "$ws" merge-base --is-ancestor "$h" "$t" 2>/dev/null && return 0
-  done
-  return 1
-}
-
-# --- (1) refusals: every store of the session family -----------------------------------
-# Each rule's latest run per judged head, per store: bad = a failing check or an engine
-# failure; good = a finished, passing run.
-refusal_listing=""
-runs="$(cd "$ws" && sr-checks sql --family "
-  select r.check_id as rule, r.head_ref as head, r.run_at as run_at,
-         case when r.exit_code != 0 or exists (select 1 from checks c where c.run_id = r.id and c.status in ('fail', 'error'))
-              then 1 else 0 end as bad,
-         case when r.exit_code = 0 and r.error is null and json_extract(r.metadata, '\$.state') = 'complete'
-                   and not exists (select 1 from checks c where c.run_id = r.id
-                                   and (c.status in ('fail', 'error', 'interrupted')
-                                        or json_extract(c.metadata, '\$.staleFrom') is not null))
-              then 1 else 0 end as good,
-         coalesce((select c.kind from checks c where c.run_id = r.id and c.status in ('fail', 'error') limit 1), 'engine') as kind,
-         coalesce((select json_extract(c.metadata, '\$.reasoning') from checks c where c.run_id = r.id and c.status in ('fail', 'error') limit 1),
-                  r.error, '') as why
-  from check_runs r
-  where r.head_ref <> ''
-    and r.id = (select r2.id from check_runs r2 where r2.check_id = r.check_id and r2.head_ref = r.head_ref
-                order by r2.run_at desc, r2.rowid desc limit 1)" 2>&1)"
-if ! printf '%s' "$runs" | jq -e 'type == "array"' >/dev/null 2>&1; then
-  case "$runs" in
-    *"no session to read"*) runs="[]" ;; # not in a session: nothing was ever recorded
-    *)
-      jq -n --arg m "${what:-This command} is refused: the check results of this session and its sub-agents could not be read (${runs:0:200}), so the gate cannot tell whether what lands was refused. $cite_hint" '{hint: $m}'
-      exit 0
-      ;;
-  esac
+# --- what is owed: every store of the session family -----------------------------------
+if ! owed_load; then
+  jq -n --arg m "${what:-This command} is refused: the check results of this session and its sub-agents could not be read ($owed_error), so the gate cannot tell whether what lands was refused. $cite_hint" '{hint: $m}'
+  exit 0
 fi
-
-heads_bad="$(printf '%s' "$runs" | jq -r '.[] | select(.bad == 1) | .head' | sort -u)"
-while IFS= read -r h; do
-  [ -n "$h" ] || continue
-  case "$h" in *[!0-9a-f]*) continue ;; esac
-  related "$h" || continue
-  # Each rule that refused at H, unless a later finished pass at H or a descendant fixed it.
-  while IFS=$'\t' read -r rule kind at why; do
-    [ -n "$rule" ] || continue
-    fixed=""
-    while IFS= read -r g; do
-      [ -n "$g" ] || continue
-      if git -C "$ws" merge-base --is-ancestor "$h" "$g" 2>/dev/null; then fixed=1; break; fi
-    done < <(printf '%s' "$runs" | jq -r --arg r "$rule" --arg at "$at" '.[] | select(.rule == $r and .good == 1 and .bad == 0 and (.run_at | tostring) > $at) | .head')
-    [ -n "$fixed" ] && continue
-    refusal_listing="${refusal_listing:+$refusal_listing$'\n'}  - $rule ($kind) at ${h:0:12}: $(printf '%s' "$why" | head -n1 | cut -c1-200)"
-  done < <(printf '%s' "$runs" | jq -r --arg h "$h" '.[] | select(.bad == 1 and .head == $h) | [.rule, .kind, (.run_at | tostring), .why] | @tsv')
-done <<<"$heads_bad"
-
-# --- (2) a commit this session recorded that no rule has passed yet --------------------
-# Every file-guard that ran anywhere in the family needs a finished passing run at the
-# commit or above it. The recorded commits are the root session's registry, which holds the
-# ones its sub-agents made too.
-owed_listing=""
-recorded=""
-[ -n "${SR_SESSION_ID:-}" ] && recorded="$(cd "$ws" && sr-session refs list --session "$SR_SESSION_ID" 2>/dev/null)"
-if [ -n "$recorded" ]; then
-  rules="$(printf '%s' "$runs" | jq -r '.[] | select(.rule | contains("file-guard/")) | .rule' | sort -u)"
-  for t in "${tips[@]}"; do
-    case "$t" in *[!0-9a-f]* | "") continue ;; esac
-    hit=""
-    while IFS=$'\t' read -r _ rname rtip _; do
-      [ -n "$rtip" ] || continue
-      if [ "$rtip" = "$t" ]; then hit=1; break; fi
-      for b in ${branches[@]+"${branches[@]}"}; do
-        [ -n "$b" ] && [ "$rname" = "refs/heads/$b" ] && hit=1
-      done
-      [ -n "$hit" ] && break
-      case "$rtip" in *[!0-9a-f]*) continue ;; esac
-      if ! in_default "$rtip" && git -C "$ws" merge-base --is-ancestor "$rtip" "$t" 2>/dev/null; then hit=1; break; fi
-    done <<<"$recorded"
-    [ -n "$hit" ] || continue
-    missing=""
-    if [ -z "$rules" ]; then
-      missing="  - no file-guard has judged anything in this session yet"
-    else
-      while IFS= read -r r; do
-        [ -n "$r" ] || continue
-        ok=""
-        while IFS= read -r g; do
-          [ -n "$g" ] || continue
-          if git -C "$ws" merge-base --is-ancestor "$t" "$g" 2>/dev/null; then ok=1; break; fi
-        done < <(printf '%s' "$runs" | jq -r --arg r "$r" '.[] | select(.rule == $r and .good == 1) | .head')
-        [ -n "$ok" ] || missing="${missing:+$missing$'\n'}  - $r"
-      done <<<"$rules"
-    fi
-    [ -n "$missing" ] && owed_listing="${owed_listing:+$owed_listing$'\n'}${t:0:12}, not yet passed by:"$'\n'"$missing"
-  done
-fi
+owed_evaluate
 
 [ -n "$refusal_listing" ] || [ -n "$owed_listing" ] || exit 1
 

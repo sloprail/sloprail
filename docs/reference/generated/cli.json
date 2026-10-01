@@ -170,7 +170,7 @@
           {
             "path": "sr-session refs list",
             "use": "list --session <id>",
-            "short": "The refs recorded for a session, one per line: folder, ref, tip, agent",
+            "short": "The refs recorded for a session, one per line: folder, ref, tip, agent, abandoned-at tip (empty when not)",
             "flags": [
               {
                 "name": "session",

@@ -124,4 +124,3 @@ func TestT033_06_ASubagentsOpenRefusalBlocksTheCoordinatorsMerge(t *testing.T) {
 		t.Fatalf("the merge was refused after the fix was judged and passed:\n%s", res.Output)
 	}
 }
-
