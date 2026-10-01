@@ -96,8 +96,17 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 		return baselineUnavailable, err
 	}
 	if pos.Commit == "" {
-		// A repository with no commit yet. Nothing to measure from until there
-		// is one, and the next cycle asks again.
+		// A repository with no commit yet. Nothing to measure a difference from until
+		// there is one, and the next cycle asks again. But the session DID begin here:
+		// recorded now, so the commits of its first turn are not mistaken for where it
+		// began when the start is next taken (a file-guard's range starts at the empty tree).
+		if _, had, err := store.Meta(sessionstate.MetaSessionStart); err != nil {
+			return baselineUnavailable, err
+		} else if !had {
+			if err := store.SetMeta(sessionstate.MetaSessionStart, sessionstate.SessionStartUnborn); err != nil {
+				return baselineUnavailable, err
+			}
+		}
 		return baselineUnavailable, nil
 	}
 

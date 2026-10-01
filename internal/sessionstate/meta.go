@@ -19,6 +19,10 @@ const (
 	// be judged. A file-guard's range reads this one; when it is no longer reachable
 	// the range anchors on the remote instead (gitrepo.ResolveRange).
 	MetaSessionStart = "session_start_commit"
+	// SessionStartUnborn is MetaSessionStart's value for a session that began in a
+	// repository with no commit yet: its range starts at git's empty tree, so the commits
+	// the agent makes in its first turn are judged.
+	SessionStartUnborn = "unborn"
 	// MetaBaselineBranch is which line of history that point belongs to. Kept
 	// beside the commit because an agent may switch branches mid-session, and a
 	// point recorded on the line it left describes a history the tree no longer

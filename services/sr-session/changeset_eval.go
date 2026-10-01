@@ -228,7 +228,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 	}
 	verdict, failed := ev.runRule(g, hash, req, payload, runID, unresolved)
 	if failed != nil {
-		return refusal(g, failed.Error()), true
+		return refusal(g, namingFiles(failed.Error(), cs.Files)), true
 	}
 	if ev.results != nil && runID != "" {
 		if err := ev.results.FinishRun(runID); err != nil {

@@ -1044,6 +1044,21 @@ func (e *Env) Meta(projDir, sessionID, key string) string {
 	return value
 }
 
+// DeleteMeta removes a key from a session's state: how a test makes a session that was
+// recorded by an older engine (one that never wrote the key).
+func (e *Env) DeleteMeta(projDir, sessionID, key string) {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+	if err := db.DeleteMeta(key); err != nil {
+		e.t.Fatalf("harness: delete meta %s: %v", key, err)
+	}
+}
+
 // sessionDBPath mirrors where the engine puts a session's state, having asked
 // the engine itself for the only part a test could get wrong: the conversation
 // identity, which is not the id the harness reports.

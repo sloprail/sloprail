@@ -40,7 +40,8 @@ func newSessionChangesetCmd() *cobra.Command {
 A file-guard judges commits. Its range runs from a base to HEAD, and the base is:
 
   watermark      the latest head the rule passed, at ANY definition of the rule,
-                 while it is still an ancestor of HEAD: work up to it was approved
+                 while it is still an ancestor of HEAD (else its merge base with HEAD): work up
+                 to it was approved
   otherwise the EARLIER, in ancestry, of
     root floor     the PARENT of the last commit that touched the rule's whole
                    .sloprail root (a rule that lives in this repository): the
@@ -55,8 +56,13 @@ The watermark is not stored on its own: it is the newest run of the rule that
 passed and whose head is still an ancestor of HEAD, read from the session's check
 results (` + "`sr-checks status`" + ` shows them).
 
-If none can be used — no floor and the session start was never recorded, or the
-tree left its history — the command fails rather than guess.
+A watermark or session start the tree left (an amend, a rebase, a reset) is not
+skipped: it is re-anchored at its merge base with HEAD. A session start git no longer
+has, or that shares no history with HEAD, falls to git's empty tree (everything is
+judged, the root commit included); so does a session that began before the first commit.
+
+If none can be used — no watermark, no floor, and no session start recorded — the
+command fails rather than guess.
 
 --rule names the file-guard: its folder name (` + "`size-limit`" + `), or its qualified
 name as a refusal cites it (` + "`file-guard/size-limit`" + `, ` + "`plugin/file-guard/size-limit`" + `).

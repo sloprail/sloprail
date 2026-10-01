@@ -57,10 +57,13 @@ session start. Every base is a SHA, checked with
 `git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
 drops a base that no longer exists instead of silently shrinking the diff. The session
 start is the HEAD the session FIRST began at, kept even when the tree later leaves its
-history; if an amend, rebase or reset rewrote it, the base is the earlier of the rule's
-floor and the merge base of `HEAD` with the remote's upstream/default branch (the work
-not yet on the remote is what is new). If none is usable (the session start was never
-recorded, or it was rewritten and there is no remote branch to anchor on) the
+history (a session that began before the first commit starts at git's empty tree). Any
+anchor the tree left (an amend, rebase or reset rewrote it) is re-anchored at its
+merge base with `HEAD` (a dropped watermark overrides an older surviving pass; a
+session start git no longer has, or that shares no history with `HEAD`, falls to the
+empty tree, so everything is judged, the root commit's own content included). If none
+is usable (no watermark, no committed rule, no session start recorded, or a session that
+began before the start was kept) the
 evaluation **fails** and Stop refuses, rather than guess; a range where `match`
 selects nothing is a pass with no `files`, never the same as a range that could
 not be computed.

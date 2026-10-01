@@ -174,3 +174,47 @@ func TestT003_28_ARuleAddedMidSessionJudgesTheSessionsEarlierWork(t *testing.T) 
 		t.Fatalf("work made earlier in the session was skipped by a rule added after it:\n%s", r.Output)
 	}
 }
+
+// T003_32: a repository with NO commit at session start. The session began before the first
+// commit, so the commits the agent makes in its first turn are judged (the range starts at
+// git's empty tree), not taken for where the session began. The first Stop refuses the
+// violation; reverting it passes.
+func TestT003_32_ASessionThatBeganBeforeTheFirstCommitJudgesItsFirstTurn(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	led := filepath.Join(t.TempDir(), "ledger.jsonl")
+	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)}) // not committed
+
+	const sess = "s-003-32"
+	e.Run(proj, sess, "write the docs", Turns("done",
+		harness.CommitFile("c1", "docs/bad.md", "FORBIDDEN words\n", "add bad"),
+	))
+	if joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(joined, "FORBIDDEN text in the changeset") || !strings.Contains(joined, "docs/bad.md") {
+		t.Fatalf("a violation committed in the first turn of a session that began unborn was not refused:\n%s", joined)
+	}
+	seen := len(e.StopContinuations(proj, sess))
+
+	e.Run(proj, sess, "fix it", Turns("done", Bash("rv", "git revert --no-edit HEAD")))
+	if n := len(e.StopContinuations(proj, sess)); n != seen {
+		t.Fatalf("the reverted range was still refused:\n%s", strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
+	}
+}
+
+// T003_33: a session recorded by an older engine (a baseline, but no kept first start) can
+// not say where it began, and the re-taken baseline would reopen the floor hole: the range
+// fails closed, with a message that says why. A new session passes.
+func TestT003_33_ASessionWithoutAKeptStartFailsClosed(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	const sess = "s-003-33"
+	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
+	e.RemoveCheckResults(proj, sess)
+	e.DeleteMeta(proj, sess, "session_start_commit")
+	e.WriteFile(proj, "docs/a.md", "clean\n")
+	e.CommitAll(proj, "add a")
+
+	r := e.StopNow(proj, sess, false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "did not keep the commit it began at") {
+		t.Fatalf("a session without a kept start did not fail closed with its reason:\n%s", r.Output)
+	}
+}

@@ -74,6 +74,9 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 		if sessionStart, ok, err = state.Meta(sessionstate.MetaSessionStart); err != nil {
 			return gitrepo.Range{}, err
 		}
+		if sessionStart == sessionstate.SessionStartUnborn {
+			sessionStart = gitrepo.EmptyTree // began before the first commit
+		}
 		if !ok {
 			if baseline, had, err := state.Meta(sessionstate.MetaBaselineCommit); err != nil {
 				return gitrepo.Range{}, err

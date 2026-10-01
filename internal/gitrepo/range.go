@@ -157,9 +157,12 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 	}
 	start := ""
 	if sessionStart != "" {
-		ok, err := Contains(dir, sessionStart)
-		if err != nil {
-			return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
+		ok := sessionStart == EmptyTree // a session that began before the first commit
+		if !ok {
+			var err error
+			if ok, err = Contains(dir, sessionStart); err != nil {
+				return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
+			}
 		}
 		if ok {
 			start = sessionStart
