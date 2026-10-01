@@ -12,11 +12,24 @@ import (
 // commit under a rule is the root's to see: the root never judges again a tip a sub-agent
 // passed, and the root's merge gate sees a sub-agent's refusal.
 
+// pullRequests makes `gh pr view N --json headRefName,headRefOid` answer for the given pull
+// requests (number -> head branch), as a real gh would; every other gh call does nothing.
+func pullRequests(e *Env, prs map[string]string) {
+	cases := ""
+	for n, b := range prs {
+		cases += n + ") b=" + b + " ;;\n"
+	}
+	e.InstallPathShim("gh", "#!/bin/sh\n[ \"$1\" = pr ] && [ \"$2\" = view ] || exit 0\nb=\nfor a in \"$@\"; do case \"$a\" in\n"+cases+"esac; done\n"+
+		"[ -n \"$b\" ] || exit 1\noid=\"$(git rev-parse \"refs/heads/$b\")\" || exit 1\n"+
+		"printf '{\"headRefName\":\"%s\",\"headRefOid\":\"%s\"}\\n' \"$b\" \"$oid\"\n")
+}
+
 // A sub-agent's pass on its branch is reused: once its worktree is gone and the root inherits
 // the branch, the rule is not run again, and the branch can be merged.
 func TestT003_74_ASubagentsPassIsReusedByTheRootAndItsBranchMerges(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	const sess = "s-003-74"
+	pullRequests(e, map[string]string{"7": "sub-ok"})
 	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("b1", "git switch -q -c sub-ok"),
 		harness.CommitFile("c1", "docs/ok.md", "clean words", "sub adds ok"),
@@ -39,7 +52,7 @@ func TestT003_74_ASubagentsPassIsReusedByTheRootAndItsBranchMerges(t *testing.T)
 	}
 
 	// The root's merge of the sub-agent's branch is not held up by a pass it cannot see.
-	if r := e.Run(proj, sess, "merge it", Turns("done", Bash("m1", "gh pr merge sub-ok --squash"))); r.Saw("no-merge-over-refusals") {
+	if r := e.Run(proj, sess, "merge it", Turns("done", Bash("m1", "gh pr merge 7 --squash"))); r.Saw("no-merge-over-refusals") {
 		t.Fatalf("the merge gate did not see the sub-agent's pass:\n%s\n%s", r.Output, e.ChecksStatus(proj, sess))
 	}
 
@@ -60,6 +73,7 @@ func TestT003_74_ASubagentsPassIsReusedByTheRootAndItsBranchMerges(t *testing.T)
 func TestT003_74_ASubagentsRefusalIsVisibleToTheRootsMergeGate(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-74b"
+	pullRequests(e, map[string]string{"8": "sub-a"})
 	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
@@ -68,11 +82,11 @@ func TestT003_74_ASubagentsRefusalIsVisibleToTheRootsMergeGate(t *testing.T) {
 	if !res.AnySubagentStopBlocked() {
 		t.Fatalf("premise: the sub-agent's own Stop should refuse:\n%s", res.Output)
 	}
-	m := e.Run(proj, sess, "merge it", Turns("done", Bash("m1", "gh pr merge sub-a --squash")))
+	m := e.Run(proj, sess, "merge it", Turns("done", Bash("m1", "gh pr merge 8 --squash")))
 	if !m.Refused() || !m.Saw("no-merge-over-refusals") {
 		t.Fatalf("the merge of a sub-agent's refused branch was not refused:\n%s", m.Output)
 	}
-	if !m.Saw("refusals this session recorded") || !m.Saw("file-guard/docs") {
+	if !m.Saw("nobody resolved") || !m.Saw("file-guard/docs") {
 		t.Fatalf("the root's gate did not see the sub-agent's open refusal itself:\n%s", m.Output)
 	}
 }
