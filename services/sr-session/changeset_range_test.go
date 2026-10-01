@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,17 +75,20 @@ func TestResolveRuleRange_TheFloorIsTheParentOfTheLastCommitTouchingTheSloprailR
 }
 
 // A session that recorded a baseline but never kept its first start (it began before that
-// was recorded) fails closed: the baseline is re-taken whenever the tree leaves its
+// was recorded) does not use the baseline as the start: the baseline is re-taken whenever the tree leaves its
 // history, so reading it as the start would reopen the floor hole.
-func TestResolveRuleRange_ABaselineWithoutAKeptSessionStartFailsClosed(t *testing.T) {
+func TestResolveRuleRange_ABaselineWithoutAKeptSessionStartIsNeverTheStart(t *testing.T) {
 	repo := initRepo(t)
 	start := commitFile(t, repo, "a.txt", "one")
 	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
 	state := openStore(t)
 	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, start))
 
-	_, err := resolveRuleRange(repo, plugin, nil, state)
-	assert.ErrorIs(t, err, errSessionStartNotKept)
+	r, err := resolveRuleRange(repo, plugin, nil, state)
+	if err == nil {
+		assert.NotEqual(t, start, r.Base, "the re-taken baseline is never the start")
+	}
+	assert.NotContains(t, fmt.Sprint(err), "did not keep", "no wedge")
 }
 
 // A session (a sub-agent's included) that began in a repository with no commit starts at

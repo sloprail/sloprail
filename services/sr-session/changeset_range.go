@@ -1,9 +1,6 @@
 package main
 
 import (
-	"fmt"
-
-	"errors"
 	"github.com/sloprail/sloprail/internal/transcript"
 
 	"github.com/sloprail/sloprail/internal/changeset"
@@ -34,11 +31,6 @@ import (
 // reported on the returned range as DroppedWatermark, so a range that widened
 // says why. gitrepo.ErrNoCommits is returned as itself: nothing is committed, so
 // nothing can be judged.
-// errSessionStartNotKept: the session recorded a baseline but not the HEAD it first
-// began at, so the baseline (re-taken whenever the tree leaves its history) cannot stand
-// in for it.
-var errSessionStartNotKept = errors.New("this session did not keep the commit it began at (it began before that was recorded), " +
-	"so which commits are new cannot be told; start a new session")
 
 // sessionStartOf is the HEAD the session FIRST began at (never the re-taken baseline, which
 // an amend or a branch switch moves), or "" when none was kept: no state, or a session that
@@ -98,15 +90,14 @@ func repairSessionStart(state sessionstate.Store, p HookPayload, root string) er
 	if v, ok := derived(); ok {
 		return state.SetMeta(sessionstate.MetaSessionStart, v)
 	}
-	recovery := ""
-	if id, err := stableID(p); err == nil {
-		if db, err := sessionDBPath(p.stateCwd(), id); err == nil {
-			recovery = fmt.Sprintf("; to recover, an operator can reset this session's bookkeeping with `rm -f %s %s-wal %s-shm` "+
-				"(the session then measures from the commit at its next tool call, so commits already made in it are not judged)",
-				shellQuote(db), shellQuote(db), shellQuote(db))
-		}
+	// The reflog cannot say: fall back, deterministically and wide, to where HEAD leaves the
+	// remote default branch, so everything not on it is judged. Never "unborn", never a
+	// wedge, no step for anyone to take. With no default branch known the range resolves its
+	// own remote anchor (resolveRuleRangeAt).
+	if mb, ok, err := gitrepo.MergeBaseWithUpstream(root); err == nil && ok {
+		return state.SetMeta(sessionstate.MetaSessionStart, mb)
 	}
-	return fmt.Errorf("%w; its reflog could not say where HEAD was when it began%s", errSessionStartNotKept, recovery)
+	return nil
 }
 
 func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
@@ -180,13 +171,9 @@ func resolveRuleRangeAt(root, tip, tipStart string, g declaration.FileGuard, res
 		if sessionStart == sessionstate.SessionStartUnborn {
 			sessionStart = gitrepo.EmptyTree // began before the first commit
 		}
-		if !ok {
-			if baseline, had, err := state.Meta(sessionstate.MetaBaselineCommit); err != nil {
-				return gitrepo.Range{}, err
-			} else if had && baseline != "" {
-				return gitrepo.Range{}, errSessionStartNotKept
-			}
-		}
+		// Not kept (and not derivable, see repairSessionStart): the start stays empty and the
+		// range resolves its own remote anchor. The re-taken baseline is never the start.
+		_ = ok
 		// A baseline first taken at a sub-agent's own Stop is where its work ENDED, not
 		// where it began: not a floor. Without another, the range fails closed.
 		if _, atStop, err := state.Meta(sessionstate.MetaBaselineAtStop); err != nil {

@@ -127,3 +127,14 @@ func ExcludeUpstream(dir string, r Range) (Range, error) {
 	r.Base = c
 	return r, nil
 }
+
+// MergeBaseWithUpstream is the merge base of HEAD and the remote default branch (origin/HEAD,
+// else origin/main): the newest commit already on it, so everything after is not. ok is false
+// when there is no such branch or no shared history.
+func MergeBaseWithUpstream(dir string) (sha string, ok bool, err error) {
+	up := upstreamRef(dir)
+	if up == "" {
+		return "", false, nil
+	}
+	return mergeBaseWithHead(dir, up, "HEAD")
+}

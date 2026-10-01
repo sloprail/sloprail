@@ -84,50 +84,6 @@ func TestT003_60_ALostSessionStartIsDerivedFromTheReflog(t *testing.T) {
 	}
 }
 
-// (c2) when the start cannot be derived (no record of when the session began), the refusal
-// names a recovery that works: running its command lets the next Stop judge.
-func TestT003_60_AnUnderivableStartRefusesWithARecoveryThatWorks(t *testing.T) {
-	e, proj, _ := project(t, docsRule)
-	e.Run(proj, "s-003-60d", "clean", Turns("done", harness.CommitFile("c1", "docs/a.md", "clean words", "add a")))
-	e.DeleteMeta(proj, "s-003-60d", sessionstate.MetaSessionStart)
-	// A record with no timestamps says nothing about when the session began.
-	record := e.TranscriptPath(proj, "s-003-60d")
-	body, err := os.ReadFile(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var kept []string
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		var rec map[string]any
-		if json.Unmarshal([]byte(line), &rec) == nil {
-			delete(rec, "timestamp")
-			b, _ := json.Marshal(rec)
-			line = string(b)
-		}
-		kept = append(kept, line)
-	}
-	if err := os.WriteFile(record, []byte(strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	res := e.StopNow(proj, "s-003-60d", false)
-	if !harness.Blocked(res) || !strings.Contains(res.Output, "rm -f ") {
-		t.Fatalf("an underivable start did not refuse with a recovery command:\n%s", res.Output)
-	}
-	idx := strings.Index(res.Output, "rm -f ")
-	cmdline := res.Output[idx:]
-	db := e.StateDBPath(proj, "s-003-60d")
-	if !strings.Contains(cmdline, db) {
-		t.Fatalf("the recovery does not name the session's state %s:\n%s", db, cmdline)
-	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		_ = os.Remove(db + suffix)
-	}
-	if res := e.StopNow(proj, "s-003-60d", false); harness.Blocked(res) && strings.Contains(res.Output, "did not keep the commit") {
-		t.Fatalf("the recovery did not release the session:\n%s", res.Output)
-	}
-}
-
 // (d) a root whose hooks run from another worktree (it `cd`'d) keeps ONE store, keyed by
 // where its record says it began; it used to get a fresh one per directory, resetting
 // its verdicts, baseline and counters.
