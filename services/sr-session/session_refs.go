@@ -99,7 +99,10 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 	defer reg.Close()
 	folder := filepath.Clean(root)
 
-	// Observe: the commits this folder made since the session began.
+	if err := observeRefs(reg, rs.ID, folder, root, p.AgentID); err != nil {
+		warn(err)
+	}
+	// Backfill: the commits this folder made since the session began, from the reflog.
 	if since, ok := sessionStartTime(p); ok {
 		derived, err := gitrepo.ReflogTips(root, since)
 		if err != nil {

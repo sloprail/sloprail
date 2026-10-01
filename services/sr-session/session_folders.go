@@ -208,7 +208,8 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 			}
 		}
 	}
-	return nil
+	// What this agent has touched in the folder so far, at every hook.
+	return observeRefs(reg, rs.ID, path, path, f.AgentID)
 }
 
 // sessionFolderFor is the registered folder a hook's tree is, or nil when it is not
