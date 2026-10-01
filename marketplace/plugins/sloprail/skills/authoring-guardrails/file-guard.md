@@ -48,16 +48,17 @@ so verdicts are not replayed, but the watermark stays); otherwise **the floor**:
 parent of the last commit that touched the rule's whole `.sloprail` root (a rule
 in this repository: the commit that adds or changes a rule, a schema or a shared
 script is judged by the rule; a root commit has no parent, so its base is git's
-empty tree). A rule applies **from the commit that added or changed it**, and what
-came before is grandfathered; a rule that did **not exist at session start** (its
-folder is absent from the session-start commit's tree) uses the floor alone, so adding
-a rule mid-session does not judge the whole session. A rule that **existed at
-session start** (including one deleted and re-added in the session) takes **the
-earlier, in ancestry, of the floor and the HEAD recorded when the session began**, so
-a violating commit followed by a commit under `.sloprail` is still judged. When the
-session start is unknown or unborn the rule counts as existing (the stricter range).
-For a plugin's rule, whose `.sloprail` root is in the plugin cache, the base is the
-session start. Every base is a SHA, checked with
+empty tree). A rule that did **not exist at session start**
+(its folder is absent from the session-start commit's tree) applies **from the
+commit that added it**: the floor alone, earlier history grandfathered, so adding a
+rule mid-session does not judge the whole session. A rule that **existed at session
+start** (including one deleted and re-added in the session) takes **the HEAD recorded
+when the session began**, never earlier and never later: a rule last changed long
+before the session does not re-judge every commit merged since, and a violating commit
+followed by a commit under `.sloprail` is still judged. When the session start is
+unknown or unborn the rule counts as existing (unborn: the whole history). For a
+plugin's rule, whose `.sloprail` root is in the plugin cache, the base is the session
+start. Every base is a SHA, checked with
 `git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
 drops a base that no longer exists instead of silently shrinking the diff. The session
 start is the HEAD the session FIRST began at, kept even when the tree later leaves its

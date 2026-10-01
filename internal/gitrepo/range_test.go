@@ -236,7 +236,7 @@ func TestResolveRange_ARuleAddedMidSessionUsesItsFloorOnly(t *testing.T) {
 	assert.Equal(t, head, r.Base)
 }
 
-func TestResolveRange_ARuleThatExistedAtSessionStartKeepsTheEarlierOfFloorAndStart(t *testing.T) {
+func TestResolveRange_ARuleThatExistedAtSessionStartJudgesFromTheSessionStartNeverEarlier(t *testing.T) {
 	dir := initRepo(t)
 	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
 	start := commit(t, dir, "a.go", "x")
@@ -248,11 +248,13 @@ func TestResolveRange_ARuleThatExistedAtSessionStartKeepsTheEarlierOfFloorAndSta
 	assert.Equal(t, start, r.Base, "touching the rule must not skip the violation")
 	assert.Equal(t, FromSessionStart, r.Origin)
 
-	// A session that began after the rule's last edit: the floor is earlier.
+	// A session that began after the rule's last edit: the base is that start, not the
+	// older floor (which would re-judge every commit merged since the rule changed).
 	late := commit(t, dir, "c.go", "z")
 	r, err = ResolveRange(dir, ruleDir, ruleDir, "", late)
 	require.NoError(t, err)
-	assert.Equal(t, FromFloor, r.Origin)
+	assert.Equal(t, late, r.Base)
+	assert.Equal(t, FromSessionStart, r.Origin)
 }
 
 func TestResolveRange_ARuleDeletedAndReAddedInTheSessionStaysStrict(t *testing.T) {

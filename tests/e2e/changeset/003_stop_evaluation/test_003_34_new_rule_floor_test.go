@@ -107,3 +107,40 @@ func TestT003_36_ARuleDeletedAndReAddedStaysStrict(t *testing.T) {
 		t.Fatalf("the reverted range was still refused:\n%s", r.Output)
 	}
 }
+
+// T003_37: a rule committed long before the session (commit A), then commits B and C that
+// violate it, and the session starts at C. With no watermark the base is the session
+// start, never the rule's older floor: the first Stop judges only the session's own
+// commit D. B and C are not reported; a violation in D is refused, and fixing it passes.
+func TestT003_37_ARuleOlderThanTheSessionJudgesOnlyTheSessionsOwnCommits(t *testing.T) {
+	e, proj, led := project(t, docsRule) // A: the rule
+	for _, name := range []string{"b", "c"} {
+		e.WriteFile(proj, "docs/before-"+name+".md", "FORBIDDEN words\n")
+		e.CommitAll(proj, "merged before the session: "+name)
+	}
+	const sess = "s-003-37"
+	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true"))) // the session starts at C
+	e.RemoveCheckResults(proj, sess)
+
+	e.WriteFile(proj, "docs/d.md", "FORBIDDEN words\n")
+	e.CommitAll(proj, "D: the session's own violation")
+
+	r := e.StopNow(proj, sess, false)
+	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/d.md") {
+		t.Fatalf("the session's own violation was not refused:\n%s", r.Output)
+	}
+	if strings.Contains(r.Output, "before-") {
+		t.Fatalf("the refusal names a commit merged before the session started:\n%s", r.Output)
+	}
+	for _, run := range ledger(t, led) {
+		if got := strings.Join(paths(run.Files), " "); strings.Contains(got, "before-") {
+			t.Fatalf("a file from before the session was handed to the rule: %v", paths(run.Files))
+		}
+	}
+
+	e.WriteFile(proj, "docs/d.md", "clean words\n")
+	e.CommitAll(proj, "fix D")
+	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
+	}
+}

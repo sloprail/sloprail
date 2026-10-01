@@ -19,9 +19,9 @@ import (
 // approved, even under an older rule), and whose head is still an ancestor of
 // HEAD. Without one, for a rule that was absent from the session-start tree it is the
 // parent of the last commit touching the rule's whole .sloprail root alone (the
-// rule applies from the commit that added or changed it); for a rule that existed
-// at session start it is the EARLIER of that parent and the HEAD recorded when the
-// session began, so nothing made in this session is skipped. results and state may be nil (nothing
+// rule applies from the commit that added it); for a rule that existed at session
+// start it is the HEAD recorded when the session began, never earlier, so nothing
+// made in this session is skipped and nothing before it is re-judged. results and state may be nil (nothing
 // recorded yet); any failure of either, or of git, is an error and no range.
 //
 // A watermark that had to be passed over — an amend or a rebase orphaned the
