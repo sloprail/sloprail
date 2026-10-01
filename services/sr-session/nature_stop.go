@@ -132,6 +132,12 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		}
 	}
 
+	// 2b. repositories this agent worked in outside its own tree, each under its own
+	//     rules. Not subject to commit-required or the shared-tree rule above.
+	for _, r := range evaluateAdHocFolders(cmd, p, scope, reg, contextMap, store) {
+		refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
+	}
+
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
 	//    the subjectless one cyclemod produces. Refusals block the turn.
 	stop := cyclemod.Event()

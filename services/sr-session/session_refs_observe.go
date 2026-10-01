@@ -43,8 +43,11 @@ func observeRefs(reg sessionstate.Store, sessionID, folder, dir, agent string) e
 	}
 	atStart := map[string]string{}
 	haveBaseline := false
-	if v, had, err := reg.Meta(sessionstate.MetaRefsAtStart); err == nil && had {
-		haveBaseline = json.Unmarshal([]byte(v), &atStart) == nil
+	for _, k := range []string{refsAtStartKey(folder), sessionstate.MetaRefsAtStart} {
+		if v, had, err := reg.Meta(k); err == nil && had {
+			haveBaseline = json.Unmarshal([]byte(v), &atStart) == nil
+			break
+		}
 	}
 	var known []string // everything the session did not make
 	for _, s := range atStart {
