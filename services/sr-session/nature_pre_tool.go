@@ -50,6 +50,7 @@ type natureVerdict struct {
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
+	recordRulesSeen(cmd, store, loaded.FileGuards)
 	grounds := requiresCitation(loaded)
 	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
