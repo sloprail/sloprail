@@ -14,7 +14,7 @@ import (
 
 var errNoSession = errors.New("sr-checks: no session to read — run this inside a session (with " + transcript.SessionIDEnv + " set) whose transcript exists")
 
-// familyChecks lists the check-result databases of the whole session family: the root
+// familyCheckStores lists the check-result databases of the whole session family: the root
 // session's own and those of every agent that worked for it.
 //
 // A sub-agent is a session of its own (see sessionpath.StateDB), keyed under its own
@@ -28,7 +28,7 @@ var errNoSession = errors.New("sr-checks: no session to read — run this inside
 //
 // Read-only: nothing here creates or changes a store. A store that cannot be listed is
 // an error; one that is simply absent is not.
-func familyChecks() ([]string, error) {
+func familyCheckStores() ([]string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func familyChecks() ([]string, error) {
 // error rather than a silent gap: a gate asking whether anything is refused must not
 // take an unreadable store for an empty one.
 func queryFamily(sql string) ([]map[string]any, error) {
-	paths, err := familyChecks()
+	paths, err := familyCheckStores()
 	if err != nil {
 		return nil, err
 	}

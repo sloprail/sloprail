@@ -199,3 +199,5 @@ owed_all() {
   owed_unique
   return 0
 }
+
+owed_work_loaded=1

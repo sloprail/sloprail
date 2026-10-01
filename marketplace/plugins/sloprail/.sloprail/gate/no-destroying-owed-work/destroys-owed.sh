@@ -13,9 +13,14 @@ payload="$(cat)"
 ws="${SR_WORKSPACE:-.}"
 raw="$(printf '%s' "$payload" | jq -r '.event.raw // ""')"
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=owed-work.sh
-. "$here/owed-work.sh"
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+unset owed_work_loaded
+. "$lib_dir/owed-work.sh" || owed_work_loaded=""
+if [ "${owed_work_loaded:-}" != 1 ]; then
+  # A partly loaded helper decides nothing: apply the requirement (exit 1 would waive it).
+  jq -n '{hint: "the gate'"'"'s own helper (owed-work.sh) did not load, so the gate cannot tell what it destroys; it asks for the user'"'"'s words instead."}'
+  exit 0
+fi
 owed_setup
 
 tips=()        # commits that would be destroyed

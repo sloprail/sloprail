@@ -28,9 +28,14 @@ branches=()    # branch names that land
 unresolved=()  # why a command could not be followed
 what=""        # the command, for the message
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=owed-work.sh
-. "$here/owed-work.sh"
+lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+unset owed_work_loaded
+. "$lib_dir/owed-work.sh" || owed_work_loaded=""
+if [ "${owed_work_loaded:-}" != 1 ]; then
+  # A partly loaded helper decides nothing: apply the requirement (exit 1 would waive it).
+  jq -n '{hint: "the gate'"'"'s own helper (owed-work.sh) did not load, so the gate cannot tell what lands; it asks for the user'"'"'s words instead."}'
+  exit 0
+fi
 owed_setup
 
 add_tip() {
