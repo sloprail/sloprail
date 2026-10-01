@@ -92,6 +92,18 @@ event, and its checks read the commits, never the working tree.
 
 ## What a check receives
 
+**Requirements are per subject, checks are per changeset.** `require` (and each
+entry's `when`) is evaluated once per **subject**, and by default a subject is one
+selected file: the payload's `subject` is `{id: "<path>", files: ["<path>"]}` and the
+whole changeset stays in it as context. So a `when` decides for `.subject.files` (one
+file), and the requirement applies only to the files whose `when` applies: a
+citation is asked of the file whose own change removes content, not of the file
+beside it that only adds. A refusal names every subject it failed for. `checks` default
+to ONE subject, the whole changeset (`subject.id` `"changeset"`, `files` every selected
+file), so a script loops over `.changeset.files[]` and a judge sees the whole change.
+A `subjects:` key, when it lands, will supply the subject list for both without
+reshaping the payload. The check results store each requirement row under its subject.
+
 A `Changeset` payload, shaped in [events.md](events.md#changeset--what-a-file-guards-checks-receive).
 A script loops over `.changeset.files[]` (a rule about one file at a time — size,
 frontmatter — is that loop), reading whatever else it needs from `SR_TREE`
