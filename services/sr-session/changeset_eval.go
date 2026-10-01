@@ -609,8 +609,12 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		if meta == nil {
 			meta = map[string]any{}
 		}
+		// Every verdict keeps its reasoning, a pass included: what the judge said
+		// is the record of why the range was let through.
 		if v.Refused {
 			rec.Status = checkstore.StatusFail
+		}
+		if v.Refused || v.Reason != "" {
 			meta["reasoning"] = v.Reason
 		}
 		rec.Metadata = meta

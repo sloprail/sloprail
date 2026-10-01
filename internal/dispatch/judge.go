@@ -249,8 +249,10 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 			quoted(stderr))), nil
 	}
 	if code == 0 {
-		// sr-agent exited 0: the verifier accepted a passing verdict.
-		return pass(), nil
+		// sr-agent exited 0: the verifier accepted a passing verdict. Its reasoning
+		// rides on the verdict (a pass carries no refusal, so nothing shows it to
+		// the agent) for the check store to keep.
+		return Verdict{Reason: passReasonFromVerifierOutput(stderr, stdout)}, nil
 	}
 	// Non-zero: either the verdict was `pass:false` (the verifier rejected it and
 	// sr-agent's attempts ran out) or the substrate failed. Both refuse; the
@@ -406,6 +408,22 @@ func reasonFromVerifierOutput(b []byte) string {
 	return found
 }
 
+// passReasonFromVerifierOutput recovers the reasoning of a passing verdict, which
+// the verifier prints as `JUDGE-PASS-REASON: …` and sr-agent echoes on stderr.
+func passReasonFromVerifierOutput(streams ...[]byte) string {
+	const marker = "JUDGE-PASS-REASON:"
+	for _, b := range streams {
+		for _, line := range strings.Split(string(b), "\n") {
+			if i := strings.Index(line, marker); i >= 0 {
+				if text := strings.TrimSpace(line[i+len(marker):]); text != "" {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // writeVerifier stages the verify script sr-agent runs against the agent's output
 // file, and returns its path plus a cleanup.
 //
@@ -486,6 +504,10 @@ pass="$(printf '%s' "$json" | jq -r '.` + verdictKey + `' 2>/dev/null)"
 reason="$(printf '%s' "$json" | jq -r '.` + reasonKey + ` // ""' 2>/dev/null)"
 
 if [ "$pass" = "true" ]; then
+  # A pass keeps its reasoning too: surface it so the engine can store it.
+  if [ -n "$reason" ]; then
+    echo "JUDGE-PASS-REASON: $(printf '%s' "$reason" | tr '\n' ' ')" >&2
+  fi
   exit 0
 fi
 

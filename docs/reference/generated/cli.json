@@ -382,6 +382,11 @@
         "usage": "The prompt, when a positional would be awkward (from a file or a pipe)"
       },
       {
+        "name": "prompt-stdin",
+        "default": "false",
+        "usage": "Read the prompt from standard input, for one too large for a command line (the OS bounds argv and environment together)"
+      },
+      {
         "name": "verify",
         "usage": "A script that decides whether the agent's answer is acceptable: exit 0 accepts, exit 3 rejects it as final, any other non-zero asks the agent again"
       },
