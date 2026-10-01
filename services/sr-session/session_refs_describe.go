@@ -135,7 +135,7 @@ func (t stopTip) describe(folder string) (head, remedy string) {
 		path := freshPath(folder, "restore-"+slug(name))
 		up := upstreamName(folder)
 		return fmt.Sprintf("%sThe work on %s (tip %s, in %s) is on no branch any more (it was deleted, or its worktree removed), and no rule had judged it: "+
-			"its commits are pinned and judged on their own tree. ", from, name, short(t.Sha), folder),
+				"its commits are pinned and judged on their own tree. ", from, name, short(t.Sha), folder),
 			fmt.Sprintf("To fix it: restore the branch from the pinned tip (`git -C %s worktree add %s -b %s %s`), fix in that worktree, commit, and stop again. "+
 				"Do not switch this folder's checkout. %s%s",
 				shellQuote(folder), shellQuote(path), slug(name), t.Sha, citationOnly(up, folder, t), t.dropSentence(folder))
