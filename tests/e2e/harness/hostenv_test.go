@@ -28,6 +28,9 @@ func TestSpawnedProcessSeesNoAmbientSession(t *testing.T) {
 	for k, v := range ambient {
 		t.Setenv(k, v)
 	}
+	// Credentials are not session identity and nothing overrides them: they must
+	// survive the scrub.
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-survives")
 
 	e := New(t)
 	probe := filepath.Join(e.BinDir(), "envprobe")
@@ -47,8 +50,13 @@ func TestSpawnedProcessSeesNoAmbientSession(t *testing.T) {
 			t.Errorf("ambient %s=%s reached the spawned process", k, v)
 		}
 	}
-	if got["CLAUDE_CODE_SESSION_ID"] != "from-test" {
-		t.Errorf("a value the test sets itself must survive, got %q", got["CLAUDE_CODE_SESSION_ID"])
+	// The probe is handed CLAUDE_CODE_SESSION_ID=from-test; it must see exactly
+	// that, never the ambient "ambient-session".
+	if got["CLAUDE_CODE_SESSION_ID"] != "from-test" || got["CLAUDE_CODE_SESSION_ID"] == ambient["CLAUDE_CODE_SESSION_ID"] {
+		t.Errorf("probe must see the harness's session id, got %q", got["CLAUDE_CODE_SESSION_ID"])
+	}
+	if got["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth-survives" {
+		t.Errorf("a non-session CLAUDE_CODE_* credential was stripped, got %q", got["CLAUDE_CODE_OAUTH_TOKEN"])
 	}
 	if got["SLOP_SUBBIN_DIR"] != e.BinDir() {
 		t.Errorf("SLOP_SUBBIN_DIR is the harness's own, got %q", got["SLOP_SUBBIN_DIR"])
