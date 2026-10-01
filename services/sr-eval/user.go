@@ -52,7 +52,10 @@ func agentArgs(model, prompt, sessionID string, resume bool, disallowed []string
 		claudeArgs["disallowed-tools"] = strings.Join(disallowed, ",")
 	}
 	harness, _ := json.Marshal(claudeArgs)
-	return []string{"--model", model, "--claude-args", string(harness), "--prompt", prompt}
+	// --harness is named, never detected: sr-eval strips the operator's own Claude
+	// Code session from the agent's environment (ambientenv.Session), and harness
+	// detection reads exactly those variables, so it would find none.
+	return []string{"--harness", "claude-code", "--model", model, "--claude-args", string(harness), "--prompt", prompt}
 }
 
 // newSessionID is a random RFC 4122 v4 UUID — the form Claude Code requires

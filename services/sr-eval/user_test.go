@@ -156,3 +156,20 @@ func TestLoadFixture_User(t *testing.T) {
 		})
 	}
 }
+
+// The agent-under-test runs with the operator's Claude Code session stripped from
+// its environment, so sr-agent cannot detect the harness: sr-eval must name it.
+func TestAgentArgs_NameTheHarness(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		argv := agentArgs("haiku", "fix it", "sid-1", resume, nil)
+		named := false
+		for i, a := range argv {
+			if a == "--harness" && i+1 < len(argv) && argv[i+1] == "claude-code" {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("resume=%v: argv %v does not name --harness claude-code; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
+		}
+	}
+}

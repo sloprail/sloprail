@@ -379,7 +379,7 @@ $es_facts"
   # rest of the isolation restated (a later --settings wins outright). Once
   # sr-agent itself sets disableAllHooks this is redundant, and harmless.
   judge_settings='{"settings":"{\"disableAllHooks\":true,\"hooks\":{},\"mcpServers\":{},\"enabledPlugins\":{}}"}'
-  raw="$(cd "$judge_cwd" && sr-agent --model "$TRAJECTORY_HEALTH_MODEL" --allowed-tools "WebSearch" --claude-args "$judge_settings" --prompt "$(cat "$prompt_file")" 2>&1)"
+  raw="$(cd "$judge_cwd" && sr-agent --harness claude-code --model "$TRAJECTORY_HEALTH_MODEL" --allowed-tools "WebSearch" --claude-args "$judge_settings" --prompt "$(cat "$prompt_file")" 2>&1)"
   rm -f "$prompt_file" "$scenario_file" "$guardrail_file" "$transcript_file"
   rmdir "$judge_cwd" 2>/dev/null || true
 
