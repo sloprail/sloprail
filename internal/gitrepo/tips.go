@@ -345,3 +345,13 @@ func inPathHistory(dir, up, path, tipBlob string) bool {
 	}
 	return false
 }
+
+// OnRemote reports whether any remote-tracking branch contains commit: it was pushed (or
+// merged upstream).
+func OnRemote(dir, commit string) (bool, error) {
+	out, err := run(dir, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", commit, "refs/remotes")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}

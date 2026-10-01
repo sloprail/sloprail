@@ -51,14 +51,16 @@ func (t stopTip) describe(folder string) string {
 		return ""
 	}
 	name := strings.TrimPrefix(strings.TrimPrefix(t.Ref, "refs/heads/"), "refs/remotes/")
+	drop := fmt.Sprintf("If the USER wants this branch dropped, ask them, then run `sr-session refs abandon --ref %s --folder %s "+
+		"--cite-user '<their exact words>'` citing what they said. ", shellQuote(name), shellQuote(folder))
 	if strings.HasPrefix(t.Ref, "detached/") {
 		return fmt.Sprintf("On commits made on a detached HEAD and left (%s, in %s), which are not checked out: "+
-			"give them a branch (`git -C %s switch -c <name> %s`), fix there, commit, and stop again. ",
-			short(t.Sha), folder, shellQuote(folder), short(t.Sha))
+			"give them a branch (`git -C %s switch -c <name> %s`), fix there, commit, and stop again. %s",
+			short(t.Sha), folder, shellQuote(folder), short(t.Sha), drop)
 	}
 	return fmt.Sprintf("On branch %s (in %s), which is not checked out: this session committed on it, "+
-		"so its commits are judged too. Fix it there (`git -C %s switch %s`), commit, and stop again. ",
-		name, folder, shellQuote(folder), shellQuote(name))
+		"so its commits are judged too. Fix it there (`git -C %s switch %s`), commit, and stop again. %s",
+		name, folder, shellQuote(folder), shellQuote(name), drop)
 }
 
 // evaluateChangesets judges every file-guard over HEAD and then over every other tip the
@@ -162,6 +164,16 @@ func stopTips(cmd *cobra.Command, p HookPayload, root string) []stopTip {
 				}
 			}
 		}
+		if r.Abandoned != "" {
+			// The user had this ref dropped, at that tip. Still that tip, and not pushed or
+			// merged since: not judged. Anything else un-abandons it.
+			if tip == r.Abandoned {
+				if onRemote, err := gitrepo.OnRemote(root, tip); err == nil && !onRemote {
+					continue
+				}
+			}
+			_ = reg.SetRefAbandoned(rs.ID, folder, r.Name, "")
+		}
 		if ok, err := gitrepo.IsAncestor(root, tip, "HEAD"); err != nil {
 			warn(err)
 			continue
@@ -219,7 +231,7 @@ agent left is still judged and its pull request cannot merge unchecked.
 The engine records them itself from the folder's reflog; ` + "`refs add`" + ` writes one by hand,
 for a ref the engine has not seen or a session begun before it did.`,
 	}
-	cmd.AddCommand(newSessionRefsAddCmd(), newSessionRefsListCmd())
+	cmd.AddCommand(newSessionRefsAddCmd(), newSessionRefsListCmd(), newSessionRefsAbandonCmd())
 	return cmd
 }
 

@@ -14,6 +14,26 @@ type Ref struct {
 	FirstTip string
 	Tip      string
 	AgentID  string
+	// Abandoned is the tip the user had the ref abandoned at ("" when it is not).
+	Abandoned string
+}
+
+// SetRefAbandoned marks a recorded ref abandoned at tip ("" clears it). The ref must be
+// recorded.
+func (s *store) SetRefAbandoned(sessionID, folder, name, tip string) error {
+	db, err := s.conn()
+	if err != nil {
+		return err
+	}
+	res, err := db.Exec(`UPDATE session_refs SET abandoned_tip = ? WHERE session_id = ? AND folder = ? AND ref = ?`,
+		tip, sessionID, folder, name)
+	if err != nil {
+		return fmt.Errorf("sessionstate: abandon ref %q: %w", name, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("sessionstate: %q is not a recorded ref of %s", name, folder)
+	}
+	return nil
 }
 
 // RecordRef writes a ref's tip: the first sighting sets FirstTip, a later one only
@@ -46,7 +66,7 @@ func (s *store) Refs(sessionID, folder string) ([]Ref, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT session_id, folder, ref, first_tip, tip, agent_id FROM session_refs WHERE session_id = ?`
+	q := `SELECT session_id, folder, ref, first_tip, tip, agent_id, abandoned_tip FROM session_refs WHERE session_id = ?`
 	args := []any{sessionID}
 	if folder != "" {
 		q += ` AND folder = ?`
@@ -60,7 +80,7 @@ func (s *store) Refs(sessionID, folder string) ([]Ref, error) {
 	var out []Ref
 	for rows.Next() {
 		var r Ref
-		if err := rows.Scan(&r.SessionID, &r.Folder, &r.Name, &r.FirstTip, &r.Tip, &r.AgentID); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Folder, &r.Name, &r.FirstTip, &r.Tip, &r.AgentID, &r.Abandoned); err != nil {
 			return nil, fmt.Errorf("sessionstate: list refs: %w", err)
 		}
 		out = append(out, r)

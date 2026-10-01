@@ -105,6 +105,11 @@ under THAT repository's own `.sloprail` plus the session's plugins. `git push` a
 `gh pr create` can be gated too, **opt-in** with `push_gate: true` in `.sloprail/config.yaml`
 (off by default): every file-guard is then evaluated over what the agent committed in the
 target repository first, and a refusal blocks the command.
+A branch the user genuinely dropped is abandoned with
+`sr-session refs abandon --ref <branch> --cite-user '<exact quote>'`: the quote must resolve
+to a USER message of the session (never an assistant's or a tool's). It is abandoned at its
+current tip, and judged again if the tip moves or the commit is pushed or merged; deleting
+a branch is not an abandon, its recorded tip is still judged.
 Uncommitted work is a `commit-required` matter and
 stays `HEAD`/worktree-only. Sub-agents judge their own folders' tips at their own Stop.
 
