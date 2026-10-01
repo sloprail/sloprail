@@ -419,3 +419,61 @@ func realPath(p string) string {
 	}
 	return p
 }
+
+// HeadAt is the commit HEAD pointed at in the working tree at dir at time t, read from
+// the HEAD reflog: the newest entry made strictly before the second t falls in (a commit made in the same second as the start is the session's, never the start). When every entry is later (the
+// reflog's oldest entry postdates t), it is what HEAD held BEFORE that first entry: the
+// parent of a commit that entry made, the entry's own commit otherwise (a checkout or a
+// clone). found is false when the reflog cannot say (empty, unborn, or no parent to
+// infer from). unborn is true when HEAD held no commit yet at t.
+func HeadAt(dir string, t time.Time) (sha string, unborn, found bool, err error) {
+	out, err := run(dir, "reflog", "show", "HEAD", "--date=unix", "--format=%H%x09%gd%x09%gs")
+	if err != nil {
+		if strings.Contains(err.Error(), "unknown revision") || strings.Contains(err.Error(), "ambiguous argument") {
+			return "", false, false, nil
+		}
+		return "", false, false, err
+	}
+	type entry struct {
+		sha, subject string
+		at           int64
+	}
+	var entries []entry // newest first
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) != 3 || !isObjectName(f[0]) {
+			continue
+		}
+		open, cl := strings.LastIndex(f[1], "{"), strings.LastIndex(f[1], "}")
+		if open < 0 || cl < open {
+			continue
+		}
+		at, perr := strconv.ParseInt(f[1][open+1:cl], 10, 64)
+		if perr != nil {
+			continue
+		}
+		entries = append(entries, entry{sha: f[0], subject: f[2], at: at})
+	}
+	if len(entries) == 0 {
+		return "", false, false, nil
+	}
+	floor := t.Unix()
+	for _, e := range entries {
+		if e.at < floor {
+			return e.sha, false, true, nil
+		}
+	}
+	oldest := entries[len(entries)-1]
+	initial := strings.HasPrefix(oldest.subject, "commit (initial)")
+	if !madeCommit(oldest.subject) && !initial {
+		return oldest.sha, false, true, nil
+	}
+	if initial {
+		return "", true, true, nil // the first commit ever: HEAD was unborn before it
+	}
+	parent, perr := run(dir, "rev-parse", "--verify", "--quiet", oldest.sha+"^")
+	if perr != nil || !isObjectName(strings.TrimSpace(parent)) {
+		return "", false, false, nil
+	}
+	return strings.TrimSpace(parent), false, true, nil
+}

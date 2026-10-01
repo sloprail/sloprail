@@ -201,20 +201,26 @@ func TestT003_32_ASessionThatBeganBeforeTheFirstCommitJudgesItsFirstTurn(t *test
 	}
 }
 
-// T003_33: a session recorded by an older engine (a baseline, but no kept first start) can
-// not say where it began, and the re-taken baseline would reopen the floor hole: the range
-// fails closed, with a message that says why. A new session passes.
-func TestT003_33_ASessionWithoutAKeptStartFailsClosed(t *testing.T) {
+// T003_33: a session recorded by an older engine (a baseline, but no kept first start)
+// does not wedge: the re-taken baseline is not the start (it would reopen the floor hole),
+// so the start is derived from the HEAD reflog at the record's first timestamp, kept, and
+// the range is judged from it. (When the reflog cannot say, the range still fails closed,
+// with a recovery: see T003_60.)
+func TestT003_33_ASessionWithoutAKeptStartDerivesItFromTheReflog(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-33"
 	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
 	e.RemoveCheckResults(proj, sess)
 	e.DeleteMeta(proj, sess, "session_start_commit")
-	e.WriteFile(proj, "docs/a.md", "clean\n")
+	e.WriteFile(proj, "docs/a.md", "FORBIDDEN words\n")
 	e.CommitAll(proj, "add a")
 
 	r := e.StopNow(proj, sess, false)
-	if !harness.Blocked(r) || !strings.Contains(r.Output, "did not keep the commit it began at") || !strings.Contains(r.Output, "docs/a.md") {
-		t.Fatalf("a session without a kept start did not fail closed with its reason:\n%s", r.Output)
+	if !harness.Blocked(r) || strings.Contains(r.Output, "did not keep the commit it began at") ||
+		!strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/a.md") {
+		t.Fatalf("a session without a kept start did not derive it and judge its commit:\n%s", r.Output)
+	}
+	if e.Meta(proj, sess, "session_start_commit") == "" {
+		t.Fatal("the derived start was not kept")
 	}
 }

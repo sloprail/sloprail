@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -258,6 +259,18 @@ func (p HookPayload) sessionRecord() (string, error) {
 // by the same fields, so nothing depends on this to find a transcript.
 func (p HookPayload) IsSubagent() bool {
 	return p.AgentTranscriptPath != "" || p.AgentID != ""
+}
+
+// stateCwd is the directory this payload's session stores are keyed by: for a root,
+// where its record says it began (so an agent that `cd`s into another worktree keeps
+// its verdicts, baseline and counters); for a sub-agent, its own cwd. See
+// sessionpath.StateCwd.
+func (p HookPayload) stateCwd() string {
+	record, err := p.record()
+	if err != nil {
+		return p.Cwd
+	}
+	return sessionpath.StateCwd(record, p.Cwd)
 }
 
 // Tool implements filemod.Pending: what the harness calls the tool it is about

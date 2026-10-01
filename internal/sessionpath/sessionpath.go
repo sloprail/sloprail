@@ -312,3 +312,26 @@ func ChecksDB(cwd, sessionID string) (string, error) {
 	}
 	return filepath.Join(filepath.Dir(state), "checks.db"), nil
 }
+
+// StateCwd is the directory a ROOT session's stores are keyed by: where its record
+// says it began, never where the hook happens to stand.
+//
+// An agent that works in another worktree (`cd ../wt`) reports that worktree as its
+// cwd from then on. Keyed by it, the verdicts, baseline, loop-breaker counters and
+// context state would silently reset at the first hook after the `cd`, and the
+// session would be split over two stores while its folder registry (which is keyed
+// by the starting directory) stayed behind. So the start is the key.
+//
+// A SUB-AGENT keeps its own cwd (its record is nested under the dispatching
+// session's directory, and its isolated worktree is its own tree): it is separated
+// from the root by its own session id, not by this. An empty record, or one that
+// names no starting directory, falls back to cwd.
+func StateCwd(record, cwd string) string {
+	if record == "" || transcript.SessionDirOfSubagent(record) != "" {
+		return cwd
+	}
+	if start, err := transcript.StartCwd(record); err == nil && start != "" {
+		return start
+	}
+	return cwd
+}

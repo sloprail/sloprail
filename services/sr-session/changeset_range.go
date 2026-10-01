@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
+
 	"errors"
+	"github.com/sloprail/sloprail/internal/transcript"
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/checkstore"
@@ -53,6 +56,57 @@ func sessionStartOf(state sessionstate.Store) string {
 		return gitrepo.EmptyTree
 	}
 	return start
+}
+
+// repairSessionStart derives the commit the session began at when the store has a
+// baseline but never kept it (a session begun before it was kept, or a store reached
+// after the baseline alone was re-taken), and keeps it. Without it every file-guard
+// range fails closed on every Stop, forever (errSessionStartNotKept).
+//
+// The start is HEAD as the folder's reflog shows it at the session record's first
+// timestamp (or, when the reflog begins later, what HEAD held before its oldest entry).
+// A no-op when the start is kept, when there is no baseline (no error path), or with no
+// store. Only when the reflog cannot say does it refuse, with a recovery that works.
+func repairSessionStart(state sessionstate.Store, p HookPayload, root string) error {
+	if state == nil {
+		return nil
+	}
+	if _, ok, err := state.Meta(sessionstate.MetaSessionStart); err != nil || ok {
+		return err
+	}
+	if baseline, had, err := state.Meta(sessionstate.MetaBaselineCommit); err != nil || !had || baseline == "" {
+		return err
+	}
+	derived := func() (string, bool) {
+		record, err := p.record()
+		if err != nil || record == "" {
+			return "", false
+		}
+		since, err := transcript.StartTime(record)
+		if err != nil || since.IsZero() {
+			return "", false
+		}
+		sha, unborn, found, err := gitrepo.HeadAt(root, since)
+		if err != nil || !found {
+			return "", false
+		}
+		if unborn {
+			return sessionstate.SessionStartUnborn, true
+		}
+		return sha, true
+	}
+	if v, ok := derived(); ok {
+		return state.SetMeta(sessionstate.MetaSessionStart, v)
+	}
+	recovery := ""
+	if id, err := stableID(p); err == nil {
+		if db, err := sessionDBPath(p.stateCwd(), id); err == nil {
+			recovery = fmt.Sprintf("; to recover, an operator can reset this session's bookkeeping with `rm -f %s %s-wal %s-shm` "+
+				"(the session then measures from the commit at its next tool call, so commits already made in it are not judged)",
+				shellQuote(db), shellQuote(db), shellQuote(db))
+		}
+	}
+	return fmt.Errorf("%w; its reflog could not say where HEAD was when it began%s", errSessionStartNotKept, recovery)
 }
 
 func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {

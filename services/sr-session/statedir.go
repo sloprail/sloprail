@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
@@ -38,6 +40,15 @@ const TranscriptEnv = "SR_TRANSCRIPT"
 var (
 	workspaceAnchor = sessionpath.WorkspaceAnchor
 )
+
+// hookStateCwd is the directory a guardrail's own hook keys the session's store by:
+// the same one the engine used (HookPayload.stateCwd), found from the environment the
+// engine set. SR_WORKSPACE is the tree the hook was invoked in, which is not the
+// session's start after the agent `cd`s; the record SR_TRANSCRIPT names says where
+// the session began.
+func hookStateCwd() string {
+	return sessionpath.StateCwd(os.Getenv(TranscriptEnv), os.Getenv(WorkspaceEnv))
+}
 
 // sessionDBPath resolves where one session's state lives — see
 // sessionpath.StateDB for the scheme and why a session id is refused when it is

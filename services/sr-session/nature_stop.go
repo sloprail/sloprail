@@ -58,6 +58,9 @@ import (
 // its verdicts are recorded in the session's check results (changeset_eval.go),
 // where a refusal stays until a run passes.
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
+	if store == nil {
+		return dispatchNatureStopStoreless(cmd, p, reg, scope)
+	}
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	recordRulesSeen(cmd, store, loaded.FileGuards)
@@ -163,6 +166,39 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// refused: a refused reply is exactly what the retry re-sends.
 	recordStopSeen(cmd, store, fileSnapshot, recordEnd)
 
+	return joinRefusals(refusals)
+}
+
+// dispatchNatureStopStoreless is the Stop dispatch when the session's state cannot be
+// opened. Judging never depends on it for the rules that judge commits: commit-required,
+// the file-guards (git and the check results) and the ad-hoc folders run exactly as
+// usual, and Stop gates run over empty context and gate maps. What is lost is
+// bookkeeping only (context enter/exit, seen marks, cited-change history), none of which
+// is read here. The caller says the state was unavailable; this never skips a rule.
+func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope) string {
+	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
+	contextMap := map[string]natures.ContextState{}
+	gatesMap := map[string]natures.GateState{}
+	var refusals []string
+
+	commitOwed := false
+	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap)); reason != "" {
+		refusals = append(refusals, reason+" (commit required)")
+		commitOwed = true
+	}
+	if !commitOwed && ownsTree(p) {
+		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, nil) {
+			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
+		}
+	}
+	for _, r := range evaluateAdHocFolders(cmd, p, scope, reg, contextMap, nil) {
+		refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
+	}
+	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{cyclemod.Event()}, scope, nil, contextMap, gatesMap, resolveNotes{}) {
+		if r.Refused {
+			refusals = append(refusals, r.Reason+" (gate "+r.Attribution+")")
+		}
+	}
 	return joinRefusals(refusals)
 }
 
