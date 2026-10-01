@@ -24,6 +24,7 @@ func TestResolveRuleRange_ABaselineTakenAtTheSubagentsStopIsNotAFloor(t *testing
 	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()} // outside the repo: no folder floor
 
 	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaSessionStart, start))
 	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, start))
 
 	r, err := resolveRuleRange(repo, plugin, nil, state)
@@ -70,4 +71,18 @@ func TestResolveRuleRange_TheFloorIsTheParentOfTheLastCommitTouchingTheSloprailR
 	r, err = resolveRuleRange(repo, g, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ruleCommit, r.Base)
+}
+
+// A session that recorded a baseline but never kept its first start (it began before that
+// was recorded) fails closed: the baseline is re-taken whenever the tree leaves its
+// history, so reading it as the start would reopen the floor hole.
+func TestResolveRuleRange_ABaselineWithoutAKeptSessionStartFailsClosed(t *testing.T) {
+	repo := initRepo(t)
+	start := commitFile(t, repo, "a.txt", "one")
+	plugin := declaration.FileGuard{Name: "size", Dir: t.TempDir()}
+	state := openStore(t)
+	require.NoError(t, state.SetMeta(sessionstate.MetaBaselineCommit, start))
+
+	_, err := resolveRuleRange(repo, plugin, nil, state)
+	assert.ErrorIs(t, err, errSessionStartNotKept)
 }

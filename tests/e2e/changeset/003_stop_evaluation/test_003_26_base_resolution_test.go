@@ -73,13 +73,16 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 				t.Fatalf("premise: the %s did not rewrite the session start", name)
 			}
 			e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
-			e.CommitAll(proj, "X: the violation")
+			violation := e.CommitAll(proj, "X: the violation")
 			e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 			e.CommitAll(proj, "Y: touch .sloprail")
 
 			r := e.StopNow(proj, sess, false)
 			if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 				t.Fatalf("a violation after a rewritten session start (%s) and a .sloprail touch was not refused:\n%s", name, r.Output)
+			}
+			if !strings.Contains(r.Output, "docs/bad.md") {
+				t.Fatalf("the refusal does not name the file it is about:\n%s", r.Output)
 			}
 			var judged []string
 			for _, run := range ledger(t, led) {
@@ -88,7 +91,41 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 			if !strings.Contains(strings.Join(judged, " "), "docs/bad.md") {
 				t.Fatalf("X's file was never handed to the rule: %v", judged)
 			}
+
+			// Fixed by a follow-up revert of the violation, the same range passes.
+			e.Git(proj, "revert", "--no-edit", violation)
+			if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+				t.Fatalf("the range with the violation reverted was still refused (%s):\n%s", name, r.Output)
+			}
 		})
+	}
+}
+
+// T003_31: the ROOT commit is amended to carry a violation. The session start (the old
+// root) is gone and shares no history with the new one, so there is no merge base: the
+// range starts at the empty tree and the amended root's own content is judged. (Anchored
+// at the root commit instead, its content would be grandfathered and the violation would
+// pass.) The rule is not committed, so there is no floor to fall back on either.
+func TestT003_31_AnAmendedRootCommitIsJudgedInFull(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.WriteFile(proj, "docs/seed.md", "seed\n")
+	e.CommitAll(proj, "the project")
+	led := filepath.Join(t.TempDir(), "ledger.jsonl")
+	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)}) // not committed: no floor
+
+	const sess = "s-003-31"
+	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
+	e.RemoveCheckResults(proj, sess)
+
+	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
+	e.Git(proj, "add", "docs/bad.md")
+	e.Git(proj, "commit", "-q", "--amend", "--no-edit")
+
+	r := e.StopNow(proj, sess, false)
+	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/bad.md") {
+		t.Fatalf("a violation inside an amended root commit was not refused:\n%s", r.Output)
 	}
 }
 

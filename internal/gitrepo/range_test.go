@@ -296,17 +296,17 @@ func TestResolveRange_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testin
 	})
 }
 
-// A session start git no longer has (gc'd), or that shares no history with HEAD, is
-// anchored at the repository's root commit: everything since is judged, never guessed
-// away.
-func TestResolveRange_ASessionStartGitHasNoMergeBaseForFallsToTheRootCommit(t *testing.T) {
+// A session start git no longer has (gc'd), or that shares no history with HEAD (the root
+// commit was amended, so it is a different root), is anchored at the EMPTY TREE: the whole
+// history is judged, the root commit's own content included, never guessed away.
+func TestResolveRange_ASessionStartGitHasNoMergeBaseForFallsToTheEmptyTree(t *testing.T) {
 	dir := initRepo(t)
-	root := commit(t, dir, "a.go", "x")
+	commit(t, dir, "a.go", "x")
 	commit(t, dir, "b.go", "y")
 
 	r, err := ResolveRange(dir, ".sloprail", "", "0123456789012345678901234567890123456789")
 	require.NoError(t, err)
-	assert.Equal(t, root, r.Base)
+	assert.Equal(t, EmptyTree, r.Base)
 	assert.Equal(t, FromSessionStart, r.Origin)
 
 	// Unrelated history: a second root, with no merge base with HEAD.
@@ -316,7 +316,23 @@ func TestResolveRange_ASessionStartGitHasNoMergeBaseForFallsToTheRootCommit(t *t
 	git(t, dir, "checkout", "-q", "main")
 	r, err = ResolveRange(dir, ".sloprail", "", other)
 	require.NoError(t, err)
-	assert.Equal(t, root, r.Base)
+	assert.Equal(t, EmptyTree, r.Base)
+}
+
+// The root commit itself amended to carry a violation: the session start (the old root)
+// is unreachable and shares no history with the new one, so the range starts at the empty
+// tree and the amended root's content is inside it.
+func TestResolveRange_AnAmendedRootCommitIsJudgedFromTheEmptyTree(t *testing.T) {
+	dir := initRepo(t)
+	start := commit(t, dir, "a.go", "x")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "violation.go"), []byte("bad"), 0o644))
+	git(t, dir, "add", "violation.go")
+	git(t, dir, "commit", "--amend", "--no-edit")
+
+	r, err := ResolveRange(dir, "", "", start)
+	require.NoError(t, err)
+	assert.Equal(t, EmptyTree, r.Base)
+	assert.False(t, r.Empty())
 }
 
 func TestResolveRange_TheWatermarkOutranksBoth(t *testing.T) {

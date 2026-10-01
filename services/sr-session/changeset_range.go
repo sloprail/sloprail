@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -26,6 +28,12 @@ import (
 // reported on the returned range as DroppedWatermark, so a range that widened
 // says why. gitrepo.ErrNoCommits is returned as itself: nothing is committed, so
 // nothing can be judged.
+// errSessionStartNotKept: the session recorded a baseline but not the HEAD it first
+// began at, so the baseline (re-taken whenever the tree leaves its history) cannot stand
+// in for it.
+var errSessionStartNotKept = errors.New("this session did not keep the commit it began at (it began before that was recorded), " +
+	"so which commits are new cannot be told; start a new session")
+
 func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.Store, state sessionstate.Store) (gitrepo.Range, error) {
 	var watermark, dropped, sessionStart string
 	if results != nil {
@@ -38,25 +46,39 @@ func resolveRuleRange(root string, g declaration.FileGuard, results checkstore.S
 		}); err != nil {
 			return gitrepo.Range{}, err
 		}
-		// The newest pass was rewritten (an amend, a rebase, a reset): ResolveRange
-		// re-anchors it at its merge base with HEAD, which is never earlier than an older
-		// pass that survives and keeps what was approved and still exists approved.
+		// The newest pass was rewritten (an amend, a rebase, a reset): it is re-anchored at
+		// its merge base with HEAD. That OVERRIDES an older pass that survives, on
+		// purpose: the merge base is never earlier than the older pass (an ancestor of
+		// both), so it keeps everything the newest pass approved and still exists
+		// approved, and judges only what was rewritten or is new. When git no longer has
+		// the newest pass (or it shares no history with HEAD) there is nothing to
+		// re-anchor and the surviving older pass, or the floors, apply.
 		if dropped != "" {
-			watermark = dropped
+			mb, found, err := gitrepo.ReanchorWatermark(root, dropped)
+			if err != nil {
+				return gitrepo.Range{}, err
+			}
+			if found {
+				watermark = mb
+			}
 		}
 	}
 	if state != nil {
 		var err error
 		// The FIRST start, never the re-taken baseline: an amend that rewrites it
-		// would otherwise move the start past the work already done.
+		// would otherwise move the start past the work already done. A session that
+		// has a baseline but never kept its first start (begun before it was kept) can
+		// not say where it began, and the re-taken baseline would reopen the hole: the
+		// range fails closed.
 		var ok bool
 		if sessionStart, ok, err = state.Meta(sessionstate.MetaSessionStart); err != nil {
 			return gitrepo.Range{}, err
 		}
 		if !ok {
-			// A session recorded before the first start was kept separately.
-			if sessionStart, _, err = state.Meta(sessionstate.MetaBaselineCommit); err != nil {
+			if baseline, had, err := state.Meta(sessionstate.MetaBaselineCommit); err != nil {
 				return gitrepo.Range{}, err
+			} else if had && baseline != "" {
+				return gitrepo.Range{}, errSessionStartNotKept
 			}
 		}
 		// A baseline first taken at a sub-agent's own Stop is where its work ENDED, not

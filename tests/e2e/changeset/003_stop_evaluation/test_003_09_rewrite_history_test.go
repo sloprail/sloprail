@@ -98,6 +98,13 @@ func TestT003_10_AnAmendedAwayWatermarkFallsBackToTheFloorAndIsJudgedAgain(t *te
 	if got := droppedWatermark(t, e, proj, "s-003-10"); !strings.Contains(got, passedHead) {
 		t.Fatalf("the run should record the watermark it had to drop (%s):\n%s", passedHead, got)
 	}
+
+	// Fixed (the new commit reverted, and a judge that now passes), the same range passes.
+	e.Git(proj, "revert", "--no-edit", "HEAD")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictPass)
+	if r := e.StopNow(proj, "s-003-10", false); harness.Blocked(r) {
+		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
+	}
 }
 
 // T003_30: the same through a soft reset that recommits (the usual "squash my commits"):
@@ -132,6 +139,13 @@ func TestT003_30_ASoftResetWatermarkFallsBackToItsMergeBaseAndIsJudgedAgain(t *t
 	}
 	if got := droppedWatermark(t, e, proj, "s-003-30"); !strings.Contains(got, passedHead) {
 		t.Fatalf("the run should record the watermark it had to drop (%s):\n%s", passedHead, got)
+	}
+
+	// Fixed (the new commit reverted, and a judge that now passes), the same range passes.
+	e.Git(proj, "revert", "--no-edit", "HEAD")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictPass)
+	if r := e.StopNow(proj, "s-003-30", false); harness.Blocked(r) {
+		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
 	}
 }
 

@@ -239,9 +239,36 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 		}
 	}
 	if verdict.Refused {
-		return refusal(g, verdict.Reason), true
+		return refusal(g, namingFiles(verdict.Reason, cs.Files)), true
 	}
 	return fileGuardResult{}, false
+}
+
+// maxNamedFiles bounds the files a refusal lists when its check named none.
+const maxNamedFiles = 10
+
+// namingFiles is a rule's refusal, guaranteed to name the file(s) it is about: a check
+// is free to word its reason as it likes, and one that names no file leaves the agent
+// guessing which of its files or commits was refused (and blaming its own commits). When
+// the reason already names a file of the changeset it is returned as it is; otherwise the
+// files the rule judged are listed after it.
+func namingFiles(reason string, files []changeset.File) string {
+	if len(files) == 0 {
+		return reason
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		if strings.Contains(reason, f.Path) {
+			return reason
+		}
+		paths = append(paths, f.Path)
+	}
+	more := ""
+	if len(paths) > maxNamedFiles {
+		more = fmt.Sprintf(" (and %d more)", len(paths)-maxNamedFiles)
+		paths = paths[:maxNamedFiles]
+	}
+	return reason + "\nThe files this refusal is about (the changeset the rule judged): " + strings.Join(paths, ", ") + more
 }
 
 // runRule runs a rule's require and then its checks in order, recording each and

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -424,4 +426,59 @@ func (s failingStore) RecordCheck(runID string, c checkstore.CheckRecord) (strin
 
 func eventWithCitations(cs ...transcript.Citation) event.Event {
 	return event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(cs)}}
+}
+
+// The newest pass is rewritten while an older one survives: the range is re-anchored at the
+// newest pass's merge base with HEAD, which OVERRIDES the older pass on purpose. The merge
+// base is never earlier than the older pass, so the commit between the two passes (approved
+// by the newest pass, and still in history) is not judged again, while the rewritten commit
+// is. The dropped pass is reported.
+func TestResolveRuleRange_ARewrittenNewestPassOverridesASurvivingOlderOne(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	older := f.commitDoc(t, "docs/a.md", "clean")
+	_, refused := f.ev.evaluate(f.guard)
+	require.False(t, refused)
+	between := f.commitDoc(t, "docs/m.md", "clean")
+	newest := f.commitDoc(t, "docs/b.md", "clean")
+	_, refused = f.ev.evaluate(f.guard)
+	require.False(t, refused)
+	require.Equal(t, []string{newest, older}, f.passedHeads(t))
+	runGit(t, f.repo, "commit", "--amend", "-m", "b, reworded")
+
+	r, err := resolveRuleRange(f.repo, f.guard, f.results, nil)
+	require.NoError(t, err)
+	assert.Equal(t, between, r.Base, "the newest pass's merge base with HEAD, not the older surviving pass")
+	assert.NotEqual(t, older, r.Base)
+	assert.Equal(t, gitrepo.FromWatermark, r.Origin)
+	assert.Equal(t, newest, r.DroppedWatermark)
+}
+
+// Every Stop refusal of a file-guard names the file(s) it is about, whatever wording the
+// check gave its reason: a check that names none gets the files it judged listed, one
+// that names a file of the changeset is left as it is.
+func TestEvaluate_ARefusalAlwaysNamesTheFilesItIsAbout(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	f.commitDoc(t, "docs/b.md", "fine")
+
+	r, refused := f.ev.evaluate(f.guard)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words", "the check's own reason is kept")
+	assert.Contains(t, r.Reason, "docs/a.md")
+	assert.Contains(t, r.Reason, "docs/b.md")
+}
+
+func TestNamingFiles(t *testing.T) {
+	files := []changeset.File{{Path: "docs/a.md"}, {Path: "docs/b.md"}}
+	assert.Equal(t, "docs/b.md: wrong", namingFiles("docs/b.md: wrong", files), "a reason that names a file is not repeated")
+	assert.Equal(t, "wrong", namingFiles("wrong", nil))
+
+	var many []changeset.File
+	for i := 0; i < maxNamedFiles+3; i++ {
+		many = append(many, changeset.File{Path: fmt.Sprintf("f%02d.md", i)})
+	}
+	got := namingFiles("wrong", many)
+	assert.Contains(t, got, "f00.md")
+	assert.NotContains(t, got, fmt.Sprintf("f%02d.md", maxNamedFiles))
+	assert.Contains(t, got, "(and 3 more)")
 }

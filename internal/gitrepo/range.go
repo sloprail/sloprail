@@ -90,7 +90,7 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //   - an unreachable watermark becomes merge-base(watermark, HEAD): what was approved
 //     and survives stays approved, what was rewritten is judged again;
 //   - an unreachable sessionStart becomes merge-base(sessionStart, HEAD), and the
-//     repository's root commit when git no longer has the commit (or shares no history
+//     empty tree (the whole history, root commit included) when git no longer has the commit (or shares no history
 //     with it): everything made since the session began is still inside the range. The
 //     folder floor alone would not do, because a later commit touching the rule's
 //     folder puts it AFTER in-session commits, which would then never be judged.
@@ -286,9 +286,11 @@ func HeadPushed(dir string) (bool, error) {
 }
 
 // reanchorSessionStart is where a session start the tree left (an amend, a rebase, a
-// reset) is measured from instead: its merge base with HEAD, or the root commit when git
-// has no such commit or it shares no history with HEAD. Never later than the work the
-// session did.
+// reset) is measured from instead: its merge base with HEAD, or the empty tree when git
+// has no such commit or it shares no history with HEAD (an amended root commit is a
+// different root). The empty tree, not the root commit: the root's own content is judged
+// too, as parentOrEmptyTree does for a rule added in the root commit. Never later than
+// the work the session did.
 func reanchorSessionStart(dir, sessionStart, head string) (string, error) {
 	mb, found, err := mergeBaseWithHead(dir, sessionStart, head)
 	if err != nil {
@@ -297,7 +299,7 @@ func reanchorSessionStart(dir, sessionStart, head string) (string, error) {
 	if found {
 		return mb, nil
 	}
-	return RootCommit(dir)
+	return EmptyTree, nil
 }
 
 // mergeBaseWithHead is the merge base of commit and head. found is false when git has no
@@ -322,4 +324,16 @@ func mergeBaseWithHead(dir, commit, head string) (base string, found bool, err e
 		return "", false, fmt.Errorf("gitrepo: merge base resolved to %q, not an object name", base)
 	}
 	return base, true, nil
+}
+
+// ReanchorWatermark is where a watermark the tree left (an amend, a rebase, a reset) is
+// measured from instead: its merge base with HEAD. found is false when git no longer has
+// the commit or it shares no history with HEAD, and the caller falls back to something
+// else it has.
+func ReanchorWatermark(dir, watermark string) (base string, found bool, err error) {
+	head, err := headSHA(dir)
+	if err != nil {
+		return "", false, err
+	}
+	return mergeBaseWithHead(dir, watermark, head)
 }
