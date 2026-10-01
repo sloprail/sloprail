@@ -68,6 +68,7 @@ type Env struct {
 	tmpDir          string
 	repoRoot        string
 	mock            string
+	onlyShipped     string // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
 	noShippedGuards bool   // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
 	shimDir         string // a `claude` that is really the mock, ahead of the real one on PATH
 
@@ -269,6 +270,14 @@ type Option func(*Env)
 // files in every range that starts before it, which is exactly what the authoring guards
 // exist to judge. A package about authoring must not use it.
 func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards = true } }
+
+// WithOnlyShippedFileGuard is WithoutShippedFileGuards for a package about ONE shipped
+// rule: every other authoring file-guard of the sloprail plugin is disabled in the
+// initial commit, and the named one (its qualified name, e.g.
+// "sloprail/file-guard/grounded-rule-changes") stays in force.
+func WithOnlyShippedFileGuard(qualified string) Option {
+	return func(e *Env) { e.onlyShipped = qualified }
+}
 
 // New stands up an isolated environment.
 func New(t *testing.T, opts ...Option) *Env {
@@ -1029,6 +1038,15 @@ func (e *Env) GitInit(dir string) {
 	e.excludeMockFiles(dir)
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
+	}
+	if e.onlyShipped != "" {
+		var others []string
+		for _, g := range shippedFileGuards {
+			if g != e.onlyShipped {
+				others = append(others, g)
+			}
+		}
+		e.DisablePluginGuardrail(dir, others...)
 	}
 	e.CommitAll(dir, "initial")
 }

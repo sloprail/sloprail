@@ -80,6 +80,7 @@ func (r Result) AnySubagentStopBlocked() bool {
 // (in the range, since the commit that adds a rule is judged) are not about.
 var shippedFileGuards = []string{
 	"sloprail/file-guard/authoring-slop",
+	"sloprail/file-guard/grounded-rule-changes",
 	"sloprail/file-guard/misplaced-declaration",
 	"sloprail/file-guard/read-context-doc",
 	"sloprail/file-guard/read-file-guard-doc",

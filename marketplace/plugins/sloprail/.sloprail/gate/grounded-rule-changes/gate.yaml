@@ -1,0 +1,22 @@
+# The PREVENTION half of file-guard/grounded-rule-changes, for ONE file:
+# `.sloprail/config.yaml`. Its `disabled:` list switches rules off, and that includes
+# the rule that guards it: a file-guard judges the committed range at Stop, after the
+# config already says it is off, so it never gets to refuse the very change that
+# disabled it. Only a write refused before it lands can hold that line.
+#
+# Every other file under `.sloprail/` is left to the file-guard at Stop. A gate on
+# all of it would refuse each rule a legitimate author writes (the Write tool carries
+# no citation) and push every edit through `sr-file`: noise on exactly the sessions
+# the plugin wants rules written in. config.yaml is rare, and a change to it is a
+# decision, so it asks for its ground up front.
+#
+# Both a write and a delete: removing config.yaml removes the `disabled:` list, which
+# can switch rules back ON, but a file under `.sloprail/` is the user's to decide.
+on:
+  - event: PreFileWrite
+    match: 'event.path == ".sloprail/config.yaml"'
+  - event: PreFileDelete
+    match: 'event.path == ".sloprail/config.yaml"'
+require:
+  - citation: {source_types: [user, tool_result]}
+    when: ./always-with-advice.sh

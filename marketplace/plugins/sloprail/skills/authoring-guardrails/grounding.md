@@ -249,8 +249,8 @@ the whole entry it was taken from, so weigh the quote in its context.
 {% for c in event.citations %}<citation source="{{ c.path }}:{{ c.line | int }}" pools="{{ c.sourceTypes | join(",") }}">
 <quote>{{ c.quote }}</quote>
 <message>{{ c.message }}</message>
-{% if c.call %}<call>{{ c.call }}</call>
-{% endif %}</citation>
+<call>{{ c.call }}</call>
+</citation>
 {% endfor %}</citations>{% else %}**This change cites nothing.**{% endif %}
 ~~~
 
