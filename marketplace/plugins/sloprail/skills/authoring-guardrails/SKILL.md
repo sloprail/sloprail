@@ -235,11 +235,26 @@ payload its checks will get without running anything
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.
 
+## Changing a rule that already stands
+
+The plugin's `grounded-rule-changes` rule judges a change to what already stands in the
+project's `.sloprail/`. A change that cites what the user said, or a tool output from
+this session, is a grounded one:
+
+```bash
+git commit -m 'relax demo: allow untitled notes' \
+  -m 'Sloprail-Cites-User: let the demo rule accept untitled notes'
+```
+
+A tool output is cited the same way, with `Sloprail-Cites-Tool:`. How a citation is made
+and what a rule sees of it: [grounding.md](grounding.md).
+
 ## Turning one off
 
 Keep the folder; the YAML body and the sibling prose hold the reasoning that
 produced the rule, which is exactly what someone needs when deciding whether to
-switch it back on.
+switch it back on. Turning a rule off is itself a change to the project's rules, cited
+as above.
 
 For a rule in **your own** `.sloprail/`, disable it at its source — see each
 nature's doc for the exact key. For a rule that **arrived inside an installed

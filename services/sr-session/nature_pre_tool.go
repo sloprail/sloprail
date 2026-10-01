@@ -48,7 +48,8 @@ type natureVerdict struct {
 // order) is what blocks — a pre-tool hook can only deny once, and denying on the
 // first refusal is the same shape the old path takes.
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
-	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
+	start := sessionStartOf(store)
+	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	grounds := requiresCitation(loaded)
 	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure

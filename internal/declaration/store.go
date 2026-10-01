@@ -46,6 +46,11 @@ import (
 type Store struct {
 	root string
 
+	// trustedRev is the commit whose config.yaml vouches for a `disabled:` entry naming a
+	// protected rule (see protectedDisable): the commit the session began at. Empty means
+	// HEAD. Set by WithTrustedRev.
+	trustedRev string
+
 	// plugins are the installed plugins whose declarations this store also reads,
 	// in precedence order. Empty for a store built with New, which is every caller
 	// that has no business knowing about plugins — `sr-file validate` reads one
@@ -84,6 +89,14 @@ func New(root string) *Store { return &Store{root: root} }
 // messages and in the disable list — the two places a wrong name costs most.
 func NewWithPlugins(projectRoot string, plugins []Origin) *Store {
 	return &Store{root: projectRoot, plugins: plugins}
+}
+
+// WithTrustedRev says which commit's config.yaml may switch off a protected rule (the
+// plugin's grounded-rule-changes): the commit the session began at, so neither the
+// working tree nor the agent's own commits can. It returns the store for chaining.
+func (s *Store) WithTrustedRev(rev string) *Store {
+	s.trustedRev = rev
+	return s
 }
 
 // NewPlugin returns a store that reads ONE plugin's declarations and no project's
@@ -445,7 +458,7 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 		if err != nil {
 			return Loaded{}, err
 		}
-		cfg = c
+		cfg = trustProtected(c, s.root, s.trustedRev)
 	}
 
 	// -- 1. parse every root, project first, tagging origin --
@@ -543,6 +556,21 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	// -- 3. resolve precedence; a displaced declaration is Shadowed, not loaded --
 	var out Loaded
 	out.Invalid = invalid
+	// A protected plugin rule is claimed first, so a project declaration of the same
+	// nature and name is the one displaced (and reported as Shadowed): a project
+	// cannot override the rule that judges its own changes to its rules.
+	sort.SliceStable(soundFileGuards, func(i, j int) bool {
+		return protectedPlugin(soundFileGuards[i].Origin, NatureFileGuard, soundFileGuards[i].Name) &&
+			!protectedPlugin(soundFileGuards[j].Origin, NatureFileGuard, soundFileGuards[j].Name)
+	})
+	sort.SliceStable(soundGates, func(i, j int) bool {
+		return protectedPlugin(soundGates[i].Origin, NatureGate, soundGates[i].Name) &&
+			!protectedPlugin(soundGates[j].Origin, NatureGate, soundGates[j].Name)
+	})
+	sort.SliceStable(soundContexts, func(i, j int) bool {
+		return protectedPlugin(soundContexts[i].Origin, NatureContext, soundContexts[i].Name) &&
+			!protectedPlugin(soundContexts[j].Origin, NatureContext, soundContexts[j].Name)
+	})
 	resolveFileGuards(&out, soundFileGuards)
 	resolveGates(&out, soundGates)
 	resolveContexts(&out, soundContexts)

@@ -189,8 +189,11 @@ const gateStatePrefix = "gate:"
 //
 // A registry is required so trigger matches can be evaluated — the loader compiles
 // them against the module vocabulary.
-func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry) declaration.Loaded {
+func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry, sessionStart ...string) declaration.Loaded {
 	store, unresolved := natureDeclarationStore(cmd, cwd)
+	if len(sessionStart) > 0 {
+		store.WithTrustedRev(sessionStart[0])
+	}
 	// Reported here, once per load, the same as reportUnresolved is called at every
 	// old-format hook point — a plugin that could not be located is named on every
 	// dispatch, not only at a session start nobody was watching.

@@ -58,7 +58,8 @@ import (
 // its verdicts are recorded in the session's check results (changeset_eval.go),
 // where a refusal stays until a run passes.
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
-	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
+	start := sessionStartOf(store)
+	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
 		return ""
 	}

@@ -6,6 +6,6 @@ Before a change that will happen again (a new endpoint, a migration, a doc page,
 3. Proof. Add the rule that says what a finished instance of the shape must hold (a file-guard on the file, or a gate on the action or the turn's end), unless one already covers it. For a file-guard's script, copy the skill's check-template.sh and change only fine().
 4. Check they load: `sr-session start < /dev/null` names every rule that did not. Then prove the rule fires: a bad instance is refused, a good one lands.
 5. Build inside them.
-The rules stay in the repo, so the next change of that shape is checked too.
+The rules stay in the repo, so the next change of that shape is checked too. A change to a rule that already stands is cited on the commit; see the skill's grounding.md.
 
 A one-off (a single fix, an investigation, a question) gets no new rule. Keep its throwaway files (scratch scripts, notes, downloads, clones) in your scratchpad or the system temp dir, not in the repo.

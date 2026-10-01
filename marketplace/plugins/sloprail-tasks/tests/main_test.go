@@ -37,7 +37,6 @@ type Env = harness.Env
 // The harness API, re-exported under short names so the tests read like the main
 // suite's do.
 var (
-	New            = harness.New
 	Turns          = harness.Turns
 	Write          = harness.Write
 	Bash           = harness.Bash
@@ -255,3 +254,13 @@ func stopBlocks(e *Env, proj, sess string) string {
 }
 
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+
+// New is the harness environment with the plugin's grounded-rule-changes rule and gate
+// switched off: this package's setup commits `.sloprail/` files inside the session (and
+// rewrites config.yaml to disable rules), which that rule judges, and what is under test
+// here is this plugin's own rules.
+func New(t *testing.T, opts ...harness.Option) *Env {
+	t.Helper()
+	opts = append([]harness.Option{harness.WithoutShipped("sloprail/file-guard/grounded-rule-changes", "sloprail/gate/grounded-rule-changes")}, opts...)
+	return harness.New(t, opts...)
+}

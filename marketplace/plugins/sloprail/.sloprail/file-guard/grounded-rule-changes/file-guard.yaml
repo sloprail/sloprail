@@ -1,0 +1,39 @@
+# A change to the project's rules must be grounded. Stuck in a refusal, an agent's
+# cheapest way out is to change the rule instead of the work: edit the rule's
+# script, write a `disabled:` entry into `.sloprail/config.yaml`, `rm -rf` the
+# rule's folder. Measured in the evals, all three. A rule that its own subject can
+# switch off is a suggestion. So a change to what ALREADY stood in `.sloprail/`
+# must trace to something real, never to the agent's wish to get past a refusal:
+#   - the user asked for it (their words, a message or an answer), or
+#   - a bug actually happened: a tool's output shows the rule misfiring.
+# Either is a citation on the commit (`Sloprail-Cites-User:` / `Sloprail-Cites-Tool:`
+# trailers, see grounding.md), resolved by the engine against the session's record.
+#
+# What needs grounding: every file under the project's `.sloprail/`, deleted ones
+# too (`deletions: include`; removing a rule is the sharpest weakening there is).
+# A file ADDED in the range needs none: setting rules up first, a new rule, a new
+# structure, is what rules-first asks for, and a new rule weakens nothing. The one
+# exception is `.sloprail/config.yaml`, where even a new file can carry `disabled:`.
+# needs-grounding.sh is that decision, for the requirement and for the checks alike.
+#
+# Three steps, cheapest first:
+#   1. `require: citation` (user or tool_result): the engine refuses a change
+#      citing nothing, before any check runs, and says how to cite.
+#   2. own-refusal-is-no-ground.sh: the one grounding that is deterministically
+#      no grounding, the rule's own refusal quoted back at it.
+#   3. the judge: does the cited text ask for, or show the need of, THIS change.
+#
+# No PreFileWrite gate beside it, on purpose. A write cannot cite (the Write tool
+# carries no citation), so a gate requiring one would refuse every legitimate rule
+# edit and send the agent through `sr-file` for each, and one that only warns is
+# noise on every rule an agent writes. The refusal at Stop names what to do.
+match: .sloprail/**
+deletions: include
+require:
+  - citation: {source_types: [user, tool_result]}
+    when: ./needs-grounding.sh
+checks:
+  - script: ./own-refusal-is-no-ground.sh
+  - prepare: ./prepare.sh
+    judge: ./judge.md.j2
+    model: size-md

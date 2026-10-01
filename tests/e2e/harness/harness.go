@@ -68,8 +68,10 @@ type Env struct {
 	tmpDir          string
 	repoRoot        string
 	mock            string
-	noShippedGuards bool   // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
-	shimDir         string // a `claude` that is really the mock, ahead of the real one on PATH
+	withoutShipped  []string // GitInit disables these shipped rules (WithoutShipped)
+	onlyShipped     string   // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
+	noShippedGuards bool     // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
+	shimDir         string   // a `claude` that is really the mock, ahead of the real one on PATH
 
 	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
 	// mock runs — how many times the mock re-runs the agent when a Stop hook
@@ -269,6 +271,21 @@ type Option func(*Env)
 // files in every range that starts before it, which is exactly what the authoring guards
 // exist to judge. A package about authoring must not use it.
 func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards = true } }
+
+// WithoutShipped switches off the named shipped rules (qualified names, a file-guard or a
+// gate) in the initial commit, for a package whose setup commits `.sloprail/` files inside
+// the session, which the plugin's grounded-rule-changes judges. The rest stay in force.
+func WithoutShipped(qualified ...string) Option {
+	return func(e *Env) { e.withoutShipped = append(e.withoutShipped, qualified...) }
+}
+
+// WithOnlyShippedFileGuard is WithoutShippedFileGuards for a package about ONE shipped
+// rule: every other authoring file-guard of the sloprail plugin is disabled in the
+// initial commit, and the named one (its qualified name, e.g.
+// "sloprail/file-guard/grounded-rule-changes") stays in force.
+func WithOnlyShippedFileGuard(qualified string) Option {
+	return func(e *Env) { e.onlyShipped = qualified }
+}
 
 // New stands up an isolated environment.
 func New(t *testing.T, opts ...Option) *Env {
@@ -1029,6 +1046,19 @@ func (e *Env) GitInit(dir string) {
 	e.excludeMockFiles(dir)
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
+		e.DisablePluginGuardrail(dir, shippedGates...)
+	}
+	if len(e.withoutShipped) > 0 {
+		e.DisablePluginGuardrail(dir, e.withoutShipped...)
+	}
+	if e.onlyShipped != "" {
+		var others []string
+		for _, g := range shippedFileGuards {
+			if g != e.onlyShipped {
+				others = append(others, g)
+			}
+		}
+		e.DisablePluginGuardrail(dir, others...)
 	}
 	e.CommitAll(dir, "initial")
 }

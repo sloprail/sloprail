@@ -370,7 +370,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		SessionID:      ev.scope.SessionID,
 		LaunchedBy:     appendLaunchedBy(os.Getenv, g.Name),
 		Changeset:      &payload,
-		Env:            changeset.Env(tree.Path, r.Base, r.Head),
+		Env:            append(changeset.Env(tree.Path, r.Base, r.Head), "SR_SESSION_START="+sessionStartOf(ev.state)),
 	}
 
 	// Recorded RUNNING, finished only once every check is stored: a run that dies

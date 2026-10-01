@@ -117,3 +117,14 @@ disables a shipped rule from their own side, in `.sloprail/config.yaml`:
 The name is qualified by the plugin AND the nature (`<plugin>/<nature>/<name>`),
 so disabling a shipped rule cannot also disable a project rule that happens to
 share its name — nor a differently-natured rule of the same name.
+
+## Changes to a project's rules
+
+`sloprail/file-guard/grounded-rule-changes` (and a `PreFileWrite` gate of the same name on
+`.sloprail/config.yaml`) judge a change to what already stands in the project's
+`.sloprail/`, in the commit's `Sloprail-Cites-User:` / `Sloprail-Cites-Tool:` trailers.
+The rule's folder has the full account, and how to switch it off:
+
+    disabled:
+      - sloprail/file-guard/grounded-rule-changes
+      - sloprail/gate/grounded-rule-changes
