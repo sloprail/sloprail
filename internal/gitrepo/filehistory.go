@@ -116,8 +116,21 @@ func parseNameStatusLog(out string) ([]logCommit, error) {
 				continue
 			}
 			e := logEntry{status: status[0]}
+			if combinedStatus(status) {
+				// A merge's combined diff (--cc) prints one letter per parent ("MM", "RM",
+				// "AM") and ONE path, the file's name in the merge; the file changed in
+				// resolving it, so it counts as modified under that name.
+				e.status = 'M'
+				if i+1 >= len(fields) {
+					return nil, fmt.Errorf("gitrepo: file history entry %q is missing its path", status)
+				}
+				e.path = fields[i+1]
+				i += 2
+				c.entries = append(c.entries, e)
+				continue
+			}
 			switch e.status {
-			case 'A', 'M', 'D', 'T', 'U':
+			case 'A', 'M', 'D', 'T', 'U', 'X', 'B':
 				if i+1 >= len(fields) {
 					return nil, fmt.Errorf("gitrepo: file history entry %q is missing its path", status)
 				}
@@ -140,4 +153,18 @@ func parseNameStatusLog(out string) ([]logCommit, error) {
 		commits = append(commits, c)
 	}
 	return commits, nil
+}
+
+// combinedStatus reports a status of a combined (merge) diff: two or more bare letters,
+// one per parent, with no similarity score.
+func combinedStatus(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	for _, r := range s {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
 }
