@@ -57,8 +57,8 @@ func subagentFolder(t *testing.T, e *Env, proj, sess string) (path, agent string
 	return "", ""
 }
 
-// T003_72: the WorktreeRemove hook keeps what the folder holds and marks it removed; it never
-// blocks the removal, whatever it is handed.
+// T003_72: the WorktreeRemove hook keeps what the folder holds (its range moves to the root
+// folder) and never blocks the removal, whatever it is handed.
 func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-72h"
@@ -82,8 +82,8 @@ func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testi
 			t.Fatalf("the hook blocked a removal it could not act on (payload %v): exit %d\n%s", bad, r.Code, r.Output)
 		}
 	}
-	if got := e.Meta(proj, sess, "folder_removed:"+wt); got != "" {
-		t.Fatalf("a payload for another session marked the folder removed: %q", got)
+	if rs := sessionRanges(t, e, proj, sess); !trackedIn(rs, wt, "sub-a") {
+		t.Fatalf("a payload for another session changed the folder's range: %+v", rs)
 	}
 	r := hook(map[string]any{
 		"session_id": sess, "transcript_path": e.TranscriptPath(proj, sess), "cwd": proj,
@@ -92,14 +92,40 @@ func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testi
 	if r.Code != 0 {
 		t.Fatalf("the hook blocked the removal: exit %d\n%s", r.Code, r.Output)
 	}
-	if got := e.Meta(proj, sess, "folder_removed:"+wt); got != "1" {
-		t.Fatalf("the folder was not marked removed: %q", got)
+	// The removed folder's range is settled, not lost: its branch still exists in the session's
+	// own repository, so the range moves to the root folder, and the folder's is untracked saying so.
+	rs := sessionRanges(t, e, proj, sess)
+	if !trackedIn(rs, proj, "sub-a") {
+		t.Fatalf("the removed worktree's range did not move to the root folder: %+v", rs)
 	}
-	if pins := strings.TrimSpace(e.Git(proj, "for-each-ref", "refs/sloprail/pins")); pins == "" {
-		t.Fatal("the folder's owed tip was not pinned")
+	if trackedIn(rs, wt, "sub-a") {
+		t.Fatalf("the removed worktree's range is still tracked in the removed folder: %+v", rs)
 	}
-	// Marked removed (the directory has not gone yet): the root's next Stop inherits it.
-	if r := e.StopNow(proj, sess, false); !harness.Blocked(r) || !strings.Contains(r.Output, "You now own this") {
-		t.Fatalf("a folder the harness reported removed was not inherited:\n%s", r.Output)
+	// The root's next Stop verifies it there: the work is kept, and judged.
+	if r := e.StopNow(proj, sess, false); !harness.Blocked(r) || !strings.Contains(r.Output, "sub-a") {
+		t.Fatalf("a folder the harness reported removed was not kept and verified at the root:\n%s", r.Output)
 	}
+}
+
+// sessionRanges is `sr-session refs list --json` as the session.
+func sessionRanges(t *testing.T, e *Env, proj, sess string) []sessionstate.TrackedRange {
+	t.Helper()
+	r := e.CLIDirectEnv(proj, e.SessionEnv(sess), "sr-session", "refs", "list", "--json")
+	if r.Code != 0 {
+		t.Fatalf("refs list: exit %d:\n%s", r.Code, r.Output)
+	}
+	var out []sessionstate.TrackedRange
+	if err := json.Unmarshal([]byte(r.Output), &out); err != nil {
+		t.Fatalf("refs list --json is not JSON (%v):\n%s", err, r.Output)
+	}
+	return out
+}
+
+func trackedIn(rs []sessionstate.TrackedRange, folder, head string) bool {
+	for _, r := range rs {
+		if r.Head == head && r.Tracked() && filepath.Clean(r.Folder) == filepath.Clean(folder) {
+			return true
+		}
+	}
+	return false
 }

@@ -37,6 +37,12 @@ func requiredProject(t *testing.T) (*Env, string, string) {
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 
+// judgeInTree is the turn an agent takes to have the judges asked about the branch a worktree
+// holds: `sr-checks run` from that worktree, over the branch's own commits.
+func judgeInTree(wt, base string) harness.Turn {
+	return Bash("j-"+filepath.Base(base), "cd "+wt+" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
+}
+
 // commitOnX: from the coordinator's own checkout, make a commit on a new branch, then go
 // back to main and hand the branch to another worktree (the way a sub-agent holds it).
 func commitOnX(withRequired bool, wt string) []harness.Turn {
@@ -48,6 +54,7 @@ func commitOnX(withRequired bool, wt string) []harness.Turn {
 		Bash("b1", "git switch -q -c feat-x"),
 		Bash("b2", cmd+" && git add -A && git commit -q -m 'work on x'"),
 		Bash("b3", "git switch -q - && git worktree add -q "+wt+" feat-x"),
+		judgeInTree(wt, "HEAD~1"),
 	}
 }
 
@@ -83,6 +90,7 @@ func TestT003_50_TheRefusalNamesTheWorktreeAndNeverSwitchesTheCheckout(t *testin
 
 	e.Run(proj, "s-003-50", "fix it", Turns("fixed",
 		Bash("b4", "cd "+wt+" && printf '%s' 'required' > REQUIRED.md && git add -A && git commit -q -m 'add the file'"),
+		judgeInTree(wt, "HEAD~2"),
 	))
 	if n := stopBlocks(e, proj, "s-003-50"); n != blocks {
 		t.Fatalf("the branch fixed in its own worktree was still refused:\n%s", newBlocks(e, proj, "s-003-50", blocks))

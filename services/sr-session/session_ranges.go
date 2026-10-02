@@ -362,15 +362,17 @@ func verifyRangeAs(cmd *cobra.Command, p HookPayload, reg *module.Registry, stor
 		headName = "detached at " + shortRev(headName) // commits on no branch: say so
 	}
 	where := fmt.Sprintf("In %s (%s, from %s)", r.Folder, headName, shortRev(r.Base))
+	if other := gitrepo.BranchWorktree(r.Folder, r.Head); other != "" {
+		where = fmt.Sprintf("In %s (%s, checked out in another worktree, %s; from %s)", r.Folder, headName, other, shortRev(r.Base))
+	}
 	rng, err := gitrepo.ResolveRange(r.Folder, r.Base, head)
 	if err != nil {
 		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
 	}
-	// Commits the session only pulled or rebased onto, already on the remote's default branch,
-	// are not its work.
-	if narrowed, nerr := gitrepo.ExcludeUpstream(r.Folder, rng); nerr == nil {
-		rng = narrowed
-	}
+	// What the default branch gained since the range was tracked (a pull, a rebase onto a newer
+	// origin/main) is upstream's, not the session's: the range starts at the head's merge base
+	// with the default branch now, when that is later than the stored base.
+	rng = advanceBase(r.Folder, rng)
 	// The range's base vouches for the project's own switch-offs of protected rules, as it does
 	// under `sr-checks run`: verify must load the same rules the run judged.
 	loaded := newNatureDeclarations(quiet, r.Folder, reg, rng.Base)
@@ -411,6 +413,24 @@ func verifyRangeAs(cmd *cobra.Command, p HookPayload, reg *module.Registry, stor
 		parts = append(parts, f.Reason+" (file-guard "+f.Attribution+")")
 	}
 	return where + ": " + joinRefusals(parts) + goneNote
+}
+
+// advanceBase moves a range's base up to the head's merge base with the remote default branch,
+// when that is a descendant of the base it has (never earlier). Work already on that branch
+// is upstream's: a pull, a fast-forward or a rebase onto a newer origin/main leaves only the
+// commits ahead of it in the range. A repository with no remote default branch keeps its base.
+func advanceBase(folder string, rng gitrepo.Range) gitrepo.Range {
+	db, ok := gitrepo.RemoteDefaultBase(folder, rng.Head)
+	if !ok || db == rng.Base {
+		return rng
+	}
+	if rng.Base != gitrepo.EmptyTree {
+		if isAnc, err := gitrepo.IsAncestor(folder, rng.Base, db); err != nil || !isAnc {
+			return rng
+		}
+	}
+	rng.Base = db
+	return rng
 }
 
 // headRevision is the revision a tracked range's head names now: its branch, else the commit it
