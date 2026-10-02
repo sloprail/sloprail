@@ -2,6 +2,8 @@
 # doc-read nudges stall the agents working on this branch. Remove before #164 merges.
 disabled:
   - sloprail/file-guard/authoring-slop
+  - sloprail/file-guard/grounded-rule-changes
+  - sloprail/file-guard/grounded-rule-changes
   - sloprail/gate/authoring-slop
   - sloprail/gate/read-context-doc
   - sloprail/gate/read-file-guard-doc
