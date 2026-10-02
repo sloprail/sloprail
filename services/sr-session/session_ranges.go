@@ -134,7 +134,6 @@ func fileGuardsOnDefaultBranch(folder string) bool {
 const (
 	observedTipPrefix    = "observed-tip:"          // observed-tip:<branch>:<folder> -> tip
 	observedFolderPrefix = "observed-folder:"       // observed-folder:<folder> -> "1" once its baseline is taken
-	observedSessionBegun = "observed-session-begun" // "1" once any folder of the session was observed
 	detachedObserved     = "(detached)"
 )
 
@@ -166,10 +165,6 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 	if err != nil {
 		return nil, fmt.Errorf("read observations of %s: %w", folder, err)
 	}
-	late, err := observeSessionBegun(reg)
-	if err != nil {
-		return nil, fmt.Errorf("read observations of %s: %w", folder, err)
-	}
 	for i, b := range branches {
 		key := observedTipPrefix + b.name + ":" + folder
 		prev, seen, err := reg.Meta(key)
@@ -183,11 +178,6 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 			branches[i].moved = true // a branch the session has not seen before
 		case b.name == head && f.BaseRef != "" && f.BaseRef != sessionstate.FolderBaseUnborn:
 			branches[i].moved = f.BaseRef != b.sha // the registered branch started at BaseRef
-		case b.name != head && b.name != detachedObserved && late:
-			// A folder first seen late: its other branches' tips are all recorded now, and one
-			// with commits the remote default lacks is the
-			// session's (over-tracking: the agent can untrack it with a reason).
-			branches[i].moved = ownCommits(folder, b.sha, f.BaseRef)
 		}
 		if !seen || prev != b.sha {
 			if err := reg.SetMeta(key, b.sha); err != nil {
@@ -201,30 +191,6 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 		}
 	}
 	return branches, nil
-}
-
-// observeSessionBegun reports whether an earlier observation already happened in this session
-// (so a folder observed now is a late one), recording that one has. No clock is involved.
-func observeSessionBegun(reg sessionstate.Store) (bool, error) {
-	_, ok, err := reg.Meta(observedSessionBegun)
-	if err != nil || ok {
-		return ok, err
-	}
-	return false, reg.SetMeta(observedSessionBegun, "1")
-}
-
-// ownCommits reports whether sha has commits that neither the remote default branch nor the
-// folder's start hold. Commit dates are never consulted: the agent controls them.
-func ownCommits(folder, sha, startedAt string) bool {
-	args := []string{"-C", folder, "rev-list", "-n", "1", sha}
-	if tip, ok := gitrepo.RemoteDefaultTip(folder); ok {
-		args = append(args, "^"+tip)
-	}
-	if startedAt != "" && startedAt != sessionstate.FolderBaseUnborn {
-		args = append(args, "^"+startedAt)
-	}
-	out, err := exec.Command("git", args...).Output()
-	return err != nil || strings.TrimSpace(string(out)) != "" // unreadable: over-track
 }
 
 // ahead reports whether sha carries commits the default branch does not (the folder's
@@ -590,8 +556,9 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet.SetOut(io.Discard)
 	quiet.SetErr(io.Discard)
 	out, notes := trackRefusal, []string(nil)
+	var due []sessionstate.TrackedRange
 	recorded := lazyRecordedCitations(p, store)
-	seen := map[string]bool{} // (folder, head, base) already verified this Stop
+	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
 	for _, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
@@ -606,9 +573,25 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		if coveredWhenGone(r, ranges) {
 			continue // a folder that no longer exists, whose commits another tracked range holds
 		}
-		t0 := time.Now()
-		reason := verifyRangeWith(cmd, p, reg, quiet, r, recorded, seen)
-		debugTiming(cmd, "range "+r.Folder+" "+r.Head, t0)
+		due = append(due, r)
+	}
+	// The distinct ranges are verified in parallel, bounded; refusals keep the registry's order.
+	reasons := make([]string, len(due))
+	sem := make(chan struct{}, rangeVerifyConcurrency)
+	var wg sync.WaitGroup
+	for i, r := range due {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int, r sessionstate.TrackedRange) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			t0 := time.Now()
+			reasons[i] = verifyRangeWith(cmd, p, reg, quiet, r, recorded, seen)
+			debugTiming(cmd, "range "+r.Folder+" "+r.Head, t0)
+		}(i, r)
+	}
+	wg.Wait()
+	for _, reason := range reasons {
 		if reason != "" {
 			out = append(out, reason)
 		}
@@ -692,18 +675,37 @@ func repoOf(folder string) string {
 	return repo
 }
 
+// seenRanges remembers which (repo, head, base) a Stop has taken up, safe for the parallel verify.
+type seenRanges struct {
+	mu sync.Mutex
+	m  map[string]bool
+}
+
+// first reports whether key has not been taken up before, and takes it up.
+func (s *seenRanges) first(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m[key] {
+		return false
+	}
+	s.m[key] = true
+	return true
+}
+
+// rangeVerifyConcurrency bounds how many ranges one Stop verifies at once.
+const rangeVerifyConcurrency = 8
+
 // verifyRangeWith is verifyRange with the recorded-quotes hint supplied lazily, so a Stop that
 // verifies many ranges builds it at most once, and only if a citation refusal needs it.
-func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, quiet *cobra.Command, r sessionstate.TrackedRange, recorded func() map[string][]transcript.Citation, seen map[string]bool) string {
+func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, quiet *cobra.Command, r sessionstate.TrackedRange, recorded func() map[string][]transcript.Citation, seen *seenRanges) string {
 	head, goneNote := headRevision(r)
 	r.Base = effectiveBase(r, head)
 	if seen != nil {
 		// Rows that name the same commits of the same folder are one range: verified once.
 		key := repoOf(r.Folder) + "\x00" + head + "\x00" + r.Base
-		if seen[key] {
+		if !seen.first(key) {
 			return ""
 		}
-		seen[key] = true
 	}
 	headName := r.Head
 	if isCommitHead(r.Folder, headName) {
@@ -716,6 +718,9 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	rng, err := gitrepo.ResolveRange(r.Folder, r.Base, head)
 	if err != nil {
 		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
+	}
+	if rng.Base == rng.Head {
+		return "" // its tip is reachable from the remote default (landed): nothing of it is owed
 	}
 	// The range's base vouches for the project's own switch-offs of protected rules, as it does
 	// under `sr-checks run`: verify must load the same rules the run judged.

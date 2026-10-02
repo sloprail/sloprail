@@ -108,7 +108,10 @@ sr-session refs untrack --reason TEXT [--folder D] [--head REF]  # stop answerin
 
 Every branch the session commits on is tracked automatically, at every hook, and a branch
 whose tip is a session-made commit that was never verified is tracked even with no new
-commit. Without an explicit `--base`, the range's base is ALWAYS the merge base with the
+commit. A folder the session first observes late only has its branch tips recorded: a branch
+is tracked once its tip moves during the session, never merely because it already carries
+commits (commits made before a folder was first observed are CI's to verify). Without an
+explicit `--base`, the range's base is ALWAYS the merge base with the
 remote default branch, read afresh at every Stop, whatever the session made, pulled or pushed:
 a pull or a fast-forward push leaves nothing of that work in the local range. An explicit
 `--base` is used exactly as given (and must be before the head).

@@ -95,11 +95,11 @@ func TestFolderHasFileGuards_ARegistryErrorFailsClosed(t *testing.T) {
 	assert.Error(t, trackCurrent(reg, rs.ID, proj, "", "", true))
 }
 
-// A folder first observed late: its non-checked-out branches carrying commits made since the
-// session began are tracked on that first observation, and so are older (or backdated) ones:
-// commit dates are agent-controlled, so every branch with commits beyond the remote default is
-// over-tracked.
-func TestObserveFolder_ALateFolderTracksItsRecentlyCommittedBranches(t *testing.T) {
+// A folder first observed late only has its branch tips RECORDED: branches already carrying
+// commits are not tracked at first sight (that tracked every old branch of a long-lived
+// repository); one is tracked when its tip moves during the session. Commits made before the
+// first observation are covered by CI.
+func TestObserveFolder_ALateFolderRecordsTipsAndTracksOnlyWhatMoves(t *testing.T) {
 	_, reg, rs := ruledAndObserved(t, nil)
 	late := initRepo(t)
 	writeFileGuardYAML(t, late, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
@@ -128,8 +128,23 @@ func TestObserveFolder_ALateFolderTracksItsRecentlyCommittedBranches(t *testing.
 			got[r.Head] = true
 		}
 	}
-	assert.True(t, got["old"], "a backdated commit must not hide a branch from tracking")
-	assert.True(t, got["fresh"], "a branch committed on after the session began, in a late folder, was not tracked")
+	assert.False(t, got["old"], "a branch first seen with old commits was tracked at first sight")
+	assert.False(t, got["fresh"], "a branch first seen in a late folder was tracked at first sight")
+
+	runGit(t, late, "switch", "fresh")
+	commitFile(t, late, "g.md", "g") // the tip moves during the session
+	runGit(t, late, "switch", "main")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	got = map[string]bool{}
+	rows, err = reg.Ranges(rs.ID)
+	require.NoError(t, err)
+	for _, r := range rows {
+		if r.Folder == filepath.Clean(late) && r.Tracked() {
+			got[r.Head] = true
+		}
+	}
+	assert.True(t, got["fresh"], "a branch whose tip moved was not tracked")
+	assert.False(t, got["old"])
 }
 
 // The root's hook observes the sub-agent's folders too.
