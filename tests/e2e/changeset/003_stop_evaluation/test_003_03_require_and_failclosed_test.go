@@ -32,13 +32,20 @@ func TestT003_03_CitationTrailersGroundTheRange(t *testing.T) {
 
 	// Words nobody said: still not a citation, and the refusal says which trailer failed.
 	e.Run(proj, "s-003-03", "amend it", Turns("done", harness.CommitFile("c2", "docs/release.md", "steps v2", "document it", "Sloprail-Cites-User: delete the release notes")))
-	joined = strings.Join(e.BlockingErrorsFrom(proj, "s-003-03", "Stop"), "\n")
+	// The words are resolved by `sr-checks run`, where the transcript is; the Stop only
+	// verifies, trusting the trailers the author's run resolved.
+	joined = strings.Join(e.CheckRun(proj, "s-003-03"), "\n")
 	if !strings.Contains(joined, "delete the release notes") || !strings.Contains(joined, "did not resolve") {
 		t.Fatalf("an unresolvable trailer should be named:\n%s", joined)
 	}
 
 	// Pass: the user's own words, in a trailer of a later commit in the range.
 	e.Run(proj, "s-003-03", "cite it", Turns("done", harness.CommitFile("c3", "docs/release.md", "steps v3", "cite the ask", "Sloprail-Cites-User: document the release process")))
+	// What the check is handed is read from `sr-checks run`'s own call: it resolves each quote
+	// against the transcript. (The Stop's verify, which has none, trusts every trailer.)
+	if r := e.CheckRunRaw(proj, "s-003-03", e.RunBase("s-003-03"), "HEAD"); r.Code != 0 {
+		t.Fatalf("with the citation in place the range was refused:\n%s", r.Output)
+	}
 	runs := ledger(t, led)
 	if len(runs) == 0 {
 		t.Fatal("with the citation in place the checks never ran")
