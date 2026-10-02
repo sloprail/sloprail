@@ -11,9 +11,10 @@ import (
 
 // newSessionWorktreeRemoveCmd is the hook point that fires when the harness removes a worktree
 // (a sub-agent finished, the session ended). It never blocks the removal: whatever it cannot do
-// it reports on stderr and exits 0. What it does is drop the ranges the session tracked in the
-// folder — there is nothing left to verify there — with the reason "worktree removed", which the
-// Stop lists. (A harness without this hook is covered the same way at the next hook: a folder
+// it reports on stderr and exits 0. What it does is settle the ranges the session tracked in the
+// folder: a branch that still exists in the session's own repository moves there (its commits
+// are still verified at Stop), one that is gone is untracked with the reason "worktree removed",
+// which the Stop lists. (A harness without this hook is covered the same way at the next hook: a folder
 // of the session that no longer exists is untracked.)
 func newSessionWorktreeRemoveCmd() *cobra.Command {
 	return &cobra.Command{
@@ -50,9 +51,7 @@ func newSessionWorktreeRemoveCmd() *cobra.Command {
 			}
 			for _, r := range ranges {
 				if r.Tracked() && sameDir(r.Folder, p.WorktreePath) {
-					if err := reg.UntrackRange(rs.ID, r.Folder, r.Head, "worktree removed", r.AgentID); err != nil {
-						warn("%v", err)
-					}
+					dropRemoved(reg, rs.ID, r)
 				}
 			}
 			return nil

@@ -166,17 +166,62 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	}
 }
 
-// untrackGone drops, with the reason, the ranges of folders that no longer exist (a worktree
-// removed): there is nothing left to verify there.
+// untrackGone handles the ranges of folders that no longer exist (a worktree removed).
 func untrackGone(reg sessionstate.Store, sessionID string, ranges []sessionstate.TrackedRange) {
 	for _, r := range ranges {
 		if !r.Tracked() {
 			continue
 		}
 		if st, err := os.Stat(r.Folder); err != nil || !st.IsDir() {
-			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed", r.AgentID)
+			dropRemoved(reg, sessionID, r)
 		}
 	}
+}
+
+// dropRemoved settles a tracked range whose folder is gone. A branch that still exists in the
+// session's own repository keeps being answered for: the range moves to the root's folder (its
+// commits are the session's, and the Stop verifies them there). Only a branch that is gone, with
+// nothing to verify it at, is untracked with the reason.
+func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.TrackedRange) {
+	if home, ok := homeFolder(reg, sessionID, r.Folder); ok {
+		moved := r
+		moved.Folder = home.Path
+		if rev, note := headRevision(moved); note == "" && rev != "" {
+			if err := reg.TrackRange(sessionstate.TrackedRange{
+				SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.Head, HeadSHA: r.HeadSHA,
+				Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
+			}); err == nil {
+				_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID)
+				return
+			}
+		}
+	}
+	_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed", r.AgentID)
+}
+
+// homeFolder is the session's root folder, when it is the same repository as folder.
+func homeFolder(reg sessionstate.Store, sessionID, folder string) (sessionstate.Folder, bool) {
+	folders, err := reg.Folders(sessionID)
+	if err != nil {
+		return sessionstate.Folder{}, false
+	}
+	var repo string
+	for _, f := range folders {
+		if sameDir(f.Path, folder) {
+			repo = f.RepoID
+		}
+	}
+	if repo == "" {
+		return sessionstate.Folder{}, false
+	}
+	for _, f := range folders {
+		if f.Role == sessionstate.FolderRoot && f.RepoID == repo && !sameDir(f.Path, folder) {
+			if st, err := os.Stat(f.Path); err == nil && st.IsDir() {
+				return f, true
+			}
+		}
+	}
+	return sessionstate.Folder{}, false
 }
 
 // verifyTrackedRanges is the Stop's file-guard work: each tracked range of this agent's folders
