@@ -1222,7 +1222,7 @@ func storedSteps(meta map[string]any) []stepRow {
 }
 
 // recordGuard stores the guard's verdict over its subject, with each step inside it. An
-// engine error never reaches here (it is no verdict), and a refusal that read the session is not stored.
+// engine error never reaches here (it is no verdict), and a refusal reached without a session is not stored.
 func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Verdict) {
 	if ev.store == nil || ev.verify || rr.runID == "" || rr.key == "" || rr.replayed {
 		return
@@ -1231,7 +1231,10 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 	rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: guardKind, Fingerprint: rr.key, Metadata: meta}
 	switch {
 	case verdict.Refused:
-		if rr.volatile {
+		// A refusal reached without a session is no verdict about the key: any check may read
+		// the transcript, which this run does not have, so the author's real `run` must judge
+		// fresh. Passes are stored (a pass without the transcript holds for every session).
+		if rr.volatile || ev.params.Transcript == "" {
 			return
 		}
 		rec.Status, meta["reasoning"] = checkstore.StatusFail, verdict.Reason

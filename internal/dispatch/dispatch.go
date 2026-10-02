@@ -234,7 +234,8 @@ type Verdict struct {
 	Abstained bool
 
 	// NoVerdict reports that a judge refused for want of any parseable answer (it
-	// produced nothing the verifier could read), not as a verdict on the content.
+	// produced nothing the verifier could read, timed out, could not start, or the model's
+	// transport failed), not as a verdict on the content.
 	// Only with Refused. Set by the judge call itself, so callers need not read
 	// the Reason text.
 	NoVerdict bool

@@ -67,6 +67,16 @@ type evalFixture struct {
 	ledger  string
 	guard   declaration.FileGuard
 	results checkstore.Store
+	// transcript is the session's transcript the runs read ("" = a run with no session).
+	transcript string
+}
+
+// withSession makes the fixture's runs happen inside a session (an empty transcript).
+func (f *evalFixture) withSession(t *testing.T) *evalFixture {
+	t.Helper()
+	f.transcript = filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(f.transcript, nil, 0o644))
+	return f
 }
 
 // newEvalFixture is a repository with a seed commit, then a committed rule "docs"
@@ -97,7 +107,7 @@ func (f *evalFixture) params(t *testing.T, results checkstore.Store) Params {
 	require.NoError(t, err)
 	return Params{
 		Guards: []declaration.FileGuard{f.guard}, Root: f.repo, Range: rng, Cwd: f.repo, SessionID: "s-eval",
-		Store: results,
+		Store: results, Transcript: f.transcript,
 	}
 }
 
@@ -525,7 +535,7 @@ func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
 // Every check kind is cached by the guard's content: the same input is a hit (pass or fail,
 // a fail replayed), and `verify` only ever reads what `run` stored.
 func TestEvaluate_AScriptIsCachedByContentAndAFailIsReplayed(t *testing.T) {
-	f := newEvalFixture(t, nil)
+	f := newEvalFixture(t, nil).withSession(t)
 	f.commitDoc(t, "docs/a.md", "clean")
 
 	_, refused := f.evaluate(t, f.results)
@@ -547,7 +557,7 @@ func TestEvaluate_AScriptIsCachedByContentAndAFailIsReplayed(t *testing.T) {
 }
 
 func TestEvaluate_VerifyNeverExecutesAnythingAndOnlyReadsStoredVerdicts(t *testing.T) {
-	f := newEvalFixture(t, nil)
+	f := newEvalFixture(t, nil).withSession(t)
 	f.commitDoc(t, "docs/a.md", "clean")
 	verify := func() ([]FileGuardResult, []CheckOutcome) {
 		p := f.params(t, f.results)
@@ -650,7 +660,7 @@ func TestEvaluate_APrepareRefusalIsAStoredFailNotAnEngineError(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(g.Dir, "prepare.sh"),
 			[]byte("#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"no standard to judge\"}'\nexit 1\n"), 0o755))
 		g.Checks = []declaration.Check{{Script: "./check.sh", Prepare: "./prepare.sh"}}
-	})
+	}).withSession(t)
 	f.commitDoc(t, "docs/a.md", "clean")
 
 	r, refused := f.evaluate(t, f.results)
@@ -876,4 +886,33 @@ func TestEvaluate_VerifyNamesAJudgeThatReturnedNoVerdict(t *testing.T) {
 	got := f.verifyReasons(t)
 	require.Len(t, got, 1)
 	assert.Contains(t, got[0].Reason, "not judged yet (the judge returned no verdict: the judge did not produce a JSON verdict object (after 2 attempts))")
+}
+
+// A run with no session (no transcript) stores no FAIL: a verdict may depend on the transcript,
+// so the author's later real run judges fresh. A pass is stored.
+func TestEvaluate_ASessionlessRunStoresNoFail(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	assert.Empty(t, guardRows(t, f.results, f.guard), "the refusal is not stored")
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+
+	f.withSession(t)
+	r, refused = f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	require.Equal(t, 2, f.runs(t), "the real run judged fresh")
+	rows := guardRows(t, f.results, f.guard)
+	require.Len(t, rows, 1)
+	assert.Equal(t, checkstore.StatusFail, rows[0].Status)
+
+	g := newEvalFixture(t, nil)
+	g.commitDoc(t, "docs/a.md", "clean")
+	_, refused = g.evaluate(t, g.results)
+	require.False(t, refused)
+	require.Len(t, guardRows(t, g.results, g.guard), 1, "a pass is stored")
 }
