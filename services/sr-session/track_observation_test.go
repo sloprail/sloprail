@@ -96,7 +96,9 @@ func TestFolderHasFileGuards_ARegistryErrorFailsClosed(t *testing.T) {
 }
 
 // A folder first observed late: its non-checked-out branches carrying commits made since the
-// session began are tracked on that first observation; older ones are not.
+// session began are tracked on that first observation, and so are older (or backdated) ones:
+// commit dates are agent-controlled, so every branch with commits beyond the remote default is
+// over-tracked.
 func TestObserveFolder_ALateFolderTracksItsRecentlyCommittedBranches(t *testing.T) {
 	_, reg, rs := ruledAndObserved(t, nil)
 	late := initRepo(t)
@@ -126,7 +128,7 @@ func TestObserveFolder_ALateFolderTracksItsRecentlyCommittedBranches(t *testing.
 			got[r.Head] = true
 		}
 	}
-	assert.False(t, got["old"], "a branch last committed on before the session began is not the session's")
+	assert.True(t, got["old"], "a backdated commit must not hide a branch from tracking")
 	assert.True(t, got["fresh"], "a branch committed on after the session began, in a late folder, was not tracked")
 }
 

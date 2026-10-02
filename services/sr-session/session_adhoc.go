@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,6 +246,12 @@ func sessionFoldersOf(p HookPayload) []sessionstate.Folder {
 	return out
 }
 
+// unreadableRegistry is the error for a session registry that exists but cannot be read (corrupt
+// or unreadable): it names the file and the way out. It is never read as "absent".
+func unreadableRegistry(path string, err error) error {
+	return fmt.Errorf("the session registry %s exists but cannot be read (%w); to recover, delete that file (the session re-registers its folders at the next hook) or fix its permissions, then stop again", path, err)
+}
+
 // sessionFolders is sessionFoldersOf with the error of a registry that exists but could not be
 // read: a caller that refuses must not take that for "nothing else was committed".
 func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
@@ -254,18 +261,18 @@ func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil // an absent registry is no registry: a project without rules is never blocked by it
 		}
-		return nil, err
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return nil, err
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	defer reg.Close()
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
-		return nil, err
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	var out []sessionstate.Folder
 	for _, f := range folders {
