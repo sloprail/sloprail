@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -502,11 +503,29 @@ func (s *store) Query(query string) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.family != "" {
+		// A reader's SQL sees the family's rows as tables of their own — the same columns, in
+		// the same order, with a rowid of their own — on a connection of its own, so the views
+		// the package's own queries use (which carry an extra rowid column) are never in
+		// its way and `select *` returns exactly what an unshared database returns.
+		tmp, err := sql.Open("sqlite", "file:"+url.PathEscape(s.path)+"?mode=ro&_pragma=busy_timeout(5000)")
+		if err != nil {
+			return nil, fmt.Errorf("checkstore: query: %w", err)
+		}
+		defer tmp.Close()
+		tmp.SetMaxOpenConns(1)
+		db = tmp
+	}
 	conn, err := db.Conn(context.Background())
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	if s.family != "" {
+		if err := materializeFamily(conn, s.family); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := conn.ExecContext(context.Background(), `PRAGMA query_only = ON`); err != nil {
 		return nil, err
 	}

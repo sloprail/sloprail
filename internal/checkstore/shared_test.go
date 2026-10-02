@@ -95,6 +95,20 @@ func TestFamilyStores_TheTablesKeepTheirRowidForARuleThatOrdersByIt(t *testing.T
 	assert.Equal(t, "h1", rows[0]["head_ref"])
 }
 
+func TestFamilyStores_SelectStarIsExactlyAnUnsharedDatabasesColumns(t *testing.T) {
+	a, err := OpenFamily(filepath.Join(t.TempDir(), "checks.db"), "sess-a")
+	require.NoError(t, err)
+	defer a.Close()
+	passRun(t, a, "h1", "fp1")
+	for table, want := range map[string]int{"check_runs": 14, "checks": 10} {
+		rows, err := a.Query("select * from " + table)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, table)
+		assert.Len(t, rows[0], want, table)
+		assert.NotContains(t, rows[0], "rowid")
+	}
+}
+
 func TestSiblingRunRefs_AreOtherFamiliesOfTheSameFolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "checks.db")
 	a, err := OpenFamily(path, "sess-a")

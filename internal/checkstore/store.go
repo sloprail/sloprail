@@ -222,6 +222,8 @@ func OpenFamilyReadOnly(path, family string) (Store, error) {
 // The columns each view exposes: exactly the unshared database's, so what a reader sees (and
 // `select *` returns) does not change with where the rows are kept.
 const (
+	// The views the package's own queries use keep rowid (they order by it); what a reader's
+	// SQL sees is materializeFamily's tables, which have it natively and expose no extra column.
 	runCols   = "id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id, base_ref, head_ref, exit_code, error, metadata, created_at, rowid AS rowid"
 	checkCols = "id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at, rowid AS rowid"
 	itemCols  = "id, check_id, key, passed, metadata, checked_at, rowid AS rowid"
@@ -523,4 +525,21 @@ func (s *store) importLegacy(src Legacy) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// materializeFamily makes the family's rows into temp tables named like the real ones, on a
+// connection that has no views of those names.
+func materializeFamily(conn *sql.Conn, family string) error {
+	lit := "'" + strings.ReplaceAll(family, "'", "''") + "'"
+	cols := func(c string) string { return strings.ReplaceAll(c, ", rowid AS rowid", "") }
+	for _, stmt := range []string{
+		`CREATE TEMP TABLE check_runs AS SELECT ` + cols(runCols) + ` FROM main.check_runs WHERE family = ` + lit + ` ORDER BY rowid`,
+		`CREATE TEMP TABLE checks AS SELECT ` + cols(checkCols) + ` FROM main.checks WHERE run_id IN (SELECT id FROM temp.check_runs) ORDER BY rowid`,
+		`CREATE TEMP TABLE check_items AS SELECT ` + cols(itemCols) + ` FROM main.check_items WHERE check_id IN (SELECT id FROM temp.checks) ORDER BY rowid`,
+	} {
+		if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
+			return fmt.Errorf("checkstore: query: %w", err)
+		}
+	}
+	return nil
 }
