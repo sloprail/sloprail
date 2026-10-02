@@ -165,3 +165,12 @@ func TestDefaultBase(t *testing.T) {
 		assert.Equal(t, EmptyTree, DefaultBase(t.TempDir(), "HEAD"))
 	})
 }
+
+func TestResolveRange_TheEmptyTreeIsTheBaseOfARangeBeforeTheFirstCommit(t *testing.T) {
+	dir := initRepo(t)
+	head := commitIn(t, dir, "a.txt", "a")
+
+	r, err := ResolveRange(dir, EmptyTree, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, Range{Base: EmptyTree, Head: head}, r)
+}

@@ -37,11 +37,16 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 // semantics: base may be a branch name or any revision, and a base that is behind
 // (a stale remote-tracking branch) only widens the range, never narrows it. Either
 // revision that does not name a commit is an error saying which; two histories that
-// share nothing are an error too, never an empty range.
+// share nothing are an error too, never an empty range. The empty tree is the one base that
+// is not a commit: it stands for a range that starts before the first commit.
 func ResolveRange(dir, baseRev, headRev string) (Range, error) {
 	head, err := commitOf(dir, headRev, "--head")
 	if err != nil {
 		return Range{}, err
+	}
+	if baseRev == EmptyTree {
+		// A session that began before the first commit: every commit up to head is the range.
+		return Range{Base: EmptyTree, Head: head}, nil
 	}
 	base, err := commitOf(dir, baseRev, "--base")
 	if err != nil {
