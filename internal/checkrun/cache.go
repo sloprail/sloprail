@@ -26,13 +26,12 @@ func OpenCache(w io.Writer, root string, write bool) (*checkcache.Store, error) 
 		return nil, fmt.Errorf("sloprail: the check results could not be opened: %w", err)
 	}
 	if !write {
-		// Read-only: fetch what others stored, push nothing, migrate nothing.
+		// Read-only: fetch what others stored, push nothing.
 		if err := store.Pull(); err != nil {
 			fmt.Fprintf(w, "sloprail: the check results could not be fetched from origin, using the local copy: %v\n", err)
 		}
 		return store, nil
 	}
-	store.MigrateLegacy()
 	if err := store.Sync(); err != nil {
 		fmt.Fprintf(w, "sloprail: the check results could not be fetched from origin, using the local copy: %v\n", err)
 	}

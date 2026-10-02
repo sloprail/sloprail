@@ -15,8 +15,7 @@
 // only thing that knows where results live, and one cache serves the whole repository: a
 // check result is a statement about a rule, a subject and an input, whichever session, agent
 // or worktree recorded it. The identity on every run (repo, branch, session, agent) is
-// provenance, never part of a lookup. Import brings in the runs an older engine kept in a
-// sqlite checks.db.
+// provenance, never part of a lookup.
 //
 // What makes a check reusable is its key: (rule, rule hash, subject, kind, fingerprint). That
 // is a10n's QueryChecks probe, and CachedCheck is a10n's CacheHit, extended to read a fail

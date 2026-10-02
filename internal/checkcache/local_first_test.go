@@ -1,8 +1,6 @@
 package checkcache
 
 import (
-	"database/sql"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,8 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
 func lookupAll(t *testing.T, s *Store, rs []Run) int {
@@ -181,86 +177,12 @@ func TestPutTriggersGcOnManySegments(t *testing.T) {
 	}
 }
 
-const legacyDDL = `CREATE TABLE check_runs (id TEXT PRIMARY KEY, run_batch_id TEXT NOT NULL, run_at TEXT NOT NULL, check_id TEXT NOT NULL,
-	repo_id TEXT NOT NULL, branch TEXT NOT NULL, session_id TEXT NOT NULL, agent_id TEXT NOT NULL DEFAULT '', base_ref TEXT NOT NULL DEFAULT '',
-	head_ref TEXT NOT NULL DEFAULT '', exit_code INTEGER NOT NULL DEFAULT 0, error TEXT, metadata TEXT NOT NULL DEFAULT '{}');
-	CREATE TABLE checks (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, subject TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
-	fingerprint TEXT, metadata TEXT NOT NULL DEFAULT '{}');
-	CREATE TABLE check_items (id TEXT PRIMARY KEY, check_id TEXT NOT NULL, key TEXT, passed INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}');
-	INSERT INTO check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, base_ref, head_ref, metadata)
-		VALUES ('run_old', 'b', '2026-01-01T00:00:00.000000000Z', 'plug/file-guard/size', 'r', 'main', 's1', 'base0', 'h0', '{"ruleHash":"h1","state":"complete"}');
-	INSERT INTO checks (id, run_id, subject, kind, status, fingerprint, metadata)
-		VALUES ('chk_old', 'run_old', 'changeset', 'check[1]:judge:./rubric.md.j2', 'fail', 'fp-old', '{"reasoning":"nope"}');
-	INSERT INTO check_items (id, check_id, key, passed) VALUES ('itm_old', 'chk_old', 'a.go', 0)`
-
-// The first Open on a repository migrates an older engine's sqlite checks.db into the ref,
-// once: reopening writes nothing, and the old file is left as it was.
-func TestOpenMigratesAnOldSqliteChecksDBOnce(t *testing.T) {
-	data := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", data)
-	dir := t.TempDir()
-	git(t, dir, "init", "-q")
-	top := git(t, dir, "rev-parse", "--show-toplevel")
-	old := filepath.Join(data, sessionpath.AppName, "sessions", sessionpath.EncodeWorkspace(top), "s1", "checks.db")
-	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", old)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(legacyDDL); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	before, _ := os.ReadFile(old)
-
-	s, err := Open(Options{Dir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.tip() != "" {
-		t.Fatal("Open must not migrate")
-	}
-	s.MigrateLegacy()
-	runs, err := s.Runs()
-	if err != nil || len(runs) != 1 || runs[0].ID != "run_old" || !runs[0].Complete || runs[0].RuleHash != "h1" {
-		t.Fatalf("migrated runs = %+v (%v)", runs, err)
-	}
-	if got := runs[0].Checks; len(got) != 1 || got[0].Status != StatusFail || len(got[0].Items) != 1 {
-		t.Fatalf("migrated checks = %+v", got)
-	}
-	tip := s.tip()
-
-	// a second Open (another process) and a second migration attempt change nothing
-	s2, err := Open(Options{Dir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s2.MigrateLegacy()
-	if s2.tip() != tip {
-		t.Fatal("the migration must be idempotent")
-	}
-	// even without its marker, a run the ref holds is not written again
-	_ = os.Remove(s2.migrationMarker(old))
-	s3, err := Open(Options{Dir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s3.MigrateLegacy()
-	if s3.tip() != tip {
-		t.Fatal("a run already in the ref must not be put again")
-	}
-	if after, _ := os.ReadFile(old); string(after) != string(before) {
-		t.Fatal("the old database must be left untouched")
-	}
-}
-
-func TestOpenWithNoOldDatabaseWritesNothing(t *testing.T) {
+// Opening a store on a fresh repository writes nothing.
+func TestOpenWritesNothing(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s := newRepo(t, "")
 	if s.tip() != "" {
-		t.Fatal("nothing to migrate: no ref")
+		t.Fatal("nothing written: no ref")
 	}
 	if out, _ := exec.Command("git", "-C", s.opt.Dir, "for-each-ref", "refs/sloprail").Output(); len(out) != 0 {
 		t.Fatalf("refs written: %s", out)
@@ -289,52 +211,6 @@ func TestPullFetchesButNeverPushes(t *testing.T) {
 	reader.opt.Remote = online
 	require.NoError(t, reader.Pull())
 	assert.Equal(t, remoteTip, git(t, remote, "rev-parse", "refs/heads/sloprail/checks"), "a Pull never pushes")
-}
-
-// Every old session store of the repository is imported: each worktree's, and a store of a
-// removed worktree that records the repository's root commit. Another repository's store is
-// not. A store is marked once imported, and the import is idempotent.
-func TestMigrateLegacyImportsEveryStoreOfTheRepository(t *testing.T) {
-	data := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", data)
-	dir := t.TempDir()
-	git(t, dir, "init", "-q")
-	git(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root")
-	root := git(t, dir, "rev-parse", "HEAD")
-	top := git(t, dir, "rev-parse", "--show-toplevel")
-	other := filepath.Join(t.TempDir(), "wt")
-	git(t, dir, "worktree", "add", "-q", "--detach", other)
-	otherTop := git(t, other, "rev-parse", "--show-toplevel")
-
-	mk := func(workspace, session, runID, repoID string) string {
-		p := filepath.Join(data, sessionpath.AppName, "sessions", workspace, session, "checks.db")
-		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
-		db, err := sql.Open("sqlite", p)
-		require.NoError(t, err)
-		_, err = db.Exec(strings.NewReplacer("run_old", runID, "chk_old", "chk_"+runID, "itm_old", "itm_"+runID, "'r'", "'"+repoID+"'").Replace(legacyDDL))
-		require.NoError(t, err)
-		db.Close()
-		return p
-	}
-	mk(sessionpath.EncodeWorkspace(top), "s1", "run_a", "x")
-	mk(sessionpath.EncodeWorkspace(otherTop), "s2", "run_b", "x")
-	mk("removed-worktree", "s3", "run_c", root)
-	mk("someone-elses-repo", "s4", "run_d", "unrelated")
-
-	s, err := Open(Options{Dir: dir})
-	require.NoError(t, err)
-	s.MigrateLegacy()
-	runs, err := s.Runs()
-	require.NoError(t, err)
-	ids := []string{}
-	for _, r := range runs {
-		ids = append(ids, r.ID)
-	}
-	assert.ElementsMatch(t, []string{"run_a", "run_b", "run_c"}, ids)
-
-	tip := s.tip()
-	s.MigrateLegacy()
-	assert.Equal(t, tip, s.tip(), "idempotent")
 }
 
 // "A remote without the branch yet" is recognised from git's stderr, so the runner must not

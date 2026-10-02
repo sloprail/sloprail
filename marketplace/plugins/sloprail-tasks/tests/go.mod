@@ -21,7 +21,6 @@ require github.com/sloprail/sloprail v0.0.0-00010101000000-000000000000
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

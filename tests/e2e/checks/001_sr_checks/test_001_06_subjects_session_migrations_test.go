@@ -139,83 +139,12 @@ func TestT001_07_RunWithoutASessionNeedsOneToJudgeCitations(t *testing.T) {
 	}
 }
 
-// legacyChecksDB writes a checks.db as the older engine kept it: one complete passing run of
-// docs, recorded against the repository's root commit.
-func legacyChecksDB(t *testing.T, path, rootCommit string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	schema, err := os.ReadFile(repoFile("internal", "checkstore", "schema.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	for _, q := range []string{
-		string(schema),
-		`INSERT INTO check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, base_ref, head_ref, exit_code, metadata)
-		 VALUES ('legacy-run-1', 'b1', '2026-01-01T00:00:00Z', 'file-guard/docs', '` + rootCommit + `', 'main', 'old-session', 'aaa', 'bbb', 0, '{"state":"complete"}')`,
-		`INSERT INTO checks (id, run_id, subject, kind, status, fingerprint, checked_at)
-		 VALUES ('legacy-check-1', 'legacy-run-1', 'changeset', 'check[0]:judge:./rubric.md.j2', 'pass', 'oldfp', '2026-01-01T00:00:00Z')`,
-	} {
-		if _, err := db.Exec(q); err != nil {
-			t.Fatalf("legacy fixture: %v\n%s", err, q)
-		}
-	}
-}
-
 func repoFile(parts ...string) string {
 	abs, err := filepath.Abs(filepath.Join(append([]string{"..", "..", "..", ".."}, parts...)...))
 	if err != nil {
 		panic(err)
 	}
 	return abs
-}
-
-func runIDs(e *Env, proj string) map[string]int {
-	ids := map[string]int{}
-	for _, r := range e.CacheRecords(proj) {
-		ids[r.ID]++
-	}
-	return ids
-}
-
-// T001_08: an older engine's sqlite checks.db is imported into the results branch by `run`
-// (and only by `run`): its history is kept, once, and the old file is left where it was.
-func TestT001_08_RunImportsTheLegacySqliteStore(t *testing.T) {
-	e, proj := session(t)
-	base := judged(t, e, proj, verdictPass)
-	root := strings.TrimSpace(e.Git(proj, "rev-list", "--max-parents=0", "HEAD"))
-
-	// A store of an old session of this same workspace, beside the live session's own.
-	legacy := filepath.Join(filepath.Dir(filepath.Dir(e.StateDBPath(proj, sessionID))), "an-old-session", "checks.db")
-	legacyChecksDB(t, legacy, root)
-
-	if n := runIDs(e, proj)["legacy-run-1"]; n != 0 {
-		t.Fatalf("the legacy run was in the results before any run (%d)", n)
-	}
-	checks(e, proj, "verify", "--base", base, "--head", "HEAD")
-	if n := runIDs(e, proj)["legacy-run-1"]; n != 0 {
-		t.Fatalf("verify imported the legacy store (%d): only run may write", n)
-	}
-
-	if r := checks(e, proj, "run", "--base", base, "--head", "HEAD"); r.Code != 0 {
-		t.Fatalf("run: exit %d:\n%s", r.Code, r.Output)
-	}
-	if n := runIDs(e, proj)["legacy-run-1"]; n != 1 {
-		t.Fatalf("run imported the legacy run %d times, want once: %v", n, runIDs(e, proj))
-	}
-	checks(e, proj, "run", "--base", base, "--head", "HEAD")
-	if n := runIDs(e, proj)["legacy-run-1"]; n != 1 {
-		t.Fatalf("the import is not idempotent: %d copies", n)
-	}
-	if _, err := os.Stat(legacy); err != nil {
-		t.Fatalf("the old store was removed: %v", err)
-	}
 }
 
 // T001_09: a session's state.db written by an older engine (before session_refs became the
