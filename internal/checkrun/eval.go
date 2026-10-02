@@ -816,7 +816,14 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 			break
 		}
 	}
-	fp, err := fingerprint(payload, hash, c.Model, string(extra))
+	// The snapshot lives in a fresh temporary directory each time, and prepare may hand its
+	// path to the judge (to measure a file there): the path is not an input, so it is named
+	// the same for every run and every verify.
+	keyed := string(extra)
+	if req.ProjectRoot != "" {
+		keyed = strings.ReplaceAll(keyed, req.ProjectRoot, "<tree>")
+	}
+	fp, err := fingerprint(payload, hash, c.Model, keyed)
 	if err != nil {
 		return fail(err)
 	}
