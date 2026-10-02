@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,9 +91,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 		}
 	}
 	if len(reg) > 0 && reg[0] != nil {
-		quiet := &cobra.Command{}
-		quiet.SetOut(io.Discard)
-		quiet.SetErr(io.Discard)
+		quiet := quietCmd()
 		for _, f := range sessionFoldersOf(p) {
 			loaded := newNatureDeclarations(quiet, f.Path, reg[0])
 			if len(loaded.FileGuards) == 0 {
