@@ -121,6 +121,11 @@ func openSession(root string) session {
 		if _, err := os.Stat(path); err == nil {
 			if st, err := sessionstate.Open(path); err == nil {
 				s.state = st
+				// A sub-agent's Bash shares its parent's session record; what says the folder is
+				// a sub-agent's is the session's own row for it.
+				if f, ok, err := st.Folder(id.ID, root); err == nil && ok && f.AgentID != "" {
+					s.subagent = true
+				}
 			}
 		}
 	}
