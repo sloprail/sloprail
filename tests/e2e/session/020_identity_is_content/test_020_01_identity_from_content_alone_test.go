@@ -90,23 +90,16 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	}
 
 	// Changed and put back within one range: two commits, no net difference.
-	// The Stop that ends this Run VERIFIES the session's whole tracked range (the setup
-	// commit up to HEAD), where the file really is new, so what it records is not what this
-	// test asks about. Count only what judging THIS range, the one that started with the
-	// original bytes, hands a rule.
-	back := e.Git(proj, "rev-parse", "HEAD")
-	e.Run(proj, sess, "change it and put it back", Turns("done",
+	changesetkit.JudgeRun(t, e, proj, sess, "change it and put it back", Turns("done",
 		Write("w2", "subject.md", "different content\n"),
 		harness.Commit("c2", "change subject"),
 		Write("w3", "subject.md", original),
 		harness.Commit("c3", "restore subject"),
 	))
-	beforeRange := countPath(changesetkit.Files(t, led.Lines()), "subject.md")
-	e.CheckRunRange(proj, sess, back, "HEAD")
-	if got := countPath(changesetkit.Files(t, led.Lines()), "subject.md"); got != beforeRange {
+	if got := countPath(changesetkit.Files(t, led.Lines()), "subject.md"); got != afterFirst {
 		t.Fatalf("content restored to what the range started with was judged again (%d then %d) — "+
 			"identity is being derived from the commits made rather than from what the file holds",
-			beforeRange, got)
+			afterFirst, got)
 	}
 
 	// The control: content that genuinely differs IS judged.

@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -166,12 +165,6 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 	e.RunFrom(proj, "sub/deep", "s-025-02", "edit upwards", Turns("done",
 		Bash("b1", "printf 'edited from below\n' > ../../top.md"),
 	).ThenCommit("the agent's work"))
-	// The Stop's own verify ran the cheap checks over the session's tracked range
-	// (default base..HEAD, where top.md is an addition) and recorded into the same
-	// ledger. This test is about the range it states itself, so start the ledger over.
-	if err := os.Remove(ledger); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
 	judgeFromBelow(e, sub, "s-025-02")
 
 	// The premise: the file is still there and really was changed. Without this
