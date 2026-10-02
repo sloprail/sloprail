@@ -13,9 +13,11 @@ import (
 func TestT056_01_TheCurrentBranchIsTrackedFromTheMergeBase(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-01"
-	initial := e.Git(proj, "rev-parse", "origin/main")
 
 	e.Run(proj, sess, "work", Turns("done", Bash("b1", "true")))
+	// The harness publishes what the project committed before its first session to origin/main
+	// when that session starts (a real project has it pushed), so the merge base is read now.
+	initial := e.Git(proj, "rev-parse", "origin/main")
 
 	rs := ranges(t, e, proj, sess)
 	if len(rs) != 1 {
