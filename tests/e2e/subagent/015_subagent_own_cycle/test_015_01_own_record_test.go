@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,6 +29,11 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	// A file-guard's `run` is a command the agent types, so it carries no identity of its
+	// own; the identity a cycle ran as is seen where hooks run. This gate records, for each
+	// command naming a markdown file, the session it was run as.
+	idLed := e.NewLedger("identities")
+	e.Gate(proj, "who", memoGate, map[string]string{"record.sh": memoScript(idLed.Path())})
 	e.GitInit(proj)
 
 	// Bash, not Write. The mock executes Bash and applies it in whatever tree the
@@ -62,7 +66,6 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	}
 
 	// (1) The sub-agent's own cycle judged the file the sub-agent made.
-	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-01", e.RunBase("s-015-01"), "HEAD")
 	subLines := subLedger(t, proj, wt, "recorder", "log")
 	if len(subLines) == 0 {
 		t.Fatalf("nothing was judged at the isolated sub-agent's own cycle. Its work is in its "+
@@ -80,7 +83,31 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 		t.Fatalf("the root's own write was not judged (%v), so the check below would pass vacuously", rootLines)
 	}
 
-	// (2) And the reverse error: the root's cycle never saw the sub-agent's file.
+	// (2) The sub-agent's cycle ran as ITSELF. The identity is the whole invariant: an
+	// engine routing the sub-agent's cycle through the parent's record would resolve the
+	// parent's identity here, and every other assertion in this test would still hold.
+	idLines := memoLines(t, idLed.Path())
+	subLine, ok := lineAbout(idLines, "only-the-sub-made-this.md")
+	if !ok {
+		t.Fatalf("the sub-agent's own command was not seen by the gate (%v), so there is no identity "+
+			"to compare", idLines)
+	}
+	rootLine, ok := lineAbout(idLines, "only-the-root-made-this.md")
+	if !ok {
+		t.Fatalf("the root's own command was not seen by the gate (%v), so there is no identity to "+
+			"compare the sub-agent's against", idLines)
+	}
+	subID, rootID := sessionOf(subLine), sessionOf(rootLine)
+	if subID == "" {
+		t.Fatalf("the sub-agent's cycle recorded no session identity at all (%q)", subLine)
+	}
+	if subID == rootID {
+		t.Fatalf("the sub-agent's cycle ran as the DISPATCHING session (%s). A sub-agent's cycle "+
+			"judged against its parent's record hands every rule another agent's actions as though "+
+			"this one had taken them.\n  sub-agent: %s\n  root:      %s", subID, subLine, rootLine)
+	}
+
+	// (3) And the reverse error: the root's cycle never saw the sub-agent's file.
 	if containsPath(rootLines, "only-the-sub-made-this.md") {
 		t.Fatalf("the DISPATCHING session's own cycle judged the sub-agent's file (%v). The two "+
 			"are separate trees, so this is the parent being handed another session's work as its "+
@@ -174,6 +201,8 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	idLed := e.NewLedger("identities")
+	e.Gate(proj, "who", memoGate, map[string]string{"record.sh": memoScript(idLed.Path())})
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -194,7 +223,6 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	}
 
 	wt := theWorktree(t, proj)
-	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-05", e.RunBase("s-015-05"), "HEAD")
 	lines := subLedger(t, proj, wt, "recorder", "log")
 	for _, want := range []string{"sub-one.md", "sub-two.md", "sub-three.md"} {
 		if !containsPath(lines, want) {
@@ -202,6 +230,30 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 				"changed leaves the rest unguarded, and a sub-agent taking several turns is the "+
 				"ordinary case rather than an unusual one. Ledger: %v", want, lines)
 		}
+	}
+
+	// All of it under ONE identity — the sub-agent's own. Several turns must not
+	// mean several sessions.
+	var id string
+	n := 0
+	for _, l := range memoLines(t, idLed.Path()) {
+		if !strings.Contains(l, "sub-") {
+			continue
+		}
+		n++
+		got := sessionOf(l)
+		if id == "" {
+			id = got
+			continue
+		}
+		if got != id {
+			t.Fatalf("one sub-agent's cycle ran under two different identities (%s and %s) — a "+
+				"session that changes identity mid-cycle keeps its state in two places. Ledger: %v",
+				id, got, memoLines(t, idLed.Path()))
+		}
+	}
+	if n < 3 || strings.TrimSpace(id) == "" {
+		t.Fatalf("the gate saw %d of the sub-agent's three commands with identity %q", n, id)
 	}
 }
 
