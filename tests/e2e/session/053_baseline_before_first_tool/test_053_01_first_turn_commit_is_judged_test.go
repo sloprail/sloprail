@@ -60,7 +60,14 @@ func requireRecordUnwrittenAtSessionStart(t *testing.T, e *Env, proj, sess strin
 		if json.Unmarshal([]byte(line), &rec) != nil || rec.UUID == "" || rec.ParentUUID != nil {
 			continue
 		}
-		if rec.Type != "attachment" || rec.Attachment.HookEvent != "SessionStart" {
+		// The origin is the SessionStart hook's attachment when the hook printed
+		// anything, else the prompt the mock writes after it (`e2e-root-<session>`):
+		// either way nothing existed while SessionStart ran. The hook prints nothing
+		// now, so the prompt is the origin; a record seeded ahead of the mock would
+		// carry some other uuid and still fails here.
+		fromHook := rec.Type == "attachment" && rec.Attachment.HookEvent == "SessionStart"
+		fromPrompt := rec.Type == "user" && rec.UUID == "e2e-root-"+sess
+		if !fromHook && !fromPrompt {
 			t.Fatalf("the record's origin is a %q entry, not the SessionStart hook's attachment: the "+
 				"record existed before SessionStart ran, so this session is not the one real Claude "+
 				"Code runs and proves nothing", rec.Type)
