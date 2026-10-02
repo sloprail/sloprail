@@ -83,9 +83,8 @@ GitLab CI (.gitlab-ci.yml):
       # sr-mark: ci-verify
       - |
         if [ -n \"\$CI_MERGE_REQUEST_IID\" ]; then
-          # CI_MERGE_REQUEST_DIFF_BASE_SHA is the merge-base of the target and the MR head; CI_COMMIT_SHA is the MR head
-          # (not CI_MERGE_REQUEST_SOURCE_BRANCH_SHA: empty outside merged-result pipelines)
-          ~/.local/bin/sr-checks verify --base \"\$CI_MERGE_REQUEST_DIFF_BASE_SHA\" --head \"\$CI_COMMIT_SHA\"
+          # CI_MERGE_REQUEST_DIFF_BASE_SHA is the merge-base of the target and the MR head; the MR head is CI_MERGE_REQUEST_SOURCE_BRANCH_SHA (in merged-results pipelines CI_COMMIT_SHA is a synthetic merge commit), falling back to CI_COMMIT_SHA
+          ~/.local/bin/sr-checks verify --base \"\$CI_MERGE_REQUEST_DIFF_BASE_SHA\" --head \"\${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-\$CI_COMMIT_SHA}\"
         else
           BEFORE=\"\$CI_COMMIT_BEFORE_SHA\"
           # first pipeline of a branch / force push: all zeros or a missing object -> merge-base with the default branch, else the root commit
