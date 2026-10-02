@@ -75,6 +75,17 @@ default_base() {
   root_commit "$sha"
 }
 
+# results_pending — succeeds when this folder's local results branch holds commits the remote does
+# not (a `sr-checks run` whose push failed). verify and CI read the remote's copy, so a push that
+# leaves them behind would read as "not judged". The tracking ref is the remote as last fetched or pushed.
+results_pending() {
+  local ref=refs/sloprail/checks
+  git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1 || return 1
+  git "${GOPTS[@]+"${GOPTS[@]}"}" remote get-url origin >/dev/null 2>&1 || return 1
+  git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse -q --verify "$ref-remote^{commit}" >/dev/null 2>&1 || return 0
+  [ -n "$(git "${GOPTS[@]+"${GOPTS[@]}"}" rev-list -n 1 "$ref-remote..$ref" 2>/dev/null)" ]
+}
+
 for inv in "${pushes[@]}"; do
   git_split "$inv"
   # git's own help pages push nothing.
@@ -113,6 +124,9 @@ for inv in "${pushes[@]}"; do
     [ -n "$base" ] || refuse "No base for '$from' ($sha) in $dir could be found, so the commits this push would send could not be checked."
     if ! res="$(cd "$dir" && sr-checks verify --base "$base" --head "$sha" 2>&1)"; then
       refuse "This push would send $to ($sha) in $dir, and its commits are not verified clean. Judge them with: cd $dir && sr-checks run --base $base --head $sha — fix what it refuses, commit, run it again, then push. verify said: $(printf '%s' "$res" | head -c 1500)"
+    fi
+    if (cd "$dir" && results_pending); then
+      refuse "results not pushed — the judged results of $dir are stored locally only, so the remote and CI would read these commits as not judged. Run: cd $dir && sr-checks run --base $base --head $sha (it retries the push), then push again."
     fi
   done <<<"$out"
 

@@ -107,3 +107,34 @@ func TestT057_03_OnlySrChecksWritesTheResultsBranch(t *testing.T) {
 		}
 	}
 }
+
+// T057_04: results `sr-checks run` stored while the remote was unreachable are local only, and verify (and
+// CI) read the remote's copy: the gated push is refused, naming the run command that retries the push; once
+// the run has pushed them, the same push goes through.
+func TestT057_04_APushWithUnpushedResultsIsRefused(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	origin := e.Origin(proj)
+	base := e.Git(proj, "rev-list", "--max-parents=0", "HEAD")
+	run := "sr-checks run --base " + base + " --head HEAD"
+	push := "git push -q origin HEAD:refs/heads/work"
+	res := e.Run(proj, "s-057-04", "judge while offline, then push", Turns("done",
+		harness.CommitFile("c1", "docs/a.md", "clean words", "add a"),
+		Bash("off", "git remote set-url origin /nonexistent/remote.git"),
+		Bash("j1", run),
+		Bash("on", "git remote set-url origin "+origin),
+		Bash("p1", push),
+	))
+	if !res.Refused() || !res.Saw("results not pushed") || !res.Saw("sr-checks run --base") {
+		t.Fatalf("a push with unpushed results was not refused with the retry command:\n%s", res.Output)
+	}
+	if reached(origin, "refs/heads/work") {
+		t.Fatal("the refused push reached the remote")
+	}
+	e.Run(proj, "s-057-04", "retry the push of the results, then push", Turns("done",
+		Bash("j2", run),
+		Bash("p2", push),
+	))
+	if !reached(origin, "refs/heads/work") {
+		t.Fatal("the push was refused after the run had pushed the results")
+	}
+}
