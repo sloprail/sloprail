@@ -372,19 +372,30 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	}
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 
-	hash, err := changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin())
-	if err != nil {
-		return ev.fail(g, run, err)
+	// The rule's hash is what a run is recorded under; verify records nothing, so it hashes only
+	// a rule that selected something (hashing walks the rule's folder, and most rules select nothing).
+	var hash string
+	if !ev.verify {
+		if hash, err = changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin()); err != nil {
+			return ev.fail(g, run, err)
+		}
+		run.RuleHash = hash
 	}
-	run.RuleHash = hash
 	match, err := guardrail.CompileFileMatch(g.Match)
 	if err != nil {
 		return ev.fail(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
+	lean := ev.verify && g.Subjects == "" && !strings.Contains(g.Match, "arkers")
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
 		Deletions: changeset.DeletionMode(g.Deletions),
 		Scan:      Markers,
 		Select:    Selector(match),
+		Lean:      lean,
+		// A `subjects:` script is handed the whole payload in run and in verify alike.
+		NoPatch:  ev.verify && g.Subjects == "",
+		RawBlobs: ev.verify && g.Subjects == "",
+		// Only a citation requirement reads which commits changed a file.
+		SkipHistory: lean && !requiresCitation(g),
 	})
 	if err != nil {
 		return ev.fail(g, run, err)
@@ -396,6 +407,12 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			return ev.fail(g, run, err)
 		}
 		return nil, FileGuardResult{}, false
+	}
+	if ev.verify {
+		if hash, err = changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin()); err != nil {
+			return ev.fail(g, run, err)
+		}
+		run.RuleHash = hash
 	}
 
 	// Verify never consults the session: a citation counts when a commit trailer carries it
@@ -424,9 +441,11 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			ev.dropTree(g, t, r.Head)
 		}
 	}
-	tree, err := snapshot()
-	if err != nil {
-		return ev.fail(g, run, err)
+	var tree *gitrepo.Snapshot
+	if !lean { // a lean (verify) rule runs nothing, so it needs no checkout
+		if tree, err = snapshot(); err != nil {
+			return ev.fail(g, run, err)
+		}
 	}
 	if g.Subjects != "" {
 		if subjects, err = ev.guardSubjects(g, r, cs, tree.Path); err != nil {
@@ -437,13 +456,17 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 
 	rrs := make([]*ruleRun, 0, len(subjects))
 	for i, sub := range subjects {
-		if i > 0 {
+		if i > 0 && !lean {
 			if tree, err = snapshot(); err != nil {
 				dropAll()
 				return ev.fail(g, run, err)
 			}
 		}
-		req := ev.requestFor(g, r, cs, sub, tree.Path, unresolved)
+		treePath := ""
+		if tree != nil {
+			treePath = tree.Path
+		}
+		req := ev.requestFor(g, r, cs, sub, treePath, unresolved)
 		// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
 		// never reads as a pass.
 		subRun := run
@@ -591,6 +614,9 @@ func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.Chec
 
 // dropTree removes a rule's snapshot.
 func (ev *changesetEvaluation) dropTree(g declaration.FileGuard, tree *gitrepo.Snapshot, head string) {
+	if tree == nil {
+		return
+	}
 	ev.snapshots.Lock()
 	defer ev.snapshots.Unlock()
 	if err := tree.Remove(); err != nil {
@@ -1378,4 +1404,14 @@ func BrokenFileGuards(l declaration.Loaded) []string {
 		}
 	}
 	return out
+}
+
+// requiresCitation says whether a rule has a citation requirement.
+func requiresCitation(g declaration.FileGuard) bool {
+	for _, r := range g.Require {
+		if r.Citation != nil {
+			return true
+		}
+	}
+	return false
 }

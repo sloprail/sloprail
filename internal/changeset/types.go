@@ -88,7 +88,10 @@ type File struct {
 	// Status is A, M, D or R.
 	Status string `json:"status"`
 	// OldPath is where a renamed file came from; empty otherwise.
-	OldPath    string   `json:"oldPath"`
+	OldPath string `json:"oldPath"`
+	// OldBlob and NewBlob are git's object ids of the two sides: what a verdict key is over.
+	OldBlob    string   `json:"oldBlob,omitempty"`
+	NewBlob    string   `json:"newBlob,omitempty"`
 	OldContent string   `json:"oldContent"`
 	NewContent string   `json:"newContent"`
 	OldMarkers []Marker `json:"oldMarkers"`

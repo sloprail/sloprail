@@ -28,13 +28,16 @@ type Delta struct {
 	// Gitlink marks a submodule pointer at either end. It has no readable content,
 	// only a commit name in its diff.
 	Gitlink bool
+	// OldBlob and NewBlob are the object ids git names for the two sides (all zeros for an absent
+	// side): the content hash, with no read of the content.
+	OldBlob, NewBlob string
 }
 
 // Deltas lists every path that differs between base and head, with renames
 // detected (`-M`). The list is complete or it is an error: a git failure or a
 // line this does not understand returns no partial answer.
 func Deltas(dir, base, head string) ([]Delta, error) {
-	out, err := run(dir, "diff", "-M", "--raw", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv", base, head)
+	out, err := runImmutable(dir, []string{base, head}, "diff", "-M", "--raw", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv", base, head)
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: diff %s..%s: %w", short(base), short(head), err)
 	}
@@ -58,7 +61,7 @@ func parseRaw(out string) ([]Delta, error) {
 		if len(parts) != 5 || !strings.HasPrefix(parts[0], ":") {
 			return nil, fmt.Errorf("gitrepo: unreadable diff header %q", header)
 		}
-		d := Delta{Gitlink: parts[0] == ":160000" || parts[1] == "160000"}
+		d := Delta{Gitlink: parts[0] == ":160000" || parts[1] == "160000", OldBlob: parts[2], NewBlob: parts[3]}
 		switch parts[4][0] {
 		case 'A', 'M', 'D':
 			d.Status = parts[4][0]
@@ -136,9 +139,30 @@ type blobEntry struct {
 	mu      sync.Mutex
 	done    bool
 	content string
+	err     error
 }
 
 var blobMemo sync.Map
+
+// runImmutable is run, remembered for the process when every revision in revs is a full object
+// id (whose answer cannot change): the file-guards of a range ask the same questions of history.
+func runImmutable(dir string, revs []string, args ...string) (string, error) {
+	for _, r := range revs {
+		if !immutableRev.MatchString(r) && r != EmptyTree {
+			return run(dir, args...)
+		}
+	}
+	key := blobKey{"run", dir, strings.Join(args, "\x00"), ""}
+	v, _ := blobMemo.LoadOrStore(key, &blobEntry{})
+	e := v.(*blobEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.done {
+		e.content, e.err = run(dir, args...) // a failure of an immutable question is as final as an answer
+		e.done = true
+	}
+	return e.content, e.err
+}
 
 // memoGit runs read once per key, concurrent askers waiting for the one run; a failure is not kept.
 func memoGit(key blobKey, read func() (string, error)) (string, error) {

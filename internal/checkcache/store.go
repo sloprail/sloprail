@@ -66,6 +66,10 @@ type Store struct {
 	dicts map[string]*zdict
 	snap  *snapshot // in-process copy keyed by dir tree
 
+	frozen    bool // read-only use: the ref is read once (FreezeTip)
+	frozenTip string
+	frozenSn  *snapshot
+
 	beforeGcPush func() // test seam: runs after Gc committed locally, before it pushes
 
 	pushErr error // why the last push of local results failed; they are retried on the next sync or put
@@ -110,8 +114,23 @@ type manifest struct {
 	Dict   string `json:"dict"` // sha of the dictionary new segments use; "" = none
 }
 
+// FreezeTip reads the local ref once and answers every later read from that commit and its
+// index, with no git process: for a caller that only reads (`verify`, `show`) and asks hundreds
+// of times. Do not write through a frozen store.
+func (s *Store) FreezeTip() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frozen = false
+	s.frozenTip = s.tip()
+	s.frozen = true
+	s.frozenSn = nil
+}
+
 // tip returns the commit the local ref points at, "" if none.
 func (s *Store) tip() string {
+	if s.frozen {
+		return s.frozenTip
+	}
 	out, err := s.g.str("rev-parse", "--verify", "-q", s.opt.Ref+"^{commit}")
 	if err != nil {
 		return ""
@@ -386,6 +405,17 @@ func (s *Store) saveCache(sn *snapshot) {
 // snapshotAt reads (or incrementally rebuilds) the index for a commit. Only
 // segments the local cache has not seen cost an index read.
 func (s *Store) snapshotAt(tip string) (*snapshot, error) {
+	if s.frozen && s.frozenSn != nil && tip == s.frozenTip {
+		return s.frozenSn, nil
+	}
+	sn, err := s.readSnapshotAt(tip)
+	if s.frozen && err == nil && tip == s.frozenTip {
+		s.frozenSn = sn
+	}
+	return sn, err
+}
+
+func (s *Store) readSnapshotAt(tip string) (*snapshot, error) {
 	if tip == "" {
 		return &snapshot{}, nil
 	}

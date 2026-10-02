@@ -37,3 +37,37 @@ func TestBlobAtIsMemoizedPerCommit(t *testing.T) {
 		t.Fatalf("3000 reads took %s: one git process each", d)
 	}
 }
+
+// A blob is read by id through one long-lived cat-file, and a delta carries both ids with no read.
+func TestBlobByIDAndDeltaBlobIDs(t *testing.T) {
+	dir := t.TempDir()
+	g := func(args ...string) string {
+		c := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return string(out)
+	}
+	g("init", "-q")
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("one"), 0o644)
+	g("add", "a.md")
+	g("commit", "-q", "-m", "1")
+	base := g("rev-parse", "HEAD")[:40]
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("two"), 0o644)
+	g("commit", "-q", "-am", "2")
+	head := g("rev-parse", "HEAD")[:40]
+	ds, err := Deltas(dir, base, head)
+	if err != nil || len(ds) != 1 || ds[0].OldBlob == "" || ds[0].NewBlob == "" || ds[0].OldBlob == ds[0].NewBlob {
+		t.Fatalf("deltas = %+v, %v", ds, err)
+	}
+	for blob, want := range map[string]string{ds[0].OldBlob: "one", ds[0].NewBlob: "two"} {
+		if got, err := BlobByID(dir, blob); err != nil || got != want {
+			t.Fatalf("BlobByID = %q, %v; want %q", got, err, want)
+		}
+	}
+	if got, err := BlobRaw(dir, head+"^1:a.md"); err != nil || got != "one" {
+		t.Fatalf("BlobRaw = %q, %v", got, err)
+	}
+	CloseBatches()
+}

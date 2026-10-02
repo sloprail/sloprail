@@ -17,7 +17,7 @@ func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
 	if strings.TrimSpace(folder) == "" || r.Head == "" || r.Base == r.Head {
 		return r, nil
 	}
-	out, err := run(dir, "log", "-1", "--format=%H", r.Head, "--", folder)
+	out, err := runImmutable(dir, []string{r.Head}, "log", "-1", "--format=%H", r.Head, "--", folder)
 	if err != nil {
 		return r, err
 	}
