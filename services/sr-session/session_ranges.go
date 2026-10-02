@@ -346,6 +346,11 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	if err != nil {
 		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
 	}
+	// Commits the session only pulled or rebased onto, already on the remote's default branch,
+	// are not its work.
+	if narrowed, nerr := gitrepo.ExcludeUpstream(r.Folder, rng); nerr == nil {
+		rng = narrowed
+	}
 	// The range's base vouches for the project's own switch-offs of protected rules, as it does
 	// under `sr-checks run`: verify must load the same rules the run judged.
 	loaded := newNatureDeclarations(quiet, r.Folder, reg, rng.Base)
