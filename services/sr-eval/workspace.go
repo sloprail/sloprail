@@ -35,6 +35,10 @@ type workspace struct {
 	// here, and handed to the scorer, rather than found later by message: the
 	// agent can write a commit with any message.
 	seedCommit, rulesCommit string
+
+	// origin is the local bare remote provisionOrigin made (root/origin.git),
+	// empty when the fixture brought an origin of its own.
+	origin string
 }
 
 // newWorkspace creates an isolated workspace and populates project/ from the
@@ -159,6 +163,39 @@ func (w *workspace) setUp(ctx context.Context, fx Fixture, env []string) error {
 	if err := w.commitSetup(); err != nil {
 		return fmt.Errorf("commit harness setup: %w", err)
 	}
+	if err := w.provisionOrigin(ctx); err != nil {
+		return fmt.Errorf("provision local origin: %w", err)
+	}
+	return nil
+}
+
+// provisionOrigin gives the project a LOCAL bare remote, root/origin.git, as its
+// `origin`, pushes the baseline to it and points origin/HEAD at main — so
+// origin/main, the pre-push gate, `sr-checks run` (which pushes the
+// sloprail/checks branch) and `sr-checks verify` all work with no network. It
+// lives in the run's temp dir, so Close removes it with the workspace.
+//
+// A project that already has an `origin` (a setup script added one) is left
+// alone: it is the fixture's own arrangement. A Repo fixture's real origin was
+// removed by cloneRepoAt, so it gets this one.
+func (w *workspace) provisionOrigin(ctx context.Context) error {
+	if exec.CommandContext(ctx, "git", "-C", w.project, "remote", "get-url", "origin").Run() == nil {
+		return nil
+	}
+	bare := filepath.Join(w.root, "origin.git")
+	steps := [][]string{
+		{"init", "--quiet", "--bare", "--initial-branch=main", bare},
+		{"-C", w.project, "remote", "add", "origin", bare},
+		{"-C", w.project, "checkout", "--quiet", "-B", "main"},
+		{"-c", "core.hooksPath=/dev/null", "-C", w.project, "push", "--quiet", "--no-verify", "-u", "origin", "main"},
+		{"-C", w.project, "remote", "set-head", "origin", "main"},
+	}
+	for _, args := range steps {
+		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	w.origin = bare
 	return nil
 }
 
