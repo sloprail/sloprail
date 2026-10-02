@@ -129,6 +129,21 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	if reason := gateRefusal(runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}
+	// A command that runs in another repository of the session (`git -C ../other commit`,
+	// `cd ../other && …`) is also judged by THAT repository's own gates: its rules apply there.
+	for _, dir := range foldersTargeted(p) {
+		quiet := &cobra.Command{}
+		quiet.SetOut(io.Discard)
+		quiet.SetErr(io.Discard)
+		folder := newNatureDeclarations(quiet, dir, reg)
+		if len(folder.Gates) == 0 {
+			continue
+		}
+		fctx := loadContextMap(quiet, nil, folder.Contexts)
+		if reason := gateRefusal(runGatesForEvents(cmd, reg, folder.Gates, events, scope, store, fctx, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
+			return natureVerdict{Blocked: "in " + dir + " (a repository this session works in; its own rules apply there): " + reason}
+		}
+	}
 	// Permitted: the cited changes this call makes are pending until the next
 	// hook finds them landed (settleCitedChanges).
 	if err := recordPending(store, pendingChanges(store, events, p.Root(), grounded.wholes, nowNano())); err != nil {

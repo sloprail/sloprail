@@ -113,7 +113,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 1. commit required: a file-guard judges commits, so uncommitted work on a
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
-	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap)); reason != "" {
+	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap), reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
 	}
 
@@ -148,7 +148,7 @@ func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.
 	gatesMap := map[string]natures.GateState{}
 	var refusals []string
 
-	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap)); reason != "" {
+	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap), reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
 	}
 	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{cyclemod.Event()}, scope, nil, contextMap, gatesMap, resolveNotes{}) {

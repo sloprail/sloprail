@@ -265,3 +265,28 @@ func sessionFoldersOf(p HookPayload) []sessionstate.Folder {
 	}
 	return out
 }
+
+// foldersTargeted is the registered folders of this agent (besides its own tree) that a Bash
+// call's git commands run in: the repositories whose own rules apply to the call.
+func foldersTargeted(p HookPayload) []string {
+	registered := sessionFoldersOf(p)
+	if len(registered) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, dir := range commandFolders(p) {
+		tree, err := gitrepo.Root(dir)
+		if err != nil || tree == "" {
+			continue
+		}
+		tree = filepath.Clean(tree)
+		for _, f := range registered {
+			if sameDir(f.Path, tree) && !seen[f.Path] {
+				seen[f.Path] = true
+				out = append(out, f.Path)
+			}
+		}
+	}
+	return out
+}

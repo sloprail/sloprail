@@ -1179,6 +1179,27 @@ func (e *Env) DeleteMeta(projDir, sessionID, key string) {
 	}
 }
 
+// SessionFolders is the folders the engine registered for a session — its own
+// repository, the worktrees its sub-agents were dispatched into and the repositories a
+// command ran in — as the root session's store holds them. The session's identity is the one
+// `sr-session id` resolved, which names the store's directory.
+func (e *Env) SessionFolders(projDir, sessionID string) []sessionstate.Folder {
+	e.t.Helper()
+
+	path := e.sessionDBPath(projDir, sessionID)
+	db, err := sessionstate.Open(path)
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	folders, err := db.Folders(filepath.Base(filepath.Dir(path)))
+	if err != nil {
+		e.t.Fatalf("harness: read session folders: %v", err)
+	}
+	return folders
+}
+
 // sessionDBPath mirrors where the engine puts a session's state, having asked
 // the engine itself for the only part a test could get wrong: the conversation
 // identity, which is not the id the harness reports.

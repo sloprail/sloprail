@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,10 +15,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/changeset"
+	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -65,26 +68,69 @@ type uncommittedGuarded struct {
 
 // commitRequired returns the refusal to end the Stop with, or "" when the tree
 // owes no commit (or this agent does not own it, or the loop breaker released it).
-func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.FileGuard, store sessionstate.Store, context map[string]any) string {
-	if len(guards) == 0 || !ownsTree(p) {
+//
+// It covers the session's own tree and every other folder the session registered for this
+// agent (an ad-hoc repository a command ran in), each under ITS OWN rules: reg is what loads
+// them. reg may be nil, which covers the own tree only.
+func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.FileGuard, store sessionstate.Store, context map[string]any, reg ...*module.Registry) string {
+	if !ownsTree(p) {
 		return ""
 	}
-	root, err := gitrepo.Root(p.Cwd)
-	if err != nil {
-		if isNotARepo(err) {
-			return "" // no repository, so nothing can be committed
+	var owed []uncommittedGuarded
+	if len(guards) > 0 {
+		root, err := gitrepo.Root(p.Cwd)
+		if err != nil {
+			if !isNotARepo(err) {
+				return failClosed(err)
+			}
+		} else {
+			o, refusal := owedIn(root, guards, context)
+			if refusal != "" {
+				return refusal
+			}
+			owed = append(owed, o...)
 		}
-		return failClosed(err)
 	}
-	changes, err := gitrepo.UncommittedChanges(root)
-	if err != nil {
-		return failClosed(err)
+	if len(reg) > 0 && reg[0] != nil {
+		quiet := &cobra.Command{}
+		quiet.SetOut(io.Discard)
+		quiet.SetErr(io.Discard)
+		for _, f := range sessionFoldersOf(p) {
+			loaded := newNatureDeclarations(quiet, f.Path, reg[0])
+			if len(loaded.FileGuards) == 0 {
+				continue
+			}
+			o, refusal := owedIn(f.Path, loaded.FileGuards, checkrun.ContextMatchValue(loadContextMap(quiet, nil, loaded.Contexts)))
+			if refusal != "" {
+				return refusal
+			}
+			for _, u := range o {
+				u.Path = filepath.Join(f.Path, u.Path)
+				owed = append(owed, u)
+			}
+		}
 	}
-	if len(changes) == 0 {
+	if len(owed) == 0 {
 		resetCommitRequired(cmd, store)
 		return ""
 	}
+	sort.Slice(owed, func(i, j int) bool { return owed[i].Path < owed[j].Path })
+	if commitRequiredReleased(cmd, p, store, owed) {
+		return ""
+	}
+	return commitRequiredMessage(owed)
+}
 
+// owedIn is the uncommitted paths of the tree at root that some rule of guards selects, or
+// the refusal for a tree or a rule that could not be read.
+func owedIn(root string, guards []declaration.FileGuard, context map[string]any) ([]uncommittedGuarded, string) {
+	changes, err := gitrepo.UncommittedChanges(root)
+	if err != nil {
+		return nil, failClosed(err)
+	}
+	if len(changes) == 0 {
+		return nil, ""
+	}
 	byPath := map[string]*uncommittedGuarded{}
 	for _, g := range guards {
 		if isLaunchedBy(os.Getenv, g.Name) {
@@ -92,9 +138,9 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 		}
 		match, err := guardrail.CompileFileMatch(g.Match)
 		if err != nil {
-			return fmt.Sprintf("the file-guard %q could not be evaluated: its match %q could not be compiled (%v); refusing because a rule that could not decide must not be read as approval", g.Name, g.Match, err)
+			return nil, fmt.Sprintf("the file-guard %q could not be evaluated: its match %q could not be compiled (%v); refusing because a rule that could not decide must not be read as approval", g.Name, g.Match, err)
 		}
-		selects := changesetSelector(match, context)
+		selects := checkrun.Selector(match, context)
 		for _, c := range changes {
 			if !changeset.Admits(changeset.DeletionMode(g.Deletions), c.Status) {
 				continue
@@ -102,7 +148,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			scope := uncommittedScope(root, c)
 			ok, err := changeset.Selects(selects, scope)
 			if err != nil {
-				return fmt.Sprintf("the file-guard %q could not be evaluated on the uncommitted %s: %v; refusing because a rule that could not decide must not be read as approval", g.Name, c.Path, err)
+				return nil, fmt.Sprintf("the file-guard %q could not be evaluated on the uncommitted %s: %v; refusing because a rule that could not decide must not be read as approval", g.Name, c.Path, err)
 			}
 			if !ok {
 				continue
@@ -115,21 +161,11 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			u.Rules = append(u.Rules, g.Qualified())
 		}
 	}
-	if len(byPath) == 0 {
-		resetCommitRequired(cmd, store)
-		return ""
-	}
-
 	owed := make([]uncommittedGuarded, 0, len(byPath))
 	for _, u := range byPath {
 		owed = append(owed, *u)
 	}
-	sort.Slice(owed, func(i, j int) bool { return owed[i].Path < owed[j].Path })
-
-	if commitRequiredReleased(cmd, p, store, owed) {
-		return ""
-	}
-	return commitRequiredMessage(owed)
+	return owed, ""
 }
 
 // uncommittedScope is what a rule's match is asked about an uncommitted change:
@@ -144,7 +180,7 @@ func uncommittedScope(root string, c gitrepo.Uncommitted) changeset.Scope {
 	var oldMarkers, markers []changeset.Marker
 	if c.Status != 'A' {
 		if text, ok := gitrepo.ContentAt(root, "HEAD", oldPath); ok {
-			oldMarkers = changesetMarkers(text)
+			oldMarkers = checkrun.Markers(text)
 		}
 	}
 	if c.Status != 'D' {
@@ -153,7 +189,7 @@ func uncommittedScope(root string, c gitrepo.Uncommitted) changeset.Scope {
 		// uncommitted guarded path — it just has no markers to read — and must never
 		// block the Stop (opening a FIFO waits for a writer; /dev/zero never ends).
 		if text, ok := filemod.ReadRegular(filepath.Join(root, c.Path), filemod.MaxContentReadBytes); ok {
-			markers = changesetMarkers(text)
+			markers = checkrun.Markers(text)
 		}
 	} else {
 		markers = oldMarkers
