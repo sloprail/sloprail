@@ -892,6 +892,9 @@ func judgeKey(runner dispatchcore.Runner, g declaration.FileGuard, req dispatchc
 	req.Changeset = &keyed
 	// prepare ran over the real payload, so a citation it inlined (`asks`, `cited_results`) carries
 	// the same transcript-found fields: hold them to the same placeholders.
+	if prep.KeyContext != nil {
+		prep.Context = prep.KeyContext
+	}
 	prep.Context = heldContext(prep.Context)
 	prompt, refusal, err := runner.RenderJudge(req, c, prep)
 	if err != nil || refusal != "" {

@@ -128,6 +128,8 @@ type Prepared struct {
 	// Fingerprint is prepare's optional "fingerprint" string: what the judge's verdict
 	// depends on besides its prompt, part of the cache key.
 	Fingerprint string
+	// KeyContext is prepare's optional "keyContext": the context the cache key is rendered with.
+	KeyContext declaration.PreparedContext
 }
 
 // PrepareJudge runs a judge check's prepare step, when it has one. A refused
@@ -148,7 +150,7 @@ func (r Runner) PrepareJudge(req Request, c declaration.Check) (Prepared, Verdic
 	if v.Refused {
 		return Prepared{}, v, nil
 	}
-	return Prepared{Skip: prepared.Skip, Context: prepared.Context, Fingerprint: prepared.Fingerprint}, pass(), nil
+	return Prepared{Skip: prepared.Skip, Context: prepared.Context, Fingerprint: prepared.Fingerprint, KeyContext: prepared.KeyContext}, pass(), nil
 }
 
 // RenderJudge is the judge's fully rendered prompt (the template with the slice and
@@ -242,6 +244,9 @@ type preparedResult struct {
 
 	// Fingerprint is prepare's optional "fingerprint" string.
 	Fingerprint string
+
+	// KeyContext is prepare's optional "keyContext".
+	KeyContext declaration.PreparedContext
 }
 
 // runPrepare runs a prepare script and returns what it concluded — the
@@ -289,7 +294,7 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 			"the judge's prepare step produced output this engine could not read as {\"additionalContext\": {...}, \"skip\": <bool>} (%v); "+
 				"refusing rather than asking the model against a half-prepared prompt", err)), nil
 	}
-	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip, Fingerprint: outcome.Fingerprint}, pass(), nil
+	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip, Fingerprint: outcome.Fingerprint, KeyContext: outcome.KeyContext}, pass(), nil
 }
 
 // checkPayloadJSON assembles the nature's check payload and marshals it for stdin.

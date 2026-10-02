@@ -235,6 +235,13 @@ type PreparedOutcome struct {
 	// folded into the verdict's cache key: a judge is pure, so anything else it
 	// reads must reach the key through the prompt (additionalContext) or this.
 	Fingerprint string `json:"fingerprint,omitempty"`
+
+	// KeyContext, when present, is the additionalContext the verdict's cache key is rendered
+	// with in place of AdditionalContext. For a prepare whose context holds what only the
+	// transcript can supply (a cited tool result, expanded): `run` has the transcript and
+	// `verify` does not, so the key must be rendered from what both know. The judge still
+	// reads AdditionalContext.
+	KeyContext PreparedContext `json:"keyContext,omitempty"`
 }
 
 // FileJudgeInput is the wire/type contract for what a file-guard's judge receives

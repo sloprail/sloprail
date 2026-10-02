@@ -562,7 +562,7 @@ func (e *Env) InstallJudgeClaudeCapturing(projDir, relPromptFile, verdict string
 	// uncommitted changes — a commit-required refusal at the Stop. Excluded, git does not see it.
 	if exclude := filepath.Join(projDir, ".git", "info", "exclude"); os.MkdirAll(filepath.Dir(exclude), 0o755) == nil && fileExists(filepath.Join(projDir, ".git", "HEAD")) {
 		if f, err := os.OpenFile(exclude, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			fmt.Fprintf(f, "/%s\n/%s.calls\n", relPromptFile, relPromptFile)
+			fmt.Fprintf(f, "/%s\n/%s.calls\n/%s.d/\n", relPromptFile, relPromptFile, relPromptFile)
 			f.Close()
 		}
 	}
@@ -583,6 +583,9 @@ for arg in "$@"; do
       # prompt is a single clean render.
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
       printf '%s' "$arg" > ` + shellQuote(promptPath) + `
+      # Every prompt, kept apart: judges run concurrently, so which one wrote the file above
+      # last is not known; a test that wants one judge's prompt asks for it by a marker.
+      mkdir -p ` + shellQuote(promptPath+".d") + ` && printf '%s' "$arg" > ` + shellQuote(promptPath+".d") + `/$$
       # One line per judge call — the prompt's heading — so a test can count how
       # often each judge was asked.
       printf '%s\n' "$arg" | head -1 >> ` + shellQuote(promptPath+".calls") + `
@@ -671,6 +674,20 @@ func (e *Env) JudgePrompt(projDir, relPromptFile string) string {
 		e.t.Fatalf("harness: read judge prompt %s: %v", relPromptFile, err)
 	}
 	return string(body)
+}
+
+// JudgePromptWith returns the captured judge prompt that contains marker (the one judge of
+// several that ran concurrently whose prompt carries it), or "" when none does.
+func (e *Env) JudgePromptWith(projDir, relPromptFile, marker string) string {
+	e.t.Helper()
+	entries, _ := os.ReadDir(filepath.Join(projDir, relPromptFile+".d"))
+	for _, ent := range entries {
+		body, err := os.ReadFile(filepath.Join(projDir, relPromptFile+".d", ent.Name()))
+		if err == nil && strings.Contains(string(body), marker) {
+			return string(body)
+		}
+	}
+	return ""
 }
 
 // InnerScenario is what the agent a hook LAUNCHES does once it is running.
