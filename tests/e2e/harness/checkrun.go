@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/checkcache"
@@ -45,22 +46,27 @@ func (e *Env) noteRunBase(projDir, sessionID string) {
 	e.runBase[sessionID] = base
 }
 
-// afterRun is the automatic `sr check run` of the range the session has produced so far.
-func (e *Env) afterRun(projDir, sessionID string) {
-	e.t.Helper()
+// withPreStopRun appends, to a scenario, the turn a real agent takes before it ends its turn: it
+// asks the checks to judge what it committed (`sr-checks run` over the range its folder tracks:
+// the merge base with origin's default branch up to HEAD). The Stop then VERIFIES that range
+// against the stored results — it never calls a model — so what a test sees refused at Stop is
+// what the judges said, with the same texts as before. NoAutoCheck() leaves a scenario as written.
+func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 	if e.noAutoCheck {
-		return
-	}
-	base := e.runBase[sessionID]
-	if base == "" {
-		return
+		return s
 	}
 	if err := exec.Command("git", "-C", projDir, "rev-parse", "--verify", "-q", "HEAD").Run(); err != nil {
-		return // nothing committed: nothing to judge
+		return s // nothing committed yet: nothing to judge
 	}
-	if refusals := e.CheckRunRange(projDir, sessionID, base, "HEAD"); len(refusals) > 0 {
-		e.checkHistory[sessionID] = append(e.checkHistory[sessionID], refusals...)
+	base := e.runBase[sessionID]
+	if e.origins[projDir] != "" {
+		base = "origin/main"
 	}
+	e.preStopRuns++
+	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "+shQuote(base)+" --head HEAD >/dev/null 2>&1; true")
+	out := s
+	out.turns = append(append([]Turn{}, s.turns...), turn)
+	return out
 }
 
 // checkCmd runs `sr check <verb> --base --head` in projDir as the session, returning

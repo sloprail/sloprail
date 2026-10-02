@@ -114,6 +114,7 @@ type Env struct {
 	// runBase, checkHistory and noAutoCheck: see checkrun.go.
 	runBase      map[string]string
 	origins      map[string]string // project -> its local bare origin
+	preStopRuns  int               // numbers the appended pre-Stop turns, which fire once each
 	checkHistory map[string][]string
 	noAutoCheck  bool
 }
@@ -2462,8 +2463,8 @@ func (e *Env) RunForked(projDir, fromSessionID, newSessionID, prompt string, s S
 	}
 	e.seenSessions[newSessionID] = true
 	e.noteRunBase(projDir, newSessionID)
+	s = e.withPreStopRun(projDir, newSessionID, s)
 	res := e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
-	e.afterRun(projDir, newSessionID)
 	return res
 }
 
@@ -2641,8 +2642,8 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		sessionFlag = "--resume"
 	}
 	e.noteRunBase(projDir, sessionID)
+	s = e.withPreStopRun(projDir, sessionID, s)
 	res := e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
-	e.afterRun(projDir, sessionID)
 	return res
 }
 
