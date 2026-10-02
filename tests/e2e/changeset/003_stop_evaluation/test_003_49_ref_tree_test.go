@@ -89,7 +89,9 @@ func TestT003_50_TheRefusalNamesTheWorktreeAndNeverSwitchesTheCheckout(t *testin
 	blocks := stopBlocks(e, proj, "s-003-50")
 
 	e.Run(proj, "s-003-50", "fix it", Turns("fixed",
-		Bash("b4", "cd "+wt+" && printf '%s' 'required' > REQUIRED.md && git add -A && git commit -q -m 'add the file'"),
+		// The fix touches the guarded file too: a verdict is cached by the changeset content, so a fix
+		// that left docs/a.md as it was would be replayed as the same refusal.
+		Bash("b4", "cd "+wt+" && printf '%s' 'required' > REQUIRED.md && printf '%s' ' (confirmed)' >> docs/a.md && git add -A && git commit -q -m 'add the file'"),
 		judgeInTree(wt, "HEAD~2"),
 	))
 	if n := stopBlocks(e, proj, "s-003-50"); n != blocks {
