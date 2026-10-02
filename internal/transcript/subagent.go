@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -132,7 +133,17 @@ func SubagentTranscriptPath(parentPath, agentID string) (string, error) {
 		return "", err
 	}
 	base := strings.TrimSuffix(parentPath, ".jsonl")
-	return filepath.Join(base, SubagentDir, subagentFilePrefix+agentID+".jsonl"), nil
+	direct := filepath.Join(base, SubagentDir, subagentFilePrefix+agentID+".jsonl")
+	if _, err := os.Stat(direct); err == nil {
+		return direct, nil
+	}
+	// A sub-agent a workflow started is recorded one level deeper, under
+	// subagents/workflows/<run>/agent-<id>.jsonl. Without this its record is never
+	// found, and every requirement read from it (a skill loaded, a doc read) refuses.
+	if matches, _ := filepath.Glob(filepath.Join(base, SubagentDir, "workflows", "*", subagentFilePrefix+agentID+".jsonl")); len(matches) > 0 {
+		return matches[0], nil
+	}
+	return direct, nil
 }
 
 // checkAgentID refuses an agent id that could traverse out of the directory it
