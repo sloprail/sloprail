@@ -16,6 +16,7 @@ import (
 func TestT002_05_LoopBreakerReleasesAfterTheCapForTheSameSet(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, ".sloprail/config.yaml", "stop_hook_block_cap: 2\n")
+	e.DisablePluginGuardrail(proj, "sloprail/gate/ci-verify-required") // the line above replaced the config the harness wrote it into
 	e.CommitAll(proj, "cap the refusal loop at two")
 	e.Run(proj, "s-002-05", "hello", Turns("done", Bash("b1", "true")))
 

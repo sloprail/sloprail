@@ -1,0 +1,69 @@
+# Pull requests and pushes to main: the stored file-guard verdicts must cover every commit added.
+#
+# `sr-checks verify` is deterministic (asks no model, writes nothing): it reads the verdicts that
+# `sr-checks run` stored on the sloprail/checks branch and exits 1 on a commit nobody judged clean.
+# This is the enforcement the plugin's sloprail/gate/ci-verify-required asks every repository with
+# file-guards to have; the `sr-mark: ci-verify` line below is what that gate looks for.
+#
+# On a pull request it verifies the PR HEAD (github.event.pull_request.head.sha), not the merge
+# commit Actions would check out by default: the verdicts are keyed to what the author's commits
+# contain. On a push to main the range is the push's before..after.
+#
+# Built from this checkout, not installed from a release: the repository tests its own engine.
+#
+# Gated while the new file-guard checks are not on main yet (the config lists them disabled until
+# PR #164 merges, so no verdicts exist for them): pull requests into main and pushes to main run it, and it
+# does not fail the check (`continue-on-error`), so it reports without blocking. When #164 is on
+# main and the verdicts are being stored, delete the `continue-on-error` line and make the job a
+# required check.
+name: verify
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # each push range must be verified: only pull requests may cancel a superseded run
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sloprail-verify:
+    name: sr-checks verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build sr-checks
+        run: make build
+      # sr-mark: ci-verify
+      - name: sr-checks verify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          PATH="$PWD/bin:$PATH"
+          if [ "$EVENT" = pull_request ]; then
+            sr-checks verify --base "origin/$BASE_REF" --head "$PR_HEAD"
+          else
+            # force push: before is all zeros or a missing object -> merge-base with main, else the root commit
+            if [ -z "${BEFORE//0/}" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              BEFORE=$(git merge-base origin/main "$GITHUB_SHA" 2>/dev/null || git rev-list --max-parents=0 "$GITHUB_SHA" | tail -1)
+            fi
+            sr-checks verify --base "$BEFORE" --head "$GITHUB_SHA"
+          fi

@@ -65,5 +65,14 @@ one `file-guard/structure.yaml` listing where writes may land at all. The
 harness calls the session hook points, and the engine runs whichever
 guardrails bind to what is about to happen.
 
+A file-guard's verdict only binds where it is enforced, so a project that has
+its own file-guards must also run `sr-checks verify` in CI: on pull requests
+(`--base` the target branch, `--head` the PR head sha) and on pushes to the
+default branch (the push's before..after). The shipped gate `sloprail/gate/ci-verify-required`
+refuses an agent's turn until the committed tree has a line containing
+`sr-mark: ci-verify` (a comment beside that CI step, on any provider) and hands
+back copy-paste snippets. Turn it off with `disabled: [sloprail/gate/ci-verify-required]`
+in `.sloprail/config.yaml`.
+
 Full docs, including how to write a guardrail:
 [sloprail.com/docs](https://sloprail.com/docs).
