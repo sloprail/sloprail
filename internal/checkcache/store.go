@@ -66,6 +66,8 @@ type Store struct {
 	dicts map[string]*zdict
 	snap  *snapshot // in-process copy keyed by dir tree
 
+	beforeGcPush func() // test seam: runs after Gc committed locally, before it pushes
+
 	pushErr error // why the last push of local results failed; they are retried on the next sync or put
 }
 
@@ -688,6 +690,25 @@ func (s *Store) commit(parent string, fresh bool, files map[string][]byte, msg s
 // commitEntries is commit for blobs already in the object store: entries maps a path under
 // SchemaDir to its blob id.
 func (s *Store) commitEntries(parent string, fresh bool, entries map[string]string, msg string) (string, error) {
+	return s.commitTree(parent, !fresh, fresh, entries, msg)
+}
+
+// commitReplacing writes a commit on top of parent whose tree is exactly files (the schema
+// directory is replaced, not extended): a compaction that keeps the history.
+func (s *Store) commitReplacing(parent string, files map[string][]byte, msg string) (string, error) {
+	entries := map[string]string{}
+	for path, content := range files {
+		oid, err := s.g.run(content, nil, "hash-object", "-w", "--stdin")
+		if err != nil {
+			return "", err
+		}
+		entries[path] = strings.TrimSpace(string(oid))
+	}
+	return s.commitTree(parent, false, false, entries, msg)
+}
+
+// commitTree: readTree starts from parent's tree; fresh drops the parent too.
+func (s *Store) commitTree(parent string, readTree, fresh bool, entries map[string]string, msg string) (string, error) {
 	dir, err := os.MkdirTemp("", "sr-checks-index-")
 	if err != nil {
 		return "", err
@@ -701,7 +722,7 @@ func (s *Store) commitEntries(parent string, fresh bool, entries map[string]stri
 	if fresh {
 		parent = ""
 	}
-	if parent != "" {
+	if parent != "" && readTree {
 		if _, err := s.g.run(nil, env, "read-tree", parent); err != nil {
 			return "", err
 		}

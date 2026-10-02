@@ -81,13 +81,13 @@ func (s *Store) readAll(sn *snapshot) (map[string]Found, int, []Run, error) {
 	return out, total, runs, nil
 }
 
-// Gc squashes the branch to a single root commit holding the latest result of
-// every key and every run (run-only history included, so Runs is the same before and after)
+// Gc compacts the branch: one new commit on top of the tip (never a rewrite of the shared
+// history) whose tree holds the latest result of every key and every run (run-only history
+// included, so Runs is the same before and after)
 // in segments of about SegmentTarget runs, with a dictionary trained on the runs when there
-// are TrainMin or more of them, and none (plain zstd) below that. With a remote the squash is
-// pushed first, under a lease on the remote tip, and the local ref follows only once that
-// succeeded: a Gc that cannot reach the remote changes nothing (and reports why). A concurrent
-// writer makes the lease or the local update fail; Gc then replays on the new tip.
+// are TrainMin or more of them, and none (plain zstd) below that. With a remote the commit is
+// pushed like any Put's, as a fast-forward; a push that loses a race is fetched, replayed on the
+// new tip and retried, and one that fails for another reason stays pending (PendingPush).
 //
 // Gc runs by itself after a Put once the branch holds GcSegments segments, or TrainMin runs
 // with no dictionary yet (see maybeGc); it is also callable on its own.
@@ -187,23 +187,21 @@ func (s *Store) gc() (GcStats, error) {
 			files["seg/"+name+".idx"] = idx
 			st.SegsAfter++
 		}
-		commit, err := s.commit("", true, files, fmt.Sprintf("checks: gc, %d results", len(ids)))
+		// A NEW commit on top of the tip whose tree is the compacted layout: the shared history is
+		// never rewritten, so the push below is an ordinary fast-forward (a concurrent writer's
+		// run is replayed on top of it by push, never overwritten).
+		commit, err := s.commitReplacing(tip, files, fmt.Sprintf("checks: gc, %d results", len(ids)))
 		if err != nil {
 			return st, err
-		}
-		if s.opt.Remote != "" {
-			// The remote tip the squash replaces. The lease holds only while nobody pushed since.
-			lease := "--force-with-lease=" + s.opt.Branch + ":" + s.rev(s.track())
-			if _, err := s.g.run(nil, nil, "push", "--quiet", lease, s.opt.Remote, commit+":"+s.opt.Branch); err != nil {
-				lastErr = err
-				continue
-			}
-			_, _ = s.g.run(nil, nil, "update-ref", s.track(), commit)
 		}
 		if _, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, commit, tip); err != nil {
 			lastErr = err // a local writer moved the ref meanwhile
 			continue
 		}
+		if s.beforeGcPush != nil {
+			s.beforeGcPush()
+		}
+		s.pushErr = s.push()
 		return st, nil
 	}
 	return GcStats{}, fmt.Errorf("checkcache: gc gave up after %d attempts: %w", maxAttempts, lastErr)

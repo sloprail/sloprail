@@ -278,6 +278,7 @@ func TestGcPreservesLatestResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	all[0] = dup
+	preGc := s.tip()
 	st, err := s.Gc()
 	if err != nil {
 		t.Fatal(err)
@@ -285,8 +286,11 @@ func TestGcPreservesLatestResults(t *testing.T) {
 	if st.Records != 1200 || st.Duplicates != 1 || st.SegsAfter != 2 || !st.Retrained {
 		t.Fatalf("stats %+v", st)
 	}
-	if n := git(t, s.opt.Dir, "rev-list", "--count", s.opt.Ref); n != "1" {
-		t.Fatalf("gc must squash to one commit, got %s", n)
+	if git(t, s.opt.Dir, "rev-parse", s.opt.Ref+"^") != preGc {
+		t.Fatal("gc must be one new commit on top of the previous tip (history kept)")
+	}
+	if git(t, s.opt.Dir, "rev-parse", s.opt.Ref) != git(t, remote, "rev-parse", defaultBranch) {
+		t.Fatal("the compaction must reach the remote as a fast-forward")
 	}
 	fresh := newRepo(t, remote)
 	_ = fresh.Sync()
@@ -533,5 +537,48 @@ func TestGcAtTrainMinTrainsAndOldSegmentsStillRead(t *testing.T) {
 		if sg.Dict != sn.ManifestDict {
 			t.Fatalf("new segments use the manifest dictionary: %q", sg.Dict)
 		}
+	}
+}
+
+// Gc never rewrites the shared history: a run another machine pushes between Gc's read and
+// its push survives, and the remote only ever moves forward.
+func TestGcKeepsAConcurrentWritersRun(t *testing.T) {
+	remote := bareRemote(t)
+	a := newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
+	b := newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
+	mine := genRuns(1, 5)
+	for i := 0; i < 3; i++ {
+		if err := a.Put(genRuns(int64(10+i), 4)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Put(mine); err != nil {
+		t.Fatal(err)
+	}
+	before := git(t, remote, "rev-parse", defaultBranch)
+	theirs := genRuns(2, 3)
+	a.beforeGcPush = func() {
+		if err := b.Put(theirs); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := a.Gc(); err != nil {
+		t.Fatal(err)
+	}
+	if a.PendingPush() != nil {
+		t.Fatalf("gc push left pending: %v", a.PendingPush())
+	}
+	if err := exec.Command("git", "-C", remote, "merge-base", "--is-ancestor", before, defaultBranch).Run(); err != nil {
+		t.Fatal("the remote history was rewritten: the old tip is no longer an ancestor")
+	}
+	reader := newRepo(t, remote)
+	if err := reader.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if n := lookupAll(t, reader, theirs); n != 3 {
+		t.Fatalf("the concurrent writer's run was lost: %d of 3", n)
+	}
+	if n := lookupAll(t, reader, mine); n != 5 {
+		t.Fatalf("Gc's own results lost: %d of 5", n)
 	}
 }
