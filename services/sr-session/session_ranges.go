@@ -286,6 +286,9 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			notes = append(notes, fmt.Sprintf("untracked: %s %s (reason: %s)", r.Folder, r.Head, r.UntrackedReason))
 			continue
 		}
+		if coveredByBranch(r, ranges) {
+			continue // commits left on a detached HEAD, since given a branch: that branch's range holds them
+		}
 		if reason := verifyRange(cmd, p, reg, store, quiet, r); reason != "" {
 			out = append(out, reason)
 		}
@@ -635,4 +638,22 @@ func recordedCitations(p HookPayload, store sessionstate.Store) map[string][]tra
 		}
 	}
 	return out
+}
+
+// coveredByBranch reports whether a range tracked at a bare commit (a detached HEAD) is held by
+// another tracked range of the same folder that is on a branch: its tip contains the commit,
+// so verifying the branch judges those commits as well.
+func coveredByBranch(r sessionstate.TrackedRange, all []sessionstate.TrackedRange) bool {
+	if len(r.Head) < 40 || strings.HasPrefix(r.Head, "refs/") {
+		return false
+	}
+	for _, o := range all {
+		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || len(o.Head) >= 40 || o.HeadSHA == "" {
+			continue
+		}
+		if ok, err := gitrepo.IsAncestor(r.Folder, r.Head, o.HeadSHA); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
