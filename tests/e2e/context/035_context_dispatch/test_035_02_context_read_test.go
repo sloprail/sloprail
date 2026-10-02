@@ -150,13 +150,14 @@ fi
 exit 0
 `
 
-// T035_05: a file-guard's match reads a context's active flag — the guard applies
-// only inside the context.
+// T035_05: a file-guard's match cannot read a context. A file-guard judges committed bytes
+// at Stop, in CI too, where there is no session to hold a context's state, so a match that
+// reads `context[...]` does not load, and the load error says where the condition belongs:
+// in a gate.
 //
-// One session: a `refactor-start` command enters the context, THEN a src/ file
-// with a debug print is written and committed. The guard's match (path under src/ AND refactor
-// active) selects it, and the check refuses — blocking the turn. Without the
-// context active the guard would not have selected the file at all.
+// The rule loads in a project where the same session enters the context and commits a
+// src/ file with a debug print; the guard is reported as not loaded, naming the gate as the
+// remedy, rather than silently never applying.
 func TestT035_05_FileGuardMatchReadsContext(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -174,18 +175,9 @@ func TestT035_05_FileGuardMatchReadsContext(t *testing.T) {
 		Write("w1", "src/x.go", "DEBUG_PRINT here\npackage x"),
 	).ThenCommit("leave a debug print"))
 
-	// The context is active (the command entered it); the guard's match selected
-	// the file; the check refused → the turn is blocked.
-	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("a context-gated file-guard did not fire on a src/ file while the context was active")
-	}
-	joined := ""
-	for _, b := range blocks {
-		joined += b + "\n"
-	}
-	if !containsStr(joined, "debug prints") {
-		t.Errorf("the context-gated guard's reason did not reach the agent:\n%s", joined)
+	r := e.CheckRunRaw(proj, sess, e.RunBase(sess), "HEAD")
+	if !containsStr(r.Output, "not loaded") || !containsStr(r.Output, "cannot read `context`") || !containsStr(r.Output, "to a gate") {
+		t.Fatalf("a file-guard whose match reads a context did not fail to load with the advice to move it to a gate:\n%s", r.Output)
 	}
 }
 
