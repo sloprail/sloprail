@@ -380,3 +380,32 @@ exit 0
 			"the file is still broken and nothing is left to report it", second)
 	}
 }
+
+// T025_06: the Stop of a session whose hooks report a subdirectory verifies the
+// session's range, found from below the repository root.
+//
+// The part of the subdirectory arrangement a file-guard's `run` cannot reach: the Stop
+// is a hook, its payload names the subdirectory, and the tracked range, the stored
+// verdicts and the registry all have to be found from there. Unjudged, the range is
+// refused as "not judged yet"; once judged from below, the same Stop is satisfied.
+func TestT025_06_AStopFromASubdirectoryVerifiesTheSessionsRange(t *testing.T) {
+	e, proj, sub, _ := subProject(t)
+	const sess = "s-025-06"
+
+	e.RunFrom(proj, "sub/deep", sess, "work from below", Turns("done",
+		Bash("b1", "printf 'written from the subdirectory\n' > inner.md"),
+	).ThenCommit("the agent's work"))
+
+	// Nothing has judged the range (the harness's own pre-Stop run is off here).
+	unjudged := e.BlockingErrorsFrom(sub, sess, "Stop")
+	if len(unjudged) == 0 || !strings.Contains(strings.Join(unjudged, "\n"), "not judged yet") {
+		t.Fatalf("a Stop from a subdirectory did not refuse a range nobody had judged (blocking: %v) "+
+			"— it never found the session's tracked range from below the root", unjudged)
+	}
+
+	// Judged from below, the Stop's verify finds the stored verdict.
+	judgeFromBelow(e, sub, sess)
+	if res := e.StopNow(sub, sess, false); harness.Blocked(res) {
+		t.Fatalf("a Stop from a subdirectory refused a range that had been judged:\n%s", res.Output)
+	}
+}
