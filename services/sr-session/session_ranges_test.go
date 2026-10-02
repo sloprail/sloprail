@@ -429,3 +429,12 @@ func TestDispatchStop_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T
 	got := dispatchNatureStop(cmd, p, modReg, hookScope{}, openStore(t))
 	assert.Contains(t, got, "not judged yet", "the sub-agent's tracked range went unverified at the root's Stop")
 }
+
+func TestAutoBase_NoRemoteDefaultBranchNeverMakesAnEmptyRange(t *testing.T) {
+	proj := initRepo(t) // no origin: a local main is not the remote default
+	sha := runGit(t, proj, "rev-parse", "HEAD")
+	started := runGit(t, proj, "rev-parse", "HEAD")
+
+	assert.Equal(t, started, autoBase(proj, sha, started), "the session's recorded base stands in")
+	assert.Equal(t, gitrepo.EmptyTree, autoBase(proj, sha, ""), "nothing recorded: the widest range, never base==head")
+}

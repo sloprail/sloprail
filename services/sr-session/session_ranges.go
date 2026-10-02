@@ -54,12 +54,15 @@ func trackedHead(folder string) (head, sha string, ok bool) {
 // when that is the head itself (the work is on the default branch, so nothing is "ahead"), the
 // HEAD the folder was registered at.
 func autoBase(folder, sha, startedAt string) string {
-	base := gitrepo.DefaultBase(folder, sha)
-	if base == sha && startedAt != "" {
+	base, ok := gitrepo.DefaultBase(folder, sha)
+	if (!ok || base == sha) && startedAt != "" {
 		if startedAt == sessionstate.FolderBaseUnborn {
 			return gitrepo.EmptyTree
 		}
 		return startedAt
+	}
+	if !ok {
+		return gitrepo.EmptyTree // no remote default branch and nothing recorded: the widest range, never an empty one
 	}
 	return base
 }
@@ -238,7 +241,7 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	// Falling back to where the folder was registered is for work on the default branch itself. A
 	// branch cut at the default branch's tip starts there: what the default branch gained since
 	// the session began is upstream's, not the session's.
-	if gitrepo.DefaultBase(folder, sha) == sha && !gitrepo.IsDefaultBranch(folder, head) && len(head) < 40 {
+	if db, ok := gitrepo.DefaultBase(folder, sha); ok && db == sha && !gitrepo.IsDefaultBranch(folder, head) && len(head) < 40 {
 		startedAt = ""
 	}
 	_ = reg.TrackRange(sessionstate.TrackedRange{
@@ -411,8 +414,8 @@ func identityRefusal(cmd *cobra.Command, p HookPayload, reg *module.Registry, st
 	out := []string{fmt.Sprintf("the session this Stop belongs to cannot be identified (%v), so its tracked ranges are unknown and cannot be verified; refusing because a session that cannot be named must not be read as 'nothing to judge'. To recover: make sure the hook payload carries the session's transcript_path (for a sub-agent, agent_transcript_path and the parent's record) and that the record exists, then stop again.", cause)}
 	if folder, err := gitrepo.Root(p.Cwd); err == nil && folder != "" {
 		if head, sha, ok := trackedHead(folder); ok {
-			base := gitrepo.DefaultBase(folder, sha)
-			if base == sha {
+			base, ok := gitrepo.DefaultBase(folder, sha)
+			if !ok || base == sha {
 				base = gitrepo.EmptyTree
 			}
 			quiet := &cobra.Command{}

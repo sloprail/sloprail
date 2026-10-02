@@ -175,7 +175,12 @@ func execute(cmd *cobra.Command, m mode) error {
 		return err
 	}
 	defer t.sess.close()
+	broken := brokenFileGuards(t.loaded)
 	if len(t.loaded.FileGuards) == 0 {
+		if m != modeShow && len(broken) > 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), joinRefusals(broken))
+			os.Exit(1)
+		}
 		return nil
 	}
 	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root)
@@ -217,7 +222,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	if m == modeShow {
 		return nil
 	}
-	var out []string
+	out := broken
 	for _, f := range refusals {
 		out = append(out, f.Reason+" (file-guard "+f.Attribution+")")
 	}
@@ -227,6 +232,18 @@ func execute(cmd *cobra.Command, m mode) error {
 	fmt.Fprintln(w, joinRefusals(out))
 	os.Exit(1)
 	return nil
+}
+
+// brokenFileGuards names every file-guard that failed to load, with why: a rule that cannot be
+// read judges nothing, so a run that passes over it must fail instead of reading as clean.
+func brokenFileGuards(l declaration.Loaded) []string {
+	var out []string
+	for _, iv := range l.Invalid {
+		if iv.Nature == declaration.NatureFileGuard {
+			out = append(out, "file-guard "+iv.Attribution()+" could not be loaded: "+iv.Reason)
+		}
+	}
+	return out
 }
 
 // joinRefusals renders the collected refusals as one block, naming each rule: a refusal an

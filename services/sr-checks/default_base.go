@@ -15,9 +15,9 @@ func newDefaultBaseCmd() *cobra.Command {
 		Use:   "default-base --head <rev>",
 		Short: "Print where work on head started: its merge base with the default branch",
 		Long: `Print the sha a range over --head starts at when nobody stated one: the merge base of --head with
-the repository's default branch (origin's HEAD, else origin/main, origin/master, else a local main or
-master). Prints git's empty tree (4b825dc642cb6eb9a060e54bf8d69288fbee4904) when there is no default
-branch or --head shares no history with it: everything is judged. Read-only.`,
+the REMOTE default branch (origin's HEAD, else origin/main, origin/master). Prints git's empty tree
+(4b825dc642cb6eb9a060e54bf8d69288fbee4904) when --head shares no history with it: everything is judged.
+Exits non-zero when there is no remote default branch (pass --base instead). Read-only.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			headRev, _ := cmd.Flags().GetString("head")
@@ -34,7 +34,11 @@ branch or --head shares no history with it: everything is judged. Read-only.`,
 			if err != nil {
 				return fmt.Errorf("sloprail: %w", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), gitrepo.DefaultBase(root, r.Head))
+			base, ok := gitrepo.DefaultBase(root, r.Head)
+			if !ok {
+				return fmt.Errorf("sloprail: no remote default branch to start %s from; pass --base", headRev)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), base)
 			return nil
 		},
 	}
