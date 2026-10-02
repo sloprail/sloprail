@@ -2,13 +2,11 @@ package checkrun
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -930,7 +928,7 @@ func withoutSession(req dispatchcore.Request) dispatchcore.Request {
 // for a rule that requires a citation, the commit messages and citation quotes. No commit
 // SHA, branch, session or snapshot path is in it, so two branches with identical content share
 // their verdicts and the run that stored one and the verify that reads it compute one key.
-func guardKey(g declaration.FileGuard, payload changeset.Payload, contexts map[string]natures.ContextState) (string, error) {
+func guardKey(g declaration.FileGuard, payload changeset.Payload) (string, error) {
 	citations := ""
 	for _, r := range g.Require {
 		if r.Citation != nil {
@@ -941,38 +939,7 @@ func guardKey(g declaration.FileGuard, payload changeset.Payload, contexts map[s
 			break
 		}
 	}
-	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint, citations, contextPart(g, contexts)), nil
-}
-
-// contextRef finds the contexts a rule reads in its `match`: context["name"] or context.name.
-var contextRef = regexp.MustCompile(`context\s*(?:\[\s*["']([^"']+)["']\s*\]|\.([A-Za-z_][\w-]*))`)
-
-// contextPart is the state of each context the rule's `match` or `require` reads, in name order:
-// whether it is active and a hash of its payload. A verdict reached while a context stood in one
-// state is not read for another, though the files the rule selected are the same.
-func contextPart(g declaration.FileGuard, contexts map[string]natures.ContextState) string {
-	names := map[string]bool{}
-	for _, m := range contextRef.FindAllStringSubmatch(g.Match, -1) {
-		names[m[1]+m[2]] = true
-	}
-	for _, r := range g.Require {
-		if r.Context != "" {
-			names[r.Context] = true
-		}
-	}
-	sorted := make([]string, 0, len(names))
-	for n := range names {
-		sorted = append(sorted, n)
-	}
-	sort.Strings(sorted)
-	var b strings.Builder
-	for _, n := range sorted {
-		st := contexts[n]
-		payload, _ := json.Marshal(st.Payload) // map keys are sorted
-		sum := sha256.Sum256(payload)
-		fmt.Fprintf(&b, "%s|%t|%x\n", n, st.Active, sum[:8])
-	}
-	return b.String()
+	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint, citations), nil
 }
 
 // stepRow is one step of a guard's stored verdict.
@@ -1016,7 +983,7 @@ func stepStatus(s string) string {
 // settled says the rule's verdict is v (and err an engine failure).
 func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err error, settled bool) {
 	g := rr.g
-	rr.key, err = guardKey(g, rr.payload, ev.contextMap)
+	rr.key, err = guardKey(g, rr.payload)
 	if err != nil {
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}

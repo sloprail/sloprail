@@ -28,17 +28,16 @@ func cp(t *testing.T, p Payload) string {
 }
 
 func TestGuardFingerprint_IsDeterministicAndFilesSensitive(t *testing.T) {
-	assert.Equal(t, GuardFingerprint("f", "", "", ""), GuardFingerprint("f", "", "", ""))
-	assert.NotEqual(t, GuardFingerprint("f", "", "", ""), GuardFingerprint("g", "", "", ""))
+	assert.Equal(t, GuardFingerprint("f", "", ""), GuardFingerprint("f", "", ""))
+	assert.NotEqual(t, GuardFingerprint("f", "", ""), GuardFingerprint("g", "", ""))
 }
 
 // What a subject declares is added to the key, and parts cannot be re-cut.
 func TestGuardFingerprint_SubjectFingerprintMovesTheKey(t *testing.T) {
-	assert.NotEqual(t, GuardFingerprint("f", "", "", ""), GuardFingerprint("f", "v1", "", ""))
-	assert.NotEqual(t, GuardFingerprint("f", "v1", "", ""), GuardFingerprint("f", "v2", "", ""))
-	assert.NotEqual(t, GuardFingerprint("ab", "c", "", ""), GuardFingerprint("a", "bc", "", ""))
-	assert.NotEqual(t, GuardFingerprint("f", "a", "", ""), GuardFingerprint("f", "", "a", ""))
-	assert.NotEqual(t, GuardFingerprint("f", "", "", "mode:on"), GuardFingerprint("f", "", "", "mode:off"))
+	assert.NotEqual(t, GuardFingerprint("f", "", ""), GuardFingerprint("f", "v1", ""))
+	assert.NotEqual(t, GuardFingerprint("f", "v1", ""), GuardFingerprint("f", "v2", ""))
+	assert.NotEqual(t, GuardFingerprint("ab", "c", ""), GuardFingerprint("a", "bc", ""))
+	assert.NotEqual(t, GuardFingerprint("f", "a", ""), GuardFingerprint("f", "", "a"))
 }
 
 // The matched files' content is keyed; a SHA, a base or a transcript never is.

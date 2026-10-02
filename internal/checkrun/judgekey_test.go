@@ -10,7 +10,6 @@ import (
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
-	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -48,7 +47,7 @@ func keyRule(t *testing.T, citation bool) (declaration.FileGuard, declaration.Ch
 func key(t *testing.T, g declaration.FileGuard, _ declaration.Check, p changeset.Payload, _, subjectFP string) string {
 	t.Helper()
 	p.Subject.Fingerprint = subjectFP
-	fp, err := guardKey(g, p, nil)
+	fp, err := guardKey(g, p)
 	require.NoError(t, err)
 	return fp
 }
@@ -136,30 +135,4 @@ func TestGuardKey_TwoBranchesWithIdenticalContentShareTheKey(t *testing.T) {
 		b.Changeset.Citations[0].Commits = []string{"rebased"}
 		assert.Equal(t, key(t, g, c, a, "/tmp/sr-tree-1", ""), key(t, g, c, b, "/tmp/sr-tree-2", ""))
 	}
-}
-
-// A context the rule's match or require reads is part of the key: a verdict reached while it
-// was inactive (or held another payload) is not read for another state. A context the rule does
-// not read is not.
-func TestGuardKey_AContextTheRuleReadsChangesTheKey(t *testing.T) {
-	g := declaration.FileGuard{Name: "r", Match: `path startsWith "src/" and context["mode"].active`}
-	k := func(ctx map[string]natures.ContextState) string {
-		fp, err := guardKey(g, keyPayload(), ctx)
-		require.NoError(t, err)
-		return fp
-	}
-	off := map[string]natures.ContextState{"mode": {}}
-	on := map[string]natures.ContextState{"mode": {Active: true}}
-	onOther := map[string]natures.ContextState{"mode": {Active: true, Payload: map[string]any{"scope": "x"}}}
-	assert.NotEqual(t, k(off), k(on))
-	assert.NotEqual(t, k(on), k(onOther))
-	assert.Equal(t, k(on), k(map[string]natures.ContextState{"mode": {Active: true}, "unrelated": {Active: true}}))
-
-	req := declaration.FileGuard{Name: "r", Require: []declaration.Prerequisite{{Context: "mode"}}}
-	kr := func(ctx map[string]natures.ContextState) string {
-		fp, err := guardKey(req, keyPayload(), ctx)
-		require.NoError(t, err)
-		return fp
-	}
-	assert.NotEqual(t, kr(off), kr(on), "a require: context counts too")
 }
