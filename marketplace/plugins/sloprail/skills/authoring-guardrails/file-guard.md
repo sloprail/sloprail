@@ -111,6 +111,11 @@ whose tip is a session-made commit that was never verified is tracked even with 
 commit. The range's base is the merge base with the remote default branch (never past
 the session's own tip).
 
+Known limitation: tracking works by observing branch and HEAD movement. A commit created
+without moving any local branch or HEAD (git plumbing such as `commit-tree`) and pushed
+straight to a remote ref in one command is not tracked by observation; CI verify on the
+pushed branch is the backstop.
+
 Untracking is allowed freely — CI is the backstop — but the Stop lists what was
 untracked, with the reason, and the range is tracked again by itself when the branch tip
 moves. When a worktree is removed, its range moves to the root folder; if its branch is

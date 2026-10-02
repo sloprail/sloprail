@@ -1013,7 +1013,9 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		// The judge never produced a verdict (it answered nothing parseable): an engine-side
 		// failure, not a FAIL verdict on the content. It is recorded as an error, never as a
 		// verdict under the key, so `verify` says "not judged yet" and the next `run` asks again.
-		return fail(errors.New(v.Reason))
+		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": v.Reason, noVerdictMeta: true}
+		_ = ev.recordCheck(runID, rec) // already failing
+		return dispatchcore.Verdict{}, engineError(g, errors.New(v.Reason))
 	}
 	return settle(v, meta)
 }
@@ -1029,21 +1031,21 @@ func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
 	var at, why string
 	for _, r := range rows {
 		reason, _ := r.Metadata["reasoning"].(string)
-		if r.Subject == rr.subject.ID && r.Status != checkstore.StatusPass && r.Status != checkstore.StatusFail && strings.HasPrefix(reason, judgeNoVerdict) && r.RunAt >= at {
+		if r.Subject == rr.subject.ID && r.Status != checkstore.StatusPass && r.Status != checkstore.StatusFail && r.Metadata[noVerdictMeta] == true && r.RunAt >= at {
 			at, why = r.RunAt, "the judge returned no verdict: "+reason
 		}
 	}
 	return why
 }
 
+// noVerdictMeta marks a stored row as the judge having returned no verdict.
+const noVerdictMeta = "no_verdict"
+
 // returnedNoVerdict says a judge check was refused for want of a parseable answer, not for a
 // verdict on the content (a script's refusal, whatever it says, is always its verdict).
 func returnedNoVerdict(c declaration.Check, v dispatchcore.Verdict) bool {
-	return c.Script == "" && v.Refused && strings.HasPrefix(v.Reason, judgeNoVerdict)
+	return c.Script == "" && v.Refused && v.NoVerdict
 }
-
-// judgeNoVerdict starts the reason a judge that returned no parseable verdict is refused with.
-const judgeNoVerdict = "the judge did not produce a JSON verdict object"
 
 // stepKey names a step of a guard: its subject and its kind.
 func stepKey(subject, kind string) string { return subject + "\x00" + kind }

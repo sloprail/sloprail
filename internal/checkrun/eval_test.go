@@ -855,9 +855,9 @@ func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *
 // A judge that returned no parseable verdict is an engine-side failure, not a verdict on the
 // content; a script's refusal (whatever it says) and a real judge refusal are verdicts.
 func TestReturnedNoVerdict_OnlyAJudgeThatAnsweredNothing(t *testing.T) {
-	none := dispatchcore.Verdict{Refused: true, Reason: "the judge did not produce a JSON verdict object (after 2 attempts)"}
+	none := dispatchcore.Verdict{Refused: true, NoVerdict: true, Reason: "any wording at all"}
 	assert.True(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, none))
-	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Refused: true, Reason: "the ADR is not cited"}))
+	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Refused: true, Reason: "the judge did not produce a JSON verdict object (a real refusal that quotes it)"}), "typed, not by the reason text")
 	assert.False(t, returnedNoVerdict(declaration.Check{Script: "./c.sh"}, none), "a script's refusal is its verdict")
 	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Reason: none.Reason}), "not a refusal")
 }
@@ -871,7 +871,7 @@ func TestEvaluate_VerifyNamesAJudgeThatReturnedNoVerdict(t *testing.T) {
 	runID, err := ev.record(checkstore.CheckRun{CheckID: f.guard.Qualified(), BaseRef: ev.rng.Base, HeadRef: ev.rng.Head})
 	require.NoError(t, err)
 	require.NoError(t, ev.recordCheck(runID, checkstore.CheckRecord{Subject: "changeset", Kind: "check[0]:judge:j.md.j2",
-		Status: checkstore.StatusError, Metadata: map[string]any{"reasoning": "the judge did not produce a JSON verdict object (after 2 attempts)"}}))
+		Status: checkstore.StatusError, Metadata: map[string]any{"reasoning": "the judge did not produce a JSON verdict object (after 2 attempts)", noVerdictMeta: true}}))
 
 	got := f.verifyReasons(t)
 	require.Len(t, got, 1)

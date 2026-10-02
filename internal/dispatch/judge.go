@@ -264,7 +264,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// Non-zero: either the verdict was `pass:false` (the verifier rejected it and
 	// sr-agent's attempts ran out) or the substrate failed. Both refuse; the
 	// reason is the verifier's complaint, which sr-agent writes to stderr.
-	return refuse(judgeRefusalReason(stdout, stderr)), nil
+	return judgeRefusal(stdout, stderr), nil
 }
 
 // judgeCommand is the shell line that runs sr-agent for a judge.
@@ -356,6 +356,15 @@ func judgeEnv(j judgeCall) []string {
 		env = append(env, launchedByEnv+"="+j.LaunchedBy)
 	}
 	return append(env, j.Env...)
+}
+
+// judgeRefusal is the refusal of a judge that exited non-zero, typed: NoVerdict when it
+// produced no parseable answer at all, so no caller reads the reason text to tell.
+func judgeRefusal(stdout, stderr []byte) Verdict {
+	reason := judgeRefusalReason(stdout, stderr)
+	v := refuse(reason)
+	v.NoVerdict = strings.HasPrefix(reason, noVerdictReason)
+	return v
 }
 
 // judgeRefusalReason extracts what to tell the agent from a rejected judge.
