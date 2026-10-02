@@ -179,3 +179,29 @@ func TestCommitRequired_AFolderIsOwedOnceNotTwice(t *testing.T) {
 	got := commitRequired(discard(), p, []declaration.FileGuard{{Name: "g", Match: `path == "x.md"`}}, nil, modReg)
 	assert.Equal(t, 1, strings.Count(got, "x.md"), "the same file was owed twice:\n"+got)
 }
+
+// A detached HEAD on a commit some ref holds was checked out, not made: not tracked. A commit
+// made on the detached HEAD (on no ref) is.
+func TestCheckedOutOnly_ADetachedCheckoutIsNotTheSessionsButADetachedCommitIs(t *testing.T) {
+	proj, _, _ := ruledAndObserved(t, nil)
+	runGit(t, proj, "switch", "-c", "pr")
+	pr := commitFile(t, proj, "p.md", "p")
+	runGit(t, proj, "switch", "-q", "--detach", pr)
+	assert.True(t, checkedOutOnly(proj, pr, nil), "another branch's commit was read as the session's")
+	assert.False(t, checkedOutOnly(proj, pr, []sessionstate.TrackedRange{{HeadSHA: pr}}), "a tip the session recorded is its own")
+	own := commitFile(t, proj, "q.md", "q")
+	assert.False(t, checkedOutOnly(proj, own, nil), "a commit on no ref is the session's")
+}
+
+// A rule only on the default branch still makes an older branch's checkout worth tracking.
+func TestFolderHasFileGuards_ARuleOnTheDefaultBranchCountsOnAnOlderCheckout(t *testing.T) {
+	proj := initRepo(t)
+	commitFile(t, proj, "seed.md", "seed")
+	runGit(t, proj, "branch", "old")
+	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	runGit(t, proj, "switch", "-q", "old")
+	has, err := folderHasFileGuards(proj, "")
+	require.NoError(t, err)
+	assert.True(t, has)
+}

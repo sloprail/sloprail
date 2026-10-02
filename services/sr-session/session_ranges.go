@@ -98,7 +98,30 @@ func folderHasFileGuards(folder, trustedRev string) (bool, error) {
 	} else {
 		loaded = newNatureDeclarations(quiet, folder, reg)
 	}
-	return len(loaded.FileGuards) > 0, nil
+	if len(loaded.FileGuards) > 0 {
+		return true, nil
+	}
+	return fileGuardsOnDefaultBranch(folder), nil
+}
+
+// fileGuardsOnDefaultBranch reports whether the project's default branch (the remote's, else a
+// local main or master) carries file-guards the checked-out branch does not: a rule added on
+// main mid-session reaches an older branch's range from its add commit, so the session's work
+// on that branch is tracked although the rule is absent from its checkout (over-tracking: the
+// Stop verifies where the rules load).
+func fileGuardsOnDefaultBranch(folder string) bool {
+	var tips []string
+	if tip, ok := gitrepo.RemoteDefaultTip(folder); ok {
+		tips = append(tips, tip)
+	}
+	tips = append(tips, "refs/heads/main", "refs/heads/master")
+	for _, tip := range tips {
+		out, err := exec.Command("git", "-C", folder, "ls-tree", "--name-only", tip, ".sloprail/file-guard").Output()
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Observation: what the session SAW, never what git remembers. At every hook each session
@@ -436,6 +459,9 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	if err != nil {
 		return fmt.Errorf("read the session's ranges: %w", err)
 	}
+	if head == sha && checkedOutOnly(folder, sha, rows) {
+		return nil // a commit only checked out (another pull request's) is never the session's work
+	}
 	for _, row := range rows {
 		if row.Folder == filepath.Clean(folder) && row.Head == head && broughtIn(reg, folder, row.HeadSHA, sha) {
 			return nil // fast-forwarded onto the remote's work: the recorded tip stays the session's own
@@ -454,6 +480,20 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 		SessionID: sessionID, Folder: filepath.Clean(folder), Head: head, HeadSHA: sha,
 		Base: autoBase(folder, sha, startedAt), AddedBy: sessionstate.RangeAuto, AgentID: agent,
 	})
+}
+
+// checkedOutOnly reports whether a detached HEAD at sha stands on a commit some ref already
+// holds (a branch or remote-tracking ref of someone else's work) that the session did not
+// record as a tip: it was checked out, not made. A commit on no ref (made on the detached HEAD)
+// is the session's. An unreadable answer is read as "made": over-track.
+func checkedOutOnly(folder, sha string, rows []sessionstate.TrackedRange) bool {
+	for _, r := range rows {
+		if r.HeadSHA == sha {
+			return false
+		}
+	}
+	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--count=1", "--contains", sha, "--format=%(refname)").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 // trackFolders makes sure the current branch of this agent's folders is tracked: the tree it
