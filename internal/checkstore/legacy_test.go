@@ -85,7 +85,7 @@ func TestImportLegacy_AStopHoldingTheLockPostponesAndAKilledStopReleasesIt(t *te
 
 	// A Stop of another process holds the lock.
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperHoldStopLock")
-	cmd.Env = append(os.Environ(), "CHECKSTORE_HOLD_LOCK="+path+StopLockSuffix)
+	cmd.Env = append(os.Environ(), "CHECKSTORE_HOLD_LOCK="+lockPathFor(dst.Path(), path))
 	out, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
@@ -96,7 +96,7 @@ func TestImportLegacy_AStopHoldingTheLockPostponesAndAKilledStopReleasesIt(t *te
 	postponed, err := ImportLegacyReport(dst, src)
 	require.NoError(t, err)
 	assert.Equal(t, []string{path}, postponed)
-	assert.True(t, LegacyBusy(path))
+	assert.True(t, LegacyBusy(path, dst.Path()))
 	heads, err := dst.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Empty(t, heads, "nothing migrated while the Stop runs")
@@ -133,14 +133,15 @@ func TestImportLegacy_AnOldBinarysRunningRowStillPostpones(t *testing.T) {
 	postponed, err := ImportLegacyReport(dst, []Legacy{{Path: path, Family: "s1"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{path}, postponed)
-	assert.True(t, LegacyBusy(path))
+	assert.True(t, LegacyBusy(path, dst.Path()))
 }
 
 func TestOpenLegacy_HoldsTheLockUntilClosed(t *testing.T) {
 	path := legacyFile(t, func(s Store) { passRun(t, s, "h1", "fp") })
-	st, err := OpenLegacy(path)
+	repoPath := filepath.Join(t.TempDir(), "r", "checks.db")
+	st, err := OpenLegacy(path, repoPath, "s1")
 	require.NoError(t, err)
-	assert.True(t, LegacyBusy(path))
+	assert.True(t, LegacyBusy(path, repoPath))
 	require.NoError(t, st.Close())
-	assert.False(t, LegacyBusy(path))
+	assert.False(t, LegacyBusy(path, repoPath))
 }

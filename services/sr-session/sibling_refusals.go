@@ -8,6 +8,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
 // outstandingRefusalBases is where a rule's range must reach back to so that nothing an
@@ -36,21 +37,32 @@ func outstandingRefusalBases(root, rule string, own checkstore.Store) ([]string,
 	}
 	passed = append(passed, mine.Passed...)
 	var paths []string
-	if sib, shared := own.(checkstore.SiblingRefs); shared && isRepoStore(ownPath) {
-		// The repository's one database: the siblings are the other session families that
-		// judged in this working tree.
+	if sib, shared := own.(checkstore.SiblingRefs); shared {
+		// The repository's database: the siblings are the other session families that judged in
+		// this working tree. (Also when this cycle runs on the family's old file because an
+		// older Stop is writing it: the repository's rows are read beside the old files.)
 		refs, err := sib.SiblingRunRefs(rule, filepath.Clean(root))
 		if err != nil {
 			return nil, fmt.Errorf("the check results of another session of this worktree could not be read: %w", err)
 		}
 		failed = append(failed, refs.Failed...)
 		passed = append(passed, refs.Passed...)
-	} else {
-		paths, err = filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(ownPath)), "*", "checks.db"))
+	}
+	if !isRepoStore(ownPath) {
+		repoPath, _ := sessionpath.RepoChecksDB(root)
+		globbed, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(ownPath)), "*", "checks.db"))
 		if err != nil {
 			return nil, err
 		}
-		sort.Strings(paths)
+		sort.Strings(globbed)
+		for _, p := range globbed {
+			// A sibling file the repository database already holds in full is read THERE: its
+			// rows may have been resolved since, and the old file would bring the refusal back.
+			if repoPath != "" && p != ownPath && checkstore.Imported(repoPath, p) {
+				continue
+			}
+			paths = append(paths, p)
+		}
 	}
 	for _, p := range paths {
 		if p == ownPath {

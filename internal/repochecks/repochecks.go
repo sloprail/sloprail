@@ -14,7 +14,6 @@
 package repochecks
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -80,7 +79,7 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 		for _, l := range srcs {
 			if l.Path == p && l.Family == family && l.Agent == "" {
 				store.Close()
-				return checkstore.OpenLegacy(p)
+				return checkstore.OpenLegacy(p, path, family)
 			}
 		}
 	}
@@ -98,32 +97,28 @@ func OpenReadOnly(cwd, family string) (checkstore.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	own, ownErr := sessionpath.ChecksDB(cwd, family)
-	haveOwn := false
-	if ownErr == nil {
-		_, statErr := os.Stat(own)
-		haveOwn = statErr == nil
+	// The family's old file, while the repository's database does not hold all of it (never
+	// imported, or written since): the reader sees BOTH, deduplicated by run id, the repository's
+	// row winning.
+	var old []checkstore.Legacy
+	if own, err := sessionpath.ChecksDB(cwd, family); err == nil {
+		if _, statErr := os.Stat(own); statErr == nil && !checkstore.Imported(path, own) {
+			old = append(old, checkstore.Legacy{Path: own, Family: family, Folder: sessionpath.WorkspaceAnchor(cwd)})
+		}
 	}
-	if haveOwn && checkstore.LegacyBusy(own) {
-		return checkstore.OpenReadOnly(own)
+	if len(old) > 0 {
+		return checkstore.OpenUnionReadOnly(path, family, old)
 	}
 	store, err := checkstore.OpenFamilyReadOnly(path, family)
-	if errors.Is(err, checkstore.ErrNoStore) && haveOwn {
-		return checkstore.OpenReadOnly(own)
-	}
 	if err != nil {
 		return nil, err
 	}
 	// The database is the repository's, so it exists once any session recorded anything: for
-	// THIS family, no runs is "nothing recorded yet" — or, where the old file holds them, not
-	// migrated yet.
+	// THIS family, no runs is "nothing recorded yet".
 	rows, qerr := store.Query("select count(*) as n from check_runs")
 	if qerr == nil && len(rows) == 1 {
 		if n, ok := rows[0]["n"].(int64); ok && n == 0 {
 			store.Close()
-			if haveOwn {
-				return checkstore.OpenReadOnly(own)
-			}
 			return nil, checkstore.ErrNoStore
 		}
 	}

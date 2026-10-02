@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -173,6 +174,10 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("checkstore: record run of %q: %w", r.CheckID, err)
 	}
+	if s.family != "" && !r.Complete {
+		host, _ := os.Hostname()
+		_, _ = db.Exec(`INSERT OR REPLACE INTO main.run_owners (run_id, pid, host) VALUES (?, ?, ?)`, id, os.Getpid(), host)
+	}
 	return id, nil
 }
 
@@ -194,6 +199,9 @@ func (s *store) FinishRun(runID string) error {
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return fmt.Errorf("checkstore: finish run: no run %q", runID)
+	}
+	if s.family != "" {
+		_, _ = db.Exec(`DELETE FROM main.run_owners WHERE run_id = ?`, runID)
 	}
 	return nil
 }

@@ -267,7 +267,7 @@ func TestOpenReadOnly_WritesNothingAndReadsTheOldFileWhereItIsNotMigrated(t *tes
 
 func TestOpenReadOnly_AnOldEnginesRunningStopKeepsTheReaderOnTheOldFile(t *testing.T) {
 	dir := repo(t)
-	path := oldLayout(t, dir, "s1", func(s checkstore.Store) {
+	_ = oldLayout(t, dir, "s1", func(s checkstore.Store) {
 		failedRun(t, s, "hBad")
 		_, err := s.RecordRun(checkstore.CheckRun{BatchID: "b", CheckID: "p/file-guard/x", HeadRef: "hLive"})
 		require.NoError(t, err) // RUNNING: a Stop of the older binary is evaluating
@@ -279,7 +279,6 @@ func TestOpenReadOnly_AnOldEnginesRunningStopKeepsTheReaderOnTheOldFile(t *testi
 	ro, err := OpenReadOnly(dir, "s1")
 	require.NoError(t, err)
 	defer ro.Close()
-	assert.Equal(t, path, ro.Path())
 	refs, err := ro.RunRefs("p/file-guard/x")
 	require.NoError(t, err)
 	assert.Len(t, refs.Failed, 1)
@@ -300,6 +299,28 @@ func TestOpen_AReaderFirstNeverMisfilesASubagentsDatabase(t *testing.T) {
 	refs, err := st.RunRefs("p/file-guard/x")
 	require.NoError(t, err)
 	assert.Len(t, refs.Failed, 2, "the sub-agent's refusal is the root family's")
+}
+
+func TestOpenReadOnly_SeesTheRepositoryAndAnOldWriteMadeAfterTheImport(t *testing.T) {
+	dir := repo(t)
+	path := oldLayout(t, dir, "s1", func(s checkstore.Store) { failedRun(t, s, "h1") })
+	st, err := Open(dir, "s1", nil)
+	require.NoError(t, err)
+	_, err = st.RecordRun(checkstore.CheckRun{BatchID: "b", CheckID: "p/file-guard/x", BaseRef: "b0", HeadRef: "hNew", Complete: true})
+	require.NoError(t, err)
+	st.Close()
+	old, err := checkstore.Open(path)
+	require.NoError(t, err)
+	failedRun(t, old, "hLate")
+	require.NoError(t, old.Close())
+
+	ro, err := OpenReadOnly(dir, "s1")
+	require.NoError(t, err)
+	defer ro.Close()
+	refs, err := ro.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 2, "the imported refusal and the late one")
+	assert.Len(t, refs.Passed, 1, "and the repository's own newer run")
 }
 
 func TestMigration_ConcurrentHooksMigrateOnceWithoutDuplicates(t *testing.T) {
