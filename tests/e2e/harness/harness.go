@@ -70,6 +70,7 @@ type Env struct {
 	mock            string
 	withoutShipped  []string // GitInit disables these shipped rules (WithoutShipped)
 	onlyShipped     string   // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
+	enabledShipped  []string // GitInit enables these opt-in shipped rules (WithEnabledShipped)
 	noShippedGuards bool     // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
 	shimDir         string   // a `claude` that is really the mock, ahead of the real one on PATH
 
@@ -277,6 +278,13 @@ func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards
 // the session, which the plugin's grounded-rule-changes judges. The rest stay in force.
 func WithoutShipped(qualified ...string) Option {
 	return func(e *Env) { e.withoutShipped = append(e.withoutShipped, qualified...) }
+}
+
+// WithEnabledShipped switches on the named shipped rules that ship OFF (`enabled: false`,
+// e.g. "sloprail/gate/no-merge-over-refusals"), the way a project does: an `enabled:`
+// entry in the initial commit's `.sloprail/config.yaml`.
+func WithEnabledShipped(qualified ...string) Option {
+	return func(e *Env) { e.enabledShipped = append(e.enabledShipped, qualified...) }
 }
 
 // WithOnlyShippedFileGuard is WithoutShippedFileGuards for a package about ONE shipped
@@ -1044,6 +1052,11 @@ func (e *Env) GitInit(dir string) {
 	e.t.Helper()
 	InitRepo(e.t, dir)
 	e.excludeMockFiles(dir)
+	// `enabled:` goes in first, so `disabled:` stays the config's last key: tests append
+	// list items to it with printf.
+	if len(e.enabledShipped) > 0 {
+		e.enableShipped(dir, e.enabledShipped)
+	}
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
 		e.DisablePluginGuardrail(dir, shippedGates...)
@@ -1061,6 +1074,27 @@ func (e *Env) GitInit(dir string) {
 		e.DisablePluginGuardrail(dir, others...)
 	}
 	e.CommitAll(dir, "initial")
+}
+
+// enableShipped merges names into the `enabled:` list of the project's config.
+func (e *Env) enableShipped(dir string, names []string) {
+	e.t.Helper()
+	cfgDir := filepath.Join(dir, ".sloprail")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	path := filepath.Join(cfgDir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	}
+	merged, err := mergeList(body, "enabled", names)
+	if err != nil {
+		e.t.Fatalf("harness: merge enabled rules into %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(merged), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
+	}
 }
 
 // excludeMockFiles keeps the mock's own scenario scripts out of every commit the test

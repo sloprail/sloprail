@@ -22,7 +22,7 @@ exit 0
 // session: the open refusal the merge gate looks for.
 func refusedProject(t *testing.T, sess string) (*harness.Env, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithEnabledShipped("sloprail/gate/no-merge-over-refusals"))
 	fakeGH(t, e, nil)
 	proj := e.Project()
 	e.GitInit(proj)

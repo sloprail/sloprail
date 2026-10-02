@@ -10,8 +10,8 @@ import (
 
 // The plugin's sloprail/gate/no-destroying-owed-work refuses a git command that destroys
 // commits the session owes a judgement (or a fix): deleting the branch, force-moving it,
-// removing its worktree, pruning the objects. It ships on by default, so these tests install
-// nothing: the plugin's own gate fires.
+// removing its worktree, pruning the objects. It ships OFF; these tests enable it the way a
+// project does (`enabled:` in .sloprail/config.yaml).
 var (
 	Turns = harness.Turns
 	Bash  = harness.Bash
@@ -37,7 +37,7 @@ exit 0
 // project is a repository with the docs rule committed and nothing else.
 func project(t *testing.T) (*harness.Env, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithEnabledShipped("sloprail/gate/no-destroying-owed-work"))
 	e.SetStopBlockCap(1)
 	proj := e.Project()
 	e.GitInit(proj)

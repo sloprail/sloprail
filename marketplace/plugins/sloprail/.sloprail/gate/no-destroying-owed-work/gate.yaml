@@ -25,8 +25,11 @@
 # literally. Dropping owed work stays the user's, through the grounded path:
 #   sr-session refs abandon --ref <b> --folder <dir> --cite-user '<their exact words>'
 #
-# On by default, like every shipped rule; switch it off with `disabled:` in
-# .sloprail/config.yaml (a change to that file is itself gated by grounded-rule-changes).
+# OFF by default: a project turns it on in .sloprail/config.yaml with
+#   enabled:
+#     - sloprail/gate/no-destroying-owed-work
+# (a change to that file is itself gated by grounded-rule-changes).
+enabled: false
 on:
   - event: PreCommandInvoke
     match: >

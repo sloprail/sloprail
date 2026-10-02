@@ -118,6 +118,20 @@ The name is qualified by the plugin AND the nature (`<plugin>/<nature>/<name>`),
 so disabling a shipped rule cannot also disable a project rule that happens to
 share its name — nor a differently-natured rule of the same name.
 
+## Opt-in rules
+
+Three gates ship off (`enabled: false`) and a project turns them on from its own
+`.sloprail/config.yaml`:
+
+    enabled:
+      - sloprail/gate/judge-before-push
+      - sloprail/gate/no-merge-over-refusals
+      - sloprail/gate/no-destroying-owed-work
+
+`no-merge-over-refusals` refuses `gh pr merge` (and a push to the default branch) over
+refusals or unjudged commits; `no-destroying-owed-work` refuses the git commands that
+would destroy such commits (`branch -D`, `worktree remove`, hard resets, prunes).
+
 ## Changes to a project's rules
 
 `sloprail/file-guard/grounded-rule-changes` (and a `PreFileWrite` gate of the same name on

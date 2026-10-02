@@ -34,6 +34,12 @@ for exactly that. A rule-authoring session, the onboarding flow and a user who a
 rules all pass. The judge is skipped for such a range. `.sloprail/config.yaml` is the
 exception: a new one can carry `disabled:`.
 
+A file **restored to a version the default branch had** (byte-identical to its content at an
+earlier commit on origin/HEAD, else main/master) needs no grounding when every commit on the
+default branch that changed it since carried no `Sloprail-Cites-*` trailer: only uncited changes
+are being undone (`is_landed_revert` in `needs-grounding-lib.sh`). Undoing a cited change, or
+writing content the default branch never had, still needs the user's words.
+
 A rename is judged by the path it came from: moving a rule out of `.sloprail/` removes it.
 
 ## It cannot disable itself
