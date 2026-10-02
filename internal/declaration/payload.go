@@ -229,15 +229,6 @@ type PreparedOutcome struct {
 	// (see the four-outcome contract above). Absent/false is the unchanged "run the
 	// judge" default.
 	Skip bool `json:"skip"`
-
-	// Fingerprint is an optional string naming what the judge's verdict depends on
-	// that is not in its prompt (a file the judge opens with its own tools). It is
-	// folded into the verdict's cache key. prepare's additionalContext is NOT in the
-	// key (it may carry text derived from the session, which `verify` cannot
-	// reproduce), so what the verdict depends on beyond the template, the matched files
-	// and the citation quotes must be named here. It must be session-independent: the
-	// same value with or without a transcript.
-	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // FileJudgeInput is the wire/type contract for what a file-guard's judge receives

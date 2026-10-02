@@ -93,47 +93,37 @@ the standard payload:
 jq -n --arg rules "$rules" '{additionalContext: {rules: $rules}}'
 ```
 
-`prepare` may also return an optional `"fingerprint": "<string>"` (see
-[A judge is pure](#a-judge-is-pure--what-its-verdict-is-cached-on)).
+`prepare` only builds context: it has no `fingerprint`. What a verdict depends on beyond the
+subject's files is declared by the rule's `subjects:` script ([file-guard.md](file-guard.md#subjects--split-a-rule-into-units-each-cached-on-its-own)).
 
 `prepare` runs **unconditionally** when set and is **not a pass/fail gate of its
 own** — but a `prepare` that **fails to run** fails the check (carrying its words),
 and one whose stdout is not the `{"additionalContext": {…}}` shape fails it closed
 too: a judge fed a half-prepared prompt would judge against something the author
 did not intend. A `prepare` that ran, had nothing to add, and printed nothing is a
-legitimate no-op. `prepare` is meaningful **only** with a `judge` — setting it on a
-script check is a load error.
+legitimate no-op. A script check may carry a `prepare` too: its `additionalContext` reaches the
+script on its payload, under that key.
 
 ## A judge is pure — what its verdict is cached on
 
-A judge is **pure**: no side effects, it judges the slice it is handed. Its verdict is
-cached under the rule, the rule's hash, the check, the subject and a **fingerprint**: the
-sha256 of
-
-- the **judge template's bytes**,
-- the **content of the subject's matched files**, always, whether or not the template renders
-  them (change a file and the question is new),
-- `prepare`'s optional **`fingerprint`** string, added to the rest, never replacing it,
-- for a `require: citation` rule only, the commit messages and the citations' quotes (the
-  citations ride in the trailers).
+A judge is **pure**: no side effects, it judges the slice it is handed. Like every check it is
+cached by content, as part of its guard's verdict over a subject (see
+[file-guard.md](file-guard.md#cached-verdicts)): the rule hash (which covers the template), the
+subject, the **content of the subject's files** (always, whether or not the template renders
+them), for a `require: citation` rule the commit messages and the citations' quotes, and the
+subject's `fingerprint` from `subjects:`.
 
 **`prepare`'s output (`additionalContext`) and the rendered prompt are not in the key**: they
 may carry text derived from the session, which `verify` in CI cannot reproduce. No commit SHA,
 branch name, path of the snapshot, run id, timestamp, session id or transcript is in it either,
-so two branches with the same content share their verdicts. A passing verdict with the same key
-is not asked again; a stored fail with the same key is replayed by `sr-checks run`; `verify`
-never calls a judge and computes the identical key.
+so two branches with the same content share their verdicts. A stored verdict with the same key
+is not asked again (a fail is replayed by `sr-checks run`); `verify` never calls a judge and
+computes the identical key.
 
 The contract that follows: **anything else the verdict depends on** — something `prepare`
-computes, or a file the judge opens with its own tools — must be declared in `fingerprint`:
-
-```bash
-jq -n --arg v "$(git -C "$SR_TREE" rev-parse HEAD:spec/api.md)" '{additionalContext: {…}, fingerprint: $v}'
-```
-
-The fingerprint must be **session-independent**: the same value with or without a transcript.
-A judge that reads more than it is shown and declares none of it is served a stale verdict
-when that thing changes. Script checks are never cached.
+computes, or a file the judge opens with its own tools — must be declared in the subject's
+`fingerprint` (the `subjects:` script). A judge that reads more than it is shown and declares
+none of it is served a stale verdict when that thing changes.
 
 A judge whose `prepare` needs the session (it fails without a transcript) cannot be judged by
 `sr-checks run` outside a session: it refuses with "needs a session to judge" instead of

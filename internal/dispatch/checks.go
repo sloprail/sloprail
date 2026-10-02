@@ -3,7 +3,6 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -36,7 +35,14 @@ import (
 func (r Runner) runCheck(req Request, c declaration.Check) (Verdict, error) {
 	switch {
 	case c.Script != "":
-		return r.runScriptCheck(req, c)
+		prepared, v, err := r.PrepareJudge(req, c)
+		if err != nil || v.Refused {
+			return v, err
+		}
+		if prepared.Skip {
+			return abstain(), nil
+		}
+		return r.runScriptCheck(req, c, prepared)
 	case c.Judge != "":
 		return r.runJudgeCheck(req, c)
 	default:
@@ -56,10 +62,18 @@ func (r Runner) runCheck(req Request, c declaration.Check) (Verdict, error) {
 // same one the old-format hooks use. A script that could not be RUN at all is a
 // refusal too (fail-closed), so a missing or non-executable script blocks rather
 // than silently admitting.
-func (r Runner) runScriptCheck(req Request, c declaration.Check) (Verdict, error) {
+//
+// A script's own prepare (optional) has run first: its additionalContext reaches the
+// script under that key of the payload.
+func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Verdict, error) {
 	payload, err := r.checkPayloadJSON(req)
 	if err != nil {
 		return Verdict{}, err
+	}
+	if p.Context != nil {
+		if payload, err = withAdditionalContext(payload, p.Context); err != nil {
+			return Verdict{}, err
+		}
 	}
 	res, err := r.runScript(scriptCall{
 		Dir:            req.Dir,
@@ -126,12 +140,9 @@ type Prepared struct {
 	Skip bool
 	// Context is prepare's additionalContext, folded into the judge's input.
 	Context declaration.PreparedContext
-	// Fingerprint is prepare's optional "fingerprint" string: what the judge's verdict
-	// depends on besides its prompt, part of the cache key.
-	Fingerprint string
 }
 
-// PrepareJudge runs a judge check's prepare step, when it has one. A refused
+// PrepareJudge runs a check's (judge or script) prepare step, when it has one. A refused
 // verdict means prepare failed (the check fails closed, carrying prepare's own
 // words); otherwise Prepared says whether to skip the judge and what context to
 // give it. Split from Judge so a caller that caches verdicts can fingerprint what
@@ -149,7 +160,7 @@ func (r Runner) PrepareJudge(req Request, c declaration.Check) (Prepared, Verdic
 	if v.Refused {
 		return Prepared{}, v, nil
 	}
-	return Prepared{Skip: prepared.Skip, Context: prepared.Context, Fingerprint: prepared.Fingerprint}, pass(), nil
+	return Prepared{Skip: prepared.Skip, Context: prepared.Context}, pass(), nil
 }
 
 // RenderJudge is the judge's fully rendered prompt (the template with the slice and
@@ -162,12 +173,6 @@ func (r Runner) RenderJudge(req Request, c declaration.Check, p Prepared) (rende
 		return "", v.Reason, err
 	}
 	return renderJudgePrompt(call)
-}
-
-// JudgeTemplate is the bytes of the check's judge template: what the cache keys the
-// question on in place of the rendered prompt.
-func JudgeTemplate(req Request, c declaration.Check) ([]byte, error) {
-	return os.ReadFile(resolveScriptPath(req.Dir, c.Judge))
 }
 
 // Judge asks the model about one judge check, after prepare.
@@ -214,9 +219,47 @@ func (r Runner) judgeCall(req Request, c declaration.Check, p Prepared) (judgeCa
 	}, Verdict{}, nil
 }
 
-// RunScript runs one script check: the payload on stdin, exit code the verdict.
-func (r Runner) RunScript(req Request, c declaration.Check) (Verdict, error) {
-	return r.withDefaults().runScriptCheck(req, c)
+// RunScript runs one script check, after prepare: the payload on stdin (plus prepare's
+// additionalContext), exit code the verdict.
+func (r Runner) RunScript(req Request, c declaration.Check, p Prepared) (Verdict, error) {
+	return r.withDefaults().runScriptCheck(req, c, p)
+}
+
+// RunSubjects runs a rule's `subjects:` script: the changeset payload on stdin and nothing of
+// the session. Its stdout is the subjects (changeset.ParseSubjects); a non-zero exit is a
+// refusal carrying the script's words.
+func (r Runner) RunSubjects(req Request, script string) ([]byte, Verdict, error) {
+	r = r.withDefaults()
+	payload, err := r.checkPayloadJSON(req)
+	if err != nil {
+		return nil, Verdict{}, err
+	}
+	res, err := r.runScript(scriptCall{
+		Dir: req.Dir, Script: script, Stdin: payload, GuardName: req.GuardName, Workspace: req.Workspace,
+		LaunchedBy: req.LaunchedBy, Env: req.Env,
+	})
+	if err != nil {
+		return nil, Verdict{}, err
+	}
+	if !res.Passed {
+		return nil, refuse(res.Reason), nil
+	}
+	return res.Stdout, pass(), nil
+}
+
+// withAdditionalContext adds prepare's additionalContext to a script's payload, as one more
+// top-level key that cannot collide with the payload's own.
+func withAdditionalContext(payload []byte, ctx declaration.PreparedContext) ([]byte, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m["additionalContext"] = raw
+	return json.Marshal(m)
 }
 
 // checkTimeout parses a check's `timeout` duration string, or returns 0 (meaning
@@ -246,9 +289,6 @@ type preparedResult struct {
 	// check ABSTAINS (reaches no verdict; other checks decide). False is the
 	// unchanged "run the judge" default.
 	Skip bool
-
-	// Fingerprint is prepare's optional "fingerprint" string.
-	Fingerprint string
 }
 
 // runPrepare runs a prepare script and returns what it concluded — the
@@ -296,7 +336,7 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 			"the judge's prepare step produced output this engine could not read as {\"additionalContext\": {...}, \"skip\": <bool>} (%v); "+
 				"refusing rather than asking the model against a half-prepared prompt", err)), nil
 	}
-	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip, Fingerprint: outcome.Fingerprint}, pass(), nil
+	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip}, pass(), nil
 }
 
 // checkPayloadJSON assembles the nature's check payload and marshals it for stdin.

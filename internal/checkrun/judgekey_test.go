@@ -10,7 +10,6 @@ import (
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
-	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -42,32 +41,42 @@ func keyRule(t *testing.T, citation bool) (declaration.FileGuard, declaration.Ch
 	return g, declaration.Check{Judge: "j.md.j2", Model: "m"}, dir
 }
 
-func key(t *testing.T, g declaration.FileGuard, c declaration.Check, p changeset.Payload, tree, prepFP string) string {
+// key is the guard's key over a payload; tree and prepFP are accepted only so the cases below
+// read as before: neither may matter (the snapshot's path and prepare's context are not input;
+// the subject's fingerprint is, and is set on the payload's subject).
+func key(t *testing.T, g declaration.FileGuard, _ declaration.Check, p changeset.Payload, _, subjectFP string) string {
 	t.Helper()
-	req := dispatchcore.Request{Dir: g.Dir, GuardName: g.Name, ProjectRoot: tree, Changeset: &p}
-	prep := dispatchcore.Prepared{Context: declaration.PreparedContext{"where": tree + "/a.go"}, Fingerprint: prepFP}
-	fp, refusal, err := judgeKey(g, req, p, c, prep)
+	p.Subject.Fingerprint = subjectFP
+	fp, err := guardKey(g, p)
 	require.NoError(t, err)
-	require.Empty(t, refusal)
 	return fp
 }
 
-func TestJudgeKey_SameCheckInTwoSnapshotDirsKeysTheSame(t *testing.T) {
+func TestGuardKey_SameCheckInTwoSnapshotDirsKeysTheSame(t *testing.T) {
 	g, c, _ := keyRule(t, true)
-	a := key(t, g, c, keyPayload(), "/tmp/sr-tree-111", "x:/tmp/sr-tree-111")
-	b := key(t, g, c, keyPayload(), "/tmp/sr-tree-222", "x:/tmp/sr-tree-222")
-	assert.Equal(t, a, b)
-	g, c, _ = keyRule(t, false)
 	assert.Equal(t, key(t, g, c, keyPayload(), "/tmp/sr-tree-111", ""), key(t, g, c, keyPayload(), "/tmp/sr-tree-222", ""))
 }
 
-func TestJudgeKey_PrepareFingerprintChangesTheKey(t *testing.T) {
+// A subjects script's fingerprint is added to the key; no fingerprint is today's default.
+func TestGuardKey_ASubjectFingerprintChangesTheKey(t *testing.T) {
 	g, c, _ := keyRule(t, false)
-	assert.NotEqual(t, key(t, g, c, keyPayload(), "/t1", ""), key(t, g, c, keyPayload(), "/t1", "v1"))
-	assert.NotEqual(t, key(t, g, c, keyPayload(), "/t1", "v1"), key(t, g, c, keyPayload(), "/t1", "v2"))
+	none := key(t, g, c, keyPayload(), "", "")
+	assert.NotEqual(t, none, key(t, g, c, keyPayload(), "", "v1"))
+	assert.NotEqual(t, key(t, g, c, keyPayload(), "", "v1"), key(t, g, c, keyPayload(), "", "v2"))
+	assert.Equal(t, none, key(t, g, c, keyPayload(), "", ""), "no fingerprint is the default subject's key")
 }
 
-func TestJudgeKey_ChangingTheSliceChangesTheKey(t *testing.T) {
+// The key is the same in `run` (a session, a transcript) and in `verify` (neither).
+func TestGuardKey_RunAndVerifyComputeOneKey(t *testing.T) {
+	g, c, _ := keyRule(t, true)
+	run, verify := keyPayload(), keyPayload()
+	verify.TranscriptPath = ""
+	verify.Changeset.Citations[0].Citation.Path, verify.Changeset.Citations[0].Citation.Line = "", 0
+	verify.Changeset.Citations[0].Citation.Call = ""
+	assert.Equal(t, key(t, g, c, run, "/t1", "fp"), key(t, g, c, verify, "/t2", "fp"))
+}
+
+func TestGuardKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 	g, c, _ := keyRule(t, false)
 	other := keyPayload()
 	other.Changeset.Files[0].NewContent = "3"
@@ -79,7 +88,7 @@ func TestJudgeKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 // A citation reword is an input only for a rule that requires a citation (its prompt need not
 // render them); for any other rule it is not, and cached passes survive it. The volatile
 // Call field and SHAs never are.
-func TestJudgeKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T) {
+func TestGuardKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T) {
 	reword := func(p *changeset.Payload) {
 		p.Changeset.Commits[0].Trailers["Cites-User"] = []string{"another"}
 		p.Changeset.Citations[0].Citation.Quote = "another"
@@ -103,27 +112,10 @@ func TestJudgeKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T)
 	}
 }
 
-// `run` resolves a quote against the transcript (path, line, message, call); `verify` trusts
-// the trailer and has none of them. A prompt that renders them must still key the same.
-func TestJudgeKey_ATemplateRenderingTranscriptFoundCitationDataKeysTheSameInRunAndVerify(t *testing.T) {
-	g, c, dir := keyRule(t, true)
-	tpl := `{% for x in changeset.citations %}{{ x.quote }}|{{ x.path }}:{{ x.line | int }}|{{ x.message }}|{% if x.call %}{{ x.call }}{% endif %}{% endfor %}`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte(tpl), 0o644))
-	run, verify := keyPayload(), keyPayload()
-	run.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}
-	verify.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}
-	run.Changeset.Citations[0].Citation.Message = "the whole output"
-	verify.Changeset.Citations[0].Citation.Path, verify.Changeset.Citations[0].Citation.Line = "", 0
-	verify.Changeset.Citations[0].Citation.Call = ""
-	assert.Equal(t, key(t, g, c, run, "/t1", ""), key(t, g, c, verify, "/t2", ""))
-	verify.Changeset.Citations[0].Citation.Quote = "another"
-	assert.NotEqual(t, key(t, g, c, run, "/t1", ""), key(t, g, c, verify, "/t2", ""))
-}
-
 // The key is the template, the matched files' content, prepare's fingerprint and (citation
 // rules) the quotes. Not the rendered prompt, not prepare's context, not the transcript, not
 // the history.
-func TestJudgeKey_AFileChangeTheTemplateDoesNotRenderChangesTheKey(t *testing.T) {
+func TestGuardKey_AFileChangeTheTemplateDoesNotRenderChangesTheKey(t *testing.T) {
 	g, c, dir := keyRule(t, false)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte("Judge the file at {{ subject.id }}.\n"), 0o644))
 	other := keyPayload()
@@ -131,33 +123,9 @@ func TestJudgeKey_AFileChangeTheTemplateDoesNotRenderChangesTheKey(t *testing.T)
 	assert.NotEqual(t, key(t, g, c, keyPayload(), "/t1", ""), key(t, g, c, other, "/t1", ""))
 }
 
-func TestJudgeKey_ATemplateChangeChangesTheKey(t *testing.T) {
-	g, c, dir := keyRule(t, false)
-	before := key(t, g, c, keyPayload(), "/t1", "")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte("Judge differently:\n{{ change }}\n"), 0o644))
-	assert.NotEqual(t, before, key(t, g, c, keyPayload(), "/t1", ""))
-}
-
-func TestJudgeKey_TranscriptAndPrepareContextAloneDoNotChangeTheKey(t *testing.T) {
-	g, c, _ := keyRule(t, true)
-	a, b := keyPayload(), keyPayload()
-	b.TranscriptPath = "/another-session.jsonl"
-	prepFor := func(where string) dispatchcore.Prepared {
-		return dispatchcore.Prepared{Context: declaration.PreparedContext{"where": where, "expanded": "text only the session has " + where}, Fingerprint: "fp"}
-	}
-	k := func(p changeset.Payload, prep dispatchcore.Prepared) string {
-		req := dispatchcore.Request{Dir: g.Dir, GuardName: g.Name, Changeset: &p}
-		fp, refusal, err := judgeKey(g, req, p, c, prep)
-		require.NoError(t, err)
-		require.Empty(t, refusal)
-		return fp
-	}
-	assert.Equal(t, k(a, prepFor("run")), k(b, prepFor("verify")), "run (with a session) and verify (without) share the key")
-}
-
 // Two branches carrying identical content share their verdicts: SHAs, the range's ends and
 // the commits' own identities are not input.
-func TestJudgeKey_TwoBranchesWithIdenticalContentShareTheKey(t *testing.T) {
+func TestGuardKey_TwoBranchesWithIdenticalContentShareTheKey(t *testing.T) {
 	for _, citation := range []bool{true, false} {
 		g, c, _ := keyRule(t, citation)
 		a, b := keyPayload(), keyPayload()

@@ -7,26 +7,25 @@ import (
 	"encoding/json"
 )
 
-// JudgeFingerprint says what a judge was asked, as one short string: the cache key's
-// last part (the rest — rule, rule hash, step, subject — is the checkcache key's own).
+// GuardFingerprint says what a guard's verdict over one subject is about, as one short string:
+// the cache key's last part (the rest — rule, rule hash, the guard's fixed step id, subject id —
+// is the checkcache key's own, and the rule hash covers every script and template of the rule).
 //
-// It is the sha256 of four parts, none of which depends on the session or the history:
+// It is the sha256 of three parts, none of which depends on the session or the history:
 //
-//   - template: the bytes of the judge template. The rendered prompt is NOT keyed: it may
-//     carry prepare's session-derived text, which `verify` in CI cannot reproduce.
-//   - files: FilesPart, the content of the subject's matched files, ALWAYS, whether or not
-//     the template renders them: the verdict is about those bytes.
-//   - prepareFP: the "fingerprint" string a prepare step may return, ADDED to the rest, for
-//     whatever the verdict depends on beyond the template and the files (a file the judge
-//     opens with its own tools). It must be session-independent.
+//   - files: FilesPart, the content of the subject's files, ALWAYS, whether or not any check
+//     reads them: the verdict is about those bytes.
+//   - subjectFP: the "fingerprint" the rule's `subjects:` script gave this subject, for whatever
+//     the verdict depends on beyond the files (a file a check opens with its own tools). It
+//     must be session-independent. Empty without `subjects:`.
 //   - citations: for a `require: citation` rule only, CitationPart: the commit messages and
 //     the citations' quotes.
 //
 // No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
 // are length-prefixed, so two parts cannot be re-cut into another pair.
-func JudgeFingerprint(template, files, prepareFP, citations string) string {
+func GuardFingerprint(files, subjectFP, citations string) string {
 	var buf []byte
-	for _, part := range []string{template, files, prepareFP, citations} {
+	for _, part := range []string{files, subjectFP, citations} {
 		buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
 		buf = append(buf, part...)
 	}

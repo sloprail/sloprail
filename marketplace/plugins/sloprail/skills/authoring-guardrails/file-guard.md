@@ -174,8 +174,34 @@ citation is asked of the file whose own change removes content, not of the file
 beside it that only adds. A refusal names every subject it failed for. `checks` default
 to ONE subject, the whole changeset (`subject.id` `"changeset"`, `files` every selected
 file), so a script loops over `.changeset.files[]` and a judge sees the whole change.
-A `subjects:` key, when it lands, will supply the subject list for both without
-reshaping the payload. The check results store each requirement row under its subject.
+The `subjects:` key (below) supplies another subject list without reshaping the payload.
+The check results store each requirement row under its subject.
+
+### `subjects:` — split a rule into units, each cached on its own
+
+```yaml
+match: "specs/**"
+subjects: ./subjects.sh
+checks:
+  - judge: ./review.md.j2
+```
+
+`subjects:` is an optional script, resolved from the rule's folder. It is run with the changeset
+payload on stdin and **no session** (no `SR_TRANSCRIPT`, no session id: `run` and `verify` both
+run it, to compute the same keys). It prints a JSON array:
+
+```json
+[{"id": "billing", "files": ["specs/billing.md"], "fingerprint": "9f2c"},
+ {"id": "auth",    "files": ["specs/auth.md"]}]
+```
+
+Each `id` is unique; each subject names at least one selected file; `fingerprint` is optional.
+The rule's requirements and checks then run once per subject, each handed that subject
+(`.subject`), and each subject has its own stored verdict. Without `subjects:` the rule has one
+subject, `changeset`, made of every selected file, and no fingerprint. A fingerprint names what
+that subject's verdict depends on **besides its files' content** (a file a check opens with its
+own tools, a version of an external spec): when it changes, only that subject is run again. It
+must be session-independent and cheap.
 
 A `Changeset` payload, shaped in [events.md](events.md#changeset--what-a-file-guards-checks-receive).
 A script loops over `.changeset.files[]` (a rule about one file at a time — size,
@@ -345,24 +371,33 @@ fails, and none is deleted. The gate's `match` reads the kind's own fields
 
 ## Cached verdicts
 
-Verdicts are stored on the orphan branch `sloprail/checks` (zstd segments, never
-checked out), which `run` pushes to `origin` and `verify` fetches, so another clone,
-another session and CI all read the same results. A judge's verdict is a fact about **(rule, rule hash, check, subject, fingerprint)** and
-nothing else: which session, agent, branch or range produced it is provenance. The
-fingerprint is the sha256 of the judge template, the matched files' content (always), the
-citations' quotes (for `require: citation` rules) and `prepare`'s optional `fingerprint`
-string — not `prepare`'s output, not the rendered prompt, and never a commit, its SHA or its
-message. See [judge-checks.md](judge-checks.md).
+**Every check is cached by content**: a script, a judge and a requirement alike. Verdicts are
+stored on the orphan branch `sloprail/checks` (zstd segments, never checked out), which `run`
+pushes to `origin` and `verify` fetches, so another clone, another session and CI all read the
+same results. One verdict is kept per **guard x subject**, a fact about **(rule, rule hash,
+subject, fingerprint)** and nothing else: which session, agent, branch or range produced it is
+provenance. The rule hash covers every script and template in the rule's folder; the
+fingerprint is the sha256 of the subject's files' content (always), the citations' quotes (for
+`require: citation` rules) and the subject's own `fingerprint` from `subjects:` when it gave one.
+Never `prepare`'s output, the rendered prompt, a commit, its SHA or its message. The verdict
+records each step's status and reason, so `sr-checks show` says which step failed and why.
 
-- **A finished pass with the same key is reused**, with no judge call: after a rebase,
-  a squash, a revert, or by another session. A stored fail is kept so `verify` can say why
-  it is red, but `run` asks the judge again.
-- **Changed input is judged again.** Editing anything under `.sloprail`, or changing
-  `model`, starts the verdicts over.
-- A script is cheap and deterministic and always re-runs.
+- **A finished pass or fail with the same key is a hit**: `run` executes nothing (no script, no
+  judge): after a rebase, a squash, a revert, or by another session. A stored fail is replayed,
+  terminal until the input changes. A miss runs the steps in order, first refusal ends it, and
+  stores the verdict.
+- **Changed input is run again.** Editing anything under `.sloprail`, or changing `model`,
+  starts the verdicts over.
+- **A check that reads anything beyond its subject's files must declare it**, through that
+  subject's `fingerprint` in `subjects:` (a file it opens with `SR_TREE`, an external spec's
+  version). An undeclared dependency is served a stale verdict when it changes.
+- An engine error stores nothing; a refusal that read the session (a `require: skill` or
+  `context`, a `prepare` that refused) is not stored either: asked again next `run`.
 
-`sr-checks verify` re-runs requirements and scripts, looks each judge's key up, and prints
-each subject's latest result; a key with no stored pass is red ("run `sr-checks run`").
+**`sr-checks verify` only reads.** It never executes a script, a judge or a requirement: it
+computes each subject's key (running the `subjects:` script, without a session), reads the
+stored verdict and prints each subject's result. A key with no stored verdict is red ("not
+judged yet, run `sr-checks run --base ... --head ...`"); a stored fail shows its reasons.
 
 **Order.** Within a run, `require` entries and script checks that precede a rule's first
 judge run before any judge starts.

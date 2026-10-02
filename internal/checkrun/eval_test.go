@@ -522,3 +522,105 @@ func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
 	assert.Contains(t, r.Reason, "could not be evaluated")
 	assert.Contains(t, r.Reason, "docs/a.md")
 }
+
+// Every check kind is cached by the guard's content: the same input is a hit (pass or fail,
+// a fail replayed), and `verify` only ever reads what `run` stored.
+func TestEvaluate_AScriptIsCachedByContentAndAFailIsReplayed(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 1, f.runs(t), "a miss runs the script")
+	_, refused = f.evaluate(t, f.results)
+	require.False(t, refused)
+	assert.Equal(t, 1, f.runs(t), "a hit does not run it again")
+
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	require.Equal(t, 2, f.runs(t), "changed content is a miss")
+	r, refused = f.evaluate(t, f.results)
+	require.True(t, refused, "the stored fail is replayed")
+	assert.Contains(t, r.Reason, "forbidden words")
+	assert.Equal(t, 2, f.runs(t), "a replayed fail does not run the script")
+}
+
+func TestEvaluate_VerifyNeverExecutesAnythingAndOnlyReadsStoredVerdicts(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	verify := func() ([]FileGuardResult, []CheckOutcome) {
+		p := f.params(t, f.results)
+		p.Verify = true
+		return Evaluate(p)
+	}
+
+	got, outcomes := verify()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+	assert.Contains(t, got[0].Reason, "sr-checks run --base")
+	assert.Equal(t, "missing", outcomes[0].Status)
+	assert.Equal(t, 0, f.runs(t), "verify did not run the script")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 1, f.runs(t))
+	got, _ = verify()
+	assert.Empty(t, got, "the stored pass is read")
+	assert.Equal(t, 1, f.runs(t), "verify did not run the script")
+
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	got, _ = verify()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet", "new content has no stored verdict")
+	_, _ = f.evaluate(t, f.results)
+	got, _ = verify()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "forbidden words", "the stored fail's reasons")
+	assert.Equal(t, 2, f.runs(t), "verify did not run the script")
+}
+
+// An engine error is no verdict: the next run starts the guard again.
+func TestEvaluate_AnEngineErrorStoresNoVerdict(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	_, refused := f.evaluate(t, failingStore{Store: f.results, check: errors.New("db locked")})
+	require.True(t, refused)
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+}
+
+// `subjects:` splits the selected files into units, each cached on its own; its fingerprint is
+// part of the key, so a change in what a subject depends on re-runs only that subject.
+func TestEvaluate_SubjectsScriptKeysEachSubjectOnItsOwn(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) { g.Subjects = "./subjects.sh" })
+	dep := filepath.Join(t.TempDir(), "dep")
+	require.NoError(t, os.WriteFile(dep, []byte("1"), 0o644))
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		"printf '[{\"id\":\"a\",\"files\":[\"docs/a.md\"],\"fingerprint\":\"%s\"},{\"id\":\"b\",\"files\":[\"docs/b.md\"]}]' \"$(cat '" + dep + "')\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "subjects.sh"), []byte(script), 0o755))
+	f.commitDoc(t, "docs/a.md", "clean")
+	f.commitDoc(t, "docs/b.md", "clean")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 2, f.runs(t), "one run per subject")
+	_, refused = f.evaluate(t, f.results)
+	require.False(t, refused)
+	assert.Equal(t, 2, f.runs(t), "both subjects are hits")
+
+	require.NoError(t, os.WriteFile(dep, []byte("2"), 0o644))
+	_, refused = f.evaluate(t, f.results)
+	require.False(t, refused)
+	assert.Equal(t, 3, f.runs(t), "only the subject whose fingerprint moved is run again")
+
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	assert.Empty(t, got, "verify computes the same keys, without a session")
+	assert.Equal(t, 3, f.runs(t))
+}

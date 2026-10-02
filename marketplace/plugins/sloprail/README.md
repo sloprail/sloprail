@@ -122,10 +122,10 @@ share its name — nor a differently-natured rule of the same name.
 
 File-guards are judged over an explicit range, never by the Stop hook:
 
-    sr-checks run    --base origin/main --head HEAD   # asks a model where no pass is stored; stores and pushes
-    sr-checks verify --base origin/main --head HEAD   # no model, no writes; exit 1 on anything failing or unjudged
+    sr-checks run    --base origin/main --head HEAD   # runs what has no stored verdict; stores and pushes
+    sr-checks verify --base origin/main --head HEAD   # only reads stored verdicts, runs nothing; exit 1 on anything failing or unjudged
 
-Verdicts are keyed by content (rule, rule hash, check, subject, fingerprint), not by
+Every check (script, judge, requirement) is cached; a verdict per guard and subject is keyed by content (rule hash, subject, fingerprint), not by
 commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, so a
 rebase, another clone or CI reads the same results. The Stop hook only verifies: it
 refuses uncommitted work on guarded paths, then verifies each range the session

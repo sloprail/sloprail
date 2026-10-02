@@ -72,7 +72,8 @@ type Check struct {
 	Subject string `json:"subject"`
 	Kind    string `json:"kind"`
 	Status  string `json:"status"`
-	// Fingerprint is the cache key part; "" (a script, a requirement) is never cached.
+	// Fingerprint is the cache key part; only a guard's verdict carries one (its steps inside
+	// it do not), and what has none is not findable.
 	Fingerprint string         `json:"fingerprint,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	Items       []Item         `json:"items,omitempty"`

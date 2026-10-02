@@ -318,20 +318,6 @@ checks:
 	assert.Contains(t, iv.Reason, "neither")
 }
 
-// A prepare belongs with a judge; on a script-only check it can only be a
-// mistake and is refused, so the author learns it does nothing.
-func TestLoad_Check_StrayPrepareOnScript(t *testing.T) {
-	iv := loadOneInvalid(t, map[string]string{
-		"file-guard/stray/file-guard.yaml": `
-match: "**/*.md"
-checks:
-  - script: ./s.sh
-    prepare: ./p.sh
-`,
-	})
-	assert.True(t, hasKind(iv, ErrStrayPrepare), "prepare on a script-only check is refused: %v", iv.Reason)
-}
-
 // A prepare ALONGSIDE a judge is the sanctioned shape and loads.
 func TestLoad_Check_PrepareWithJudge(t *testing.T) {
 	loaded := loadOK(t, map[string]string{
@@ -345,11 +331,11 @@ checks:
 	require.Len(t, loaded.FileGuards, 1)
 	c := loaded.FileGuards[0].Checks[0]
 	assert.True(t, c.isJudge())
-	assert.True(t, c.hasPrepare())
+	assert.True(t, c.Prepare != "")
 }
 
 // model/timeout are judge-only. On a script-only check each can only be a
-// mistake and is refused, the same way a stray prepare is — so the author learns
+// mistake and is refused, so the author learns
 // the field does nothing rather than having it silently ignored.
 func TestLoad_Check_StrayModelOnScript(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{

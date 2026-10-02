@@ -259,7 +259,7 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 `seen` on a Post file event is delivered to **contexts** (and anything else still
 bound to `PostFile*`). A **file-guard** does not receive Post file events: it
 judges commits. What replaces `seen` for it is the verdict cache — unchanged input is
-never re-judged; see [file-guard.md](file-guard.md#cached-verdicts).
+never run again, whatever the check; see [file-guard.md](file-guard.md#cached-verdicts).
 
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
@@ -310,8 +310,8 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
   - a **check** (a script or a judge) has ONE subject by default, the whole
     changeset: `{"id": "changeset", "files": [<every selected file>]}`.
 
-  A future `subjects:` key will supply the list, for requirements and checks alike,
-  in this same shape. A gate's payload has no `subject`: it has `.event`.
+  A rule's `subjects:` script ([file-guard.md](file-guard.md#subjects--split-a-rule-into-units-each-cached-on-its-own))
+  supplies the list instead, in this same shape plus an optional `fingerprint`. A gate's payload has no `subject`: it has `.event`.
   `transcriptPath` and `context` as everywhere.
 
 ### `Stop` — a work cycle ended
