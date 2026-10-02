@@ -76,6 +76,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 		return ""
 	}
 	var owed []uncommittedGuarded
+	covered := map[string]bool{} // trees already walked: one listed twice would owe its paths twice
 	if len(guards) > 0 {
 		root, err := gitrepo.Root(p.Cwd)
 		if err != nil {
@@ -88,6 +89,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 				return refusal
 			}
 			owed = append(owed, o...)
+			covered[treeKey(root)] = true
 		}
 	}
 	if len(reg) > 0 && reg[0] != nil {
@@ -97,6 +99,11 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			return failClosed(err) // a registry that could not be read is not "nothing else was committed"
 		}
 		for _, f := range others {
+			if key := treeKey(f.Path); covered[key] {
+				continue
+			} else {
+				covered[key] = true
+			}
 			loaded := newNatureDeclarations(quiet, f.Path, reg[0])
 			if len(loaded.FileGuards) == 0 {
 				continue
@@ -335,4 +342,12 @@ func setKey(owed []uncommittedGuarded) string {
 		fmt.Fprintf(h, "%c %s\n", u.Status, u.Path)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// treeKey names a tree by its real path, so one reached by a symlinked spelling is the same tree.
+func treeKey(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	return filepath.Clean(path)
 }

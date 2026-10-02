@@ -132,3 +132,20 @@ func TestT003_48_AFeatureBranchFastForwardedToMainStillJudgesSessionCommits(t *t
 		t.Fatalf("a feature-branch session commit that landed upstream was not judged:\n%s", got)
 	}
 }
+
+// (5) the session commits AND fast-forward-pushes to origin/main in ONE command: the hook sees
+// the tip move onto a commit the remote default already holds, and must not read it as a pull.
+func TestT003_48_ACommitPushedFastForwardInOneCommandIsStillJudged(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	remoteWithUpstream(t, e, proj)
+	main := e.Git(proj, "branch", "--show-current")
+
+	script := "mkdir -p docs && echo 'FORBIDDEN words' > docs/a.md && git add -A && git commit -q -m 'add a' && git push -q origin HEAD:refs/heads/" + main
+	e.WriteFile(proj, "../ship.sh", script)
+	e.Run(proj, "s-003-48e", "commit and push", Turns("done",
+		Bash("p1", "sh "+filepath.Join(filepath.Dir(proj), "ship.sh")), // one hook window: the verify-before-push gate reads the command line, not the script
+	))
+	if got := stopRefusals(e, proj, "s-003-48e"); got == "" {
+		t.Fatalf("a session commit pushed fast-forward in the command that made it escaped the Stop:\n%s", got)
+	}
+}

@@ -145,6 +145,11 @@ func TestT056_04_TheAgentCanTrackAnotherBaseAndTakeBackWhatItDropped(t *testing.
 	if r := refs(e, proj, sess, "untrack", "--reason", "dropping it for now"); r.Code != 0 {
 		t.Fatalf("untrack: exit %d:\n%s", r.Code, r.Output)
 	}
+	// A base that is the head (or after it) would empty the range: refused, that is an untrack.
+	e.Run(proj, sess, "work", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
+	if r := refs(e, proj, sess, "track", "--base", e.Git(proj, "rev-parse", "HEAD")); r.Code == 0 {
+		t.Fatalf("a base equal to the head emptied the range without an untrack reason:\n%s", r.Output)
+	}
 	if r := refs(e, proj, sess, "track", "--base", head); r.Code != 0 {
 		t.Fatalf("track: exit %d:\n%s", r.Code, r.Output)
 	}
