@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -106,7 +107,14 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	hasFolder := map[string]bool{}
 	hasHead := map[string]bool{}
 	lastTip := map[string]string{}
+	tipsIn := map[string]map[string]bool{} // folder -> the tips the session recorded there
 	for _, r := range ranges {
+		if r.HeadSHA != "" {
+			if tipsIn[r.Folder] == nil {
+				tipsIn[r.Folder] = map[string]bool{}
+			}
+			tipsIn[r.Folder][r.HeadSHA] = true
+		}
 		hasFolder[r.Folder] = true
 		hasHead[r.Folder+"\x00"+r.Head] = true
 		lastTip[r.Folder+"\x00"+r.Head] = r.HeadSHA
@@ -123,6 +131,9 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		if !ok {
 			continue
 		}
+		// Before this hook refreshes a tip: a branch standing at a commit the session made is
+		// the session's, whether or not it carries anything since the folder was registered.
+		trackSessionTipBranches(reg, rs.ID, folder, f, hasHead, tipsIn[folder])
 		switch {
 		case hasHead[folder+"\x00"+head]:
 			if broughtIn(folder, lastTip[folder+"\x00"+head], sha) {
@@ -139,6 +150,31 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 			// session's rules (verify loads them), from where that rule came into force.
 			trackCurrent(reg, rs.ID, f.Path, f.AgentID, f.BaseRef, false)
 		}
+	}
+}
+
+// trackSessionTipBranches tracks every local branch of folder that stands at a tip the session
+// recorded there (a branch it made, reset away, and recreated at the old SHA: nothing but the
+// session remembers the commit). Such a branch has no commit "since registration" to show, so
+// the usual rule would miss it; its commits are the session's and stay owed until verified.
+func trackSessionTipBranches(reg sessionstate.Store, sessionID, folder string, f sessionstate.Folder, hasHead map[string]bool, tips map[string]bool) {
+	if len(tips) == 0 {
+		return
+	}
+	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name, sha, found := strings.Cut(line, " ")
+		if !found || hasHead[folder+"\x00"+name] || !tips[sha] || sha == f.BaseRef {
+			continue
+		}
+		hasHead[folder+"\x00"+name] = true
+		_ = reg.TrackRange(sessionstate.TrackedRange{
+			SessionID: sessionID, Folder: folder, Head: name, HeadSHA: sha,
+			Base: autoBase(folder, sha, f.BaseRef), AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
+		})
 	}
 }
 

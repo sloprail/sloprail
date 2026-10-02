@@ -195,6 +195,43 @@ func TestDropRemoved_NoHomeKeepsTheRangeTracked(t *testing.T) {
 	assert.True(t, ranges[0].Tracked())
 }
 
+// A branch recreated at a commit the session made (the original reset away) is tracked though it
+// has no commit since registration, and a branch at the folder's registered commit is not.
+func TestTrackMissing_ABranchRecreatedAtATipTheSessionMadeIsTracked(t *testing.T) {
+	proj := initRepo(t)
+	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	base := runGit(t, proj, "rev-parse", "HEAD")
+	reg := openStore(t)
+	rs := rootSession{ID: "s1", Cwd: proj}
+	_, err := reg.RegisterFolder(sessionstate.Folder{SessionID: rs.ID, Path: proj, Role: sessionstate.FolderRoot, GitRoot: proj, BaseRef: base})
+	require.NoError(t, err)
+	p := HookPayload{}
+
+	runGit(t, proj, "switch", "-c", "side")
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "x.md"), []byte("x"), 0o644))
+	runGit(t, proj, "add", "x.md")
+	runGit(t, proj, "commit", "-m", "work")
+	made := runGit(t, proj, "rev-parse", "HEAD")
+	trackMissing(reg, rs, p)
+
+	runGit(t, proj, "reset", "--hard", "main")
+	runGit(t, proj, "branch", "copy", made)
+	runGit(t, proj, "branch", "idle", base)
+	trackMissing(reg, rs, p)
+
+	ranges, err := reg.Ranges(rs.ID)
+	require.NoError(t, err)
+	tracked := map[string]string{}
+	for _, r := range ranges {
+		if r.Tracked() {
+			tracked[r.Head] = r.HeadSHA
+		}
+	}
+	assert.Equal(t, made, tracked["copy"], "a branch at the session's own tip must be tracked")
+	assert.NotContains(t, tracked, "idle", "a branch at the registered commit holds nothing of the session's")
+}
+
 // An untracked range is tracked again at the next hook once its branch's tip moves.
 func TestTrackMissing_AnUntrackedRangeIsTrackedAgainWhenItsTipMoves(t *testing.T) {
 	proj := initRepo(t)
