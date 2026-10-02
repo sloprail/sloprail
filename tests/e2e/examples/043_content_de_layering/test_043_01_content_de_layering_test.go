@@ -187,6 +187,38 @@ func TestT043_04_FileContentReachesTemplate(t *testing.T) {
 	}
 }
 
+// installFactJudge stands in for the model with one that judges the CONTENT it is shown,
+// as the real one does: it refuses (with the given reasoning) a file that restates Dana
+// Per's standing detail inline, and passes any other. A fixed verdict cannot tell a fixed
+// file from a still-bad one once the session's range accumulates its commits: the fixed
+// file is still in the range, so every cycle's run judges it again, and only a judge that
+// reads it can pass it.
+func installFactJudge(e *harness.Env, reasoning string) {
+	e.InstallShim("claude", `#!/bin/sh
+out=""
+bad=no
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      case "$arg" in *"Head of Platform"*) bad=yes ;; esac
+      ;;
+  esac
+done
+[ -n "$out" ] || exit 0
+if [ "$bad" = yes ]; then
+  cat > "$out" <<'VERDICT_EOF'
+{"pass": false, "reasoning": "`+reasoning+`"}
+VERDICT_EOF
+else
+  cat > "$out" <<'VERDICT_EOF'
+{"pass": true, "reasoning": ""}
+VERDICT_EOF
+fi
+exit 0
+`)
+}
+
 // T043_05: a not-fine file RE-FIRES each cycle until it is FIXED — the file-guard's
 // defining property.
 //
@@ -216,7 +248,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	sess := "s-043-05"
 
 	// Cycle 1: the bad file. The judge refuses with a distinct reason.
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R1 Dana Per's role duplicated inline"}`)
+	installFactJudge(e, "R1 Dana Per's role duplicated inline")
 	e.Run(proj, sess, "write a weekly update", Turns("done",
 		Write("w1", "memories/updates/2026-08-18.md", duplicatedUpdate),
 	).ThenCommit("write the files"))
@@ -226,7 +258,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 
 	// Cycle 2: work OUTSIDE the match. A block here can only be the re-fired bad
 	// file, judged afresh with reason R2.
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R2 the duplicated update is still outstanding"}`)
+	installFactJudge(e, "R2 the duplicated update is still outstanding")
 	e.Run(proj, sess, "do unrelated non-matching work", Turns("done",
 		Write("w2", "memories/notes/unrelated.md", "a plain note the guard does not match"),
 	).ThenCommit("write the files"))
@@ -235,7 +267,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	}
 
 	// Cycle 3: FIX the file. Judge passes; the outstanding refusal clears.
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+	installFactJudge(e, "R3 would refuse the duplicated fact")
 	e.Run(proj, sess, "fix the update", Turns("done",
 		Write("w3", "memories/updates/2026-08-18.md", cleanUpdate),
 	).ThenCommit("write the files"))
@@ -243,7 +275,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	// Cycle 4: work OUTSIDE the match again, judge armed to refuse with a NEW
 	// reason. If the fix cleared the outstanding file, nothing re-fires and R4 never
 	// appears.
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R4 must not appear if the fix cleared the file"}`)
+	installFactJudge(e, "R4 must not appear if the fix cleared the file")
 	e.Run(proj, sess, "more unrelated non-matching work", Turns("done",
 		Write("w4", "memories/notes/another.md", "another plain unmatched note"),
 	).ThenCommit("write the files"))
