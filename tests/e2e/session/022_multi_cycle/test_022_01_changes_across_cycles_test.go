@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -238,5 +239,80 @@ func TestT022_03b_RestoredWithTheBasesBytesWithinARangeIsSilent(t *testing.T) {
 		t.Fatalf("a file restored to its base bytes was reported as %v: %v\n"+
 			"the changeset is the net difference between two trees, not a log of what was "+
 			"done to the path along the way", k, second)
+	}
+}
+
+// T022_04: a file left alone after a rule passed it is not put in front of that
+// rule again.
+//
+// Each cycle states the range of the commits it added, so the next range
+// starts after everything that was judged: the untouched file is in the base, not
+// in the change. What it catches is an engine whose range keeps reaching back to
+// the session's start and re-judges everything it can still see.
+//
+// The positive is asserted in the same cycle and the same ledger slice that the
+// negative is read from.
+func TestT022_04_AFileLeftAloneAfterBeingReportedFallsSilent(t *testing.T) {
+	e, proj, ledger := project(t)
+
+	got := cycles(t, e, proj, ledger, "s-022-04",
+		Turns("done",
+			Write("w1", "kept.md", "one\n"),
+			Write("w2", "moved-on.md", "one\n"),
+		).ThenCommit("add both"),
+		Turns("done", Write("w3", "kept.md", "two\n")).ThenCommit("edit kept"),
+	)
+	first, second := got[0], got[1]
+
+	if !changesetkit.Saw(first, "kept.md") || !changesetkit.Saw(first, "moved-on.md") {
+		t.Fatalf("cycle one did not report both files: %v", first)
+	}
+	if !changesetkit.Saw(second, "kept.md") {
+		t.Fatalf("cycle two did not report the file it edited: %v — nothing was observed, so "+
+			"the silence about the other file proves nothing", second)
+	}
+	if k := changesetkit.Statuses(second, "moved-on.md"); len(k) > 0 {
+		t.Fatalf("a file untouched since the previous cycle was reported again as %v: %v\n"+
+			"the range starts at the last cycle's head; reporting it again puts settled work in front "+
+			"of every rule forever", k, second)
+	}
+}
+
+// T022_05: five cycles in one session, each putting only its own work in front
+// of the rule.
+//
+// The compounding case. Every cycle writes and commits a file named for itself;
+// what keeps the rule from being re-asked about the earlier ones is that each
+// cycle's range starts past them. A range that did not advance hands the rule a growing pile: by cycle five, five files where one
+// belongs, each re-ask a fresh model call free to come back with a different
+// answer about work the agent has moved on from.
+//
+// Each cycle is checked as it goes rather than only at the end, so a failure
+// names the cycle the advance stopped holding on.
+func TestT022_05_FiveCyclesEachReportOnlyTheirOwnWork(t *testing.T) {
+	e, proj, ledger := project(t)
+
+	names := []string{"c1.md", "c2.md", "c3.md", "c4.md", "c5.md"}
+	var scenarios []harness.Scenario
+	for i, n := range names {
+		scenarios = append(scenarios, Turns("done",
+			Write(strings.Repeat("w", i+1), n, "written in cycle\n")).ThenCommit("cycle "+n))
+	}
+
+	got := cycles(t, e, proj, ledger, "s-022-05", scenarios...)
+
+	for i, own := range names {
+		this := got[i]
+		if !changesetkit.Saw(this, own) {
+			t.Fatalf("cycle %d did not report its own file %q: %v — this cycle observed "+
+				"nothing, so what it left out proves nothing", i+1, own, this)
+		}
+		for _, earlier := range names[:i] {
+			if k := changesetkit.Statuses(this, earlier); len(k) > 0 {
+				t.Fatalf("cycle %d was handed %q again as %v: %v\nthe range stopped "+
+					"advancing, so every later cycle re-reports the whole session's work",
+					i+1, earlier, k, this)
+			}
+		}
 	}
 }

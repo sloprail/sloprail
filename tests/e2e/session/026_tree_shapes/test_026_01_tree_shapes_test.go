@@ -399,6 +399,28 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 	}
 }
 
+// T026_06: a file the agent COMMITS mid-cycle is judged on the committed bytes.
+//
+// What counts is that work already committed still reaches a rule (016 and 023_11
+// show the same): the range holds the commit, not only outstanding work. (That a
+// settled verdict is not re-asked on a later cycle is a property of the range a
+// caller states, covered by 022_multi_cycle; the Stop no longer remembers passes.)
+func TestT026_06_CommittedWorkIsJudged(t *testing.T) {
+	e, proj, ledger := project(t)
+
+	first := runOne(t, e, proj, ledger, "s-026-06", Turns("done",
+		Write("w1", "committed.md", "written then committed\n"),
+	))
+
+	// The premise: it really was committed, so the range genuinely spans the commit.
+	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
+		t.Fatalf("the file is still outstanding (%q), so this does not test the committed case", status)
+	}
+	if n := countPath(first, "committed.md"); n == 0 {
+		t.Fatalf("work the agent committed mid-cycle was not judged: %v", first)
+	}
+}
+
 // shellArg renders a path as one single-quoted shell word, for a command a
 // scenario hands to the agent.
 func shellArg(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
