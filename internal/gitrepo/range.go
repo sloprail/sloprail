@@ -160,3 +160,17 @@ func DefaultBase(dir, head string) string {
 	}
 	return EmptyTree
 }
+
+// IsDefaultBranch reports whether branch is the repository's default branch: the one origin's
+// HEAD names, else main or master.
+func IsDefaultBranch(dir, branch string) bool {
+	if branch == "" {
+		return false
+	}
+	if out, err := run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimPrefix(strings.TrimSpace(out), "origin/"); ref != "" {
+			return ref == branch
+		}
+	}
+	return branch == "main" || branch == "master"
+}

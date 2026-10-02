@@ -174,3 +174,11 @@ func TestResolveRange_TheEmptyTreeIsTheBaseOfARangeBeforeTheFirstCommit(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, Range{Base: EmptyTree, Head: head}, r)
 }
+
+func TestIsDefaultBranch_OriginsHeadElseMainOrMaster(t *testing.T) {
+	dir := initRepo(t)
+	assert.True(t, IsDefaultBranch(dir, "main"))
+	assert.True(t, IsDefaultBranch(dir, "master"))
+	assert.False(t, IsDefaultBranch(dir, "feat"))
+	assert.False(t, IsDefaultBranch(dir, ""))
+}

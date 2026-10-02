@@ -152,6 +152,12 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	if !ok {
 		return
 	}
+	// Falling back to where the folder was registered is for work on the default branch itself. A
+	// branch cut at the default branch's tip starts there: what the default branch gained since
+	// the session began is upstream's, not the session's.
+	if gitrepo.DefaultBase(folder, sha) == sha && !gitrepo.IsDefaultBranch(folder, head) && len(head) < 40 {
+		startedAt = ""
+	}
 	_ = reg.TrackRange(sessionstate.TrackedRange{
 		SessionID: sessionID, Folder: filepath.Clean(folder), Head: head, HeadSHA: sha,
 		Base: autoBase(folder, sha, startedAt), AddedBy: sessionstate.RangeAuto, AgentID: agent,
