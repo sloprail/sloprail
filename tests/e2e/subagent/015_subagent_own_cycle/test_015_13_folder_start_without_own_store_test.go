@@ -45,7 +45,7 @@ func TestT015_13_AFolderIsFoundByItsPathWhenTheAgentsOwnStoreHasNoStart(t *testi
 	))
 
 	// B and C have landed on the default branch; the sub-agent's worktree is cut from main at C.
-	e.Git(proj, "update-ref", "refs/remotes/origin/main", "HEAD")
+	e.PushBranch(proj, "main")
 	wt := filepath.Join(proj, ".claude", "worktrees", "agent-x")
 	e.Git(proj, "worktree", "add", "-q", "-b", "worktree-agent-x", wt, "HEAD")
 	c := e.Git(proj, "rev-parse", "HEAD")
@@ -57,7 +57,7 @@ func TestT015_13_AFolderIsFoundByItsPathWhenTheAgentsOwnStoreHasNoStart(t *testi
 	e.WriteFile(other, "docs/old.md", "FORBIDDEN in OLD")
 	e.CommitAll(other, "OLD: before the sub-agent touched this repository")
 	otherHead := e.Git(other, "rev-parse", "HEAD")
-	e.Git(other, "update-ref", "refs/remotes/origin/main", otherHead) // OLD has landed
+	e.PushBranch(other, "main") // OLD has landed
 
 	record := e.TranscriptPath(proj, sess)
 	payload := func(event, cwd string, extra map[string]any) string {
