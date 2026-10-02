@@ -28,8 +28,8 @@ checks:
 runs — here a citation of the user's words, `when` the change removes something
 ([grounding.md](grounding.md)). `checks` is the list of checks, run in order, first
 refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
-judge ([judge-checks.md](judge-checks.md)). `deletions` is the one
-nature-specific knob, below; it is optional.
+judge ([judge-checks.md](judge-checks.md)). `deletions` and `subjects` are the
+nature-specific knobs, below; both are optional.
 
 A file-guard's match sees a file's own facts **bare** — `path`, `status`,
 `markers`, `oldMarkers`, `trailers`, `context`, not `event.path`

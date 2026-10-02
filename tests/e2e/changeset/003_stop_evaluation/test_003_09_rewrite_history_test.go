@@ -134,9 +134,9 @@ func TestT003_30_ASoftResetWatermarkFallsBackToItsMergeBaseAndIsJudgedAgain(t *t
 }
 
 // T003_11: the same through a rebase. The passed head is rewritten onto new
-// upstream work; the range widens to include it (named in `others` and in the
-// commits) and is judged again — passing here — and the watermark then moves to the
-// new head, so a further Stop judges nothing.
+// upstream work; the range widens to include it, but what the judge is about is the
+// matched files' content, which the rebase did not change: the stored pass is a hit
+// (no second judge call), and a further Stop judges nothing either.
 func TestT003_11_ARebasedWatermarkFallsBackAndTheRangeIsJudgedAgain(t *testing.T) {
 	e, proj := startedJudgeProject(t, "s-003-11", verdictPass)
 	floor := e.Git(proj, "rev-parse", "HEAD")
@@ -161,18 +161,15 @@ func TestT003_11_ARebasedWatermarkFallsBackAndTheRangeIsJudgedAgain(t *testing.T
 	if r := e.StopJudged(proj, "s-003-11", false); harness.Blocked(r) {
 		t.Fatalf("a rebased range that passes was refused:\n%s", r.Output)
 	}
-	if n := e.JudgeCalls(proj, promptFile, ""); n != 2 {
-		t.Fatalf("the widened range should have been judged again (%d calls)", n)
-	}
-	if !strings.Contains(e.JudgePrompt(proj, promptFile), "[upstream work]") {
-		t.Fatalf("the rebased range should carry the upstream commit:\n%s", e.JudgePrompt(proj, promptFile))
+	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
+		t.Fatalf("the rebased range holds the same matched content, so the stored pass is a hit and the judge is not asked again (%d calls)", n)
 	}
 
 	// It passed at the new head: nothing new is judged.
 	if r := e.StopJudged(proj, "s-003-11", false); harness.Blocked(r) {
 		t.Fatalf("refused:\n%s", r.Output)
 	}
-	if n := e.JudgeCalls(proj, promptFile, ""); n != 2 {
+	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
 		t.Fatalf("a Stop after the pass asked the judge again (%d calls)", n)
 	}
 }
