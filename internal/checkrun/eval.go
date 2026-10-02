@@ -22,6 +22,7 @@ import (
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // Evaluating file-guards over an explicit range: one changeset per rule.
@@ -64,6 +65,9 @@ type Params struct {
 	Store checkstore.Store
 	// Verify: a judge is looked up, never asked; nothing is recorded.
 	Verify bool
+	// Recorded is the citations the session already recorded per file (sr-file --cite),
+	// oldest first; a citation refusal hands them back as the trailer to paste.
+	Recorded map[string][]transcript.Citation
 }
 
 // FileGuardResult is one file-guard's outcome: the guard's name, how a refusal should
@@ -617,7 +621,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 	}
 	reason := "a citation grounds only the commit it is in; an empty commit carrying only the trailer does not count. " +
 		"Not grounded by a citation in the commit that last changed it: " + strings.Join(failed, ", ") + ".\n" +
-		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe()) + "\n" + body + unresolvedNote(unresolved)
+		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe(), ev.recordedQuotes(failed, p.Citation.Pools())) + "\n" + body + unresolvedNote(unresolved)
 	return dispatchcore.Verdict{Refused: true, Reason: reason}, nil
 }
 
@@ -636,7 +640,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 // starts before the first commit has no commit to reset to). Undoing is `git revert`,
 // never `git reset --hard`.
 // Several quotes on one commit are fine.
-func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool) string {
+func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool, recorded []recordedQuote) string {
 	var b strings.Builder
 	b.WriteString("Last changed by:")
 	allHead := true
@@ -654,6 +658,15 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 		fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, tip))
 	}
 	line := trailer + ": <exact quote>"
+	if len(recorded) > 0 {
+		// The agent already cited these files (sr-file --cite): hand back the
+		// quote it found, as the exact trailer to paste, never a placeholder.
+		line = recorded[0].Trailer + ": " + recorded[0].Quote
+		b.WriteString("\nQuotes already recorded for these files this session (sr-file --cite), each the trailer line to paste into the commit message:")
+		for _, r := range recorded {
+			fmt.Fprintf(&b, "\n  %s: %s: %s", r.Path, r.Trailer, r.Quote)
+		}
+	}
 	quoted := make([]string, len(files))
 	for i, f := range files {
 		quoted[i] = "'" + f + "'"

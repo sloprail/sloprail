@@ -248,7 +248,7 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	refusals, _ := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
-		ContextMap: contextMap, Store: results, Verify: true,
+		ContextMap: contextMap, Store: results, Verify: true, Recorded: recordedCitations(p, store),
 	})
 	if len(refusals) == 0 {
 		return ""
@@ -500,4 +500,20 @@ lists what was untracked with the reason you give, so say it plainly.`,
 	cmd.Flags().StringVar(&head, "head", "", "The range's head (default: the current branch)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Why the range is dropped (required)")
 	return cmd
+}
+
+// recordedCitations is the citations this session (and the sessions sharing its tree) recorded
+// per file with `sr-file --cite`, oldest first: what a refusal hands back as the trailer to paste.
+func recordedCitations(p HookPayload, store sessionstate.Store) map[string][]transcript.Citation {
+	out := map[string][]transcript.Citation{}
+	record, _ := p.record()
+	others, _ := otherHistories(p, record)
+	for _, hist := range []map[string][]historyPoint{historyIn(store, true), others} {
+		for path, pts := range hist {
+			for _, pt := range pts {
+				out[path] = append(out[path], pt.Cites...)
+			}
+		}
+	}
+	return out
 }
