@@ -25,9 +25,7 @@ func TestT003_39_ACommitInARepositoryOutsideTheRootIsJudged(t *testing.T) {
 		Bash("b1", "cd "+other+" && "+write("FORBIDDEN words")+" && git add -A && git commit -q -m 'violate'"),
 	))
 	got := stopRefusals(e, proj, "s-003-39")
-	// A run from another repository finds no session record, so it stores no refusal: the Stop's
-	// verify says "not judged yet", naming the folder and the file the rule is about.
-	if !strings.Contains(got, "docs/x.md") || !strings.Contains(got, other) {
+	if !strings.Contains(got, refusalText) || !strings.Contains(got, other) {
 		t.Fatalf("a commit in a repository outside the root was not judged and named:\n%s", got)
 	}
 	blocks := stopBlocks(e, proj, "s-003-39")

@@ -52,8 +52,7 @@ func TestT003_66_AnotherRepositoryIsJudgedByItsOwnRulesNeverTheRoots(t *testing.
 		Bash("b3", commitIn("lib/z.md", "FORBIDDEN words", "lib in the other repository")),
 	))
 	got := newBlocks(e, proj, sess, blocks)
-	// (A run from another repository stores no refusal, so the Stop says "not judged yet" for its own rule.)
-	if !strings.Contains(got, `file-guard "libs"`) || !strings.Contains(got, other) || !strings.Contains(got, "lib/z.md") {
+	if !strings.Contains(got, refusalText) || !strings.Contains(got, other) || !strings.Contains(got, "lib/z.md") {
 		t.Fatalf("the other repository's own rule did not refuse its violation, naming the folder:\n%s", got)
 	}
 	blocks = stopBlocks(e, proj, sess)

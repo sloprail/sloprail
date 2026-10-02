@@ -81,7 +81,7 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 	base := e.stopBase(projDir, sessionID)
 	e.preStopRuns++
 	rootRun := "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base " + shQuote(base) + " --head HEAD >/dev/null 2>&1"
-	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "cd "+shQuote(projDir)+" && "+rootRun+"; "+runTrackedRanges(false))
+	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "export CLAUDE_CODE_SESSION_ID="+shQuote(sessionID)+"; cd "+shQuote(projDir)+" && "+rootRun+"; "+runTrackedRanges(false))
 	out := s
 	out.turns = append(append([]Turn{}, s.turns...), turn)
 	return out
@@ -92,7 +92,8 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 // folder — sub-agent worktrees, other repositories, branches it left — exactly as `refs list`
 // prints them (a branch that is gone is run at the commit it last pointed at, a folder that is gone is
 // skipped with a line saying so). The ranges are read when the step runs, since the commits they cover do not exist
-// when the scenario is written. A sub-agent (own=true) runs only the ranges of its own worktree.
+// when the scenario is written. The run carries the session id, as a real agent's Bash does, so a
+// folder outside the session's tree still resolves the session. A sub-agent (own=true) runs only the ranges of its own worktree.
 // A refusal is the judges' answer (the Stop reports it); anything else that goes wrong —
 // `refs list` failing, a folder or range `run` cannot use (nothing on stdout, a non-zero exit) — is
 // printed and fails the turn, never swallowed.
