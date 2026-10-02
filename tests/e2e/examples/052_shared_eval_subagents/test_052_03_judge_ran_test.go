@@ -74,15 +74,6 @@ func (f *judgeFixture) judge(pass bool) {
 		verdict = `{"pass": false, "reasoning": "not clean"}`
 	}
 	f.e.InstallJudgeClaude(verdict)
-	// The session has a transcript, as the agent's does: a refusal reached without one is
-	// stored for no key (any check may read the transcript), so it would not be a verdict.
-	tp := f.e.TranscriptPath(f.proj, judgeSession)
-	if err := os.MkdirAll(filepath.Dir(tp), 0o755); err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(tp, []byte(`{"type":"user","uuid":"u1","message":{"role":"user","content":"work"}}`+"\n"), 0o644); err != nil {
-		f.t.Fatal(err)
-	}
 	f.e.CheckRunRaw(f.proj, judgeSession, "origin/main", "HEAD")
 }
 
