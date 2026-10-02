@@ -1233,6 +1233,21 @@ func (e *Env) DeleteMeta(projDir, sessionID, key string) {
 	}
 }
 
+// CorruptSessionState overwrites a session's state database with bytes that are not a
+// database: the registry of its tracked ranges and folders becomes unreadable, the way a
+// damaged or half-written file would.
+func (e *Env) CorruptSessionState(projDir, sessionID string) {
+	e.t.Helper()
+	path := e.sessionDBPath(projDir, sessionID)
+	if err := os.WriteFile(path, []byte("this is not a database, it is garbage that cannot be read\n"), 0o644); err != nil {
+		e.t.Fatalf("harness: corrupt session state: %v", err)
+	}
+	// A WAL or journal left beside it would be replayed over the garbage.
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		_ = os.Remove(path + suffix)
+	}
+}
+
 // SessionFolders is the folders the engine registered for a session — its own
 // repository, the worktrees its sub-agents were dispatched into and the repositories a
 // command ran in — as the root session's store holds them. The session's identity is the one
