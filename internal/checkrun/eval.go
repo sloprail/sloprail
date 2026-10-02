@@ -477,8 +477,16 @@ func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Ran
 		LaunchedBy:     AppendLaunchedBy(os.Getenv, g.Name),
 		Changeset:      &payload,
 		// SR_SESSION_START is kept for rules written against it: what stood before the work is the base.
-		Env: append(changeset.Env(tree, r.Base, r.Head), "SR_SESSION_START="+r.Base),
+		Env: append(changeset.Env(tree, r.Base, r.Head), ev.agentEnv("SR_SESSION_START="+r.Base)...),
 	}
+}
+
+// agentEnv appends SR_AGENT_ID, the sub-agent a run is made as, to env when there is one.
+func (ev *changesetEvaluation) agentEnv(env ...string) []string {
+	if ev.params.AgentID != "" {
+		env = append(env, "SR_AGENT_ID="+ev.params.AgentID)
+	}
+	return env
 }
 
 // guardSubjects runs the rule's `subjects:` script: the changeset payload on stdin, no

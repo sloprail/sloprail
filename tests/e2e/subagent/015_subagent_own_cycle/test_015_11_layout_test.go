@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,7 +45,14 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
 	}
 
-	lines := subLedger(t, proj, theWorktree(t, proj), "recorder", "log")
+	wt := theWorktree(t, proj)
+	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-12", e.RunBase("s-015-12"), "HEAD")
+	lines := subLedger(t, proj, wt, "recorder", "log")
+	for _, l := range lines {
+		if agentOf(l) == "" {
+			t.Fatalf("the file-guard judged without the sub-agent's identity: %s", l)
+		}
+	}
 	if len(lines) == 0 {
 		t.Fatalf("the sub-agent's cycle judged nothing, though it created a file in its own "+
 			"tree:\n%s", res.Output)

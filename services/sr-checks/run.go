@@ -93,7 +93,7 @@ const (
 // session is the session this is run from, when there is one: the record a citation resolves
 // in and the state the contexts are read from. Everything may be absent (CI, a bare checkout).
 type session struct {
-	record, id, workspace string
+	record, id, agentID, workspace string
 	subagent              bool
 	state                 sessionstate.Store
 }
@@ -123,12 +123,23 @@ func openSession(root string) session {
 				// A sub-agent's Bash shares its parent's session record; what says the folder is
 				// a sub-agent's is the session's own row for it.
 				if f, ok, err := st.Folder(id.ID, root); err == nil && ok && f.AgentID != "" {
-					s.subagent = true
+					s.adoptSubagent(f.AgentID)
 				}
 			}
 		}
 	}
 	return s
+}
+
+// adoptSubagent makes this session the sub-agent's: the session id stays the parent's (the state
+// is keyed on it), but the record a citation resolves in is the sub-agent's own transcript, and
+// what is recorded carries its agent id.
+func (s *session) adoptSubagent(agentID string) {
+	s.subagent = true
+	s.agentID = agentID
+	if path, err := transcript.SubagentTranscriptPath(s.record, agentID); err == nil {
+		s.record = path
+	}
 }
 
 // target is what a command works over: the repository, the range, the rules and the session.
@@ -190,7 +201,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	results := checkstore.Open(cache, m != modeRun)
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: cmd.ErrOrStderr(), Guards: t.loaded.FileGuards, Root: t.root, Range: t.rng,
-		Cwd: t.root, Transcript: t.sess.record, Workspace: t.sess.workspace, SessionID: t.sess.id, Subagent: t.sess.subagent,
+		Cwd: t.root, Transcript: t.sess.record, Workspace: t.sess.workspace, SessionID: t.sess.id, AgentID: t.sess.agentID, Subagent: t.sess.subagent,
 		Store: results, Verify: m != modeRun, Recorded: recordedCitations(t.sess, t.root),
 	})
 	if err := results.Close(); err != nil {

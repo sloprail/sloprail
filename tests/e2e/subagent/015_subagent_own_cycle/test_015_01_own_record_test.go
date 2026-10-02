@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -66,6 +67,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	}
 
 	// (1) The sub-agent's own cycle judged the file the sub-agent made.
+	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-01", e.RunBase("s-015-01"), "HEAD")
 	subLines := subLedger(t, proj, wt, "recorder", "log")
 	if len(subLines) == 0 {
 		t.Fatalf("nothing was judged at the isolated sub-agent's own cycle. Its work is in its "+
@@ -81,6 +83,16 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	rootLines := e.FileGuardLedgerLines(proj, "recorder", "log")
 	if _, ok := lineAbout(rootLines, "only-the-root-made-this.md"); !ok {
 		t.Fatalf("the root's own write was not judged (%v), so the check below would pass vacuously", rootLines)
+	}
+
+	// (1b) The FILE-GUARD itself ran as the sub-agent: it is handed the sub-agent's agent id,
+	// and the root's own run is handed none.
+	subJudged, _ := lineAbout(subLines, "only-the-sub-made-this.md")
+	if agentOf(subJudged) == "" {
+		t.Fatalf("the file-guard judged the sub-agent's file without the sub-agent's identity: %s", subJudged)
+	}
+	if rootJudged, _ := lineAbout(rootLines, "only-the-root-made-this.md"); agentOf(rootJudged) != "" {
+		t.Fatalf("the root's file-guard run carried a sub-agent identity: %s", rootJudged)
 	}
 
 	// (2) The sub-agent's cycle ran as ITSELF. The identity is the whole invariant: an
@@ -223,7 +235,13 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	}
 
 	wt := theWorktree(t, proj)
+	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-05", e.RunBase("s-015-05"), "HEAD")
 	lines := subLedger(t, proj, wt, "recorder", "log")
+	for _, l := range lines {
+		if agentOf(l) == "" || agentOf(l) != agentOf(lines[0]) {
+			t.Fatalf("the file-guard did not judge everything as one sub-agent identity: %v", lines)
+		}
+	}
 	for _, want := range []string{"sub-one.md", "sub-two.md", "sub-three.md"} {
 		if !containsPath(lines, want) {
 			t.Fatalf("the sub-agent's cycle did not judge %s. A cycle judging only some of what it "+

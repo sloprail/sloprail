@@ -40,12 +40,12 @@ func TestT042_20_AProjectGateCannotShadowTheGate(t *testing.T) {
 	}
 }
 
-// T042_15 (unlanded disable): a protected rule's disable that is committed but not yet on
+// T042_32 (unlanded disable): a protected rule's disable that is committed but not yet on
 // the default branch is not honoured: the range starts at the merge base with origin's
 // default branch, where the rule is still on, so the rule judges the range (the disable
 // included) and an uncited loosening of a rule is refused rather than the rule going quiet.
 // (The old session-start meta this was keyed on is gone; the range base is the merge base.)
-func TestT042_15_AnUnlandedProtectedDisableIsNotHonoured(t *testing.T) {
+func TestT042_32_AnUnlandedProtectedDisableIsNotHonoured(t *testing.T) {
 	e := harness.New(t, harness.WithOnlyShippedFileGuard(ruleName), harness.KeepOrigin())
 	proj := e.Project()
 	e.WriteFile(proj, ".sloprail/file-guard/demo/file-guard.yaml", demoYAML)
