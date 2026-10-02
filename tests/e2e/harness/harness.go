@@ -1052,15 +1052,17 @@ func (e *Env) GitInit(dir string) {
 	e.t.Helper()
 	InitRepo(e.t, dir)
 	e.excludeMockFiles(dir)
+	// `enabled:` goes in first, so `disabled:` stays the config's last key: tests append
+	// list items to it with printf.
+	if len(e.enabledShipped) > 0 {
+		e.enableShipped(dir, e.enabledShipped)
+	}
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
 		e.DisablePluginGuardrail(dir, shippedGates...)
 	}
 	if len(e.withoutShipped) > 0 {
 		e.DisablePluginGuardrail(dir, e.withoutShipped...)
-	}
-	if len(e.enabledShipped) > 0 {
-		e.enableShipped(dir, e.enabledShipped)
 	}
 	if e.onlyShipped != "" {
 		var others []string
