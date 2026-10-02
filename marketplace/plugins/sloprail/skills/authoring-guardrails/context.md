@@ -172,11 +172,13 @@ first.)
 ### The Stop order
 
 At Stop the work runs in one fixed order: **context enters → commit-required →
-file-guards → gates → context exits.** Enters come first, so commit-required, a
-file-guard's `match`/`when`/checks and a gate's `match`/`require` all read the
-contexts this turn entered, not last turn's state. Exits come last, so a context
-that closes at this Stop is still active for every rule judged at that same Stop,
-and is closed afterwards. (Before a tool call the order is enters, then structure
+tracked-range verify → gates → context exits.** Enters come first, so
+commit-required, the verify of the session's tracked ranges (no model; see
+[file-guard.md](file-guard.md#where-it-is-enforced)) and a gate's `match`/`require`
+all read the contexts this turn entered, not last turn's state. Exits come last, so
+a context that closes at this Stop is still active for every rule checked at that
+same Stop, and is closed afterwards. A file-guard is not judged at Stop: `sr-checks
+run` judges it, and reads the contexts of the session it is run from. (Before a tool call the order is enters, then structure
 gates, then gates.)
 
 Note that a `match` reads `context[...]` at **run time** (context names are

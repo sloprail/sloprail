@@ -1,11 +1,10 @@
 # File-guard
 
-A file-guard judges a **changeset**: the net change between two commits — what
-the agent committed since the rule last passed. Its whole job is to answer "is
-this change OK?". It judges **commits**, never the working tree, so a half-finished
-edit is never judged; it is post-factum only, and it keeps refusing (replaying its
-verdict) until the change is fixed. It never acts before a write lands — refusing
-a write or a delete *before* it happens is a **gate's** job (below).
+A file-guard judges a **changeset**: the net change over a range of commits,
+`merge-base(base, head)..head`. Its whole job is to answer "is this change OK?".
+It judges **commits**, never the working tree, so a half-finished edit is never
+judged. It is post-factum only: it never acts before a write lands — refusing a
+write or a delete *before* it happens is a **gate's** job (below).
 
 ```
 .sloprail/file-guard/<name>/file-guard.yaml
@@ -36,22 +35,22 @@ A file-guard's match sees a file's own facts **bare** — `path`, `status`,
 `markers`, `oldMarkers`, `trailers`, `context`, not `event.path`
 ([matchers.md](matchers.md)).
 
-## When it fires: when `sr check run` judges a range
+## When it fires: `sr-checks run` over an explicit range
 
 A file-guard judges **an explicit range of commits**, stated by whoever runs it:
 
 ```bash
-sr check run    --base origin/main --head HEAD   # judges; asks a model where it must; stores verdicts
-sr check verify --base origin/main --head HEAD   # deterministic: asks no model, writes nothing; exit 1 = red
+sr-checks run    --base origin/main --head HEAD   # judges; asks a model only where no pass is stored; stores the verdicts
+sr-checks verify --base origin/main --head HEAD   # deterministic: asks no model, writes nothing; exit 1 = red
+sr-checks show   --base origin/main --head HEAD   # each subject's latest stored result; always exit 0
 ```
 
-`--base` and `--head` are both required (a branch, a tag or a sha). The range is
-`merge-base(base, head)..head` as one squashed net diff (`git diff -M base head`), so a
-base that is behind only widens it. The Stop hook does **not** evaluate file-guards: it
-cannot know the range. Nothing tracks a session, a branch or what was judged before; the
-same content in the range is the same input however it got there (a rebase, a squash, a
-revert and re-apply). A range where `match` selects nothing is a pass with no `files`,
-never the same as a range that could not be computed.
+(`sr checks …` is the same command through the `sr` proxy.) `--base` and `--head` are both
+required (a branch, a tag or a sha). The range is `merge-base(base, head)..head` as one
+squashed net diff, so a base that is behind only widens it. The commands know nothing of
+sessions or branches: the same content in the range is the same input however it got
+there (a rebase, a squash, a revert and re-apply). A range where `match` selects nothing
+is a pass with no `files`, never the same as a range that could not be computed.
 
 Anything that goes wrong in the engine (git, the rule's folder, a store that cannot be
 read) fails the run closed.
@@ -69,21 +68,87 @@ from (with the markers it carried there): moving a file out of a guarded path,
 uncommitted rename under commit required. `deletions:` does not change this — a
 rename is not a deletion.
 
-**Commit required.** Work that is not committed cannot be judged, so at Stop an
-uncommitted change to a path some file-guard's `match` selects refuses the Stop:
-"commit these". It is always on, never commits for the agent, applies only to an
-agent that owns the tree (a sub-agent working in the session's own tree is not
-gated, one in a worktree of its own is), and lets go after `stop_hook_block_cap`
-refusals of the same uncommitted set. Put the user's words in the commit message
-as a trailer where the change is grounded (below).
-
 The change is already committed, so refusing does not undo it; it tells the agent
-the cycle is not finished and it must fix what it did — by committing a fix, which
-is judged together with the commits it fixes. The net result is what is judged:
-if a later commit fully restores what an earlier one removed, the range passes.
-That makes a file-guard right for a rule about the **result** of a piece of work
-("every new file under `memories/` has frontmatter"). It is never handed a `Pre*`
-event, and its checks read the commits, never the working tree.
+it must fix what it did — by committing a fix, which is judged together with the
+commits it fixes. The net result is what is judged: if a later commit fully restores
+what an earlier one removed, the range passes. That makes a file-guard right for a
+rule about the **result** of a piece of work ("every new file under `memories/` has
+frontmatter"). It is never handed a `Pre*` event, and its checks read the commits,
+never the working tree.
+
+## Where it is enforced
+
+`run` is the only command that asks a model or writes. Everything else verifies:
+
+- **At Stop** (no model, nothing written). First **commit required**: an uncommitted
+  change to a path some file-guard's `match` selects refuses the Stop with "commit
+  these" (never commits for the agent; applies only to an agent that owns the tree;
+  lets go after `stop_hook_block_cap` refusals of the same uncommitted set). Then
+  each **tracked range** of the session (below) is verified like `sr-checks verify`,
+  from the local results: a range with no stored pass is refused with the
+  `sr-checks run` command that produces it.
+- **Before a push**, optionally, a git `pre-push` hook (below).
+- **In CI**, `sr-checks verify` as a required status check (below). This is the
+  backstop for anything a session did not track.
+
+### Session folders and tracked ranges
+
+The session keeps a registry of the folders it works in — its own repository, a
+sub-agent's worktree, a repository a `git` command ran in (`git -C ../other commit`)
+— and, per folder, the ranges of commits it answers for. When a folder is found its
+current branch is **tracked automatically**, from where the work started (the merge
+base with the default branch). The agent can change that:
+
+```bash
+sr-session refs list                                        # tracked and untracked ranges
+sr-session refs track   [--folder D] [--base REV] [--head REF]   # track a range (replaces its base)
+sr-session refs untrack --reason TEXT [--folder D] [--head REF]  # stop answering for it
+```
+
+Untracking is allowed freely — CI is the backstop — but the Stop lists what was
+untracked, with the reason. A removed worktree's ranges are untracked for it. A
+folder's own `.sloprail` rules apply in it: gates judge the calls made there and
+commit required covers its uncommitted work.
+
+### Pre-push hook
+
+```sh
+#!/bin/sh
+# .git/hooks/pre-push — judge what is about to be pushed
+while read -r _ sha _ _; do
+  [ "$sha" = 0000000000000000000000000000000000000000 ] && continue
+  sr-checks run --base origin/main --head "$sha" || exit 1
+done
+```
+
+`run` pushes the new results to `sloprail/checks` on `origin` itself.
+
+### CI
+
+```yaml
+name: sloprail
+on: { pull_request: { branches: [main] } }
+permissions: { contents: read }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }      # the merge base is needed
+      - run: |
+          curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: sr-checks verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
+```
+
+`verify` fetches `sloprail/checks` from `origin` and reads it; it never writes. Make
+the job a required status check. Red means some subject has no stored pass: run
+`sr-checks run` over the same range and push.
+
+Session-only requirements are not re-checked by `verify` (a skill that must have been
+loaded, a context that must have been open): they are checked where the session ran.
+A `require: citation` counts the `Sloprail-Cites-*` trailer on the commit that last
+changed the file, which the repository alone can show.
 
 ## What a check receives
 
@@ -108,7 +173,7 @@ frontmatter — is that loop), reading whatever else it needs from `SR_TREE`
 ## Seeing what a rule will be handed
 
 ```bash
-sr-session changeset --rule size-limit --base origin/main --head HEAD
+sr-checks changeset --rule size-limit --base origin/main --head HEAD
 ```
 
 prints JSON and **runs nothing**: no check, no judge, no verdict stored. Use it to
@@ -159,7 +224,7 @@ bytes about to be lost. A call that changes several files (`rm a.go b.go`, two
 refusal names every file it refused.
 
 Keep what the gate decides small and cheap (a `require`, a script); keep the judge
-in the file-guard, which rules on the committed result at Stop.
+in the file-guard, which rules on the committed result (`sr-checks run`).
 A script both halves need is written once, as a library that keeps no event-kind
 logic (in the file-guard folder, `<script>-lib.sh`); each half keeps a thin entry
 that reads its own input — the `Pre*` event in the gate, the `Changeset` in the
@@ -170,7 +235,7 @@ file-guard — and sources it (`. "$lib_dir/<script>-lib.sh"`; the gate's entry 
 or `git` edit whose result the engine cannot derive reaches the gate with
 `resultKnown: false` and an empty `newContent`. A gate whose decision reads the
 content must refuse it (see [The resultKnown discipline](#the-resultknown-discipline)),
-or the write slips through to be judged only at Stop.
+or the write slips through to be judged only once it is committed.
 
 ## Grounded changes
 
@@ -267,7 +332,9 @@ fails, and none is deleted. The gate's `match` reads the kind's own fields
 
 ## Cached verdicts
 
-A judge's verdict is a fact about **(rule, rule hash, check, subject, fingerprint)** and
+Verdicts are stored on the orphan branch `sloprail/checks` (zstd segments, never
+checked out), which `run` pushes to `origin` and `verify` fetches, so another clone,
+another session and CI all read the same results. A judge's verdict is a fact about **(rule, rule hash, check, subject, fingerprint)** and
 nothing else: which session, agent, branch or range produced it is provenance. The
 fingerprint covers everything the judge is given — the changed files' content and diffs,
 markers, the citations' quotes, the model, what `prepare` supplied, the rule's whole
@@ -279,14 +346,11 @@ markers, the citations' quotes, the model, what `prepare` supplied, the rule's w
 - **Changed input is judged again.** Editing anything under `.sloprail`, or changing
   `model`, starts the verdicts over.
 - A script is cheap and deterministic and always re-runs.
-- **TODO:** a rule's one subject is the whole changeset today; per-file subjects will let a
-  one-line fix re-judge one file.
 
-`sr check verify` re-runs requirements and scripts, looks each judge's key up, and prints
-each subject's latest result; a key with no stored pass is red ("run `sr check run`").
+`sr-checks verify` re-runs requirements and scripts, looks each judge's key up, and prints
+each subject's latest result; a key with no stored pass is red ("run `sr-checks run`").
 
-**Order.** Commit-required is the only file-guard work left at Stop (below); the rest is
-`sr check`. Within a run, `require` entries and script checks that precede a rule's first
+**Order.** Within a run, `require` entries and script checks that precede a rule's first
 judge run before any judge starts.
 
 **Rules run concurrently, scripts before judges.** The file-guards of one run are

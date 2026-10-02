@@ -73,7 +73,7 @@ The gate refuses **before** the action, preventing it. Examples:
 ### Preventing a write or a delete — `PreFileWrite` and `PreFileDelete`
 
 This is where writes and deletes are **prevented**. A file-guard judges only what
-settled at Stop; the gate is the one that refuses before the bytes land or the
+was committed (`sr-checks run`); the gate is the one that refuses before the bytes land or the
 file goes. (A `preventive:` key on a file-guard no longer exists — such a
 declaration is refused at load. Split it into a gate like the ones below plus a
 plain file-guard for the settled result; see [file-guard.md](file-guard.md).)
@@ -120,7 +120,7 @@ checks:
   (see [file-guard.md](file-guard.md), "The resultKnown discipline"). A
   `PreFileWrite` or `PreFileDelete` gate holds only cheap checks — a `require`, a
   script; the judge belongs to the file-guard of the same name, which judges the
-  settled file at Stop. The exception is a gate whose judge is not about a file
+  committed file (`sr-checks run`). The exception is a gate whose judge is not about a file
   write: a `Stop` gate or a `PreCommandInvoke` gate may keep its judge
   (`examples/action-proof` `screenshot-proves-fields`, `examples/no-unasked-commit`
   `require-live-ask-for-commit`).

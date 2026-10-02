@@ -120,14 +120,19 @@ share its name — nor a differently-natured rule of the same name.
 
 ## Judging file-guards
 
-File-guards are judged over an explicit range, not at Stop:
+File-guards are judged over an explicit range, never by the Stop hook:
 
-    sr check run    --base origin/main --head HEAD
-    sr check verify --base origin/main --head HEAD
+    sr-checks run    --base origin/main --head HEAD   # asks a model where no pass is stored; stores and pushes
+    sr-checks verify --base origin/main --head HEAD   # no model, no writes; exit 1 on anything failing or unjudged
 
-`run` asks a model where no stored pass exists for exactly that content and stores the
-verdicts; `verify` is deterministic (no model, no writes) and exits 1 on anything failing
-or unjudged, so it can be a required CI check.
+Verdicts are keyed by content (rule, rule hash, check, subject, fingerprint), not by
+commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, so a
+rebase, another clone or CI reads the same results. The Stop hook only verifies: it
+refuses uncommitted work on guarded paths, then verifies each range the session
+tracks (`sr-session refs list|track|untrack`; a folder's current branch is tracked
+automatically). CI runs `sr-checks verify` as a required check. The setup, a
+`pre-push` hook and the CI job are in
+`skills/authoring-guardrails/file-guard.md`.
 
 ## Changes to a project's rules
 

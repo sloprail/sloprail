@@ -95,11 +95,14 @@ own call.
   as `Sloprail-Cites-User: <quote>` and `Sloprail-Cites-Tool: <quote>` trailers,
   resolved like `sr-file --cite:user` / `--cite:tool_result`: the quote must match
   exactly one real user message (or tool output), model text is never citable, and
-  a quote that resolves nowhere is not a citation (`sr-session changeset` lists it
+  a quote that resolves nowhere is not a citation (`sr-checks changeset` lists it
   under `unresolvedCitations`). The current session's transcript is searched
   first, then the project's other sessions newest to oldest; the first session
   containing the quote must match it exactly once. Outside a session (no
-  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. Each entry also says which
+  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. `sr-checks verify` (Stop, CI)
+  has no transcript: there a `require: citation` counts the trailer on the commit
+  that last changed the file, and the quote was resolved when `sr-checks run`
+  judged it. Each entry also says which
   commits carried it (`commits`, SHAs) and which selected files those commits
   changed (`files`); the list as a whole stays the range's, for a judge. The rest
   of this list describes a gate's events. A `require: citation` on a file-guard is
@@ -194,7 +197,7 @@ require:
 ```
 
 Pair it with a plain file-guard of the same name (`match: 'path startsWith
-"memories/rules/"'` with the same `require`), which refuses at Stop commits that
+"memories/rules/"'` with the same `require`), which refuses (in `sr-checks run`, and so at Stop and in CI) commits that
 carry no citation trailer — a change a command made that the engine could not model, say.
 `preventive:` on the file-guard no longer exists; a declaration carrying it is
 refused at load.

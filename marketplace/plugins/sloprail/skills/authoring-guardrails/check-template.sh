@@ -4,7 +4,7 @@
 # could not be read, the refusal format — is already right; the plugin's
 # authoring-slop rule refuses scripts that get those wrong.
 #
-# A file-guard judges COMMITS: the range from where the rule last passed to HEAD,
+# A file-guard judges COMMITS: merge-base(--base, --head)..--head of `sr-checks run`,
 # handed to the check as one Changeset. The files `match` selected are under
 # `.changeset.files[]`, each {path, status, oldPath, oldContent, newContent,
 # oldMarkers, newMarkers, diff} — committed content, always known, so there is no
