@@ -627,24 +627,32 @@ func identityRefusal(cmd *cobra.Command, p HookPayload, reg *module.Registry, st
 	return out
 }
 
+// effectiveBase is the base a tracked range is judged from: an explicit one (an agent's
+// `refs track --base`) as given; otherwise (an automatic row, or `refs track` without --base)
+// the default, the head's merge base with the remote default branch NOW, whatever was pulled or
+// pushed since the row was made (see autoBase). head is the revision the row's head names.
+func effectiveBase(r sessionstate.TrackedRange, head string) string {
+	if r.Base != "" && r.AddedBy != sessionstate.RangeAuto {
+		return r.Base
+	}
+	sha := r.HeadSHA
+	if h, err := gitrepo.ResolveRange(r.Folder, "HEAD", head); err == nil {
+		sha = h.Head
+	}
+	if db, ok := gitrepo.DefaultBase(r.Folder, sha); ok {
+		return db
+	}
+	if r.Base == "" {
+		return gitrepo.EmptyTree
+	}
+	return r.Base
+}
+
 // verifyRange verifies one tracked range, returning the refusal or "". It only reads what `sr-checks run`
 // stored: no check is executed, so it needs no record or session id.
 func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, quiet *cobra.Command, r sessionstate.TrackedRange) string {
 	head, goneNote := headRevision(r)
-	if r.Base == "" || r.AddedBy == sessionstate.RangeAuto {
-		// No explicit base (an automatic row, or `refs track` without --base): the default, the
-		// head's merge base with the remote default branch NOW, whatever was pulled or pushed
-		// since the row was made (see autoBase). An explicit base is used exactly as given.
-		sha := r.HeadSHA
-		if h, err := gitrepo.ResolveRange(r.Folder, "HEAD", head); err == nil {
-			sha = h.Head
-		}
-		if db, ok := gitrepo.DefaultBase(r.Folder, sha); ok {
-			r.Base = db
-		} else if r.Base == "" {
-			r.Base = gitrepo.EmptyTree
-		}
-	}
+	r.Base = effectiveBase(r, head)
 	headName := r.Head
 	if isCommitHead(r.Folder, headName) {
 		headName = "detached at " + shortRev(headName) // commits on no branch: say so
@@ -816,6 +824,10 @@ func newRefsListCmd() *cobra.Command {
 			ranges, err := s.reg.Ranges(s.rs.ID)
 			if err != nil {
 				return err
+			}
+			for i := range ranges { // the base each range is judged from now, not the one stored
+				head, _ := headRevision(ranges[i])
+				ranges[i].Base = effectiveBase(ranges[i], head)
 			}
 			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 				enc := json.NewEncoder(cmd.OutOrStdout())

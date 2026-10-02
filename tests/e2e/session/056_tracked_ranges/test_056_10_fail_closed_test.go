@@ -50,7 +50,7 @@ func TestT056_11_AnUnreadableRegistryRefusesTheStop(t *testing.T) {
 	if !harness.Blocked(res) {
 		t.Fatalf("a Stop over a registry that cannot be read let the turn end:\n%s", res.Output)
 	}
-	if !strings.Contains(res.Output, "tracked ranges could not be read") {
+	if !strings.Contains(res.Output, "session registry") || !strings.Contains(res.Output, "cannot be read") {
 		t.Fatalf("the Stop refused, but not because the registry of tracked ranges could not be read:\n%s", res.Output)
 	}
 }
