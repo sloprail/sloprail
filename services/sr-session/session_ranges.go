@@ -104,9 +104,11 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	}
 	hasFolder := map[string]bool{}
 	hasHead := map[string]bool{}
+	lastTip := map[string]string{}
 	for _, r := range ranges {
 		hasFolder[r.Folder] = true
 		hasHead[r.Folder+"\x00"+r.Head] = true
+		lastTip[r.Folder+"\x00"+r.Head] = r.HeadSHA
 	}
 	for _, f := range folders {
 		if f.AgentID != p.AgentID {
@@ -122,6 +124,9 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		}
 		switch {
 		case hasHead[folder+"\x00"+head]:
+			if broughtIn(folder, lastTip[folder+"\x00"+head], sha) {
+				continue // a fast-forward onto the remote's work: upstream's commits are not the tip the session made
+			}
 			_ = reg.TrackRange(sessionstate.TrackedRange{
 				SessionID: rs.ID, Folder: folder, Head: head, HeadSHA: sha, AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
 			})
@@ -151,6 +156,13 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	head, sha, ok := trackedHead(folder)
 	if !ok {
 		return
+	}
+	if rows, err := reg.Ranges(sessionID); err == nil {
+		for _, row := range rows {
+			if row.Folder == filepath.Clean(folder) && row.Head == head && broughtIn(folder, row.HeadSHA, sha) {
+				return // fast-forwarded onto the remote's work: the recorded tip stays the session's own
+			}
+		}
 	}
 	// Falling back to where the folder was registered is for work on the default branch itself. A
 	// branch cut at the default branch's tip starts there: what the default branch gained since
@@ -367,7 +379,7 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	// What the default branch gained since the range was tracked (a pull, a rebase onto a newer
 	// origin/main) is upstream's, not the session's: the range starts at the head's merge base
 	// with the default branch now, when that is later than the stored base.
-	rng = advanceBase(r.Folder, rng)
+	rng = advanceBase(r.Folder, rng, r.HeadSHA)
 	// The range's base vouches for the project's own switch-offs of protected rules, as it does
 	// under `sr-checks run`: verify must load the same rules the run judged.
 	loaded := newNatureDeclarations(quiet, r.Folder, reg, rng.Base)
@@ -400,14 +412,27 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	return out
 }
 
+// broughtIn reports whether moving a branch from the tip the session last saw to sha only
+// fast-forwarded it onto commits the remote default branch already holds (a pull).
+func broughtIn(folder, old, sha string) bool {
+	if old == "" || old == sha {
+		return false
+	}
+	if mb, ok := gitrepo.RemoteDefaultBase(folder, sha); !ok || mb != sha {
+		return false
+	}
+	ff, err := gitrepo.IsAncestor(folder, old, sha)
+	return err == nil && ff
+}
+
 // advanceBase moves a range's base up to the head's merge base with the remote default branch,
 // when that is a descendant of the base it has (never earlier). Work already on that branch
 // is upstream's: a pull, a fast-forward or a rebase onto a newer origin/main leaves only the
 // commits ahead of it in the range. A repository with no remote default branch keeps its base.
-func advanceBase(folder string, rng gitrepo.Range) gitrepo.Range {
+func advanceBase(folder string, rng gitrepo.Range, ownTip string) gitrepo.Range {
 	db, ok := gitrepo.RemoteDefaultBase(folder, rng.Head)
-	if !ok || db == rng.Base {
-		return rng
+	if !ok || db == rng.Base || db == ownTip {
+		return rng // the tip the session made is itself what landed: judged until it passed
 	}
 	if rng.Base != gitrepo.EmptyTree {
 		if isAnc, err := gitrepo.IsAncestor(folder, rng.Base, db); err != nil || !isAnc {
