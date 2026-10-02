@@ -680,6 +680,7 @@ func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Contains(t, got[0].Reason, "not judged yet", "no FAIL was stored under the key")
 	assert.NotContains(t, got[0].Reason, "needs a session")
+	assert.Empty(t, guardRows(t, f.results, f.guard), "nothing is stored under the guard x subject key")
 }
 
 // A quote that does not resolve in a present session is a real refusal: stored as a FAIL.
@@ -691,11 +692,64 @@ func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
 	p.Transcript = record
 	ev := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p, store: f.results, rng: p.Range, batch: "b1"}
 	ev.identity = ev.runIdentity()
-	_, refused := ev.evaluate(f.guard)
+	first, refused := ev.evaluate(f.guard)
 	require.True(t, refused)
+
+	rows := guardRows(t, f.results, f.guard)
+	require.Len(t, rows, 1, "run stored one verdict under the guard x subject key")
+	assert.Equal(t, checkstore.StatusFail, rows[0].Status)
+	assert.NotEmpty(t, rows[0].Fingerprint)
+	stored := rows[0]
+
 	got := f.verifyReasons(t)
-	require.Len(t, got, 1)
-	assert.NotContains(t, got[0].Reason, "not judged yet", "the refusal is stored")
+	require.Len(t, got, 1, "verify reports the stored refusal (non-zero exit)")
+	assert.NotContains(t, got[0].Reason, "not judged yet")
+	assert.Equal(t, first.Reason, got[0].Reason, "verify reports the refusal's own reason")
+	assert.NotEmpty(t, got[0].Reason)
+
+	// A second run with the same input replays the stored FAIL: nothing new is recorded and
+	// no check script runs.
+	counting := &recordCountingStore{Store: f.results}
+	p2 := f.params(t, counting)
+	p2.Transcript = record
+	ev2 := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p2, store: counting, rng: p2.Range, batch: "b2"}
+	ev2.identity = ev2.runIdentity()
+	again, refused := ev2.evaluate(f.guard)
+	require.True(t, refused)
+	assert.Equal(t, first.Reason, again.Reason, "the stored refusal is replayed")
+	require.NotEmpty(t, counting.records)
+	for _, rec := range counting.records {
+		assert.Equal(t, true, rec.Metadata["replayed"], "%s is replayed from the store, not judged again", rec.Kind)
+	}
+	assert.Equal(t, 0, f.runs(t), "no check script ran")
+	rows = guardRows(t, f.results, f.guard)
+	require.Len(t, rows, 1)
+	assert.Equal(t, stored.Fingerprint, rows[0].Fingerprint, "same key")
+}
+
+// recordCountingStore collects the checks recorded through it.
+type recordCountingStore struct {
+	checkstore.Store
+	records []checkstore.CheckRecord
+}
+
+func (s *recordCountingStore) RecordCheck(runID string, c checkstore.CheckRecord) (string, error) {
+	s.records = append(s.records, c)
+	return s.Store.RecordCheck(runID, c)
+}
+
+// guardRows are the stored guard-level verdicts (kind "guard") of the rule's latest run.
+func guardRows(t *testing.T, st checkstore.Store, g declaration.FileGuard) []checkstore.CheckStatusRow {
+	t.Helper()
+	all, err := st.CheckStatus(false, g.Qualified())
+	require.NoError(t, err)
+	var out []checkstore.CheckStatusRow
+	for _, r := range all {
+		if r.Kind == guardKind {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // A guard's stored steps are its own subject's: another subject of the same rule contributes none.
