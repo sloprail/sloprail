@@ -340,8 +340,9 @@ exit 0
 // where the file does not exist at all, and does unrelated work there. The range of
 // main is still one the session answers for (a tracked range is per branch), so the
 // Stop still verifies it: the rule is put the file again and the Stop refuses it,
-// naming main. A refusal tied to the branch the agent happens to be on would drop
-// the broken file out of view at exactly this moment.
+// naming main (the stored verdict of the unchanged range is replayed, not re-asked). A
+// refusal tied to the branch the agent happens to be on would drop the broken file out of
+// view at exactly this moment.
 //
 // There is no re-creation of the file after the switch (unlike T015_02): the file is
 // absent from the tree and from feature's range, so the only way it can be reported
@@ -387,9 +388,12 @@ func TestT015_04_ARefusedFileOnAnotherBranchIsStillReported(t *testing.T) {
 	if !changesetkit.Saw(second, "unrelated.md") {
 		t.Fatalf("the cycle's own work is missing from %v — the claim below would be vacuous", second)
 	}
-	if countPath(second, "bad-file.md") == 0 {
-		t.Fatalf("an unfixed refusal was dropped once its branch was left: the rule was not put "+
-			"bad-file.md again (%v)", second)
+	// Every check is cached by content: main's range holds the same bytes it held when the rule
+	// refused them, so the rule is NOT asked again — the stored refusal is replayed, and it is
+	// the Stop's refusal below that proves the broken file stayed in view.
+	if countPath(second, "bad-file.md") != 0 {
+		t.Fatalf("main's unchanged range was judged again after the switch (%v): a stored verdict "+
+			"for the same content must be replayed, not re-asked", second)
 	}
 	later := e.AllBlockingErrorsFrom(proj, sess, "Stop")[stops:]
 	if got := strings.Join(later, "\n"); !strings.Contains(got, "this file is not acceptable") || !strings.Contains(got, "(main") {

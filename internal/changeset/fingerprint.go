@@ -13,7 +13,7 @@ import (
 //
 // It is the sha256 of three parts, none of which depends on the session or the history:
 //
-//   - files: FilesPart, the content of the subject's files, ALWAYS, whether or not any check
+//   - files: FilesPart, the path and content of the subject's files, ALWAYS, whether or not any check
 //     reads them: the verdict is about those bytes.
 //   - subjectFP: the "fingerprint" the rule's `subjects:` script gave this subject, for whatever
 //     the verdict depends on beyond the files (a file a check opens with its own tools). It
@@ -68,9 +68,10 @@ func blankSHAs(shas []string) []string {
 	return make([]string, len(shas))
 }
 
-// FilesPart is the content of the subject's matched files, in the subject's order: the
-// bytes the verdict is about, keyed whether or not the template renders them. Content only
-// (a deleted file is marked as such): no SHA, no base, no path.
+// FilesPart is the path and content of the subject's matched files, in the subject's order:
+// the bytes the verdict is about, and where they are (the same bytes at a new path have never
+// been judged there: a rule's prompt and its match are about the path too), keyed whether or
+// not the template renders them. A deleted file is marked as such; no SHA, no base.
 func FilesPart(p Payload) string {
 	byPath := make(map[string]File, len(p.Changeset.Files))
 	for _, f := range p.Changeset.Files {
@@ -89,6 +90,8 @@ func FilesPart(p Payload) string {
 		if f.Status == "D" {
 			content = "\x00deleted"
 		}
+		buf = binary.BigEndian.AppendUint64(buf, uint64(len(path)))
+		buf = append(buf, path...)
 		buf = binary.BigEndian.AppendUint64(buf, uint64(len(content)))
 		buf = append(buf, content...)
 	}
