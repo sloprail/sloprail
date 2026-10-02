@@ -849,5 +849,5 @@ func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *
 	require.NoError(t, os.WriteFile(resolved, []byte(
 		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
 	r2, refused := f.evaluateWith(t, resolved, "b2")
-	assert.False(t, refused, r2.Reason+"\n"+ "the quote resolves now: the citation is judged again and holds")
+	assert.False(t, refused, r2.Reason+"\n"+"the quote resolves now: the citation is judged again and holds")
 }
