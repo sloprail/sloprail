@@ -90,6 +90,94 @@ push_error() {
   head -c 600 "$common/sloprail-checks-push-error" 2>/dev/null || true
 }
 
+# drop_unsafe_gopts — removes the global options that make git run agent-chosen code (-c,
+# --config-env, --exec-path) from GOPTS, which every git call below passes on.
+drop_unsafe_gopts() {
+  local kept=() i=0 n=${#GOPTS[@]} a
+  while [ "$i" -lt "$n" ]; do
+    a="${GOPTS[$i]}"
+    case "$a" in
+      -c | --config-env) i=$((i + 1)) ;;
+      -c* | --config-env=* | --exec-path | --exec-path=*) ;;
+      *) kept+=("$a") ;;
+    esac
+    i=$((i + 1))
+  done
+  GOPTS=(${kept[@]+"${kept[@]}"})
+}
+
+# resolve_push_pairs DIR — from REST (the push's arguments) and DIR's local refs only, sets
+# PUSH_PAIRS to one "<flag>\t<from>:<to>" line per ref the push would update (flag ' ': update,
+# '-': delete), and PUSH_WHY on failure. Reads no remote and runs none of the agent's options.
+resolve_push_pairs() {
+  local dir="$1" all="" mirror="" tags="" repo="" ddash="" a skip=""
+  local specs=() pos=() spec src dst r pre
+  PUSH_PAIRS="" PUSH_WHY=""
+  for a in ${REST[@]+"${REST[@]}"}; do
+    if [ -n "$skip" ]; then skip=""; continue; fi
+    if [ -z "$ddash" ]; then
+      case "$a" in
+        --) ddash=1; continue ;;
+        --all | --branches) all=1; continue ;;
+        --mirror) mirror=1; continue ;;
+        --tags) tags=1; continue ;;
+        --repo | --receive-pack | --exec | -o | --push-option) skip=1; [ "$a" = "--repo" ] && repo=1; continue ;;
+        -*) continue ;;
+      esac
+    fi
+    pos+=("$a")
+  done
+  if [ -n "$repo" ]; then specs=(${pos[@]+"${pos[@]}"}); else specs=(${pos[@]+"${pos[@]:1}"}); fi
+  local g=(git ${GOPTS[@]+"${GOPTS[@]}"})
+  if [ -n "$all" ] || [ -n "$mirror" ]; then
+    pre="refs/heads/"
+    [ -z "$mirror" ] || pre="refs/"
+    while IFS= read -r r; do
+      [ -n "$r" ] && specs+=("$r:$r")
+    done < <(cd "$dir" && "${g[@]}" for-each-ref --format='%(refname)' "$pre" 2>/dev/null)
+  fi
+  if [ -n "$tags" ]; then
+    while IFS= read -r r; do
+      [ -n "$r" ] && specs+=("$r:$r")
+    done < <(cd "$dir" && "${g[@]}" for-each-ref --format='%(refname)' refs/tags/ 2>/dev/null)
+  fi
+  if [ "${#specs[@]}" -eq 0 ]; then
+    # no refspec: the current branch, to its same-named branch
+    r="$(cd "$dir" && "${g[@]}" symbolic-ref -q HEAD 2>/dev/null)" || {
+      PUSH_WHY="HEAD is detached and the push names no refspec"
+      return 1
+    }
+    specs=("$r:$r")
+  fi
+  for spec in "${specs[@]}"; do
+    spec="${spec#+}"
+    case "$spec" in
+      *:*) src="${spec%%:*}"; dst="${spec#*:}" ;;
+      *) src="$spec"; dst="$spec" ;;
+    esac
+    if [ -z "$src" ]; then PUSH_PAIRS+="-"$'\t'":$dst"$'\n'; continue; fi # a delete sends no commits
+    [ -n "$dst" ] || dst="$src"
+    if [[ "$src" == *'*'* ]]; then
+      local m cand frag
+      while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        m=""
+        for cand in "$r" "${r#refs/heads/}" "${r#refs/tags/}"; do
+          # shellcheck disable=SC2053
+          if [[ "$cand" == $src ]]; then m="$cand"; break; fi
+        done
+        [ -n "$m" ] || continue
+        frag="${m#"${src%%\**}"}"
+        frag="${frag%"${src#*\*}"}"
+        PUSH_PAIRS+=" "$'\t'"$r:${dst/\*/$frag}"$'\n'
+      done < <(cd "$dir" && "${g[@]}" for-each-ref --format='%(refname)' 2>/dev/null)
+      continue
+    fi
+    PUSH_PAIRS+=" "$'\t'"$src:$dst"$'\n'
+  done
+  return 0
+}
+
 for inv in "${pushes[@]}"; do
   git_split "$inv"
   # git's own help pages push nothing.
@@ -102,20 +190,15 @@ for inv in "${pushes[@]}"; do
   case "$cwd" in /*) dir="$cwd" ;; *) dir="${SR_WORKSPACE:-.}/$cwd" ;; esac
   [ -d "$dir" ] || refuse "The folder this push runs in ($dir) does not exist, so the commits it would send could not be checked."
 
-  # -q / --quiet would hide the porcelain lines this reads, so they are not passed on.
-  dry=()
-  for a in ${REST[@]+"${REST[@]}"}; do case "$a" in -q | --quiet) ;; *) dry+=("$a") ;; esac; done
-  err="$(mktemp)"
-  out="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" push --dry-run --porcelain --no-verify ${dry[@]+"${dry[@]}"} 2>"$err")"
-  status=$?
-  why="$(head -c 600 "$err")"
-  rm -f "$err"
+  # The pushed refs are worked out HERE, from the command line and local refs only. The gate never
+  # runs the agent's own git options or contacts the remote: `-c core.sshCommand=...`, `ext::` URLs
+  # and `--receive-pack` would run agent-chosen code (or hang) inside the gate.
+  drop_unsafe_gopts
+  resolve_push_pairs "$dir" || refuse "This push could not be resolved to the refs it would update in $dir, so what leaves could not be checked: $PUSH_WHY"
 
-  refs=0
   while IFS=$'\t' read -r flag pair _; do
     case "$flag" in ' ' | '+' | '-' | '*' | '!' | '=') ;; *) continue ;; esac
     [ -n "$pair" ] || continue
-    refs=$((refs + 1))
     from="${pair%%:*}"
     to="${pair#*:}"
     case "$from:$to" in
@@ -133,10 +216,7 @@ for inv in "${pushes[@]}"; do
       perr="$(cd "$dir" && push_error)"
       refuse "results not pushed — the judged results of $dir are stored locally only, so the remote and CI would read these commits as not judged. Run: cd $dir && sr-checks run --base $base --head $sha (it retries the push), then push again.${perr:+ The push of the results failed with: $perr} If that keeps failing it is an environment problem (for example no permission to push refs/sloprail/checks) that the USER has to fix: the user can push the results themselves, or turn this gate off in .sloprail/config.yaml. Do not retry in a loop and do not work around it."
     fi
-  done <<<"$out"
+  done <<<"$PUSH_PAIRS"
 
-  if [ "$refs" -eq 0 ] && [ "$status" -ne 0 ]; then
-    refuse "This push could not be resolved to the refs it would update in $dir, so what leaves could not be checked: ${why:-git exited $status}"
-  fi
 done
 exit 0
