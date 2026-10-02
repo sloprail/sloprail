@@ -288,8 +288,8 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
  "transcriptPath": "…", "context": {}}
 ```
 
-- `base`, `head` — the range, as SHAs ([file-guard.md](file-guard.md) for how the
-  base is chosen).
+- `base`, `head` — the range, as SHAs: the merge base of `--base` and `--head`, and
+  `--head` ([file-guard.md](file-guard.md)).
 - `commits` — every commit in the range, oldest first; `trailers` maps the
   trailer key in canonical case (`Sloprail-Cites-User`) to its values.
 - `files` — the files `match` selected, in full. `status` is `A` (body in

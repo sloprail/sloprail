@@ -59,14 +59,14 @@ that marker, not off a path, so it fires wherever the marked code lives.
 Pinning the code to the spec opens a second way out: rewrite the spec line to
 agree with the code, or re-pin the code to looser wording. A second rule,
 `pinned-spec-holds`, closes it — as a gate, so the change is refused before it
-lands, with a file-guard of the same name as the after-check at Stop. A spec that code pins holds the user's business
+lands, with a file-guard of the same name as the after-check on the commits. A spec that code pins holds the user's business
 rules, so any change to it — a pinned line, a new rule, an exception on a line of
 its own — and any write that moves or removes a pin, must cite the user's own
-words, and — at Stop — a judge checks that those words ask for that change; for a pinned
+words, and — once committed — a judge checks that those words ask for that change; for a pinned
 line, that they ask for the rule itself to change rather than for a feature that
 conflicts with it.
 
-`pinned-invariant` is a plain **file-guard**: it judges the committed files at Stop,
+`pinned-invariant` is a plain **file-guard**: it judges the committed files (`sr-checks run`),
 and the markers decide which files carry an invariant and which spec lines are
 pinned. `pinned-spec-holds` is a **gate** plus a file-guard: the gate prevents
 the change to the rules (a citation requirement, no model), and the file-guard
@@ -136,12 +136,12 @@ requirement when the change touches a spec some marker pins (at the committed he
 or at the range's base) — any line of it — or moves a marker off the wording it pinned —
 marked code moved to another file keeps its pin — and waives it only when it has
 decided the write does neither. The judge (with `only-when-pinned.sh`, which asks it
-about exactly those writes) lives in the file-guard and rules at Stop.
+about exactly those writes) lives in the file-guard and rules on the commits.
 
 <Code code={holdsGateYaml} lang="yaml" title=".sloprail/gate/pinned-spec-holds/gate.yaml" />
 <Code code={unknownSh} lang="bash" title=".sloprail/gate/pinned-spec-holds/refuse-unknown-result.sh" />
 
-The **file-guard** of the same name is the after-check. It acts at Stop on the
+The **file-guard** of the same name is the after-check. It acts on the
 committed changeset, each file at the range's base against head, and catches what
 the gate cannot: a script rewriting a spec, or one command deleting every holder of
 a pin. The shared logic of `changes-pinned-lines.sh` is one library; the file-guard's

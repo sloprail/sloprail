@@ -12,9 +12,10 @@ first decision is which one — because the nature fixes the directory, the YAML
 keys, what is in scope for its match, and when it fires.
 
 - **file-guard** — judges a **file's state**. "Every file under `memories/`
-  carries frontmatter." It judges the *committed* result: at Stop it is handed
-  the commits since it last passed as one changeset, and a fail is replayed
-  until the commits change. It never acts before a write — prevention is a
+  carries frontmatter." It judges the *committed* result: `sr-checks run --base
+  --head` hands it `merge-base(base, head)..head` as one changeset and stores the
+  verdicts on the `sloprail/checks` branch; Stop and CI only verify them (no
+  model). It never acts before a write — prevention is a
   gate's job. `deletions: include`/`only` when losing the file is the rule's
   business too (by default a deleted file is skipped).
   → [file-guard.md](file-guard.md)
@@ -227,10 +228,10 @@ Loading clean is not the same as firing. What still never fires:
 - a mistyped key **inside** a list element, or a flag read off an open map
 - a check whose logic permits where it meant to refuse
 
-For a file-guard, `sr-session changeset --rule <name> --base <rev> --head <rev>` prints the
+For a file-guard, `sr-checks changeset --rule <name> --base <rev> --head <rev>` prints the
 range and the payload its checks will get without running anything
 ([file-guard.md](file-guard.md#seeing-what-a-rule-will-be-handed)), and
-`sr check run --base <rev> --head <rev>` judges it (`sr check verify` re-reads the stored
+`sr-checks run --base <rev> --head <rev>` judges it (`sr-checks verify` re-reads the stored
 verdicts without asking a model).
 
 So cause the action the rule guards and see the refusal. If you cannot make it

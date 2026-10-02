@@ -25,6 +25,10 @@ its append/dedup). This doc mirrors it.
 | `SR_SESSION_START` | the range's base (same as `SR_BASE`; kept for rules written against it), so a check can tell what stood before the work | file-guard checks only |
 | `SLOPRAIL_LAUNCHED_BY` | the guardrails whose checks are on the current call stack — the re-entry provenance | only when a check runs underneath a judging rule (see below) |
 
+A file-guard check runs under `sr-checks run|verify`, which may run outside any
+session (CI, a `pre-push` hook): there `SR_SESSION_ID` and `SR_TRANSCRIPT` are
+unset, so a check that needs the transcript must say so rather than pass.
+
 Each `SR_*` variable is **left unset when its value is empty**, deliberately —
 "unset is diagnosable" is a stance a rule can test for. Outside a hook there is no
 guardrail in scope, so `sr-session state` says so rather than guessing.
