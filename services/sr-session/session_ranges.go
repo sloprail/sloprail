@@ -697,19 +697,31 @@ func recordedCitations(p HookPayload, store sessionstate.Store) map[string][]tra
 // as well. A commit older than the branch's base, or one the branch cannot be shown to hold, is
 // not covered: it is verified on its own.
 func coveredByBranch(r sessionstate.TrackedRange, all []sessionstate.TrackedRange) bool {
-	if len(r.Head) < 40 || strings.HasPrefix(r.Head, "refs/") {
+	commit := r.Head
+	switch {
+	case len(r.Head) >= 40 && !strings.HasPrefix(r.Head, "refs/"):
+	case r.HeadSHA != "":
+		// A branch that is gone (renamed, deleted): the commit it last pointed at.
+		if _, note := headRevision(r); note == "" {
+			return false
+		}
+		commit = r.HeadSHA
+	default:
 		return false
 	}
 	for _, o := range all {
-		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || len(o.Head) >= 40 || o.HeadSHA == "" || o.Base == "" {
+		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || len(o.Head) >= 40 || o.HeadSHA == "" || o.Base == "" || o.Head == r.Head {
 			continue
 		}
-		tip, _ := headRevision(o) // the live tip; the commit it last pointed at when the branch is gone
-		if in, err := gitrepo.IsAncestor(r.Folder, r.Head, tip); err != nil || !in {
+		tip, note := headRevision(o) // the live tip
+		if note != "" {
+			continue // a branch that is gone holds nothing now
+		}
+		if in, err := gitrepo.IsAncestor(r.Folder, commit, tip); err != nil || !in {
 			continue
 		}
 		if o.Base != gitrepo.EmptyTree {
-			if before, err := gitrepo.IsAncestor(r.Folder, r.Head, o.Base); err != nil || before {
+			if before, err := gitrepo.IsAncestor(r.Folder, commit, o.Base); err != nil || before {
 				continue
 			}
 		}
