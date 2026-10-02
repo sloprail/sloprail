@@ -412,16 +412,3 @@ func globRegexp(pattern string) (*regexp.Regexp, error) {
 	b.WriteString(`\z`)
 	return regexp.Compile(b.String())
 }
-
-// GlobRegexSource returns the anchored regular expression a file-guard glob
-// compiles to, as source text (`^…$`), so a tool can restate the glob as a
-// `path matches "…"` expression — the form a gate trigger uses.
-func GlobRegexSource(pattern string) (string, error) {
-	re, err := globRegexp(pattern)
-	if err != nil {
-		return "", err
-	}
-	s := strings.TrimPrefix(re.String(), `\A`)
-	s = strings.TrimSuffix(s, `\z`)
-	return "^" + s + "$", nil
-}

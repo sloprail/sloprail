@@ -273,7 +273,7 @@ require:
 `,
 	})
 	assert.True(t, hasKind(iv, ErrRetiredKey), "a skill require on a file-guard is refused: %v", iv.Reason)
-	assert.Contains(t, iv.Reason, "gate/require-topic-requires/gate.yaml")
+	assert.Contains(t, iv.Reason, "gate/<name>/gate.yaml")
 	assert.Contains(t, iv.Reason, "skill: document-topic")
 }
 

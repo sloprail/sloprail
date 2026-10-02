@@ -102,9 +102,7 @@ own call.
   `CLAUDE_CODE_SESSION_ID`) `citations` is empty. Each entry also says which
   commits carried it (`commits`, SHAs) and which selected files those commits
   changed (`files`); the list as a whole stays the range's, for a judge. The rest
-  of this list describes a gate's events. (`require: citation` is the one requirement a
-  file-guard keeps: it reads commit trailers. Requirements that read the session —
-  `skill`, `context` — live on gates only; see [gate.md](gate.md).) A `require: citation` on a file-guard is
+  of this list describes a gate's events. A `require: citation` on a file-guard is
   satisfied **per subject**, and the default subject is one selected file
   ([events.md](events.md#changeset--what-a-file-guards-checks-receive)): a file is
   grounded only by a citation whose trailer is in the commit that last changed THAT

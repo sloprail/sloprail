@@ -69,7 +69,7 @@ func TestT037_01b_SkillRequireOnAFileGuardIsRefusedNamingTheGate(t *testing.T) {
 	if res.Code != 1 {
 		t.Fatalf("a file-guard requiring a skill must fail to load, got exit %d:\n%s", res.Code, res.Output)
 	}
-	for _, want := range []string{"gate/require-topic-requires/gate.yaml", "event: PreFileWrite", "skill: document-topic"} {
+	for _, want := range []string{"gate/<name>/gate.yaml", "event: PreFileWrite", "skill: document-topic"} {
 		if !strings.Contains(res.Output, want) {
 			t.Errorf("the load fault does not carry %q:\n%s", want, res.Output)
 		}
