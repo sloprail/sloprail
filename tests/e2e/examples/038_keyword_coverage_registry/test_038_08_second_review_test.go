@@ -48,7 +48,7 @@ func TestT038_34_AnEmptiedScannerIsNotRetiredUncited(t *testing.T) {
 // PostFileCreate — a create drops nothing — and the context set the entry to
 // exactly the file's keywords, so a search for the one keyword left passed.
 func TestT038_35_AnUnseenNarrowingDoesNotShrinkTheRegistry(t *testing.T) {
-	e, proj := researchProject(t)
+	e, proj := researchProjectUncited(t)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	const sess = "s-038-35"
 	e.Run(proj, sess, "research guardrails", Turns("done",

@@ -454,7 +454,7 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
@@ -531,6 +531,33 @@
           {
             "name": "rule",
             "usage": "Only this file-guard (folder name or qualified name)"
+          }
+        ]
+      },
+      {
+        "path": "sr-checks staged",
+        "use": "staged --needs citation [--amend] | staged --recorded <path>...",
+        "short": "The staged files a commit must cite, by the file-guards' `require: citation`",
+        "long": "Print, one path per line, the staged files that a file-guard selects and that carry a\n`require: citation` the commit being made must meet.\n\nThe candidate change is the index against HEAD (against git's empty tree when HEAD does not exist\nyet). With --amend it is the index against HEAD's parent: the amended commit replaces HEAD, so\neverything HEAD changed is the commit's again. File-guards are loaded, matched and their\n`when` evaluated exactly as `sr-checks run` does over a range, and a requirement whose\n`when` waives a file leaves it out. Nothing is judged, written, staged or committed.\n\nThis is the prevention half of the commit-time check: `run` and `verify` refuse the commit afterwards,\nthis says before it which files will need a citation. Exits 1 with the reason on stderr when the\nchange could not be read: no answer is never \"nothing is needed\".\n\nWith --trailers, read a commit message on stdin and resolve each Sloprail-Cites-User /\nSloprail-Cites-Tool line in it against the session transcript, exactly as `sr-file --cite` does (the user\npool for -User, tool_result for -Tool), one JSON object per line: {\"trailer\", \"quote\", \"ok\", \"error\"}.\n\nWith --recorded and paths instead, print the citations this session already recorded for them\n(`sr-file --cite`), one JSON object per line: {\"path\", \"trailer\", \"quote\"}.",
+        "flags": [
+          {
+            "name": "amend",
+            "default": "false",
+            "usage": "The commit replaces HEAD: judge the index against HEAD's parent"
+          },
+          {
+            "name": "needs",
+            "usage": "What to list the staged files for; only 'citation' is known (required)"
+          },
+          {
+            "name": "recorded",
+            "default": "false",
+            "usage": "Print the quotes already recorded for the given paths, as JSON lines"
+          },
+          {
+            "name": "trailers",
+            "default": "false",
+            "usage": "Resolve the Sloprail-Cites-* lines of a commit message read from stdin, as JSON lines"
           }
         ]
       },

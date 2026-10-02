@@ -34,7 +34,7 @@ func TestT003_61_RewritingAnUnjudgedViolationHidesNothing(t *testing.T) {
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			e, proj, _ := project(t, docsRule)
+			e, proj, _ := uncitedProject(t, docsRule)
 			main := e.Git(proj, "branch", "--show-current")
 			sess := "s-003-61-" + string(rune('a'+i))
 

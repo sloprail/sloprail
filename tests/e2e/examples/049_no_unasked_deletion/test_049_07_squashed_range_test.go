@@ -20,7 +20,7 @@ const deleteTopic = `python3 -c "import os; os.remove('memories/topic.md')"`
 // after-check is what sees it — refused while the memory is gone, admitted once it
 // is back.
 func TestT049_23_DeletionRestoredInTheRangePasses(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — nothing net was removed"}`)
 	seedCommittedMemory(t, e, proj, "memories/topic.md", "a fact worth keeping\n")

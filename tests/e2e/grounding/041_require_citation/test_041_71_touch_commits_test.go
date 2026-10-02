@@ -26,7 +26,7 @@ func TestT041_71_NoTouchOfAnUncitedChangeGroundsIt(t *testing.T) {
 	}
 	for i, tc := range touches {
 		t.Run(tc.name, func(t *testing.T) {
-			e, proj := guarded(t, afterCitationGuard)
+			e, proj := guardedUncited(t, afterCitationGuard)
 			sess := "s-041-71-" + string(rune('a'+i))
 			turns := []harness.Turn{
 				Write("w1", "memories/a.md", original),

@@ -36,7 +36,7 @@ func subagentStopNow(t *testing.T, e *Env, proj, sess, wt, agent string) harness
 // branch clean (its Stop passes); the parent applies the patch cleanly, is refused for it
 // uncited, and passes once the commit carries the user's answer as the trailer.
 func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(t *testing.T) {
-	e, proj, _ := project(t, citingRule)
+	e, proj, _ := uncitedProject(t, citingRule)
 	const sess = "s-003-75"
 	sub := harness.SubagentScript(t, Turns("sub done",
 		harness.CommitFile("c1", "docs/release.md", "the steps", "document the release"),

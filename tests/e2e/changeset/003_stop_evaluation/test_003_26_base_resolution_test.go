@@ -131,7 +131,7 @@ func TestT003_31_AnAmendedRootCommitIsJudgedInFull(t *testing.T) {
 // git's empty tree), not taken for where the session began. The first Stop refuses the
 // violation; reverting it passes.
 func TestT003_32_ASessionThatBeganBeforeTheFirstCommitJudgesItsFirstTurn(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
 	e.GitInitUnborn(proj)
 	led := filepath.Join(t.TempDir(), "ledger.jsonl")
