@@ -1,0 +1,52 @@
+# Pull requests: the stored file-guard verdicts must cover every commit the PR adds.
+#
+# `sr-checks verify` is deterministic (asks no model, writes nothing): it reads the verdicts that
+# `sr-checks run` stored on the sloprail/checks branch and exits 1 on a commit nobody judged clean.
+# This is the enforcement the plugin's sloprail/gate/ci-verify-required asks every repository with
+# file-guards to have; the `sr-mark: ci-verify` line below is what that gate looks for.
+#
+# It verifies the PULL REQUEST HEAD (github.event.pull_request.head.sha), not the merge commit
+# Actions would check out by default: the verdicts are keyed to what the author's commits contain.
+#
+# Built from this checkout, not installed from a release: the repository tests its own engine.
+#
+# Gated while the new file-guard checks are not on main yet (the config lists them disabled until
+# PR #164 merges, so no verdicts exist for them): only pull requests into main run it, and it
+# does not fail the check (`continue-on-error`), so it reports without blocking. When #164 is on
+# main and the verdicts are being stored, delete the `continue-on-error` line and make the job a
+# required check.
+name: verify
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sloprail-verify:
+    name: sr-checks verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build sr-checks
+        run: make build
+      # sr-mark: ci-verify
+      - name: sr-checks verify
+        run: |
+          PATH="$PWD/bin:$PATH"
+          sr-checks verify --base "origin/${{ github.event.pull_request.base.ref }}" --head "${{ github.event.pull_request.head.sha }}"

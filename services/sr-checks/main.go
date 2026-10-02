@@ -38,6 +38,7 @@ func newRoot() *cobra.Command {
   sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results
   sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged
   sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
+  sr-checks guards --base <rev> --head <rev>   the file-guards this project loads, one name per line
   sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
   sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
 
@@ -51,6 +52,6 @@ origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd(), newDefaultBaseCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newGuardsCmd(), newChangesetCmd(), newDefaultBaseCmd())
 	return root
 }

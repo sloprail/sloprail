@@ -454,7 +454,7 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. A judge's verdict is keyed by the rule, its definition, the check and a\nfingerprint of the judge's fully rendered prompt (plus what its prepare step declares) — never by a commit, session or agent — so the\nsame content after a rebase, a squash or a revert is a cache hit, and so is the same content\nanother clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks guards --base <rev> --head <rev>   the file-guards this project loads, one name per line\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. A judge's verdict is keyed by the rule, its definition, the check and a\nfingerprint of the judge's fully rendered prompt (plus what its prepare step declares) — never by a commit, session or agent — so the\nsame content after a rebase, a squash or a revert is a cache hit, and so is the same content\nanother clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
@@ -482,6 +482,22 @@
         "short": "Print where work on head started: its merge base with the default branch",
         "long": "Print the sha a range over --head starts at when nobody stated one: the merge base of --head with\nthe repository's default branch (origin's HEAD, else origin/main, origin/master, else a local main or\nmaster). Prints git's empty tree (4b825dc642cb6eb9a060e54bf8d69288fbee4904) when there is no default\nbranch or --head shares no history with it: everything is judged. Read-only.",
         "flags": [
+          {
+            "name": "head",
+            "usage": "The head revision: a branch, tag or sha (required)"
+          }
+        ]
+      },
+      {
+        "path": "sr-checks guards",
+        "use": "guards --base <rev> --head <rev>",
+        "short": "Print the name of each file-guard that `run` and `verify` would load, one per line",
+        "long": "Print the name of every file-guard this project loads over merge-base(--base, --head)..--head, one per\nline: the project's own and every enabled plugin's, minus what the config at the range's base\nswitches off. The same set run and verify judge. Prints nothing, and exits 0, when there are none.\nRead-only; asks no model and writes nothing.",
+        "flags": [
+          {
+            "name": "base",
+            "usage": "The base revision: a branch, tag or sha (required)"
+          },
           {
             "name": "head",
             "usage": "The head revision: a branch, tag or sha (required)"

@@ -1,0 +1,28 @@
+# A file-guard's verdict is only worth something where it is enforced. `sr-checks run` writes the
+# verdicts; `sr-checks verify` reads them and exits 1 on a commit nobody judged clean. The Stop hook
+# and verify-before-push verify on the agent's machine, which the agent controls. The enforcement a
+# team can rely on is a CI job that runs
+#
+#   sr-checks verify --base <default branch> --head <pull request head sha>
+#
+# on every pull request. This gate refuses the end of a turn in a project that loads file-guards
+# until the committed tree shows such a job.
+#
+# Detected by a MARKER, never by a provider's file path, so GitHub Actions, GitLab CI, Azure
+# Pipelines, Bitbucket, Jenkins and the rest are all the same: any committed file with a line
+# containing `sr-mark: ci-verify` (a comment next to the `sr-checks verify` step). It is looked up
+# in HEAD (`git grep ... HEAD`), the committed tree, so an uncommitted CI file does not count: a
+# pipeline that is not committed does not run on a pull request. The gate does not parse the CI
+# config; the marker is a promise the author makes, kept honest by review.
+#
+# Applies only where there is something to verify: `sr-checks guards` lists the file-guards the
+# project loads (its own and every enabled plugin's, as `verify` would load them), and a project
+# with none passes. Fails closed: a git or sr-checks error is a refusal, not a pass. Every Stop
+# until fixed (the stop_hook_block_cap in .sloprail/config.yaml bounds the loop).
+#
+# On by default, like every shipped rule, and switched off by listing
+# `sloprail/gate/ci-verify-required` under `disabled:` in .sloprail/config.yaml.
+on:
+  - event: Stop
+checks:
+  - script: ./check.sh

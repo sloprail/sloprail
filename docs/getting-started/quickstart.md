@@ -66,6 +66,14 @@ The rule **refuses**, and the reason you wrote is shown back to the agent.
 (A file-guard judges the committed result; the Stop hook and CI only verify the
 stored verdicts with `sr-checks verify`, without asking a model.)
 
+A file-guard's verdict only binds where it is enforced. Add a CI job that runs
+`sr-checks verify --base <default branch> --head <PR head sha>` on every pull
+request and put a comment `sr-mark: ci-verify` beside that step (any provider:
+GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, ...). Until a committed file
+carries that marker, the shipped `sloprail/gate/ci-verify-required` refuses the
+end of the agent's turn and prints a snippet per provider; switch it off with
+`disabled: [sloprail/gate/ci-verify-required]` in `.sloprail/config.yaml`.
+
 Now ask it to commit a `.ts` file *without* that marker. The run passes.
 
 If both happened, your guardrail is real. If the bad file passed,
