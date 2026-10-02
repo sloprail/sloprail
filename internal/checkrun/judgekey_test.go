@@ -102,3 +102,20 @@ func TestJudgeKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T)
 		}
 	}
 }
+
+// `run` resolves a quote against the transcript (path, line, message, call); `verify` trusts
+// the trailer and has none of them. A prompt that renders them must still key the same.
+func TestJudgeKey_ATemplateRenderingTranscriptFoundCitationDataKeysTheSameInRunAndVerify(t *testing.T) {
+	g, c, dir := keyRule(t, true)
+	tpl := `{% for x in changeset.citations %}{{ x.quote }}|{{ x.path }}:{{ x.line | int }}|{{ x.message }}|{% if x.call %}{{ x.call }}{% endif %}{% endfor %}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte(tpl), 0o644))
+	run, verify := keyPayload(), keyPayload()
+	run.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}
+	verify.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}
+	run.Changeset.Citations[0].Citation.Message = "the whole output"
+	verify.Changeset.Citations[0].Citation.Path, verify.Changeset.Citations[0].Citation.Line = "", 0
+	verify.Changeset.Citations[0].Citation.Call = ""
+	assert.Equal(t, key(t, g, c, run, "/t1", ""), key(t, g, c, verify, "/t2", ""))
+	verify.Changeset.Citations[0].Citation.Quote = "another"
+	assert.NotEqual(t, key(t, g, c, run, "/t1", ""), key(t, g, c, verify, "/t2", ""))
+}

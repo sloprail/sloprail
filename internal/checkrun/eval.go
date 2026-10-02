@@ -874,6 +874,21 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 func judgeKey(runner dispatchcore.Runner, g declaration.FileGuard, req dispatchcore.Request,
 	payload changeset.Payload, c declaration.Check, prep dispatchcore.Prepared) (fp, refusal string, err error) {
 
+	// Where a quote was found (its transcript path, line, whole message and the tool call that
+	// printed it) is only known where the transcript is: `run` resolves it, `verify` trusts
+	// the trailer and has none. A prompt that renders them would key differently in the two,
+	// so the prompt is keyed with those fields held to placeholders; the quote and its pool
+	// stay, and so do the judge's own words (it is asked with the real ones).
+	keyed := payload
+	keyed.Changeset.Citations = slices.Clone(payload.Changeset.Citations)
+	for i, cit := range keyed.Changeset.Citations {
+		cit.Citation.Path, cit.Citation.Line, cit.Citation.Message, cit.Citation.Call = "<path>", 0, "<message>", ""
+		if slices.Contains(cit.Citation.SourceTypes, transcript.SourceToolResult) {
+			cit.Citation.Call = "<call>"
+		}
+		keyed.Changeset.Citations[i] = cit
+	}
+	req.Changeset = &keyed
 	prompt, refusal, err := runner.RenderJudge(req, c, prep)
 	if err != nil || refusal != "" {
 		return "", refusal, err
