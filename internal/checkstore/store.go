@@ -95,6 +95,9 @@ type store struct {
 	// family, when set, scopes every read to the runs of one session family (temp views named
 	// like the tables, see scopeToFamily) and stamps every run written; "" is an unscoped store.
 	family string
+	// pending are the old per-session files the opener knows of whose rows are not in this
+	// database in full (postponed or failed imports): see PendingLegacy.
+	pending []Legacy
 }
 
 // Open opens the check-results database at path read-write, creating it, its

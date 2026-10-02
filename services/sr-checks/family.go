@@ -33,7 +33,7 @@ func openFamilyChecks() (checkstore.Store, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	store, err := repochecks.OpenReadOnly(sessionpath.StateCwd(record, cwd), family)
+	store, err := repochecks.OpenReadOnly(sessionpath.StateCwd(record, cwd), family, repochecks.SubagentSources(repochecks.RootRecord(record), family)...)
 	if err != nil {
 		return nil, "", err
 	}

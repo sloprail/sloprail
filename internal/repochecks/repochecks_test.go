@@ -323,6 +323,20 @@ func TestOpenReadOnly_SeesTheRepositoryAndAnOldWriteMadeAfterTheImport(t *testin
 	assert.Len(t, refs.Passed, 1, "and the repository's own newer run")
 }
 
+func TestOpenReadOnly_AlsoSeesASubagentsOldFileNotYetImported(t *testing.T) {
+	dir := repo(t)
+	oldLayout(t, dir, "root1", func(s checkstore.Store) { failedRun(t, s, "hRoot") })
+	sub := oldLayout(t, dir, "sub1", func(s checkstore.Store) { failedRun(t, s, "hSub") })
+	src := checkstore.Legacy{Path: sub, Family: "root1", Agent: "agent-x", Folder: dir}
+
+	ro, err := OpenReadOnly(dir, "root1", src)
+	require.NoError(t, err)
+	defer ro.Close()
+	refs, err := ro.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 2, "the sub-agent's refusal counts before it is migrated")
+}
+
 func TestMigration_ConcurrentHooksMigrateOnceWithoutDuplicates(t *testing.T) {
 	dir := repo(t)
 	oldLayout(t, dir, "s1", func(s checkstore.Store) {

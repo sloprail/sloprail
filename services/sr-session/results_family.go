@@ -42,6 +42,14 @@ func newFamilyResults(s checkstore.Store) *familyResults {
 	return &familyResults{Store: s, heads: map[string][]string{}}
 }
 
+// PendingLegacy forwards the opener's list of old files not yet imported in full.
+func (f *familyResults) PendingLegacy() []checkstore.Legacy {
+	if p, ok := f.Store.(checkstore.Pending); ok {
+		return p.PendingLegacy()
+	}
+	return nil
+}
+
 // SiblingRunRefs is the other session families' runs of the same working tree, when the store
 // under this one is the repository's (an unshared store has none).
 func (f *familyResults) SiblingRunRefs(rule, folder string) (checkstore.RunRefs, error) {

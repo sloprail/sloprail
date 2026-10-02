@@ -145,9 +145,10 @@ func attachSrc(ctx context.Context, conn *sql.Conn, path, as string) error {
 
 // runningBlocks says a run recorded RUNNING in the attached database `src` may still be being
 // written: it began within RunningWindow, and its owner (a new engine records pid and host in
-// run_owners) is not provably gone. A run without an owner record is an older engine's: only
-// its age can tell.
-func runningBlocks(ctx context.Context, conn *sql.Conn, src string) (bool, error) {
+// run_owners) is not provably gone. Owners are read from the schema `owners` (the repository
+// database, where a new engine records them; "" for none): an older engine's rows can never have
+// one, and for those only the age can tell.
+func runningBlocks(ctx context.Context, conn *sql.Conn, src, owners string) (bool, error) {
 	cutoff := time.Now().Add(-RunningWindow).UTC().Format("2006-01-02T15:04:05.000000000Z")
 	rows, err := conn.QueryContext(ctx, `SELECT id FROM `+src+`.check_runs
 		WHERE json_extract(metadata, '$.state') = 'running' AND run_at > ?`, cutoff)
@@ -166,11 +167,13 @@ func runningBlocks(ctx context.Context, conn *sql.Conn, src string) (bool, error
 	rows.Close()
 	host, _ := os.Hostname()
 	for _, id := range ids {
-		var pid int
-		var h string
-		err := conn.QueryRowContext(ctx, `SELECT pid, host FROM `+src+`.run_owners WHERE run_id = ?`, id).Scan(&pid, &h)
-		if err == nil && h == host && processGone(pid) {
-			continue // its process is gone: a crashed Stop
+		if owners != "" {
+			var pid int
+			var h string
+			err := conn.QueryRowContext(ctx, `SELECT pid, host FROM `+owners+`.run_owners WHERE run_id = ?`, id).Scan(&pid, &h)
+			if err == nil && h == host && processGone(pid) {
+				continue // its process is gone: a crashed Stop
+			}
 		}
 		return true, nil
 	}
@@ -266,7 +269,7 @@ func (s *store) importLegacy(src Legacy) error {
 		return err
 	}
 	rollback := func() { _, _ = conn.ExecContext(ctx, `ROLLBACK`) }
-	if blocked, err := runningBlocks(ctx, conn, "src"); err == nil && blocked {
+	if blocked, err := runningBlocks(ctx, conn, "src", "main"); err == nil && blocked {
 		rollback()
 		return errPostponed
 	}
@@ -350,14 +353,22 @@ func OpenUnionReadOnly(repoPath, family string, old []Legacy) (Store, error) {
 		}
 		lit := "'" + strings.ReplaceAll(family, "'", "''") + "'"
 		cols := func(c string) string { return strings.ReplaceAll(c, ", rowid AS rowid", "") }
+		// One read transaction on the attached file: the three tables are one snapshot.
+		if _, err := conn.ExecContext(ctx, `BEGIN`); err != nil {
+			return fail(err)
+		}
 		for _, q := range []string{
 			`INSERT INTO main.check_runs SELECT ` + cols(runCols) + ` FROM fam.check_runs WHERE family = ` + lit + ` ORDER BY rowid`,
 			`INSERT INTO main.checks SELECT ` + cols(checkCols) + ` FROM fam.checks WHERE run_id IN (SELECT id FROM main.check_runs) ORDER BY rowid`,
 			`INSERT INTO main.check_items SELECT ` + cols(itemCols) + ` FROM fam.check_items WHERE check_id IN (SELECT id FROM main.checks) ORDER BY rowid`,
 		} {
 			if _, err := conn.ExecContext(ctx, q); err != nil {
+				_, _ = conn.ExecContext(ctx, `ROLLBACK`)
 				return fail(fmt.Errorf("checkstore: read %s: %w", repoPath, err))
 			}
+		}
+		if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+			return fail(err)
 		}
 		if _, err := conn.ExecContext(ctx, `DETACH DATABASE fam`); err != nil {
 			return fail(err)
@@ -404,6 +415,77 @@ type lockedStore struct {
 	release  func()
 	repoPath string
 	family   string
+	pending  []Legacy
+}
+
+// Pending is implemented by a store opened with the old files it could not bring in yet.
+type Pending interface {
+	// PendingLegacy lists the old per-session files (siblings', sub-agents') not in the
+	// repository database in full: their open refusals still count.
+	PendingLegacy() []Legacy
+}
+
+func (s *store) PendingLegacy() []Legacy       { return s.pending }
+func (l *lockedStore) PendingLegacy() []Legacy { return l.pending }
+
+// SetPendingLegacy records, on a store this package opened, the old files not imported in full.
+func SetPendingLegacy(st Store, pending []Legacy) {
+	if pending == nil {
+		pending = []Legacy{} // set, and empty: the opener knows of none
+	}
+	switch v := st.(type) {
+	case *store:
+		v.pending = pending
+	case *lockedStore:
+		v.pending = pending
+	}
+}
+
+// NotImported filters sources down to those the repository database at repoPath does not hold
+// in full.
+func NotImported(repoPath string, sources []Legacy) []Legacy {
+	var out []Legacy
+	for _, l := range sources {
+		if _, err := os.Stat(l.Path); err == nil && !Imported(repoPath, l.Path) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// RecordRun records the run's owner (this process) in the repository database, so a migration
+// can tell a crashed Stop from a live one; FinishRun forgets it.
+func (l *lockedStore) RecordRun(r CheckRun) (string, error) {
+	id, err := l.Store.RecordRun(r)
+	if err == nil && !r.Complete {
+		l.owners(`INSERT OR REPLACE INTO run_owners (run_id, pid, host) VALUES (?, ?, ?)`, id, os.Getpid(), hostname())
+	}
+	return id, err
+}
+
+func (l *lockedStore) FinishRun(runID string) error {
+	err := l.Store.FinishRun(runID)
+	l.owners(`DELETE FROM run_owners WHERE run_id = ?`, runID)
+	return err
+}
+
+func hostname() string { h, _ := os.Hostname(); return h }
+
+// owners runs a statement on the repository database's run_owners; best effort (the lock held
+// for the whole evaluation is the primary signal).
+func (l *lockedStore) owners(q string, args ...any) {
+	if l.repoPath == "" {
+		return
+	}
+	if _, err := os.Stat(l.repoPath); err != nil {
+		return
+	}
+	db, err := sql.Open("sqlite", l.repoPath+"?_pragma=busy_timeout(2000)")
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	_, _ = db.Exec(q, args...)
 }
 
 func (l *lockedStore) Close() error {
@@ -449,7 +531,14 @@ func LegacyBusy(path, repoPath string) bool {
 		return false
 	}
 	defer conn.Close()
-	// runningBlocks names its source schema: main is the file itself here.
-	blocked, err := runningBlocks(ctx, conn, "main")
+	owners := ""
+	if _, err := os.Stat(repoPath); err == nil {
+		if _, err := conn.ExecContext(ctx, `ATTACH DATABASE ? AS own`, "file:"+url.PathEscape(repoPath)+"?mode=ro"); err == nil {
+			defer conn.ExecContext(ctx, `DETACH DATABASE own`)
+			owners = "own"
+		}
+	}
+	// runningBlocks names its source schema: main is the old file itself here.
+	blocked, err := runningBlocks(ctx, conn, "main", owners)
 	return err == nil && blocked
 }

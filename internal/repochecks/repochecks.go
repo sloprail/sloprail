@@ -18,9 +18,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/sessionpath"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // legacySources is every per-session database the older layout holds for the worktree cwd
@@ -72,6 +74,10 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 	if err != nil && warn != nil {
 		fmt.Fprintln(warn, "sloprail: some earlier check results were not imported:", err)
 	}
+	// Whatever is not in the repository database in full (postponed, or failed) keeps counting
+	// for the evaluation: its open refusals are read from the old files.
+	pending := checkstore.NotImported(path, srcs)
+	checkstore.SetPendingLegacy(store, pending)
 	// The family's own old database is being written by a Stop of an older engine this very
 	// moment: this cycle keeps using it as it is (nothing it recorded is hidden), and the next
 	// hook migrates it.
@@ -79,7 +85,11 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 		for _, l := range srcs {
 			if l.Path == p && l.Family == family && l.Agent == "" {
 				store.Close()
-				return checkstore.OpenLegacy(p, path, family)
+				legacy, err := checkstore.OpenLegacy(p, path, family)
+				if err == nil {
+					checkstore.SetPendingLegacy(legacy, pending)
+				}
+				return legacy, err
 			}
 		}
 	}
@@ -92,7 +102,7 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 // file — the repository's database does not exist yet, holds nothing of this family, or an
 // older engine's Stop is writing the old file right now — that file is read as it is.
 // checkstore.ErrNoStore when nothing was recorded.
-func OpenReadOnly(cwd, family string) (checkstore.Store, error) {
+func OpenReadOnly(cwd, family string, extra ...checkstore.Legacy) (checkstore.Store, error) {
 	path, err := sessionpath.RepoChecksDB(cwd)
 	if err != nil {
 		return nil, err
@@ -104,6 +114,13 @@ func OpenReadOnly(cwd, family string) (checkstore.Store, error) {
 	if own, err := sessionpath.ChecksDB(cwd, family); err == nil {
 		if _, statErr := os.Stat(own); statErr == nil && !checkstore.Imported(path, own) {
 			old = append(old, checkstore.Legacy{Path: own, Family: family, Folder: sessionpath.WorkspaceAnchor(cwd)})
+		}
+	}
+	// The family's sub-agents' old files (the caller knows them, see SubagentSources) not in the
+	// repository database in full yet are read the same way.
+	for _, l := range extra {
+		if _, statErr := os.Stat(l.Path); statErr == nil && !checkstore.Imported(path, l.Path) {
+			old = append(old, l)
 		}
 	}
 	if len(old) > 0 {
@@ -123,4 +140,40 @@ func OpenReadOnly(cwd, family string) (checkstore.Store, error) {
 		}
 	}
 	return store, nil
+}
+
+// SubagentSources is the old per-session check-results databases of the sub-agents dispatched
+// under a root session's record, as sources of that family (each tagged with its agent), for a
+// reader that must see their open refusals before they are migrated. Best effort: a record that
+// cannot be read is left out.
+func SubagentSources(rootRecord, family string) []checkstore.Legacy {
+	if rootRecord == "" {
+		return nil
+	}
+	recs, _ := filepath.Glob(filepath.Join(strings.TrimSuffix(rootRecord, ".jsonl"), "subagents", "agent-*.jsonl"))
+	var out []checkstore.Legacy
+	for _, rec := range recs {
+		agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(rec), "agent-"), ".jsonl")
+		cwd, err := transcript.StartCwd(rec)
+		if err != nil || cwd == "" {
+			continue
+		}
+		id, err := sessionpath.StableIdentity(rec, cwd)
+		if err != nil {
+			continue
+		}
+		if path, err := sessionpath.ChecksDB(cwd, id.ID); err == nil {
+			out = append(out, checkstore.Legacy{Path: path, Family: family, Agent: agent, Folder: sessionpath.WorkspaceAnchor(cwd)})
+		}
+	}
+	return out
+}
+
+// RootRecord is the record of the root session a record belongs to: a sub-agent's record is
+// nested under the session that dispatched it.
+func RootRecord(record string) string {
+	if dir := transcript.SessionDirOfSubagent(record); dir != "" {
+		return dir + ".jsonl"
+	}
+	return record
 }

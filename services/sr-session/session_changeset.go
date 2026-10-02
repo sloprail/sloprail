@@ -287,7 +287,7 @@ func openChangesetSession(p *HookPayload) (changesetSession, error) {
 	} else if !os.IsNotExist(statErr) {
 		return sess, statErr
 	}
-	switch sess.checks, err = repochecks.OpenReadOnly(p.stateCwd(), id); {
+	switch sess.checks, err = repochecks.OpenReadOnly(p.stateCwd(), id, repochecks.SubagentSources(repochecks.RootRecord(record), id)...); {
 	case errors.Is(err, checkstore.ErrNoStore):
 		sess.checks = nil
 	case err != nil:

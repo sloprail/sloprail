@@ -108,35 +108,60 @@ func TestImportLegacy_TheLockLivesBesideTheRepositoryDatabaseNotTheOldFile(t *te
 	assert.FileExists(t, lockPathFor(dst.Path(), path))
 }
 
-func TestImportLegacy_ARunningRunWithADeadOwnerDoesNotPostpone(t *testing.T) {
-	var path string
-	{
-		// A run recorded RUNNING by a new engine whose process is gone.
-		p := filepath.Join(t.TempDir(), "sessions", "ws", "s1", "checks.db")
-		st, err := OpenFamily(p, "s1")
+// runningOld is an old-layout file with one run recorded RUNNING, and that run's id.
+func runningOld(t *testing.T) (string, string) {
+	t.Helper()
+	var id string
+	path := legacyFile(t, func(s Store) {
+		var err error
+		id, err = s.RecordRun(run("hRunning"))
 		require.NoError(t, err)
-		_, err = st.RecordRun(run("hCrashed"))
-		require.NoError(t, err)
-		require.NoError(t, st.Close())
-		cmd := exec.Command("true")
-		require.NoError(t, cmd.Run())
-		rawExec(t, p, `UPDATE run_owners SET pid = ?`, cmd.Process.Pid)
-		path = p
-	}
+	})
+	return path, id
+}
+
+func deadPid(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	require.NoError(t, cmd.Run())
+	return cmd.Process.Pid
+}
+
+func TestImportLegacy_ARunningRunWhoseRecordedOwnerIsGoneDoesNotPostpone(t *testing.T) {
+	path, id := runningOld(t)
 	dst := newRepoStore(t)
+	host, _ := os.Hostname()
+	// Owners are recorded in the repository database (by a new engine's Stop on the old file).
+	rawExec(t, dst.Path(), `INSERT INTO run_owners (run_id, pid, host) VALUES (?, ?, ?)`, id, deadPid(t), host)
 	postponed, err := ImportLegacyReport(dst, []Legacy{{Path: path, Family: "s1"}})
 	require.NoError(t, err)
 	assert.Empty(t, postponed, "its process is provably gone")
 }
 
-func TestImportLegacy_ARunningRunWithALiveOwnerPostponesAndAnOldOneWithoutOwnerUsesTheStopTimeout(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "sessions", "ws", "s1", "checks.db")
-	st, err := OpenFamily(p, "s1")
-	require.NoError(t, err)
-	_, err = st.RecordRun(run("hLive"))
-	require.NoError(t, err)
-	require.NoError(t, st.Close())
+func TestLockedStore_RecordsItsRunsOwnerInTheRepositoryAndForgetsItAtFinish(t *testing.T) {
 	dst := newRepoStore(t)
+	path := legacyFile(t, func(s Store) { passRun(t, s, "h0", "fp") })
+	l, err := OpenLegacy(path, dst.Path(), "s1")
+	require.NoError(t, err)
+	defer l.Close()
+	id, err := l.RecordRun(run("h1"))
+	require.NoError(t, err)
+	var n int
+	db, err := sql.Open("sqlite", dst.Path())
+	require.NoError(t, err)
+	defer db.Close()
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM run_owners WHERE run_id = ?`, id).Scan(&n))
+	assert.Equal(t, 1, n)
+	require.NoError(t, l.FinishRun(id))
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM run_owners WHERE run_id = ?`, id).Scan(&n))
+	assert.Equal(t, 0, n)
+}
+
+func TestImportLegacy_ARunningRunWithALiveOwnerPostponesAndAnOldOneWithoutOwnerUsesTheStopTimeout(t *testing.T) {
+	p, id := runningOld(t)
+	dst := newRepoStore(t)
+	host, _ := os.Hostname()
+	rawExec(t, dst.Path(), `INSERT INTO run_owners (run_id, pid, host) VALUES (?, ?, ?)`, id, os.Getpid(), host)
 	postponed, err := ImportLegacyReport(dst, []Legacy{{Path: p, Family: "s1"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{p}, postponed, "this very test process owns it, and it is alive")

@@ -8,7 +8,6 @@ import (
 
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/gitrepo"
-	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
 // outstandingRefusalBases is where a rule's range must reach back to so that nothing an
@@ -48,21 +47,22 @@ func outstandingRefusalBases(root, rule string, own checkstore.Store) ([]string,
 		failed = append(failed, refs.Failed...)
 		passed = append(passed, refs.Passed...)
 	}
-	if !isRepoStore(ownPath) {
-		repoPath, _ := sessionpath.RepoChecksDB(root)
+	if pend, aware := own.(checkstore.Pending); aware && pend.PendingLegacy() != nil {
+		// The old per-session files (siblings', sub-agents') the repository database does not
+		// hold in full yet — postponed or failed imports: refused work must never pass because
+		// its source is not migrated. One already imported in full is read from the repository.
+		for _, l := range pend.PendingLegacy() {
+			if l.Path != ownPath {
+				paths = append(paths, l.Path)
+			}
+		}
+	} else if !isRepoStore(ownPath) {
 		globbed, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(ownPath)), "*", "checks.db"))
 		if err != nil {
 			return nil, err
 		}
 		sort.Strings(globbed)
-		for _, p := range globbed {
-			// A sibling file the repository database already holds in full is read THERE: its
-			// rows may have been resolved since, and the old file would bring the refusal back.
-			if repoPath != "" && p != ownPath && checkstore.Imported(repoPath, p) {
-				continue
-			}
-			paths = append(paths, p)
-		}
+		paths = globbed
 	}
 	for _, p := range paths {
 		if p == ownPath {
