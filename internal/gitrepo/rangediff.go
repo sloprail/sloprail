@@ -2,7 +2,9 @@ package gitrepo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 )
 
 // What changed between two commits, read as data.
@@ -92,6 +94,14 @@ func parseRaw(out string) ([]Delta, error) {
 // detection on so a rename reads as a rename rather than a deletion plus an
 // addition. The old path is named as well as the new one for exactly that reason.
 func PatchOf(dir, base, head string, d Delta) (string, error) {
+	if immutableRev.MatchString(base) && immutableRev.MatchString(head) {
+		// Every file-guard of the range asks for the same patches: one git process each, not one per guard.
+		return memoGit(blobKey{"patch", dir, base + ".." + head, d.Path + "\x00" + d.OldPath}, func() (string, error) { return patchOf(dir, base, head, d) })
+	}
+	return patchOf(dir, base, head, d)
+}
+
+func patchOf(dir, base, head string, d Delta) (string, error) {
 	args := []string{"diff", "-M", "--no-ext-diff", "--no-textconv", "--no-color", base, head, "--", d.Path}
 	if d.OldPath != "" {
 		args = append(args, d.OldPath)
@@ -109,6 +119,45 @@ func PatchOf(dir, base, head string, d Delta) (string, error) {
 // exist at that commit (it is in a delta), so a failure to read it is a fault
 // and not an absence.
 func BlobAt(dir, commit, path string) (string, error) {
+	if !immutableRev.MatchString(commit) {
+		return blobAt(dir, commit, path)
+	}
+	// A commit named by its sha never changes, and every file-guard of a range reads the same
+	// blobs: one git process per (commit, path), not one per guard.
+	return memoGit(blobKey{"blob", dir, commit, path}, func() (string, error) { return blobAt(dir, commit, path) })
+}
+
+// immutableRev is a revision that names one commit forever: a sha, or one of its parents.
+var immutableRev = regexp.MustCompile(`^[0-9a-f]{40}(\^[0-9]*)?$`)
+
+type blobKey struct{ kind, dir, a, b string }
+
+type blobEntry struct {
+	mu      sync.Mutex
+	done    bool
+	content string
+}
+
+var blobMemo sync.Map
+
+// memoGit runs read once per key, concurrent askers waiting for the one run; a failure is not kept.
+func memoGit(key blobKey, read func() (string, error)) (string, error) {
+	v, _ := blobMemo.LoadOrStore(key, &blobEntry{})
+	e := v.(*blobEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.done {
+		return e.content, nil
+	}
+	content, err := read()
+	if err != nil {
+		return "", err
+	}
+	e.content, e.done = content, true
+	return content, nil
+}
+
+func blobAt(dir, commit, path string) (string, error) {
 	out, err := run(dir, "cat-file", "--filters", fmt.Sprintf("%s:%s", commit, path))
 	if err != nil {
 		return "", fmt.Errorf("gitrepo: read %q at %s: %w", path, short(commit), err)
