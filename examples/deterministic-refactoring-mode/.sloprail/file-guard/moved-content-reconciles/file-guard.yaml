@@ -1,13 +1,17 @@
-# Reconcile a moved file against its origin at Stop — but only inside a declared
-# refactor (the context link is a variable in the match, not a flat active_in) and
-# only for a file carrying an sr:moved-from marker. The same marker outside the
-# context is not this guard's business.
+# Reconcile a moved file against its origin at Stop, for every file of the committed
+# range carrying an sr:moved-from marker.
+#
+# The match reads no context: a file-guard judges committed bytes (in CI, with no
+# session), and a context is session state. Whether a refactor is DECLARED is the
+# gates' business (gate/moved-content-reconciles and gate/refactor-complete read
+# the refactoring context live); this backstop only reconciles what the commits
+# hold.
 #
 # This judges the committed changeset: each file the range touched that carries the
 # marker is reconciled as committed. The PREVENTION — refusing a move that
 # regenerated instead of carrying the bytes, before the write lands — is the
 # PreFileWrite gate of the same name (gate/moved-content-reconciles); this is the
 # backstop for a write the gate could not see (a command the engine does not parse).
-match: context["refactoring"].active and any(markers, .kind == "moved-from")
+match: any(markers, .kind == "moved-from")
 checks:
   - script: ./reconciles-against-origin.sh

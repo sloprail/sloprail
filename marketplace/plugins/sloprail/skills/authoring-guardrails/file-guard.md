@@ -32,8 +32,9 @@ judge ([judge-checks.md](judge-checks.md)). `deletions` and `subjects` are the
 nature-specific knobs, below; both are optional.
 
 A file-guard's match sees a file's own facts **bare** — `path`, `status`,
-`markers`, `oldMarkers`, `trailers`, `context`, not `event.path`
-([matchers.md](matchers.md)).
+`markers`, `oldMarkers`, `trailers`, not `event.path`
+([matchers.md](matchers.md)). It cannot read `context`: a file-guard sees no session,
+so a condition on a context belongs on a gate.
 
 ## When it fires: `sr-checks run` over an explicit range
 

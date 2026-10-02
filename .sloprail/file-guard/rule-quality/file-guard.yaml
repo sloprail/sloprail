@@ -27,7 +27,7 @@
 #
 # match: every RULE.md in the repo, path-anchored on the file's own name. A
 # file-guard matches a FILE'S STATE (flat `path`, `status`, `markers`, `oldMarkers`,
-# `context`, `trailers`), so the expression reads `path`. No directory
+# `trailers`; no `context`: a file-guard sees no session), so the expression reads `path`. No directory
 # prefix, so a rule written anywhere is caught, not only the ones under a guard's
 # rules/ today — a prefix matcher would go stale, silently, the first time a
 # guardrail is added somewhere new.

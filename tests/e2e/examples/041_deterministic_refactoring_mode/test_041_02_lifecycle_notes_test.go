@@ -10,11 +10,11 @@ import (
 // Stop (only a gate blocks), so the completeness refusal lives in the paired Stop
 // gate `gate/refactor-complete`, not in the context's exit. These tests prove the
 // gate blocks an incomplete refactor (T041_07) and permits a completed one
-// (T041_08), and pin the context-activation behavior the file-guard rests on
+// (T041_08), and pin the context-activation behavior the gates rest on
 // (T041_06). None of this disturbs the reconcile gate (T041_01..05).
 
 // T041_06: the `refactoring` context activates on ANY PreToolUse, not only when a
-// `#refactor` was declared — so the file-guard fires on a moved-from marker even
+// `#refactor` was declared — so the reconcile gate fires on a moved-from marker even
 // with NO refactor declaration.
 //
 // enter.sh means to DECLINE (not activate) when it finds no #refactor, and does so
@@ -22,7 +22,7 @@ import (
 // empty stdout" as "ACTIVATE, keeping the prior payload" (dispatch/context.go) —
 // the way to decline is a NON-ZERO exit or an unmet `require`. So enter.sh's
 // exit-0 decline is a no-op: the context activates on every PreToolUse. The
-// practical effect is benign for the file-guard (its match ALSO requires an
+// practical effect is benign for the reconcile gate (its match ALSO requires an
 // sr:moved-from marker, which is the real narrowing — see T041_04), and benign for
 // the completeness gate (with no #refactor declared, declared_markers is empty and
 // the gate permits — proven here: this run carries no Stop completeness block).
