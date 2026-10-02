@@ -209,3 +209,8 @@ func eventsOf(e normalized) []string {
 func New(t *testing.T) *Env {
 	return harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
 }
+
+// NewJudging is New without NoAutoCheck: the harness's pre-Stop `sr-checks run` is what
+// runs a file-guard here, so a test whose subject is what the guard's check reads
+// needs it.
+func NewJudging(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
