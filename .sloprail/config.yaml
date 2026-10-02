@@ -1,5 +1,5 @@
-# TEMPORARY while the cut (#164) is being integrated: the prose-quality judges and
-# doc-read nudges stall the agents working on this branch. Remove before #164 merges.
+# TEMPORARY: the user asked to keep all 17 rules below disabled until #164 merges;
+# delete this file in a follow-up once the new checks run on main.
 disabled:
   - sloprail/file-guard/authoring-slop
   - sloprail/file-guard/grounded-rule-changes
