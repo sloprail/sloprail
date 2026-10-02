@@ -254,6 +254,55 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 // failure. What this directory covers end to end is everything downstream of the
 // anchor being right — the paths (T025_01, T025_02) and the refusal (T025_05).
 
+// T025_04: a verdict recorded from the repository root holds for the same range judged
+// from a subdirectory, and the other way round.
+//
+// The anchor's other consequence, and the one a person actually notices. The results
+// are keyed by the repository, so a command run from `sub/deep` that opened a store of
+// its own would lose every verdict and ask the judge again about a range it has already
+// passed — on a judge that is a fresh model call, free to come back with a different
+// answer about work the agent has moved on from. (A script check runs every time by
+// design, so this is a judge's property.)
+//
+// The shape: judge the session's range from the subdirectory (the judge is asked); judge
+// it again from the subdirectory and then from the root: nothing is asked. The control
+// is that the first run did ask, with the committed file in front of it.
+func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T) {
+	e, proj, sub, _ := subProject(t)
+	e.FileGuard(proj, "verdict", "match: \"**/*.md\"\nchecks:\n  - judge: ./rubric.md.j2\n",
+		map[string]string{"rubric.md.j2": "Does this change hold up?\n{{ change }}\n"})
+	e.CommitAll(proj, "the judged rule")
+	const promptFile = ".git/judge-prompt"
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": true, "reasoning": "fine"}`)
+
+	const sess = "s-025-04"
+	e.RunFrom(proj, "sub/deep", sess, "settle a file", Turns("done",
+		Write("w1", "settled.md", "judged and passed\n"),
+	).ThenCommit("the agent's work"))
+	if refusals := judgeFromBelow(e, sub, sess); len(refusals) != 0 {
+		t.Fatalf("the judge refused a passing verdict: %v", refusals)
+	}
+	asked := e.JudgeCalls(proj, promptFile, "")
+	if asked == 0 {
+		t.Fatalf("the judge was never asked about the file, so there is no verdict for the " +
+			"re-run below to inherit and its silence would hold for the wrong reason")
+	}
+	if p := e.JudgePrompt(proj, promptFile); !strings.Contains(p, "judged and passed") {
+		t.Fatalf("the judge was not shown the file:\n%s", p)
+	}
+
+	judgeFromBelow(e, sub, sess)
+	if n := e.JudgeCalls(proj, promptFile, ""); n != asked {
+		t.Fatalf("a verdict recorded from the subdirectory was not found by the same range judged "+
+			"from the subdirectory again (%d judge calls, was %d)", n, asked)
+	}
+	e.CheckRunRaw(proj, sess, e.RunBase(sess), "HEAD")
+	if n := e.JudgeCalls(proj, promptFile, ""); n != asked {
+		t.Fatalf("a verdict recorded from the subdirectory was not found from the repository root "+
+			"(%d judge calls, was %d): the results are not keyed by the repository", n, asked)
+	}
+}
+
 // T025_05: an unfixed violation still refuses when judged from a subdirectory,
 // after a later cycle that did not touch it.
 //
