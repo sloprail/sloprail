@@ -42,6 +42,9 @@ func (s *Store) readAll(sn *snapshot) (map[string]Found, int, error) {
 			return nil, 0, err
 		}
 		for i := range sg.Keys {
+			if int(sg.Pos[i]) == runOnly {
+				continue // a run with nothing findable is not a result; Gc lets it go
+			}
 			r, err := sg.decodeAt(blob, i, d)
 			if err != nil {
 				return nil, 0, err

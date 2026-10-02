@@ -88,3 +88,29 @@ func (f *File) Put(runs []Run) error {
 	}
 	return fh.Close()
 }
+
+func (f *File) Runs() ([]Run, error) {
+	fh, err := os.Open(f.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("checkcache: %w", err)
+	}
+	defer fh.Close()
+	var runs []Run
+	sc := bufio.NewScanner(fh)
+	sc.Buffer(make([]byte, 1<<20), 1<<28)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var r Run
+		if err := json.Unmarshal(line, &r); err != nil {
+			return nil, fmt.Errorf("checkcache: unreadable run in %s: %w", f.path, err)
+		}
+		runs = append(runs, r)
+	}
+	return newestFirst(runs), sc.Err()
+}

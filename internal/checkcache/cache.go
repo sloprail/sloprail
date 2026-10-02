@@ -16,6 +16,7 @@ package checkcache
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"sync"
 )
 
@@ -130,18 +131,32 @@ type Cache interface {
 	// Put stores runs. Writing a key that already has a result adds to it, never rewrites
 	// it; a reader resolves duplicates as Lookup says.
 	Put(runs []Run) error
+	// Runs returns every run stored, each once (a run put again replaces the earlier copy),
+	// newest first: the history a reader that lists (not looks up) works over. A run with no
+	// findable check is a run too.
+	Runs() ([]Run, error)
 }
 
 // Findable is whether a check can be looked up: it has a fingerprint and finished as a
-// pass or a fail.
+// pass or a fail — or is a fail that was resolved as stale (a skip carrying metadata
+// "staleFrom"), which is found so that, being the newest result of its key, it supersedes
+// the fail it resolves: a reader sees a skip, and a skip is no hit.
 func Findable(c Check) bool {
-	return c.Fingerprint != "" && (c.Status == StatusPass || c.Status == StatusFail)
+	if c.Fingerprint == "" {
+		return false
+	}
+	if c.Status == StatusSkip {
+		_, stale := c.Metadata["staleFrom"]
+		return stale
+	}
+	return c.Status == StatusPass || c.Status == StatusFail
 }
 
 // Memory is the in-memory Cache.
 type Memory struct {
 	mu   sync.Mutex
 	byID map[string]Found
+	runs []Run
 }
 
 // NewMemory returns an empty in-memory cache.
@@ -163,6 +178,7 @@ func (m *Memory) Put(runs []Run) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range runs {
+		m.runs = append(m.runs, r)
 		for _, c := range r.Checks {
 			if !Findable(c) {
 				continue
@@ -176,4 +192,26 @@ func (m *Memory) Put(runs []Run) error {
 		}
 	}
 	return nil
+}
+
+func (m *Memory) Runs() ([]Run, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return newestFirst(m.runs), nil
+}
+
+// newestFirst keeps the last copy of each run id and sorts by RunAt, newest first.
+func newestFirst(runs []Run) []Run {
+	last := make(map[string]int, len(runs))
+	for i, r := range runs {
+		last[r.ID] = i
+	}
+	out := make([]Run, 0, len(last))
+	for i, r := range runs {
+		if last[r.ID] == i {
+			out = append(out, r)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].RunAt > out[j].RunAt })
+	return out
 }

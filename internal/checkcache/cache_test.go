@@ -82,3 +82,29 @@ func TestCache_OnlyAFinishedPassOrFailIsFindable(t *testing.T) {
 		})
 	}
 }
+
+// Runs lists every run, the ones with nothing findable too (an engine failure, an empty
+// range): that history is what a reader of what a rule passed or refused works over.
+func TestCache_RunsListsEveryRunNewestFirstEachOnce(t *testing.T) {
+	impls := implementations(t)
+	impls["git"] = newRepo(t, "")
+	for name, c := range impls {
+		t.Run(name, func(t *testing.T) {
+			empty := run("1")
+			empty.HeadRef = "h-empty"
+			failed := run("3")
+			failed.ExitCode, failed.Error = 1, "git: bad"
+			require.NoError(t, c.Put([]Run{empty, run("2", judge("a", StatusPass)), failed}))
+			require.NoError(t, c.Put([]Run{run("2", judge("a", StatusPass))})) // the same run again
+
+			got, err := c.Runs()
+			require.NoError(t, err)
+			var ids []string
+			for _, r := range got {
+				ids = append(ids, r.ID)
+			}
+			assert.Equal(t, []string{"run_3", "run_2", "run_1"}, ids)
+			assert.Equal(t, "git: bad", got[0].Error)
+		})
+	}
+}

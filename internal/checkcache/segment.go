@@ -24,9 +24,13 @@ import (
 // idx layout: "SRIDX002" | dictSha[32] | n u32 | n x (key16 | off u32 | len u32 | pos u16), big endian.
 
 const (
-	idxMagic  = "SRIDX002"
-	keyLen    = 16
-	idxEntry  = keyLen + 10
+	idxMagic = "SRIDX002"
+	keyLen   = 16
+	idxEntry = keyLen + 10
+	// runOnly is the position of an index entry that names a run, not one of its checks: it
+	// is how a run with nothing findable (an engine failure, an empty range, a script-only
+	// rule) is kept, for Runs. A lookup never asks for one: its key is no check's key.
+	runOnly   = 0xFFFF
 	idxHeader = len(idxMagic) + 32 + 4
 )
 
@@ -100,6 +104,13 @@ func stampDictID(d []byte) []byte {
 
 func marshalRun(r Run) ([]byte, error) { return json.Marshal(r) }
 
+// runKeyID is the index key of a run's own entry; the "run" prefix keeps it apart from any
+// check key (those hash SchemaVersion first).
+func runKeyID(runID string) string {
+	sum := sha256.Sum256([]byte("run\x00" + runID))
+	return hex.EncodeToString(sum[:])
+}
+
 // entry is one findable check of one run.
 type entry struct {
 	id  string
@@ -123,9 +134,16 @@ func encodeSegment(runs []Run, d *zdict) (name string, zst, idx []byte, err erro
 			best[id] = entry{id, ri, pi}
 		}
 	}
-	entries := make([]entry, 0, len(best))
+	entries := make([]entry, 0, len(best)+len(runs))
 	for _, e := range best {
 		entries = append(entries, e)
+	}
+	seenRun := map[string]bool{}
+	for ri, r := range runs {
+		if !seenRun[r.ID] {
+			seenRun[r.ID] = true
+			entries = append(entries, entry{runKeyID(r.ID), ri, runOnly})
+		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].id < entries[j].id }) // hex order == key16 byte order
 	var data, ix bytes.Buffer
@@ -222,6 +240,9 @@ func (s *segIdx) decodeAt(blob []byte, i int, d *zdict) (Found, error) {
 		return Found{}, err
 	}
 	pos := int(s.Pos[i])
+	if pos == runOnly {
+		return Found{}, fmt.Errorf("%w: %s entry %d names a run, not a check", ErrCorrupt, s.Name, i)
+	}
 	if pos >= len(r.Checks) {
 		return Found{}, fmt.Errorf("%w: %s entry names check %d of a run with %d", ErrCorrupt, s.Name, pos, len(r.Checks))
 	}
