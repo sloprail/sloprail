@@ -54,25 +54,22 @@ import (
 // transcript as the feedback turn it is re-run with, and the SubagentStop
 // attachment beside it.
 //
-// The sub-agent takes its own worktree and commits there: a file-guard judges
-// commits, and only an agent that owns a tree is judged at its own stop (a
-// sub-agent sharing the dispatching session's tree is judged at the root's). The
-// mock does not APPLY a sub-agent's Write, so the delegated work is done with
-// Bash, which the mock executes inside the worktree.
+// The sub-agent takes its own worktree and works there; the refusing rule is a
+// Stop gate that objects while the cycle's workspace holds the delegated file, so
+// only the sub-agent's own stop is refused. The mock does not APPLY a sub-agent's
+// Write, so the delegated work is done with Bash, which the mock executes inside
+// the worktree.
 //
 // Asserted against the sub-agent's own record specifically, not against every
-// refusal anywhere. Sharing the tree means the root's own Stop sees from-sub.md
-// too and refuses it a second time, in the ROOT's record, so "some refusal
-// arrived" is true even when the sub-agent's cycle judged nothing — measured,
-// by re-stubbing subagent-stop and watching the loose version of this test stay
-// green.
+// refusal anywhere, so "some refusal arrived" cannot pass on a refusal the root's
+// own Stop produced.
 func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
 	ranLog := filepath.Join(t.TempDir(), "refused.log")
-	e.FileGuard(proj, "nosubwork", refuseCreatedFiles, map[string]string{
-		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\n" +
+	e.Gate(proj, "nosubwork", refuseAtStop, map[string]string{
+		"refuse.sh": "#!/bin/sh\ncat >/dev/null\n[ -e \"$SR_WORKSPACE/from-sub.md\" ] || exit 0\necho ran >> " + ranLog + "\n" +
 			"echo '{\"reason\":\"the sub-agent should not have created this\"}'\nexit 1\n",
 	})
 	initRepo(t, proj)
@@ -146,7 +143,7 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	// rule at all, the dispatch would have nothing bound and the cycle would
 	// prove only that nothing ran.
 	ranLog := filepath.Join(t.TempDir(), "allowed.log")
-	e.FileGuard(proj, "permitsubwork", refuseCreatedFiles, map[string]string{
+	e.Gate(proj, "permitsubwork", refuseAtStop, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\nexit 0\n",
 	})
 	initRepo(t, proj)
@@ -173,12 +170,14 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	}
 }
 
-// refuseCreatedFiles is a file-guard that refuses every `.md` file the sub-agent
-// committed. A sub-agent's own cycle ends at its SubagentStop, where the file-guard
-// judges what it committed; a refusal blocks that stop, read with
-// e.SubagentBlockingErrors from the sub-agent's own record. `match: "**/*.md"`
-// selects the delegated `.md` work the sub-agent's Bash creates.
-const refuseCreatedFiles = `match: "**/*.md"
+// refuseAtStop is a Stop gate, which runs at the end of every cycle — the root's
+// Stop and a sub-agent's own SubagentStop alike. Its check refuses while the
+// cycle's workspace holds the delegated file, which only the sub-agent's own
+// worktree does. A file-guard is no longer the vehicle: it is judged by `sr check
+// run` over a commit range, outside any session, so it never refuses a
+// sub-agent's stop.
+const refuseAtStop = `on:
+  - event: Stop
 checks:
   - script: ./refuse.sh
 `

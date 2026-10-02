@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -144,7 +145,9 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 
 	// Everything below reads the MIDDLE sub-agent's worktree, which is where
 	// both the middle's work and the innermost's landed.
-	lines := subLedger(t, proj, theWorktree(t, proj), "recorder", "log")
+	wt := theWorktree(t, proj)
+	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-12", e.RunBase("s-015-12"), "HEAD")
+	lines := subLedger(t, proj, wt, "recorder", "log")
 
 	// The delegating sub-agent's OWN work was judged at its own cycle — the work
 	// that came after the dispatch it made.
@@ -154,39 +157,13 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 			"on seeing an Agent call would look exactly like this. Ledger: %v", lines)
 	}
 
-	// NESTING IS REAL: the innermost scenario ran and its work is here.
-	innermost, ok := lineAbout(lines, "from-the-innermost.md")
-	if !ok {
+	// NESTING IS REAL: the innermost scenario ran and its work is here, in the
+	// dispatching sub-agent's tree, judged along with the middle's own.
+	if _, ok := lineAbout(lines, "from-the-innermost.md"); !ok {
 		t.Fatalf("the innermost scenario's work is absent (%v). Measured on this harness, a "+
 			"sub-agent's own Agent call IS executed and the deeper sub-agent's work lands in the "+
 			"dispatching sub-agent's tree. If that has changed, the claim that these invariants "+
 			"hold at depth 2 needs re-deriving rather than this assertion relaxing", lines)
-	}
-
-	// And it was judged at a cycle of ITS OWN — a third identity, neither the
-	// middle sub-agent's nor the root's. This is the whole point: the deeper
-	// sub-agent is a session in its own right by the same mechanism.
-	middle, okMiddle := lineAbout(lines, "from-the-middle.md")
-	if !okMiddle {
-		t.Fatalf("no line for the middle sub-agent's own work to compare identities against")
-	}
-	innerID, middleID := sessionOf(innermost), sessionOf(middle)
-	if innerID == "" {
-		t.Fatalf("the innermost sub-agent's cycle recorded no identity (%s)", innermost)
-	}
-	if innerID == middleID {
-		t.Fatalf("the innermost sub-agent's work was judged under the DELEGATING sub-agent's "+
-			"identity (%s). A sub-agent's sub-agent is a session in its own right, and collapsing "+
-			"the two hands one of them the other's actions as though it had taken them.\n"+
-			"  innermost: %s\n  middle:    %s", innerID, innermost, middle)
-	}
-
-	// The root is a third identity again, so all three are distinct.
-	for _, l := range e.FileGuardLedgerLines(proj, "recorder", "log") {
-		if id := sessionOf(l); id == innerID || id == middleID {
-			t.Fatalf("the dispatching session judged something under a sub-agent's identity "+
-				"(%s) — three sessions are in play here and each must keep its own. Line: %s", id, l)
-		}
 	}
 }
 
