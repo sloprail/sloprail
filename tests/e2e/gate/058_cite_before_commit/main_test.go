@@ -34,7 +34,7 @@ const citedDocs = "match: \"docs/**\"\nrequire:\n  - citation: {source_types: [u
 
 func project(t *testing.T) (*Env, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithCiteBeforeCommit())
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
