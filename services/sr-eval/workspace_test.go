@@ -37,7 +37,7 @@ func TestCommitSetup_SeedThenRulesAlone(t *testing.T) {
 	writeIn(t, filepath.Join(project, ".claude", "settings.json"), "{}\n")
 	writeIn(t, filepath.Join(project, ".sloprail", "gate", "g", "gate.yaml"), "name: g\n")
 
-	w := &workspace{project: project}
+	w := &workspace{root: t.TempDir(), project: project}
 	if err := w.commitSetup(); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestCommitSetup_OnlyRulesStillGetsASeedCommit(t *testing.T) {
 	project := initProject(t)
 	writeIn(t, filepath.Join(project, ".sloprail", "context", "c", "context.yaml"), "name: c\n")
 
-	w := &workspace{project: project}
+	w := &workspace{root: t.TempDir(), project: project}
 	if err := w.commitSetup(); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestCommitSetup_OnlyRulesStillGetsASeedCommit(t *testing.T) {
 func TestCommitSetup_NoRulesIsOneCommit(t *testing.T) {
 	project := initProject(t)
 	writeIn(t, filepath.Join(project, "a.txt"), "a\n")
-	w := &workspace{project: project}
+	w := &workspace{root: t.TempDir(), project: project}
 	if err := w.commitSetup(); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestSetUp_SetupThatCommitsStillGetsRulesLast(t *testing.T) {
 	writeIn(t, filepath.Join(project, ".sloprail", "gate", "g", "gate.yaml"), "name: g\n")
 	env := append(baseAgentEnv(os.Environ(), t.TempDir(), t.TempDir(), false), "PATH="+os.Getenv("PATH"))
 
-	w := &workspace{project: project}
+	w := &workspace{root: t.TempDir(), project: project}
 	if err := w.setUp(context.Background(), fx, env); err != nil {
 		t.Fatal(err)
 	}

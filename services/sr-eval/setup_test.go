@@ -49,7 +49,7 @@ func TestSetUp_RunsInTheAgentsEnvironmentWithGitPinned(t *testing.T) {
 	env := baseAgentEnv(os.Environ(), agentHome, t.TempDir(), false)
 	env = append(env, "PATH="+os.Getenv("PATH"))
 
-	w := &workspace{project: project}
+	w := &workspace{root: t.TempDir(), project: project}
 	if err := w.setUp(context.Background(), fx, env); err != nil {
 		t.Fatalf("setUp under an operator config that signs and hooks every commit: %v", err)
 	}
