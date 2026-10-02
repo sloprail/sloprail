@@ -206,8 +206,9 @@ can wash an old, generic instruction into one). Engine failures (a run that erro
 without refusing anything) are not listed as refusals; the unjudged tip they leave is
 judged at the next Stop. `no-destroying-owed-work` is built the same way for branch
 deletion, `worktree remove`, hard resets and prunes; dropping owed work stays the user's
-through `sr-session refs abandon --cite-user`. Both are on by default and switched off
-like any shipped rule, under `disabled:` in `.sloprail/config.yaml`.
+through `sr-session refs abandon --cite-user`. Both ship **off** (opt-in): a project turns them on with
+`enabled: [sloprail/gate/no-merge-over-refusals, sloprail/gate/no-destroying-owed-work]` in
+`.sloprail/config.yaml`.
 
 ### The resolution floor
 

@@ -10,7 +10,7 @@ import (
 // unjudgedProject is a project with the docs rule and nothing refused yet.
 func unjudgedProject(t *testing.T) (*harness.Env, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithEnabledShipped("sloprail/gate/no-merge-over-refusals"))
 	fakeGH(t, e, nil)
 	proj := e.Project()
 	e.GitInit(proj)

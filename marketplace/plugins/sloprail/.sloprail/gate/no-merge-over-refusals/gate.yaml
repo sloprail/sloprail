@@ -19,9 +19,11 @@
 # or loop in place of the PR number, an unknown flag, a PR gh cannot look up) is refused
 # with the advice to name the pull request literally.
 #
-# On by default, like every shipped rule, and switched off the same way: list
-# `sloprail/gate/no-merge-over-refusals` under `disabled:` in .sloprail/config.yaml
+# OFF by default: a project turns it on in .sloprail/config.yaml with
+#   enabled:
+#     - sloprail/gate/no-merge-over-refusals
 # (a change to that file is itself gated by grounded-rule-changes).
+enabled: false
 on:
   - event: PreCommandInvoke
     match: >

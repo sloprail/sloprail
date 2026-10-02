@@ -12,7 +12,7 @@ import (
 
 // The plugin's sloprail/gate/no-merge-over-refusals refuses `gh pr merge` while the
 // branch being merged has open refusals recorded this session, judged at its tip.
-// It ships on by default, so these tests install nothing: the plugin's own gate fires.
+// It ships OFF; these tests enable it the way a project does (`enabled:` in .sloprail/config.yaml).
 var (
 	Turns = harness.Turns
 	Bash  = harness.Bash

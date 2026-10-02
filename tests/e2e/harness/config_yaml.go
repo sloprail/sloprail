@@ -13,6 +13,11 @@ import (
 // would land under another key), the file need not end in a newline, and an entry already
 // there is not repeated. Every other key and comment is kept.
 func mergeDisabled(body string, names []string) (string, error) {
+	return mergeList(body, "disabled", names)
+}
+
+// mergeList is mergeDisabled for any top-level list key (`enabled:` too).
+func mergeList(body, key string, names []string) (string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
 		return "", fmt.Errorf("parse: %w", err)
@@ -26,14 +31,14 @@ func mergeDisabled(body string, names []string) (string, error) {
 	}
 	var list *yaml.Node
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "disabled" {
+		if root.Content[i].Value == key {
 			list = root.Content[i+1]
 			break
 		}
 	}
 	if list == nil {
 		root.Content = append(root.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "disabled"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
 			&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"})
 		list = root.Content[len(root.Content)-1]
 	}
@@ -41,7 +46,7 @@ func mergeDisabled(body string, names []string) (string, error) {
 		*list = yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	}
 	if list.Kind != yaml.SequenceNode {
-		return "", fmt.Errorf("`disabled:` is not a list")
+		return "", fmt.Errorf("`%s:` is not a list", key)
 	}
 	have := map[string]bool{}
 	for _, n := range list.Content {
