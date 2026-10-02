@@ -11,17 +11,23 @@ import (
 // a merge pull (a merge commit whose second parent is upstream's), a fast-forward-only pull, a
 // plain `git merge --ff-only`, a rebase. Upstream's violating commit is never refused; the
 // session's own commit made beside it still is.
+//
+// A fast-forward brings nothing but upstream's commits, and tells them from a commit the session
+// made and pushed in the same command only by their having been on the remote at the PREVIOUS
+// observation: so a fast-forward spelling fetches in an earlier command (a one-command
+// `git pull --ff-only` is tracked, the over-tracking the rule accepts).
 func TestT003_67_UpstreamCommitsBroughtInAnyWayAreNotTheSessionsWork(t *testing.T) {
 	spellings := []struct {
-		name string
-		pull func(main string) string
-		own  bool // the session has a commit of its own beside upstream's (so the pull merges)
+		name    string
+		pull    func(main string) string
+		own     bool // the session has a commit of its own beside upstream's (so the pull merges)
+		fetched bool // upstream was fetched by an earlier command (a fast-forward is told from a push that way)
 	}{
-		{"merge pull", func(main string) string { return "git pull -q --no-rebase --no-edit origin " + main }, true},
-		{"rebase pull", func(main string) string { return "git pull -q --rebase origin " + main }, true},
-		{"fast-forward only pull", func(main string) string { return "git pull -q --ff-only origin " + main }, false},
-		{"fetch and merge --ff-only", func(main string) string { return "git fetch -q origin && git merge -q --ff-only origin/" + main }, false},
-		{"fetch and rebase", func(main string) string { return "git fetch -q origin && git rebase -q origin/" + main }, true},
+		{"merge pull", func(main string) string { return "git pull -q --no-rebase --no-edit origin " + main }, true, false},
+		{"rebase pull", func(main string) string { return "git pull -q --rebase origin " + main }, true, false},
+		{"fast-forward only pull", func(main string) string { return "git pull -q --ff-only origin " + main }, false, true},
+		{"fetch and merge --ff-only", func(main string) string { return "git merge -q --ff-only origin/" + main }, false, true},
+		{"fetch and rebase", func(main string) string { return "git fetch -q origin && git rebase -q origin/" + main }, true, false},
 	}
 	for i, sp := range spellings {
 		t.Run(sp.name, func(t *testing.T) {
@@ -34,6 +40,9 @@ func TestT003_67_UpstreamCommitsBroughtInAnyWayAreNotTheSessionsWork(t *testing.
 			var turns []harness.Turn
 			if sp.own {
 				turns = append(turns, harness.CommitFile("c1", "docs/own.md", "clean words", "add own"))
+			}
+			if sp.fetched {
+				turns = append(turns, Bash("p0", "git fetch -q origin"))
 			}
 			turns = append(turns, Bash("p1", sp.pull(main)))
 			e.Run(proj, sess, "bring upstream in", Turns("done", turns...))

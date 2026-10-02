@@ -54,8 +54,8 @@ func TestTrackMissing_ASessionCommitPushedFastForwardIsStillTracked(t *testing.T
 	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, "main"), "the pushed session commit escaped the tracked range")
 }
 
-// Commits another identity landed upstream and the session only pulled are brought in: the
-// tracked tip stays where the session left it.
+// Commits landed upstream that the remote-tracking refs already held at the previous observation
+// are brought in by a pull: the tracked tip stays where the session left it.
 func TestTrackMissing_APulledUpstreamCommitIsBroughtIn(t *testing.T) {
 	var bare string
 	proj, reg, rs := ruledAndObserved(t, func(proj string) { bare = withOrigin(t, proj) })
@@ -67,7 +67,9 @@ func TestTrackMissing_APulledUpstreamCommitIsBroughtIn(t *testing.T) {
 	runGit(t, up, "add", ".")
 	runGit(t, up, "-c", "user.name=up", "-c", "user.email=up@example.com", "commit", "-q", "-m", "upstream")
 	runGit(t, up, "push", "-q", "origin", "main")
-	runGit(t, proj, "pull", "-q", "--ff-only", "origin", "main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{})) // the hook that sees the fetch: the remote holds it now
+	runGit(t, proj, "merge", "-q", "--ff-only", "origin/main")
 
 	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
 	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
@@ -183,14 +185,14 @@ func TestCommitRequired_AFolderIsOwedOnceNotTwice(t *testing.T) {
 // A detached HEAD on a commit some ref holds was checked out, not made: not tracked. A commit
 // made on the detached HEAD (on no ref) is.
 func TestCheckedOutOnly_ADetachedCheckoutIsNotTheSessionsButADetachedCommitIs(t *testing.T) {
-	proj, _, _ := ruledAndObserved(t, nil)
+	proj, reg, _ := ruledAndObserved(t, nil)
 	runGit(t, proj, "switch", "-c", "pr")
 	pr := commitFile(t, proj, "p.md", "p")
 	runGit(t, proj, "switch", "-q", "--detach", pr)
-	assert.True(t, checkedOutOnly(proj, pr, nil), "another branch's commit was read as the session's")
-	assert.False(t, checkedOutOnly(proj, pr, []sessionstate.TrackedRange{{HeadSHA: pr}}), "a tip the session recorded is its own")
+	assert.True(t, checkedOutOnly(reg, proj, pr, nil), "another branch's commit was read as the session's")
+	assert.False(t, checkedOutOnly(reg, proj, pr, []sessionstate.TrackedRange{{HeadSHA: pr}}), "a tip the session recorded is its own")
 	own := commitFile(t, proj, "q.md", "q")
-	assert.False(t, checkedOutOnly(proj, own, nil), "a commit on no ref is the session's")
+	assert.False(t, checkedOutOnly(reg, proj, own, nil), "a commit on no ref is the session's")
 }
 
 // A rule only on the default branch still makes an older branch's checkout worth tracking.
@@ -204,4 +206,53 @@ func TestFolderHasFileGuards_ARuleOnTheDefaultBranchCountsOnAnOlderCheckout(t *t
 	has, err := folderHasFileGuards(proj, "")
 	require.NoError(t, err)
 	assert.True(t, has)
+}
+
+// A session commit whose author AND committer identities differ from the folder's, pushed in the
+// command that made it, is still the session's: no identity decides what was pulled.
+func TestTrackMissing_AForgedIdentityCommitPushedInOneCommandIsStillTracked(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, func(proj string) { withOrigin(t, proj) })
+	require.NotEmpty(t, rangeTip(t, reg, rs.ID, "main"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "z.md"), []byte("z"), 0o644))
+	runGit(t, proj, "add", ".")
+	runGit(t, proj, "-c", "user.name=other", "-c", "user.email=other@example.com", "commit", "-q", "-m", "z")
+	sha := runGit(t, proj, "rev-parse", "HEAD")
+	runGit(t, proj, "push", "-q", "origin", "main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
+	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, "main"), "a commit under another identity escaped the tracked range")
+}
+
+// A commit made on a detached HEAD and pushed in the same command stands on a remote-tracking ref
+// by the next hook, but none held it at the previous observation: it is the session's.
+func TestTrackMissing_ADetachedCommitPushedInOneCommandIsTracked(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, func(proj string) { withOrigin(t, proj) })
+	runGit(t, proj, "switch", "-q", "--detach")
+	sha := commitFile(t, proj, "d.md", "d")
+	runGit(t, proj, "push", "-q", "origin", "HEAD:main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
+	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, sha), "the detached, pushed commit escaped as 'held by a ref'")
+}
+
+// A detached checkout of a commit the remote already held at the previous observation is someone
+// else's work, not the session's.
+func TestTrackMissing_ADetachedCheckoutOfARemoteCommitIsNotTracked(t *testing.T) {
+	var bare string
+	proj, reg, rs := ruledAndObserved(t, func(proj string) { bare = withOrigin(t, proj) })
+	up := filepath.Join(t.TempDir(), "up")
+	runGit(t, filepath.Dir(up), "clone", "-q", bare, up)
+	require.NoError(t, os.WriteFile(filepath.Join(up, "u.md"), []byte("u"), 0o644))
+	runGit(t, up, "add", ".")
+	runGit(t, up, "-c", "user.name=up", "-c", "user.email=up@example.com", "commit", "-q", "-m", "upstream")
+	runGit(t, up, "push", "-q", "origin", "main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{})) // the hook that sees the fetch
+	runGit(t, proj, "switch", "-q", "--detach", "origin/main")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
+	assert.Empty(t, rangeTip(t, reg, rs.ID, runGit(t, proj, "rev-parse", "HEAD")), "someone else's commit was tracked as the session's")
 }

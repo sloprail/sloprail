@@ -146,6 +146,6 @@ func TestT003_48_ACommitPushedFastForwardInOneCommandIsStillJudged(t *testing.T)
 		Bash("p1", "sh "+filepath.Join(filepath.Dir(proj), "ship.sh")), // one hook window: the verify-before-push gate reads the command line, not the script
 	))
 	if got := stopRefusals(e, proj, "s-003-48e"); got == "" {
-		t.Fatalf("a session commit pushed fast-forward in the command that made it escaped the Stop:\n%s", got)
+		t.Fatalf("a session commit pushed fast-forward in the command that made it escaped the Stop: it refused nothing")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -132,8 +133,8 @@ const (
 	observedTipPrefix    = "observed-tip:"          // observed-tip:<branch>:<folder> -> tip
 	observedFolderPrefix = "observed-folder:"       // observed-folder:<folder> -> "1" once its baseline is taken
 	observedMovedPrefix  = "observed-moved:"        // observed-moved:<branch>:<folder> -> "1" once the branch's tip moved in the session
-	observedRemotePrefix = "observed-remote:"       // observed-remote:<folder> -> the remote default's tip at the last observation
-	observedPrevRemote   = "observed-prevremote:"   // observed-prevremote:<folder> -> the remote default's tip at the observation BEFORE the last
+	observedRemotePrefix = "observed-remote:"       // observed-remote:<folder> -> the remote-tracking tips at the last observation
+	observedPrevRemote   = "observed-prevremote:"   // observed-prevremote:<folder> -> the remote-tracking tips at the observation BEFORE the last
 	observedSessionStart = "observed-session-start" // unix seconds of the session's first observation
 	detachedObserved     = "(detached)"
 )
@@ -235,24 +236,66 @@ func observeSessionStart(reg sessionstate.Store) (int64, error) {
 	return n, nil
 }
 
-// observeRemote records the remote default branch's tip, keeping the previous one: a commit
-// reachable from where the remote stood at the last observation was not made since.
+// remoteTips are the tips of every remote-tracking ref of the folder, sorted and joined by a
+// space ("" when there are none). An unreadable listing is an error: it is never "no remotes".
+func remoteTips(folder string) (string, error) {
+	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(objectname)", "refs/remotes").Output()
+	if err != nil {
+		return "", fmt.Errorf("list remote-tracking refs of %s: %w", folder, err)
+	}
+	seen := map[string]bool{}
+	var tips []string
+	for _, t := range strings.Fields(string(out)) {
+		if !seen[t] {
+			seen[t] = true
+			tips = append(tips, t)
+		}
+	}
+	sort.Strings(tips)
+	return strings.Join(tips, " "), nil
+}
+
+// observeRemote records where the remote-tracking refs stand, keeping where they stood at the
+// observation before: a commit reachable from those earlier tips was on the remote before the
+// session's last command, so it was pulled, not made. The folder's first observation takes its
+// current tips as both (what stood there when the session began is not the session's).
 func observeRemote(reg sessionstate.Store, folder string) error {
-	cur, _ := gitrepo.RemoteDefaultTip(folder)
+	cur, err := remoteTips(folder)
+	if err != nil {
+		return err
+	}
 	key := observedRemotePrefix + folder
-	prev, _, err := reg.Meta(key)
+	prev, seen, err := reg.Meta(key)
 	if err != nil {
 		return fmt.Errorf("read observations of %s: %w", folder, err)
+	}
+	if !seen {
+		prev = cur
 	}
 	if err := reg.SetMeta(observedPrevRemote+folder, prev); err != nil {
 		return fmt.Errorf("record observations of %s: %w", folder, err)
 	}
-	if cur != prev {
+	if !seen || cur != prev {
 		if err := reg.SetMeta(key, cur); err != nil {
 			return fmt.Errorf("record observations of %s: %w", folder, err)
 		}
 	}
 	return nil
+}
+
+// notOnPrevRemote reports whether rev has a commit that no remote-tracking ref held at the
+// observation before the last one. An unreadable answer is read as "yes": over-track.
+func notOnPrevRemote(reg sessionstate.Store, folder, rev string) bool {
+	prev, _, err := reg.Meta(observedPrevRemote + folder)
+	if err != nil {
+		return true
+	}
+	args := []string{"-C", folder, "rev-list", "-n", "1", rev}
+	for _, t := range strings.Fields(prev) {
+		args = append(args, "^"+t)
+	}
+	out, err := exec.Command("git", args...).Output()
+	return err != nil || strings.TrimSpace(string(out)) != ""
 }
 
 // recentOwnCommits reports whether sha has commits that neither the remote default branch nor
@@ -459,7 +502,7 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	if err != nil {
 		return fmt.Errorf("read the session's ranges: %w", err)
 	}
-	if head == sha && checkedOutOnly(folder, sha, rows) {
+	if head == sha && checkedOutOnly(reg, folder, sha, rows) {
 		return nil // a commit only checked out (another pull request's) is never the session's work
 	}
 	for _, row := range rows {
@@ -482,18 +525,26 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	})
 }
 
-// checkedOutOnly reports whether a detached HEAD at sha stands on a commit some ref already
-// holds (a branch or remote-tracking ref of someone else's work) that the session did not
-// record as a tip: it was checked out, not made. A commit on no ref (made on the detached HEAD)
-// is the session's. An unreadable answer is read as "made": over-track.
-func checkedOutOnly(folder, sha string, rows []sessionstate.TrackedRange) bool {
+// checkedOutOnly reports whether a detached HEAD at sha stands on commits that were already
+// someone else's before the session's last command: held by a local branch or tag, or by a
+// remote-tracking ref as the previous observation saw it, and not recorded as a tip the session
+// made. A commit on no such ref (made on the detached HEAD, even if pushed in the same command, so
+// that a remote-tracking ref holds it NOW) is the session's. An unreadable answer is read as
+// "made": over-track.
+func checkedOutOnly(reg sessionstate.Store, folder, sha string, rows []sessionstate.TrackedRange) bool {
 	for _, r := range rows {
 		if r.HeadSHA == sha {
 			return false
 		}
 	}
-	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--count=1", "--contains", sha, "--format=%(refname)").Output()
-	return err == nil && strings.TrimSpace(string(out)) != ""
+	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--count=1", "--contains", sha, "--format=%(refname)", "refs/heads", "refs/tags").Output()
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		return true
+	}
+	return !notOnPrevRemote(reg, folder, sha)
 }
 
 // trackFolders makes sure the current branch of this agent's folders is tracked: the tree it
@@ -759,8 +810,7 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 // fast-forwarded it onto commits the remote default branch already holds (a pull). Commits the
 // session made are never "brought in", however they came to be on the remote: a commit pushed
 // fast-forward in the same command that made it is not upstream's. Such a commit is one the
-// remote default did not hold at the observation before this one and that carries the
-// folder's own configured identity (over-tracking when in doubt).
+// remote-tracking refs did not hold at the observation before this one (over-tracking when in doubt).
 func broughtIn(reg sessionstate.Store, folder, old, sha string) bool {
 	if old == "" || old == sha {
 		return false
@@ -775,33 +825,12 @@ func broughtIn(reg sessionstate.Store, folder, old, sha string) bool {
 	return err == nil && ff
 }
 
-// sessionMade reports whether old..sha may hold a commit the session made: one the remote
-// default had not yet at the previous observation, by the folder's own identity. An unreadable
-// answer is read as "yes".
+// sessionMade reports whether old..sha may hold a commit the session made: one that no
+// remote-tracking ref held at the previous observation. A pull's commits were fetched before the
+// hook that sees the branch move; a commit made and pushed in one command was not. No identity
+// is read (author and committer are forgeable). An unreadable answer is read as "yes".
 func sessionMade(reg sessionstate.Store, folder, old, sha string) bool {
-	prev, _, err := reg.Meta(observedPrevRemote + folder)
-	if err != nil {
-		return true
-	}
-	email, err := exec.Command("git", "-C", folder, "config", "user.email").Output()
-	me := strings.TrimSpace(string(email))
-	if err != nil || me == "" {
-		return true
-	}
-	args := []string{"-C", folder, "log", "--format=%ae%n%ce", old + ".." + sha}
-	if prev != "" {
-		args = append(args, "^"+prev)
-	}
-	out, err := exec.Command("git", args...).Output()
-	if err != nil {
-		return true
-	}
-	for _, e := range strings.Fields(string(out)) {
-		if strings.EqualFold(e, me) {
-			return true
-		}
-	}
-	return false
+	return notOnPrevRemote(reg, folder, old+".."+sha)
 }
 
 // advanceBase moves a range's base up to the head's merge base with the remote default branch,
