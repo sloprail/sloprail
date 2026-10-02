@@ -72,7 +72,10 @@ func TestT042_14_DeletingConfigNeedsGrounding(t *testing.T) {
 	}
 	res = e.Run(proj, "s-042-14", "remove the config file entirely", Turns("done",
 		Bash("d2", "sr-file delete .sloprail/config.yaml --cite:user 'remove the config file entirely'"),
-	).ThenCommit("remove the config", harness.CitesUser("remove the config file entirely")))
+		// The config that switched the commit-time cite gate off is gone, so the commit carries its
+		// cite in front, as the gate asks.
+		Bash("d3", "git add -A && sr-session trajectory cite 'remove the config file entirely' && git commit -q -m 'remove the config' -m 'Sloprail-Cites-User: remove the config file entirely'"),
+	))
 	if res.Refused() || e.Exists(proj, ".sloprail/config.yaml") {
 		t.Fatalf("the cited delete did not land:\n%s", res.Output)
 	}
