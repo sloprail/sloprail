@@ -85,9 +85,6 @@ func Open(opt Options) (*Store, error) {
 	if _, err := s.g.str("rev-parse", "--git-dir"); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.migrateLegacy()
 	return s, nil
 }
 
@@ -120,6 +117,15 @@ func (s *Store) tip() string {
 		return ""
 	}
 	return out
+}
+
+// Pull brings the remote branch into the local ref, and nothing else: it never pushes and
+// never writes a result. It is what a read-only command (`verify`, `show`) uses. A remote
+// without the branch yet is not an error; only a failed fetch is.
+func (s *Store) Pull() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sync()
 }
 
 // Sync brings the remote branch into the local ref and pushes local results the remote

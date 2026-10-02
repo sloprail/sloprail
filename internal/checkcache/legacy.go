@@ -1,13 +1,16 @@
 package checkcache
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/sessionpath"
 
@@ -139,75 +142,123 @@ func hasColumn(db *sql.DB, table, column string) (bool, error) {
 	return rows.Next(), rows.Err()
 }
 
-// legacyDBs lists the checks.db files an older engine kept for the worktree dir belongs to:
-// {data home}/sloprail/sessions/<workspace>/<session>/checks.db, in a stable order.
-func legacyDBs(dir string) []string {
+// legacyDBs lists every checks.db an older engine kept under the sessions dir:
+// {data home}/sloprail/sessions/<workspace>/<session>/checks.db (and one level deeper, for a
+// sub-agent's), in a stable order. Which of them belong to this repository is decided by
+// the caller.
+func legacyDBs() []string {
 	home, err := sessionpath.DataHome()
 	if err != nil {
 		return nil
 	}
-	hits, _ := filepath.Glob(filepath.Join(home, sessionpath.AppName, "sessions", sessionpath.EncodeWorkspace(dir), "*", "checks.db"))
+	base := filepath.Join(home, sessionpath.AppName, "sessions")
+	var hits []string
+	for _, pat := range []string{"*/*/checks.db", "*/*/*/checks.db"} {
+		m, _ := filepath.Glob(filepath.Join(base, pat))
+		hits = append(hits, m...)
+	}
 	sort.Strings(hits)
 	return hits
 }
 
-// migrateLegacy is the one-time migration of an older engine's sqlite checks.db files (one
-// per session of this worktree) into the ref. It runs when a Store is first opened on a
-// repository, under the store's lock, and is idempotent twice over: a marker in the git common
-// dir records that it ran, and a run the ref already holds is never written again. The old
-// files are only read and stay where they are. A database that cannot be read is skipped, never
-// an error of Open, and does not stop the marker: the old engine's verdicts were keyed by an
+// worktreeWorkspaces is the encoded workspace names of every worktree of the repository
+// (the sessions dir is keyed by them).
+func (s *Store) worktreeWorkspaces() map[string]bool {
+	out := map[string]bool{}
+	if top, err := s.g.str("rev-parse", "--show-toplevel"); err == nil {
+		out[sessionpath.EncodeWorkspace(top)] = true
+	}
+	if txt, err := s.g.str("worktree", "list", "--porcelain"); err == nil {
+		for _, line := range strings.Split(txt, "\n") {
+			if p, ok := strings.CutPrefix(line, "worktree "); ok {
+				out[sessionpath.EncodeWorkspace(p)] = true
+			}
+		}
+	}
+	return out
+}
+
+// rootCommits are the repository's root commits: the repo_id an older engine recorded.
+func (s *Store) rootCommits() map[string]bool {
+	out := map[string]bool{}
+	if txt, err := s.g.str("rev-list", "--max-parents=0", "HEAD"); err == nil {
+		for _, l := range strings.Fields(txt) {
+			out[l] = true
+		}
+	}
+	return out
+}
+
+// MigrateLegacy is the migration of an older engine's sqlite checks.db files into the ref. It
+// imports EVERY old session store that belongs to this repository (every worktree's, a
+// removed worktree's too: a store belongs when its workspace is one of the repository's
+// worktrees, or when its runs record the repository's root commit). Only a write path calls
+// it (`sr-checks run`): opening a store never migrates. It is idempotent per store: a marker
+// in the git common dir records each store imported, and a run the ref already holds is never
+// written again. The old files are only read and stay where they are. A database that cannot
+// be read is skipped, and does not stop the others: the old engine's verdicts were keyed by an
 // older fingerprint schema, so the history is what is kept, not hits.
+func (s *Store) MigrateLegacy() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrateLegacy()
+}
+
 func (s *Store) migrateLegacy() {
-	marker := s.migrationMarker()
-	if marker == "" {
+	if s.cachePath() == "" {
 		return
 	}
-	if _, err := os.Stat(marker); err == nil {
-		return
-	}
-	dir, err := s.g.str("rev-parse", "--show-toplevel")
-	if err != nil {
-		return
-	}
-	var runs []Run
-	for _, db := range legacyDBs(dir) {
-		if rs, err := ReadLegacyDB(db, ""); err == nil {
-			runs = append(runs, rs...)
+	var pending []string
+	for _, db := range legacyDBs() {
+		if _, err := os.Stat(s.migrationMarker(db)); err != nil {
+			pending = append(pending, db)
 		}
 	}
-	if len(runs) > 0 {
-		if sn, err := s.snapshotAt(s.tip()); err == nil && len(sn.Segs) > 0 {
-			have := map[string]bool{}
-			if known, err := s.runsOf(sn); err == nil {
-				for _, r := range known {
-					have[r.ID] = true
-				}
-			}
-			kept := runs[:0]
-			for _, r := range runs {
-				if !have[r.ID] {
-					kept = append(kept, r)
-				}
-			}
-			runs = kept
-		}
-		if len(runs) > 0 {
-			sort.SliceStable(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
-			if err := s.put(runs); err != nil {
-				return // not marked: the next open tries again
+	if len(pending) == 0 {
+		return
+	}
+	workspaces, roots := s.worktreeWorkspaces(), s.rootCommits()
+	have := map[string]bool{}
+	if sn, err := s.snapshotAt(s.tip()); err == nil && len(sn.Segs) > 0 {
+		if known, err := s.runsOf(sn); err == nil {
+			for _, r := range known {
+				have[r.ID] = true
 			}
 		}
 	}
-	if os.MkdirAll(filepath.Dir(marker), 0o755) == nil {
-		_ = os.WriteFile(marker, []byte("migrated\n"), 0o644)
+	for _, db := range pending {
+		rs, err := ReadLegacyDB(db, "")
+		if err != nil {
+			continue
+		}
+		ours := workspaces[filepath.Base(filepath.Dir(filepath.Dir(db)))] || workspaces[filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(db))))]
+		var kept []Run
+		for _, r := range rs {
+			if (ours || roots[r.RepoID]) && !have[r.ID] {
+				kept = append(kept, r)
+			}
+		}
+		if len(kept) > 0 {
+			sort.SliceStable(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
+			if err := s.put(kept); err != nil {
+				continue // not marked: the next run tries again
+			}
+			for _, r := range kept {
+				have[r.ID] = true
+			}
+		}
+		if m := s.migrationMarker(db); os.MkdirAll(filepath.Dir(m), 0o755) == nil {
+			_ = os.WriteFile(m, []byte("migrated\n"), 0o644)
+		}
 	}
 }
 
-func (s *Store) migrationMarker() string {
+// migrationMarker is the file that records the old store at db was imported.
+func (s *Store) migrationMarker(db string) string {
 	p := s.cachePath()
 	if p == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(p), "legacy-checks-migrated")
+	sum := sha256.Sum256([]byte(db))
+	return filepath.Join(filepath.Dir(p), "legacy-checks-migrated-"+hex.EncodeToString(sum[:6]))
 }

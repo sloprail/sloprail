@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
@@ -216,6 +219,10 @@ func TestOpenMigratesAnOldSqliteChecksDBOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if s.tip() != "" {
+		t.Fatal("Open must not migrate")
+	}
+	s.MigrateLegacy()
 	runs, err := s.Runs()
 	if err != nil || len(runs) != 1 || runs[0].ID != "run_old" || !runs[0].Complete || runs[0].RuleHash != "h1" {
 		t.Fatalf("migrated runs = %+v (%v)", runs, err)
@@ -230,18 +237,17 @@ func TestOpenMigratesAnOldSqliteChecksDBOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2.mu.Lock()
-	s2.migrateLegacy()
-	s2.mu.Unlock()
+	s2.MigrateLegacy()
 	if s2.tip() != tip {
 		t.Fatal("the migration must be idempotent")
 	}
 	// even without its marker, a run the ref holds is not written again
-	_ = os.Remove(s2.migrationMarker())
+	_ = os.Remove(s2.migrationMarker(old))
 	s3, err := Open(Options{Dir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
+	s3.MigrateLegacy()
 	if s3.tip() != tip {
 		t.Fatal("a run already in the ref must not be put again")
 	}
@@ -259,4 +265,74 @@ func TestOpenWithNoOldDatabaseWritesNothing(t *testing.T) {
 	if out, _ := exec.Command("git", "-C", s.opt.Dir, "for-each-ref", "refs/sloprail").Output(); len(out) != 0 {
 		t.Fatalf("refs written: %s", out)
 	}
+}
+
+// Pull is what verify/show use: it fetches, and never pushes. Results a reader holds only
+// locally stay local, and the remote branch is exactly as another machine left it.
+func TestPullFetchesButNeverPushes(t *testing.T) {
+	remote := bareRemote(t)
+	writer := newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
+	require.NoError(t, writer.Put(genRuns(1, 2)))
+	remoteTip := git(t, remote, "rev-parse", "refs/heads/sloprail/checks")
+
+	reader := newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
+	require.NoError(t, reader.Pull())
+	got, err := reader.Runs()
+	require.NoError(t, err)
+	assert.Len(t, got, 2, "what another machine stored is found")
+	assert.Equal(t, remoteTip, git(t, remote, "rev-parse", "refs/heads/sloprail/checks"))
+
+	// a result stored while the remote was gone stays pending through a Pull
+	online := reader.opt.Remote
+	reader.opt.Remote = filepath.Join(t.TempDir(), "gone.git")
+	require.NoError(t, reader.Put(genRuns(2, 1)))
+	reader.opt.Remote = online
+	require.NoError(t, reader.Pull())
+	assert.Equal(t, remoteTip, git(t, remote, "rev-parse", "refs/heads/sloprail/checks"), "a Pull never pushes")
+}
+
+// Every old session store of the repository is imported: each worktree's, and a store of a
+// removed worktree that records the repository's root commit. Another repository's store is
+// not. A store is marked once imported, and the import is idempotent.
+func TestMigrateLegacyImportsEveryStoreOfTheRepository(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	git(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root")
+	root := git(t, dir, "rev-parse", "HEAD")
+	top := git(t, dir, "rev-parse", "--show-toplevel")
+	other := filepath.Join(t.TempDir(), "wt")
+	git(t, dir, "worktree", "add", "-q", "--detach", other)
+	otherTop := git(t, other, "rev-parse", "--show-toplevel")
+
+	mk := func(workspace, session, runID, repoID string) string {
+		p := filepath.Join(data, sessionpath.AppName, "sessions", workspace, session, "checks.db")
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		db, err := sql.Open("sqlite", p)
+		require.NoError(t, err)
+		_, err = db.Exec(strings.NewReplacer("run_old", runID, "chk_old", "chk_"+runID, "itm_old", "itm_"+runID, "'r'", "'"+repoID+"'").Replace(legacyDDL))
+		require.NoError(t, err)
+		db.Close()
+		return p
+	}
+	mk(sessionpath.EncodeWorkspace(top), "s1", "run_a", "x")
+	mk(sessionpath.EncodeWorkspace(otherTop), "s2", "run_b", "x")
+	mk("removed-worktree", "s3", "run_c", root)
+	mk("someone-elses-repo", "s4", "run_d", "unrelated")
+
+	s, err := Open(Options{Dir: dir})
+	require.NoError(t, err)
+	s.MigrateLegacy()
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	ids := []string{}
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	assert.ElementsMatch(t, []string{"run_a", "run_b", "run_c"}, ids)
+
+	tip := s.tip()
+	s.MigrateLegacy()
+	assert.Equal(t, tip, s.tip(), "idempotent")
 }
