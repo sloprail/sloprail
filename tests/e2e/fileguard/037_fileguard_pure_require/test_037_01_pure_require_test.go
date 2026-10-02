@@ -17,45 +17,62 @@ require:
   - skill: document-topic
 `
 
-// pureRequireGuard is the plain file-guard of the same rule: it judges the settled
-// file at Stop with the same `require:` and no checks.
+// pureRequireGuard is the plain file-guard of the same rule with the same skill
+// `require:` and no checks. A file-guard cannot see the session, so this is REFUSED
+// at load (T037_01); the gate above is where the requirement lives.
 const pureRequireGuard = `match: "memories/topics/**/*.md"
 require:
   - skill: document-topic
 `
 
-// T037_01: a pure-require file-guard and gate (no checks) VALIDATE.
+// pureCitationGuard is a pure-require file-guard that is legal: a citation is read
+// from the commits' trailers, which the committed range carries.
+const pureCitationGuard = `match: "memories/topics/**/*.md"
+require:
+  - citation: {source_types: [user]}
+`
+
+// T037_01: a pure-citation file-guard and a pure-skill gate (no checks) VALIDATE;
+// a file-guard carrying a skill require is REFUSED at load, naming the gate.
 //
-// The half of the change that lives at load time: `sr-file declarations` loads the
-// project's `.sloprail` and reports what is in force. Before the change this guard
-// was refused with a missing-field fault on `checks`; now it loads, because a
-// file-guard carrying a non-empty `require:` no longer needs a check. Asserted the
-// way 030 asserts a sound tree — exit 0 and the guard named in the loaded report —
-// and, so the test cannot pass vacuously against the old behaviour, that the report
-// does NOT carry a checks fault for the guard.
+// `sr-file declarations` loads the project's `.sloprail` and reports what is in
+// force. A file-guard with a non-empty `require: citation` needs no check. A file-guard
+// cannot see the session, so `require: skill` on one is a load fault whose message
+// carries the gate to write instead (#162).
 func TestT037_01_PureRequireFileGuardValidates(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
+	e.FileGuard(proj, "cite-topic", pureCitationGuard, nil)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
 
 	res := e.CLIDirect(proj, "sr-file", "declarations", proj)
 	if res.Code != 0 {
-		t.Fatalf("a pure-require file-guard (no checks) must load clean, got exit %d:\n%s", res.Code, res.Output)
+		t.Fatalf("a pure-citation file-guard (no checks) must load clean, got exit %d:\n%s", res.Code, res.Output)
 	}
-	if !strings.Contains(res.Output, "file-guards (1): require-topic") {
+	if !strings.Contains(res.Output, "file-guards (1): cite-topic") {
 		t.Errorf("the loaded report did not name the pure-require file-guard:\n%s", res.Output)
 	}
 	if !strings.Contains(res.Output, "gates (1): require-topic") {
 		t.Errorf("the loaded report did not name the pure-require gate:\n%s", res.Output)
 	}
-	// Non-vacuity: the OLD engine refused this guard with a "checks" missing-field
-	// fault. Prove that fault is gone, not merely that some line mentions the name.
 	if strings.Contains(res.Output, "could not be loaded") {
-		t.Errorf("a pure-require file-guard was reported invalid — it must load:\n%s", res.Output)
+		t.Errorf("a pure-require declaration was reported invalid — it must load:\n%s", res.Output)
 	}
-	if strings.Contains(res.Output, "checks") {
-		t.Errorf("the report still complains about checks on a guard that needs none:\n%s", res.Output)
+}
+
+func TestT037_01b_SkillRequireOnAFileGuardIsRefusedNamingTheGate(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
+
+	res := e.CLIDirect(proj, "sr-file", "declarations", proj)
+	if res.Code != 1 {
+		t.Fatalf("a file-guard requiring a skill must fail to load, got exit %d:\n%s", res.Code, res.Output)
+	}
+	for _, want := range []string{"gate/require-topic-requires/gate.yaml", "event: PreFileWrite", "skill: document-topic"} {
+		if !strings.Contains(res.Output, want) {
+			t.Errorf("the load fault does not carry %q:\n%s", want, res.Output)
+		}
 	}
 }
 

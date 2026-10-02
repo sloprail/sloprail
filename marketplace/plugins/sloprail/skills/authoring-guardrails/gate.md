@@ -239,6 +239,12 @@ require:
   - citation: {source_types: [user]}  # the action cites the user's words
 ```
 
+`skill` and `context` requirements live **only on gates** (and contexts): they read
+the session, which a file-guard (committed bytes at Stop) cannot, so a file-guard
+carrying one is refused at load. A rule that needs "skill X loaded before editing
+these files" is a `PreFileWrite` gate with that `require`; `citation` may sit on
+either nature (a file-guard reads it from the commits' trailers).
+
 Three forms in use:
 
 - **`skill: <name>`** — the named skill was loaded this session. "Writing under

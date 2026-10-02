@@ -32,6 +32,27 @@ refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
 judge ([judge-checks.md](judge-checks.md)). `deletions` is the one
 nature-specific knob, below; it is optional.
 
+**What `require` may hold on a file-guard.** Only `citation`: it reads the
+`Sloprail-Cites-*` trailers of the commits in the range, which the committed range
+carries. A file-guard judges committed bytes at Stop and cannot see the session, so
+`require: skill` (a skill loaded, a page read) and `require: context` (session state)
+are **refused at load** — they belong on a **gate**, which reads the live session
+before the write lands. The refusal prints the exact gate to write:
+
+```yaml
+# .sloprail/gate/<name>-requires/gate.yaml
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "examples/"   # the file-guard's match, `path` -> `event.path`
+require:
+  - skill: document-example
+```
+
+`go run ./internal/declaration/cmd/split-require [-n] <dir>...` does this for a whole
+tree (`-n` prints the plan): it writes the gate (or reuses the sibling gate of the same
+name when it already holds the requirement), removes the entries, and deletes a
+file-guard left with no `require` and no `checks`.
+
 A file-guard's match sees a file's own facts **bare** — `path`, `status`,
 `markers`, `oldMarkers`, `trailers`, `context`, not `event.path`
 ([matchers.md](matchers.md)).
