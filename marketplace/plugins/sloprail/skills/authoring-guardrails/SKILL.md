@@ -257,8 +257,7 @@ disabled:
   - sloprail/file-guard/authoring-slop
 ```
 
-The name is `<plugin>/<nature>/<name>`, exactly what the refusal cites. The
-nature is part of the key because a gate and a context may share a name:
+The name is `<plugin>/<nature>/<name>`, exactly what the refusal cites:
 `disabled: [sloprail/file-guard/authoring-slop]` switches off the plugin's
 file-guard and leaves a file-guard of your own called `authoring-slop` in force.
 
