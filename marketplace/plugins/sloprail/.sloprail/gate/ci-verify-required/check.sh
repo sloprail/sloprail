@@ -55,11 +55,20 @@ GitHub Actions (.github/workflows/sloprail.yml):
             ref: \${{ github.event.pull_request.head.sha || github.sha }}
         - run: curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
         # sr-mark: ci-verify
-        - run: |
-            if [ \"\${{ github.event_name }}\" = pull_request ]; then
-              ~/.local/bin/sr-checks verify --base origin/\${{ github.event.pull_request.base.ref }} --head \${{ github.event.pull_request.head.sha }}
+        - env:
+            EVENT: \${{ github.event_name }}
+            BASE_REF: \${{ github.event.pull_request.base.ref }}
+            PR_HEAD: \${{ github.event.pull_request.head.sha }}
+            BEFORE: \${{ github.event.before }}
+          run: |
+            if [ \"\$EVENT\" = pull_request ]; then
+              ~/.local/bin/sr-checks verify --base \"origin/\$BASE_REF\" --head \"\$PR_HEAD\"
             else
-              ~/.local/bin/sr-checks verify --base \${{ github.event.before }} --head \${{ github.sha }}
+              # new branch / force push: before is all zeros or a missing object -> merge-base with the default branch, else the root commit
+              if [ -z \"\${BEFORE//0/}\" ] || ! git cat-file -e \"\$BEFORE^{commit}\" 2>/dev/null; then
+                BEFORE=\$(git merge-base origin/main \"\$GITHUB_SHA\" 2>/dev/null || git rev-list --max-parents=0 \"\$GITHUB_SHA\" | tail -1)
+              fi
+              ~/.local/bin/sr-checks verify --base \"\$BEFORE\" --head \"\$GITHUB_SHA\"
             fi
 
 GitLab CI (.gitlab-ci.yml):
@@ -74,9 +83,16 @@ GitLab CI (.gitlab-ci.yml):
       # sr-mark: ci-verify
       - |
         if [ -n \"\$CI_MERGE_REQUEST_IID\" ]; then
-          ~/.local/bin/sr-checks verify --base origin/\$CI_MERGE_REQUEST_TARGET_BRANCH_NAME --head \$CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
+          # CI_MERGE_REQUEST_DIFF_BASE_SHA is the merge-base of the target and the MR head; CI_COMMIT_SHA is the MR head
+          # (not CI_MERGE_REQUEST_SOURCE_BRANCH_SHA: empty outside merged-result pipelines)
+          ~/.local/bin/sr-checks verify --base \"\$CI_MERGE_REQUEST_DIFF_BASE_SHA\" --head \"\$CI_COMMIT_SHA\"
         else
-          ~/.local/bin/sr-checks verify --base \$CI_COMMIT_BEFORE_SHA --head \$CI_COMMIT_SHA
+          BEFORE=\"\$CI_COMMIT_BEFORE_SHA\"
+          # first pipeline of a branch / force push: all zeros or a missing object -> merge-base with the default branch, else the root commit
+          if [ -z \"\${BEFORE//0/}\" ] || ! git cat-file -e \"\$BEFORE^{commit}\" 2>/dev/null; then
+            BEFORE=\$(git merge-base \"origin/\$CI_DEFAULT_BRANCH\" \"\$CI_COMMIT_SHA\" 2>/dev/null || git rev-list --max-parents=0 \"\$CI_COMMIT_SHA\" | tail -1)
+          fi
+          ~/.local/bin/sr-checks verify --base \"\$BEFORE\" --head \"\$CI_COMMIT_SHA\"
         fi
 
 Azure Pipelines (azure-pipelines.yml; add a build validation policy on the default branch):
@@ -91,9 +107,12 @@ Azure Pipelines (azure-pipelines.yml; add a build validation policy on the defau
         if [ \"\$(Build.Reason)\" = PullRequest ]; then
           ~/.local/bin/sr-checks verify --base origin/\$(System.PullRequest.TargetBranchName) --head \$(System.PullRequest.SourceCommitId)
         else
-          ~/.local/bin/sr-checks verify --base \$(Build.SourceVersion)~1 --head \$(Build.SourceVersion)
+          # Azure gives no before sha: verify everything the branch added over the default branch (merge-base), or the root commit
+          ~/.local/bin/sr-checks verify --base \$(git merge-base origin/main \$(Build.SourceVersion) 2>/dev/null || git rev-list --max-parents=0 \$(Build.SourceVersion) | tail -1) --head \$(Build.SourceVersion)
         fi
 
-Any other provider (Bitbucket Pipelines, Jenkins, CircleCI, ...): run the same 'sr-checks verify' on pull requests (--base the target branch, --head the PR head sha) and on pushes to the default branch (--base the push's before sha, --head its after sha), with the line '$MARKER' in a comment beside it in the committed pipeline file. Jenkinsfile: '// $MARKER'. On the first push of a branch the before sha is all zeros: use the default branch as --base.
+(Azure has no push before sha, so branch pushes are verified from the merge-base with the default branch; a build OF the default branch itself has an empty range there, so for it pass the previous successful build's commit as --base if you want per-push ranges.)
+
+Any other provider (Bitbucket Pipelines, Jenkins, CircleCI, ...): run the same 'sr-checks verify' on pull requests (--base the target branch, --head the PR head sha) and on pushes to the default branch (--base the push's before sha, --head its after sha), with the line '$MARKER' in a comment beside it in the committed pipeline file. Jenkinsfile: '// $MARKER'. On the first push of a branch (and on a force push) the before sha is all zeros or missing: use the merge-base of the default branch and the after sha, or the root commit if none, as --base.
 
 To turn this off, list 'sloprail/gate/ci-verify-required' under 'disabled:' in .sloprail/config.yaml."

@@ -29,7 +29,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # each push range must be verified: only pull requests may cancel a superseded run
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sloprail-verify:
@@ -50,10 +51,19 @@ jobs:
         run: make build
       # sr-mark: ci-verify
       - name: sr-checks verify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           PATH="$PWD/bin:$PATH"
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            sr-checks verify --base "origin/${{ github.event.pull_request.base.ref }}" --head "${{ github.event.pull_request.head.sha }}"
+          if [ "$EVENT" = pull_request ]; then
+            sr-checks verify --base "origin/$BASE_REF" --head "$PR_HEAD"
           else
-            sr-checks verify --base "${{ github.event.before }}" --head "${{ github.sha }}"
+            # force push: before is all zeros or a missing object -> merge-base with main, else the root commit
+            if [ -z "${BEFORE//0/}" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              BEFORE=$(git merge-base origin/main "$GITHUB_SHA" 2>/dev/null || git rev-list --max-parents=0 "$GITHUB_SHA" | tail -1)
+            fi
+            sr-checks verify --base "$BEFORE" --head "$GITHUB_SHA"
           fi

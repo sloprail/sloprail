@@ -23,8 +23,8 @@ func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 	for _, want := range []string{
 		marker,
 		"GitHub Actions", "GitLab CI", "Azure Pipelines", "Jenkins",
-		"sr-checks verify", "push to the default branch", "github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion",
-		"github.event.pull_request.head.sha", "CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", "System.PullRequest.SourceCommitId",
+		"sr-checks verify", "push to the default branch", "github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion", "merge-base",
+		"github.event.pull_request.head.sha", "CI_MERGE_REQUEST_DIFF_BASE_SHA", "System.PullRequest.SourceCommitId",
 		"sloprail/gate/ci-verify-required",
 	} {
 		if !strings.Contains(got, want) {
