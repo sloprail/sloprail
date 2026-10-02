@@ -14,8 +14,6 @@ import (
 // change back: a patch file outside the repository, a revert on its branch, a report to its
 // parent, who asks the user and commits the patch with the user's answer as the trailer.
 
-const citingRule = "match: \"docs/**\"\nrequire:\n  - citation: {source_types: [user]}\nchecks:\n  - script: ./check.sh\n"
-
 const handbackPrompt = "please document the release process in docs"
 
 // subagentStopNow runs the SubagentStop hook for the sub-agent the session dispatched into its

@@ -58,15 +58,30 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 	if err := exec.Command("git", "-C", projDir, "rev-parse", "--verify", "-q", "HEAD").Run(); err != nil {
 		return s // nothing committed yet: nothing to judge
 	}
-	base := e.runBase[sessionID]
-	if e.origins[projDir] != "" {
-		base = "origin/main"
-	}
+	base := e.stopBase(projDir, sessionID)
 	e.preStopRuns++
 	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "+shQuote(base)+" --head HEAD >/dev/null 2>&1; true")
 	out := s
 	out.turns = append(append([]Turn{}, s.turns...), turn)
 	return out
+}
+
+// stopBase is the base of the range a Stop verifies: the merge base with origin's default
+// branch (a project made with GitInit has one), else where the session began.
+func (e *Env) stopBase(projDir, sessionID string) string {
+	if e.origins[projDir] != "" {
+		return "origin/main"
+	}
+	return e.runBase[sessionID]
+}
+
+// StopJudged is StopNow after the turn a real agent takes first: `sr-checks run` over the
+// range the Stop will verify. A test that drives the Stop itself, over commits it made by hand,
+// uses it where it wants the judges to have been asked.
+func (e *Env) StopJudged(projDir, sessionID string, active bool) Result {
+	e.t.Helper()
+	e.CheckRunRaw(projDir, sessionID, e.stopBase(projDir, sessionID), "HEAD")
+	return e.StopNow(projDir, sessionID, active)
 }
 
 // checkCmd runs `sr check <verb> --base --head` in projDir as the session, returning

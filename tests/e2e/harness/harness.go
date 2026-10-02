@@ -1060,6 +1060,15 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 // depend on whatever the machine has configured.
 func (e *Env) GitInit(dir string) {
 	e.t.Helper()
+	e.GitInitUnborn(dir)
+	e.CommitAll(dir, "initial")
+	e.addOrigin(dir)
+}
+
+// GitInitUnborn is GitInit before the first commit: the repository, the config, the mock's
+// exclusions — and no commit, no origin: a session that begins in it begins before any history.
+func (e *Env) GitInitUnborn(dir string) {
+	e.t.Helper()
 	InitRepo(e.t, dir)
 	e.excludeMockFiles(dir)
 	// `enabled:` goes in first, so `disabled:` stays the config's last key: tests append
@@ -1084,8 +1093,6 @@ func (e *Env) GitInit(dir string) {
 		e.DisablePluginGuardrail(dir, others...)
 	}
 	e.enableSubagentStopCheck(dir)
-	e.CommitAll(dir, "initial")
-	e.addOrigin(dir)
 }
 
 // enableSubagentStopCheck opts the project in to a sub-agent's own Stop verifying the tracked ranges
