@@ -96,39 +96,17 @@ func TestCompileFileMatch_RefusesMisspelledMarkerField(t *testing.T) {
 	assert.Contains(t, err.Error(), "knid")
 }
 
-// context[<name>].active is the spec's context read, and its negation the ask
-// that added `not` to the grammar — matching a context's own absence directly.
-// context is open (types.Any) because the keys are project-defined names, so
-// these check the run-time evaluation rather than a load-time type.
-func TestCompileFileMatch_ContextRead(t *testing.T) {
-	active, err := CompileFileMatch(`context["research-run"].active`)
+// A file-guard's scope has no `context`: it judges committed bytes with no
+// session, so a read of it is refused at compile, as an unknown name.
+func TestCompileFileMatch_ContextIsNotInScope(t *testing.T) {
+	for _, src := range []string{`context["research-run"].active`, `not context["x"].active`, `any(markers, context["x"].active)`} {
+		_, err := CompileFileMatch(src)
+		require.Error(t, err, src)
+		assert.Contains(t, err.Error(), "unknown name context", src)
+	}
+	// The word inside a string literal is not a read of the variable.
+	_, err := CompileFileMatch(`path contains ".sloprail/context/"`)
 	require.NoError(t, err)
-
-	admitted, err := active.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{
-		"path":    "a.md",
-		"context": map[string]any{"research-run": map[string]any{"active": true}},
-	}})
-	require.NoError(t, err)
-	assert.True(t, admitted, "the named context is active")
-
-	admitted, err = active.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{
-		"path":    "a.md",
-		"context": map[string]any{"research-run": map[string]any{"active": false}},
-	}})
-	require.NoError(t, err)
-	assert.False(t, admitted, "the named context is inactive")
-}
-
-func TestCompileFileMatch_NegatedContextRead(t *testing.T) {
-	m, err := CompileFileMatch(`not context["x"].active`)
-	require.NoError(t, err)
-
-	admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{
-		"path":    "a.md",
-		"context": map[string]any{"x": map[string]any{"active": false}},
-	}})
-	require.NoError(t, err)
-	assert.True(t, admitted, "the context is not active, so `not active` holds")
 }
 
 // The whole reason the scopes are split: a file-guard's `match` reasons about a
@@ -632,11 +610,11 @@ func TestCompileContextMatch_EmptyAdmitsEverything(t *testing.T) {
 func TestFileMatchScope_ExposesExactlyItsVariables(t *testing.T) {
 	env := fileMatchScope()
 
-	assert.Len(t, env, 6, "path, markers, oldMarkers, context, status, trailers and nothing else")
+	assert.Len(t, env, 5, "path, markers, oldMarkers, status, trailers and nothing else")
 	assert.Equal(t, types.String, env["path"])
 	assert.Equal(t, types.Array(types.Map{"kind": types.String, "fqn": types.String, "line": types.Int}), env["markers"])
 	assert.Equal(t, types.Array(types.Map{"kind": types.String, "fqn": types.String, "line": types.Int}), env["oldMarkers"])
-	assert.Contains(t, env, "context")
+	assert.NotContains(t, env, "context")
 	assert.Equal(t, types.String, env["status"])
 	assert.Contains(t, env, "trailers")
 
@@ -663,7 +641,7 @@ func TestEventMatchScope_ExposesEventFieldsAndContext(t *testing.T) {
 // type would refuse every real read.
 func TestScopes_ContextMapIsOpen(t *testing.T) {
 	assert.Equal(t, types.Any, contextMapType())
-	assert.Equal(t, types.Any, fileMatchScope()["context"])
+	assert.NotContains(t, fileMatchScope(), "context")
 	assert.Equal(t, types.Any, eventMatchScope(preFileCreateKind)["context"])
 }
 

@@ -71,7 +71,7 @@ type uncommittedGuarded struct {
 // It covers the session's own tree and every other folder the session registered for this
 // agent (an ad-hoc repository a command ran in), each under ITS OWN rules: reg is what loads
 // them. reg may be nil, which covers the own tree only.
-func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.FileGuard, store sessionstate.Store, context map[string]any, reg ...*module.Registry) string {
+func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.FileGuard, store sessionstate.Store, reg ...*module.Registry) string {
 	if !ownsTree(p) {
 		return ""
 	}
@@ -83,7 +83,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 				return failClosed(err)
 			}
 		} else {
-			o, refusal := owedIn(root, guards, context)
+			o, refusal := owedIn(root, guards)
 			if refusal != "" {
 				return refusal
 			}
@@ -101,7 +101,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			if len(loaded.FileGuards) == 0 {
 				continue
 			}
-			o, refusal := owedIn(f.Path, loaded.FileGuards, checkrun.ContextMatchValue(loadContextMap(quiet, nil, loaded.Contexts)))
+			o, refusal := owedIn(f.Path, loaded.FileGuards)
 			if refusal != "" {
 				return refusal
 			}
@@ -124,7 +124,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 
 // owedIn is the uncommitted paths of the tree at root that some rule of guards selects, or
 // the refusal for a tree or a rule that could not be read.
-func owedIn(root string, guards []declaration.FileGuard, context map[string]any) ([]uncommittedGuarded, string) {
+func owedIn(root string, guards []declaration.FileGuard) ([]uncommittedGuarded, string) {
 	changes, err := gitrepo.UncommittedChanges(root)
 	if err != nil {
 		return nil, failClosed(err)
@@ -141,7 +141,7 @@ func owedIn(root string, guards []declaration.FileGuard, context map[string]any)
 		if err != nil {
 			return nil, fmt.Sprintf("the file-guard %q could not be evaluated: its match %q could not be compiled (%v); refusing because a rule that could not decide must not be read as approval", g.Name, g.Match, err)
 		}
-		selects := checkrun.Selector(match, context)
+		selects := checkrun.Selector(match)
 		for _, c := range changes {
 			if !changeset.Admits(changeset.DeletionMode(g.Deletions), c.Status) {
 				continue

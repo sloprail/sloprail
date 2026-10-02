@@ -152,22 +152,6 @@ checks:
 	assert.Equal(t, "**/*.md", loaded.FileGuards[0].Match)
 }
 
-// A file-guard's match reading a context is at parity with its checks — it must
-// load, since context[<name>] is in the file scope.
-func TestLoad_FileGuard_ContextInMatch(t *testing.T) {
-	loadOK(t, map[string]string{
-		"file-guard/moved/file-guard.yaml": `
-match: context["refactoring"].active and any(markers, .kind == "moved-from")
-checks:
-  - script: ./check.sh
-`,
-		// The context it names must exist for a prerequisite; a match read of a
-		// context is NOT a prerequisite, so this loads even without the context —
-		// but declare it so the test also documents the guard→context link.
-		"context/refactoring/context.yaml": validContextYAML,
-	})
-}
-
 // ---------------------------------------------------------------------------
 // File-guard: refusals
 // ---------------------------------------------------------------------------
@@ -201,7 +185,7 @@ checks:
 	// name is in front of them; the available names have to be too. (The old
 	// GUARDRAIL.md validator proved this via guardrail.Validate's field list; the
 	// new file-guard validator carries the same courtesy in its match message.)
-	for _, field := range []string{"path", "markers", "context"} {
+	for _, field := range []string{"path", "markers", "trailers"} {
 		assert.Containsf(t, iv.Reason, field,
 			"the refusal should name %q as an available field on the file scope", field)
 	}
@@ -275,6 +259,28 @@ require:
 	assert.True(t, hasKind(iv, ErrRetiredKey), "a skill require on a file-guard is refused: %v", iv.Reason)
 	assert.Contains(t, iv.Reason, "gate/<name>/gate.yaml")
 	assert.Contains(t, iv.Reason, "skill: document-topic")
+}
+
+// A file-guard's match has no `context`: an identifier use is refused (with the
+// gate advice), while the word inside a string literal still loads.
+func TestLoad_FileGuard_MatchReadingContextIsRefused(t *testing.T) {
+	for _, m := range []string{`context["x"].active`, `any(markers, context["x"].active)`, `path contains "a" and context["x"].active`} {
+		iv := loadOneInvalid(t, map[string]string{
+			"file-guard/ctx/file-guard.yaml": "match: '" + m + "'\nchecks:\n  - script: ./c.sh\n",
+		})
+		assert.True(t, hasKind(iv, ErrRetiredKey), "%s: %v", m, iv.Reason)
+		assert.Contains(t, iv.Reason, "move the condition on the context to a gate", m)
+	}
+}
+
+func TestLoad_FileGuard_ContextInAStringLiteralLoads(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"file-guard/lit/file-guard.yaml": "match: 'path contains \".sloprail/context/\"'\nchecks:\n  - script: ./c.sh\n",
+	})
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, loaded.Invalid, invalidReasons(loaded))
+	assert.Len(t, loaded.FileGuards, 1)
 }
 
 // A file-guard with neither require nor checks would select a file and decide

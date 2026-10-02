@@ -8,7 +8,6 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
-	"github.com/sloprail/sloprail/internal/natures"
 )
 
 // This file holds what a file-guard's `match` is asked and the vocabulary shared
@@ -82,15 +81,14 @@ func containsString(list []string, s string) bool {
 // an event.Event whose Fields ARE the scope, and hands it to the compiled
 // matcher, which reads those names directly (CompileFileMatch compiles against
 // fileMatchScope() with no declared kind, so the env is exactly the fields
-// passed, no fill-in). markers is the file's own markers in wire form; context is
-// every declared context in the wire form expr can index (`context[<name>].active`).
-func fileGuardSelects(match *guardrail.Matcher, e event.Event, contextMap map[string]natures.ContextState) (bool, error) {
-	return match.Match(fileMatchScopeEvent(e, contextMap))
+// passed, no fill-in). markers is the file's own markers in wire form. There is no
+// context: a file-guard cannot see session state.
+func fileGuardSelects(match *guardrail.Matcher, e event.Event) (bool, error) {
+	return match.Match(fileMatchScopeEvent(e))
 }
 
 // fileMatchScopeEvent builds the FileMatchScope an event presents to a
-// file-guard's match: the file's path and markers off the event, and the context
-// map in wire form, all flat.
+// file-guard's match: the file's path and markers off the event, flat.
 //
 // markers comes from the event's NEW markers — on a Post event these are the
 // settled file's markers (Scan of what is on disk). That is the "the markers the
@@ -98,12 +96,11 @@ func fileGuardSelects(match *guardrail.Matcher, e event.Event, contextMap map[st
 // {kind,fqn,line} objects) is what filemod already puts on the event under
 // `newMarkers`, reused rather than re-scanned. On a delete, which has no result,
 // it is the markers the file carried — see fileMarkers.
-func fileMatchScopeEvent(e event.Event, contextMap map[string]natures.ContextState) event.Event {
+func fileMatchScopeEvent(e event.Event) event.Event {
 	fields := map[string]any{
 		"path":       e.Fields[filemod.FieldPath],
 		"markers":    fileMarkers(e),
 		"oldMarkers": fileOldMarkers(e),
-		"context":    contextMatchValue(contextMap),
 	}
 	return event.Event{Kind: e.Kind, Fields: fields}
 }

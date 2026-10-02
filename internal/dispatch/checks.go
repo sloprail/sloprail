@@ -362,7 +362,6 @@ func (r Runner) checkPayloadJSON(req Request) ([]byte, error) {
 		return json.Marshal(declaration.CheckPayload{
 			Event:          declaration.FlatEvent(req.Event),
 			TranscriptPath: req.TranscriptPath,
-			Context:        req.contextMap(),
 		})
 	}
 }
@@ -398,7 +397,6 @@ func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedConte
 			CheckPayload: declaration.CheckPayload{
 				Event:          declaration.FlatEvent(req.Event),
 				TranscriptPath: req.TranscriptPath,
-				Context:        req.contextMap(),
 			},
 			Change:            fileChange(req.Event),
 			AdditionalContext: additional,

@@ -17,7 +17,7 @@ func samplePayload() Payload {
 		Others:    []Other{{Path: "README.md", Status: "M"}},
 		Citations: []Citation{{Citation: transcript.Citation{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: "/t", Line: 3, Message: "m"}, Commits: []string{"c1"}, Files: []string{"a.go"}}},
 	}
-	return NewPayload(cs, Whole(cs), "/t.jsonl", nil)
+	return NewPayload(cs, Whole(cs), "/t.jsonl")
 }
 
 func cp(t *testing.T, p Payload) string {
@@ -103,7 +103,7 @@ func TestCitationPart_ARebuiltRangeWithTheSameContentHits(t *testing.T) {
 		head := put(t, dir, "edit", map[string]string{"a.go": "2\n"})
 		cs, err := Build(dir, rng(base, head), Options{Scan: scan, Select: selectAll})
 		require.NoError(t, err)
-		return NewPayload(cs, Whole(cs), "", nil)
+		return NewPayload(cs, Whole(cs), "")
 	}
 	a, b := build("2026-01-01T00:00:00Z"), build("2026-02-02T00:00:00Z")
 	require.NotEqual(t, a.Changeset.Head, b.Changeset.Head)

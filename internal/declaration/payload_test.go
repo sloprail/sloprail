@@ -78,7 +78,7 @@ func TestFlatEvent_RoundTrips(t *testing.T) {
 }
 
 // A FileJudgeInput spreads CheckPayload's fields flat at the top level — `event`,
-// `transcriptPath`, `context` render unprefixed — and carries additionalContext
+// `transcriptPath` render unprefixed — and carries additionalContext
 // as one more top-level field, present only when set. AND `event` itself is flat,
 // so `{{ event.newContent }}` reaches the content.
 func TestFileJudgeInput_SpreadsPayloadFlat(t *testing.T) {
@@ -86,7 +86,6 @@ func TestFileJudgeInput_SpreadsPayloadFlat(t *testing.T) {
 		CheckPayload: CheckPayload{
 			Event:          FlatEvent{Kind: "PostFileUpdate", Fields: map[string]any{"path": "a.md", "newContent": "body"}},
 			TranscriptPath: "/t.jsonl",
-			Context:        map[string]natures.ContextState{"refactoring": {Active: true}},
 		},
 		AdditionalContext: PreparedContext{"doc_text": "hello"},
 	}
@@ -100,7 +99,7 @@ func TestFileJudgeInput_SpreadsPayloadFlat(t *testing.T) {
 	// "checkPayload" — this is what makes `{{ event.newContent }}` render.
 	assert.Contains(t, back, "event")
 	assert.Contains(t, back, "transcriptPath")
-	assert.Contains(t, back, "context")
+	assert.NotContains(t, back, "context")
 	assert.Contains(t, back, "additionalContext")
 	assert.NotContains(t, back, "CheckPayload", "the payload must spread flat, not nest under its Go type name")
 	assert.NotContains(t, back, "payload", "the payload spreads flat, it is not wrapped in a `payload` key")
@@ -118,7 +117,6 @@ func TestFileJudgeInput_OmitsAdditionalContextWhenAbsent(t *testing.T) {
 		CheckPayload: CheckPayload{
 			Event:          FlatEvent{Kind: "PostFileCreate", Fields: map[string]any{}},
 			TranscriptPath: "/t.jsonl",
-			Context:        map[string]natures.ContextState{},
 		},
 	}
 	raw, err := json.Marshal(in)
@@ -152,26 +150,12 @@ func TestGateJudgeInput_SpreadsPayloadFlat(t *testing.T) {
 	assert.NotContains(t, ev, "fields")
 }
 
-// The check payloads carry `context` at parity with their match scope — a check
-// reads `context[<name>].active` and `.payload` the same way a matcher does,
-// through internal/natures' ContextState.
-func TestCheckPayload_CarriesContextAtParity(t *testing.T) {
-	p := CheckPayload{
-		Event:          FlatEvent{Kind: "PostFileUpdate"},
-		TranscriptPath: "/t",
-		Context:        map[string]natures.ContextState{"c": {Active: false, Payload: map[string]any{"measured": 3}}},
-	}
-	raw, err := json.Marshal(p)
+// A file-guard's check payload carries no `context`: it judges committed bytes
+// and cannot see session state.
+func TestCheckPayload_CarriesNoContext(t *testing.T) {
+	raw, err := json.Marshal(CheckPayload{Event: FlatEvent{Kind: "PostFileUpdate"}, TranscriptPath: "/t"})
 	require.NoError(t, err)
-	var back struct {
-		Context map[string]struct {
-			Active  bool           `json:"active"`
-			Payload map[string]any `json:"payload"`
-		} `json:"context"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &back))
-	assert.False(t, back.Context["c"].Active)
-	assert.EqualValues(t, 3, back.Context["c"].Payload["measured"], "an inactive context still carries its last payload")
+	assert.NotContains(t, string(raw), "context")
 }
 
 // A context's enter and exit payloads carry `gates` — how a context reads a

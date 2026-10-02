@@ -182,7 +182,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: cmd.ErrOrStderr(), Guards: t.loaded.FileGuards, Root: t.root, Range: t.rng,
 		Cwd: t.root, Transcript: t.sess.record, Workspace: t.sess.workspace, SessionID: t.sess.id, Subagent: t.sess.subagent,
-		ContextMap: t.contexts(cmd), Store: results, Verify: m != modeRun,
+		Store: results, Verify: m != modeRun,
 	})
 	if err := results.Close(); err != nil {
 		return fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)

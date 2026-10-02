@@ -429,11 +429,10 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	}
 	results := checkstore.Open(cache, true)
 	defer results.Close()
-	contextMap := checkrun.LoadContextMap(io.Discard, store, loaded.Contexts)
 	refusals, _ := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
-		ContextMap: contextMap, Store: results, Verify: true, Recorded: recordedCitations(p, store),
+		Store: results, Verify: true, Recorded: recordedCitations(p, store),
 	})
 	if len(refusals) == 0 {
 		return ""

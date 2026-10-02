@@ -22,7 +22,6 @@ import (
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/guardrail"
-	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -69,8 +68,6 @@ type Params struct {
 	// from, when there is one; Subagent says a sub-agent's. All may be empty.
 	Cwd, Transcript, Workspace, SessionID, AgentID string
 	Subagent                                       bool
-	// ContextMap is each declared context's state (every one present, inactive by default).
-	ContextMap map[string]natures.ContextState
 	// Store records the runs and finds earlier ones; nil records and looks up nothing.
 	Store checkstore.Store
 	// Verify: a judge is looked up, never asked; nothing is recorded.
@@ -97,19 +94,17 @@ type FileGuardResult struct {
 // safe to use from several goroutines: stderr and git's worktree registry are guarded
 // below.
 type changesetEvaluation struct {
-	errw       io.Writer
-	diags      map[string]*bytes.Buffer // each rule's diagnostics, emitted in declaration order after the pool
-	root       string
-	params     Params
-	contextMap map[string]natures.ContextState
-	context    map[string]any
-	store      checkstore.Store // nil: nothing is recorded or looked up
-	identity   checkstore.RunIdentity
-	batch      string
-	verify     bool // judges are looked up, never asked; nothing is written
-	rng        gitrepo.Range
-	runner     dispatchcore.Runner
-	snapshots  sync.Mutex // `git worktree add/remove` race on the worktree names
+	errw      io.Writer
+	diags     map[string]*bytes.Buffer // each rule's diagnostics, emitted in declaration order after the pool
+	root      string
+	params    Params
+	store     checkstore.Store // nil: nothing is recorded or looked up
+	identity  checkstore.RunIdentity
+	batch     string
+	verify    bool // judges are looked up, never asked; nothing is written
+	rng       gitrepo.Range
+	runner    dispatchcore.Runner
+	snapshots sync.Mutex // `git worktree add/remove` race on the worktree names
 
 	mu       sync.Mutex
 	outcomes []CheckOutcome
@@ -223,8 +218,8 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		errw = io.Discard
 	}
 	ev := &changesetEvaluation{
-		errw: errw, diags: map[string]*bytes.Buffer{}, root: p.Root, params: p, contextMap: p.ContextMap,
-		context: ContextMatchValue(p.ContextMap), store: p.Store, verify: p.Verify, rng: p.Range,
+		errw: errw, diags: map[string]*bytes.Buffer{}, root: p.Root, params: p,
+		store: p.Store, verify: p.Verify, rng: p.Range,
 		batch: "check-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}
 	ev.identity = ev.runIdentity()
@@ -389,7 +384,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
 		Deletions: changeset.DeletionMode(g.Deletions),
 		Scan:      Markers,
-		Select:    Selector(match, ev.context),
+		Select:    Selector(match),
 	})
 	if err != nil {
 		return ev.fail(g, run, err)
@@ -468,13 +463,12 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 
 // requestFor is what a rule's checks are handed for one subject of the changeset.
 func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Range, cs changeset.Changeset, sub changeset.Subject, tree string, unresolved []changeset.Unresolved) dispatchcore.Request {
-	payload := changeset.NewPayload(cs, sub, ev.params.Transcript, ev.context)
+	payload := changeset.NewPayload(cs, sub, ev.params.Transcript)
 	return dispatchcore.Request{
 		Nature:         dispatchcore.NatureFileGuard,
 		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.Citations))}},
 		TranscriptPath: ev.params.Transcript,
 		Subagent:       ev.params.Subagent,
-		Context:        ev.contextMap,
 		Dir:            g.Dir,
 		GuardName:      g.Name,
 		Workspace:      ev.params.Workspace,
@@ -675,7 +669,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 		if !slices.Contains(whole.Subject.Files, s.ID) {
 			continue // another subject's file: its own verdict covers it
 		}
-		payload := changeset.NewPayload(cs, s, whole.TranscriptPath, whole.Context)
+		payload := changeset.NewPayload(cs, s, whole.TranscriptPath)
 		one := req
 		one.Changeset = &payload
 		one.Require = []declaration.Prerequisite{p}

@@ -25,7 +25,7 @@ func keyPayload() changeset.Payload {
 		Citations: []changeset.Citation{{Citation: transcript.Citation{Quote: "q", Path: "/t", Line: 3, Call: "Bash: one"},
 			Commits: []string{"c1"}, Files: []string{"a.go"}}},
 	}
-	return changeset.NewPayload(cs, changeset.Whole(cs), "/t.jsonl", nil)
+	return changeset.NewPayload(cs, changeset.Whole(cs), "/t.jsonl")
 }
 
 func keyRule(t *testing.T, citation bool) (declaration.FileGuard, declaration.Check, string) {

@@ -70,8 +70,12 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 		problems = append(problems, prob(ErrMissingField, "match",
 			"a file-guard must say which files it covers"))
 	} else if _, err := guardrail.CompileFileMatch(g.Match); err != nil {
-		problems = append(problems, prob(ErrBadMatch, "match",
-			"%s — a file-guard's match reads a file's own facts (path, markers, oldMarkers, context)", oneLine(err.Error())))
+		if strings.Contains(err.Error(), "unknown name context ") {
+			problems = append(problems, prob(ErrRetiredKey, "match", contextInFileGuardMatch))
+		} else {
+			problems = append(problems, prob(ErrBadMatch, "match",
+				"%s — a file-guard's match reads a file's own facts (path, status, markers, oldMarkers, trailers)", oneLine(err.Error())))
+		}
 	}
 
 	// `preventive:` is gone. A file-guard judges the settled result at Stop;

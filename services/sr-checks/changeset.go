@@ -83,11 +83,10 @@ func runChangeset(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := checkrun.ContextMatchValue(t.contexts(cmd))
 	cs, err := changeset.Build(t.root, t.rng, changeset.Options{
 		Deletions: changeset.DeletionMode(g.Deletions),
 		Scan:      checkrun.Markers,
-		Select:    checkrun.Selector(match, ctx),
+		Select:    checkrun.Selector(match),
 	})
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: %w", g.Name, err)
@@ -98,7 +97,7 @@ func runChangeset(cmd *cobra.Command, _ []string) error {
 	}
 	out := changesetOutput{
 		Rule: g.Qualified(), Base: t.rng.Base, Head: t.rng.Head, RuleHash: hash, UnresolvedCitations: unresolved,
-		Payload: changeset.NewPayload(cs, changeset.Whole(cs), t.sess.record, ctx),
+		Payload: changeset.NewPayload(cs, changeset.Whole(cs), t.sess.record),
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")

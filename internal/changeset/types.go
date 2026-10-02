@@ -34,9 +34,8 @@ type Payload struct {
 	// Subject is what is being judged as one unit. Without `subjects:` it is the
 	// whole changeset; with it, one entry the rule's script returned. Carried
 	// from the start so `subjects:` adds a producer, not a field.
-	Subject        Subject        `json:"subject"`
-	TranscriptPath string         `json:"transcriptPath"`
-	Context        map[string]any `json:"context"`
+	Subject        Subject `json:"subject"`
+	TranscriptPath string  `json:"transcriptPath"`
 }
 
 // Event is the fixed event a changeset evaluation presents.
@@ -181,10 +180,7 @@ func Subjects(cs Changeset, role Role) []Subject {
 }
 
 // NewPayload assembles what a check receives for one subject of a changeset.
-func NewPayload(cs Changeset, subject Subject, transcriptPath string, context map[string]any) Payload {
-	if context == nil {
-		context = map[string]any{}
-	}
+func NewPayload(cs Changeset, subject Subject, transcriptPath string) Payload {
 	if subject.Context == nil {
 		subject.Context = map[string]any{}
 	}
@@ -193,7 +189,6 @@ func NewPayload(cs Changeset, subject Subject, transcriptPath string, context ma
 		Changeset:      cs,
 		Subject:        subject,
 		TranscriptPath: transcriptPath,
-		Context:        context,
 	}
 }
 

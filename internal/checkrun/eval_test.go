@@ -21,7 +21,6 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
-	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -98,7 +97,7 @@ func (f *evalFixture) params(t *testing.T, results checkstore.Store) Params {
 	require.NoError(t, err)
 	return Params{
 		Guards: []declaration.FileGuard{f.guard}, Root: f.repo, Range: rng, Cwd: f.repo, SessionID: "s-eval",
-		ContextMap: map[string]natures.ContextState{}, Store: results,
+		Store: results,
 	}
 }
 
@@ -108,7 +107,7 @@ func (f *evalFixture) newEvaluation(t *testing.T, results checkstore.Store) *cha
 	p := f.params(t, results)
 	ev := &changesetEvaluation{
 		errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p,
-		contextMap: p.ContextMap, context: map[string]any{}, store: results, rng: p.Range, batch: "b1",
+		store: results, rng: p.Range, batch: "b1",
 	}
 	ev.identity = ev.runIdentity()
 	return ev
@@ -280,7 +279,7 @@ func TestRunRequirement_CitationPerFile(t *testing.T) {
 	ev := f.newEvaluation(t, f.results)
 	req := dispatchcore.Request{Nature: dispatchcore.NatureFileGuard, Dir: f.guard.Dir, Changeset: &changeset.Payload{}, Require: []declaration.Prerequisite{prereq}}
 	require := func(cs changeset.Changeset) (dispatchcore.Verdict, error) {
-		return ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
+		return ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), ""), "", nil)
 	}
 
 	t.Run("every file grounded", func(t *testing.T) {
