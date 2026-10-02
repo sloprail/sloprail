@@ -211,6 +211,12 @@ func (e *Env) addOrigin(dir string) {
 	e.t.Helper()
 	bare := filepath.Join(e.t.TempDir(), "origin.git")
 	Git(e.t, filepath.Dir(bare), "init", "-q", "--bare", "--initial-branch=main", bare)
+	// no detached auto-gc after a push: it races the TempDir cleanup ("directory not empty").
+	Git(e.t, bare, "config", "gc.auto", "0")
+	Git(e.t, bare, "config", "receive.autogc", "false")
+	Git(e.t, bare, "config", "maintenance.auto", "false")
+	Git(e.t, dir, "config", "gc.auto", "0")
+	Git(e.t, dir, "config", "maintenance.auto", "false")
 	Git(e.t, dir, "remote", "add", "origin", bare)
 	Git(e.t, dir, "push", "-q", "origin", "main")
 	Git(e.t, dir, "fetch", "-q", "origin")

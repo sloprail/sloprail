@@ -88,6 +88,7 @@ func newRepoOpt(t testing.TB, opt Options) *Store {
 	t.Helper()
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
+	quietGc(t, dir)
 	opt.Dir = dir
 	s, err := Open(opt)
 	if err != nil {
@@ -100,7 +101,17 @@ func bareRemote(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "--bare")
+	quietGc(t, dir)
 	return dir
+}
+
+// quietGc stops git from detaching an auto-gc/maintenance process after a commit or push: it
+// races t.TempDir's RemoveAll ("directory not empty") on a slow runner.
+func quietGc(t testing.TB, dir string) {
+	t.Helper()
+	git(t, dir, "config", "gc.auto", "0")
+	git(t, dir, "config", "receive.autogc", "false")
+	git(t, dir, "config", "maintenance.auto", "false")
 }
 
 // keyOf is the key of a run's judge check.
