@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,20 +13,14 @@ const asUpstream = "-c user.name=upstream -c user.email=up@example.com"
 // different places merge with no conflict.
 const bigScript = "#!/bin/sh\ncat >/dev/null\n# 1\n# 2\n# 3\n# 4\n# 5\n# 6\n# 7\n# 8\n# 9\nexit 0\n"
 
-// remoteWithUpstream gives proj an origin whose default branch is main, and returns a
-// function that lands one more commit upstream (from a second clone).
+// remoteWithUpstream pushes proj's default branch to the origin GitInit gave it, and returns
+// a function that lands one more commit upstream (from a second clone).
 func remoteWithUpstream(t *testing.T, e *harness.Env, proj string) (land func(path, content, msg string)) {
 	t.Helper()
 	main := e.Git(proj, "branch", "--show-current")
-	bare := filepath.Join(t.TempDir(), "origin.git")
-	e.Git(filepath.Dir(bare), "init", "-q", "--bare", bare)
-	e.Git(bare, "symbolic-ref", "HEAD", "refs/heads/"+main)
-	e.Git(proj, "remote", "add", "origin", bare)
 	e.Git(proj, "push", "-q", "origin", "HEAD:refs/heads/"+main)
 	e.Git(proj, "fetch", "-q", "origin")
-	e.Git(proj, "remote", "set-head", "origin", main)
-	up := filepath.Join(t.TempDir(), "up")
-	e.Git(filepath.Dir(up), "clone", "-q", bare, up)
+	up := e.CloneFresh(proj)
 	return func(path, content, msg string) {
 		t.Helper()
 		e.WriteFile(up, path, content)
