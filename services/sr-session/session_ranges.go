@@ -310,8 +310,16 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	results := checkstore.Open(cache, true)
 	defer results.Close()
 	contextMap := checkrun.LoadContextMap(io.Discard, store, loaded.Contexts)
+	// A script check still runs in verify (only judges are looked up), and one that reads the
+	// session's registry needs the session's record and id, as it has them under `sr-checks run`.
+	record, _ := p.record()
+	var sessionID string
+	if id, err := stableID(p); err == nil {
+		sessionID = id
+	}
 	refusals, _ := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
+		Transcript: record, SessionID: sessionID,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
 		ContextMap: contextMap, Store: results, Verify: true, Recorded: recordedCitations(p, store),
 	})
