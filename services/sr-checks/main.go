@@ -39,6 +39,7 @@ func newRoot() *cobra.Command {
   sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged
   sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
   sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
+  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
 
 The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
 states the range. A judge's verdict is keyed by the rule, its definition, the check and a
@@ -50,6 +51,6 @@ origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd(), newDefaultBaseCmd())
 	return root
 }
