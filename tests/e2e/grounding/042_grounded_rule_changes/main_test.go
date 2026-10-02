@@ -74,11 +74,11 @@ func editScript(t *testing.T, id, path, content string) []harness.Turn {
 	}
 }
 
-// blocked runs a Stop on the session as it stands and says whether this rule refused the
-// turn, with the refusal's text.
+// blocked runs `sr check run` over what the session committed and says whether this rule
+// refused it, with the refusal's text.
 func blocked(e *harness.Env, proj, sess string) (bool, string) {
-	res := e.StopNow(proj, sess, false)
-	return harness.Blocked(res) && strings.Contains(res.Output, "grounded-rule-changes"), res.Output
+	res := e.CheckRunRaw(proj, sess, e.RunBase(sess), "HEAD")
+	return res.Code != 0 && strings.Contains(res.Output, "grounded-rule-changes"), res.Output
 }
 
 // refuseThenPass is the shape of every case: the agent makes the change (`change`, which

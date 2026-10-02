@@ -190,9 +190,6 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	// The sub-agent committed with a trailer citing its own tool output, which the
 	// session resolves against the sub-agent's record. The tree is shared, so it is
 	// the root's Stop that judges the range — and it finds the citation.
-	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-21"); len(blocks) != 0 {
-		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
-	}
 	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "Stop"); len(blocks) != 0 {
 		t.Errorf("the root's cycle end refused the sub-agent's cited write: %v", blocks)
 	}
@@ -261,24 +258,17 @@ require:
 	if !e.Exists(proj, "memories/a.md") {
 		t.Fatalf("the cited write did not land:\n%s", res.Output)
 	}
-	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-23"); len(blocks) != 0 {
-		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
-	}
 	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "Stop"); len(blocks) != 0 {
 		t.Errorf("the root's cycle end refused the sub-agent's cited write: %v", blocks)
 	}
 
 	e2, proj2 := guarded(t, afterGuard)
-	e2.SetStopBlockCap(1)
 	uncited := subagentScript(t, harness.Turns("sub done",
 		harness.CommitFile("sb1", "memories/b.md", "# b", "write it down"),
 	))
 	e2.Run(proj2, "s-041-23b", prompt, Turns("done", harness.Dispatch("d1", "write it down", uncited, "")))
 	if blocks := stopRefusal(e2, proj2, "s-041-23b"); !strings.Contains(blocks, noCitation) {
 		t.Errorf("an uncited sub-agent commit was not refused at the root's Stop, so the guard never ran:\n%s", blocks)
-	}
-	if blocks := e2.SubagentBlockingErrors(proj2, "s-041-23b"); len(blocks) != 0 {
-		t.Errorf("the sub-agent's own stop judged a range it does not own: %v", blocks)
 	}
 }
 
@@ -417,9 +407,6 @@ func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
 	}
 	if !strings.Contains(pre, `"record":"`+e.TranscriptPath(proj, "s-041-27")+`"`) || !strings.Contains(pre, `"types":["user"]`) {
 		t.Errorf("the citation does not point at the user's message in the main conversation: %s", pre)
-	}
-	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-27"); len(blocks) != 0 {
-		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 }
 

@@ -59,7 +59,7 @@ exit 1
 	if !strings.Contains(refusal, "an empty commit carrying only the trailer does not count") {
 		t.Errorf("the refusal does not say an empty trailer-only commit grounds nothing:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	// Their one commit is HEAD, unpushed, with a clean tree: the amend is offered, but the
 	// recommended fix — and the command followed here — is a follow-up commit that
@@ -71,7 +71,7 @@ exit 1
 		Write("w3", "memories/a.md", "# a changed again\n"),
 		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
 	))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the refusal's own command did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
@@ -109,13 +109,13 @@ require:
 	if strings.Contains(refusal, "--amend") || strings.Contains(refusal, "reset --soft") {
 		t.Fatalf("a pushed HEAD was offered a history rewrite:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	e.Run(proj, sess, "go on", Turns("done",
 		Write("w2", "memories/a.md", "# a changed\n"),
 		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
 	))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the follow-up commit did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }

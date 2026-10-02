@@ -9,10 +9,11 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// stop_order: at Stop the order is context ENTERS -> commit-required ->
-// file-guards -> gates -> context EXITS. A rule that reads context[] therefore
-// sees the contexts this turn entered (and the ones exiting at this very Stop),
-// never the previous turn's state.
+// stop_order: at Stop the order is context ENTERS -> commit-required -> gates ->
+// context EXITS. A rule that reads context[] therefore sees the contexts this turn
+// entered (and, for a gate, the ones exiting at this very Stop), never the previous
+// turn's state. File-guards are judged by `sr check run` after the Stop, against the
+// context state the Stop left.
 
 type Env = harness.Env
 

@@ -19,7 +19,7 @@ func TestT042_07_NewRuleNeedsNoGrounding(t *testing.T) {
 		Write("w2", ".sloprail/file-guard/invoices/check.sh", demoScript),
 		Write("w3", ".sloprail/file-guard/structure.yaml", "allow:\n  - glob: \".sloprail/**\"\n  - glob: \"src/**\"\n"),
 	).ThenCommit("rules first"))
-	res := e.StopNow(proj, "s-042-07", false)
+	res := e.CheckRunRaw(proj, "s-042-07", e.RunBase("s-042-07"), "HEAD")
 	if strings.Contains(res.Output, "grounded-rule-changes") || strings.Contains(res.Output, "SR042") {
 		t.Fatalf("adding rules was refused or judged:\n%s", res.Output)
 	}

@@ -72,9 +72,10 @@ func TestT005_03_GateRequireSeesAContextEnteredThisTurn(t *testing.T) {
 	}
 }
 
-// T005_04: a context that EXITS at this Stop is still active for the file-guards
-// and gates of that same Stop — both refuse — and is inactive after it. Entering
-// again (trigger rewritten) with the fixes lets the Stop pass.
+// T005_04: a context that EXITS at this Stop is still active for the gates of that
+// same Stop — the gate refuses — and is inactive after it. Entering again (trigger
+// rewritten) with the fixes lets the Stop pass. (File-guards no longer run at Stop:
+// `sr check run` judges after the Stop, when the context has already exited.)
 func TestT005_04_ContextExitingAtThisStopIsStillActiveForIt(t *testing.T) {
 	e, proj, _ := setup(t, "0", true)
 
@@ -83,7 +84,7 @@ func TestT005_04_ContextExitingAtThisStopIsStillActiveForIt(t *testing.T) {
 		harness.CommitFile("c1", "src/d.txt", "FORBIDDEN", "add d"),
 	))
 	got := joined(e.BlockingErrorsFrom(proj, "s-005-04", "Stop"))
-	for _, want := range []string{"SCOPED-GUARD refused", "STOP-GATE-RAN"} {
+	for _, want := range []string{"STOP-GATE-RAN"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the Stop in which the context exits did not see it active: missing %q in %q", want, e.BlockingErrors(proj, "s-005-04"))
 		}

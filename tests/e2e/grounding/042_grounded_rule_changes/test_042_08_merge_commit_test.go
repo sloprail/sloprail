@@ -65,7 +65,9 @@ func citedEditThenMerge(t *testing.T, e *harness.Env, proj, sess, ask, edited, m
 // T042_30: a clean merge of upstream into the session's branch is not the commit that
 // "last changed" the protected file. The session edited the rule at the end (cited),
 // upstream at the top; the merge resolved nothing, so it needs no citation of its own
-// and the refusal never names it.
+// and the refusal never names it. The range is the branch against the upstream it
+// merged (base origin/<main>), the way a caller judges a branch for its target: the
+// upstream commit is the target's, not the branch's.
 func TestT042_30_ACleanMergeIsNotTheLastChanger(t *testing.T) {
 	e := New(t)
 	proj := project(t, e)
@@ -78,7 +80,8 @@ func TestT042_30_ACleanMergeIsNotTheLastChanger(t *testing.T) {
 	const ask = "tighten the demo rule at its end"
 	e.Run(proj, "s-042-30", ask, citedEditThenMerge(t, e, proj, "s-042-30", ask,
 		strings.Replace(bigScript, "# 9\n", "# 9\n# tighter\n", 1), main))
-	if got, out := blocked(e, proj, "s-042-30"); got {
+	res := e.CheckRunRaw(proj, "s-042-30", "origin/"+main, "HEAD")
+	if got, out := res.Code != 0 && strings.Contains(res.Output, "grounded-rule-changes"), res.Output; got {
 		t.Fatalf("a clean merge of upstream was refused for the rule change it carried:\n%s", out)
 	}
 }
