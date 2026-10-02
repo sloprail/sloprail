@@ -152,11 +152,6 @@ checks:
   `Bash` grant can widen that.
   → [judge-checks.md](judge-checks.md)
 
-The two check kinds are documented separately because their contracts differ — a
-script's `reason`/exit-code verdict and fail-closed-on-cannot-run, versus a
-judge's `reasoning` verdict, `prepare` + `.md.j2` + `model`/`allowed_tools`,
-and the fail-open-via-a-script escape hatch.
-
 ## The refusal contract
 
 A check **refuses by exiting non-zero**, and the engine finds the reason to show
@@ -273,25 +268,3 @@ This also works on a shipped rule that will not **load**. A broken declaration
 refuses every action it was bound to — deliberately, since a rule that cannot be
 checked must not read as approval — and when it is a plugin's you cannot fix the
 file. Naming it here is the way out that does not mean uninstalling the plugin.
-
-## The cross-cutting references
-
-- [events.md](events.md) — every event kind and its flat fields, the per-kind
-  tables, and the payload envelopes a check and a judge template read.
-- [environment.md](environment.md) — the `SR_*` variables every guardrail script
-  receives (`SR_GUARDRAIL`, `SR_WORKSPACE`, `SR_TRANSCRIPT`, …) and the
-  `SLOPRAIL_LAUNCHED_BY` re-entry provenance.
-- [matchers.md](matchers.md) — the `match:` expression language, the three
-  scopes, the glob shorthand, and the fail-closed rule.
-- [script-checks.md](script-checks.md) — the deterministic check: the skeleton,
-  reading the flat event off stdin, the exit-code verdict, and fail-closed-on-
-  cannot-run.
-- [judge-checks.md](judge-checks.md) — the model check: `prepare` + the `.md.j2`
-  template + `additionalContext`, the `sr-agent` substrate, `model`/
-  `allowed_tools`, and the fail-open escape hatch.
-- [grounding.md](grounding.md) — changes that must trace to what the user
-  said: citing with `sr-file --cite:` or `cite && <cmd>`, `event.citations`,
-  `require: [{citation}]`, and judging a citation.
-- [state-management.md](state-management.md) — `sr-session state` across cycles,
-  the `--owner` cross-guardrail read a gate uses to read a context's registry,
-  and the turn-scoping trap.
