@@ -125,6 +125,9 @@ type Prepared struct {
 	Skip bool
 	// Context is prepare's additionalContext, folded into the judge's input.
 	Context declaration.PreparedContext
+	// Fingerprint is prepare's optional "fingerprint" string: what the judge's verdict
+	// depends on besides its prompt, part of the cache key.
+	Fingerprint string
 }
 
 // PrepareJudge runs a judge check's prepare step, when it has one. A refused
@@ -145,15 +148,36 @@ func (r Runner) PrepareJudge(req Request, c declaration.Check) (Prepared, Verdic
 	if v.Refused {
 		return Prepared{}, v, nil
 	}
-	return Prepared{Skip: prepared.Skip, Context: prepared.Context}, pass(), nil
+	return Prepared{Skip: prepared.Skip, Context: prepared.Context, Fingerprint: prepared.Fingerprint}, pass(), nil
+}
+
+// RenderJudge is the judge's fully rendered prompt (the template with the slice and
+// prepare's additionalContext folded in), exactly as Judge will render it: what a cache keys
+// a verdict on. A non-empty refusal is the reason the prompt cannot be rendered; Judge
+// refuses with the same words.
+func (r Runner) RenderJudge(req Request, c declaration.Check, p Prepared) (rendered, refusal string, err error) {
+	call, v, err := r.judgeCall(req, c, p)
+	if err != nil || v.Refused {
+		return "", v.Reason, err
+	}
+	return renderJudgePrompt(call)
 }
 
 // Judge asks the model about one judge check, after prepare.
 func (r Runner) Judge(req Request, c declaration.Check, p Prepared) (Verdict, error) {
 	r = r.withDefaults()
+	call, v, err := r.judgeCall(req, c, p)
+	if err != nil || v.Refused {
+		return v, err
+	}
+	return r.runJudge(call)
+}
+
+func (r Runner) judgeCall(req Request, c declaration.Check, p Prepared) (judgeCall, Verdict, error) {
+	r = r.withDefaults()
 	input, err := r.judgeInputJSON(req, p.Context)
 	if err != nil {
-		return Verdict{}, err
+		return judgeCall{}, Verdict{}, err
 	}
 
 	// The check's own timeout, parsed from its duration string. The loader
@@ -164,11 +188,11 @@ func (r Runner) Judge(req Request, c declaration.Check, p Prepared) (Verdict, er
 	// not actually specify is the wrong direction to guess.
 	timeout, err := checkTimeout(c)
 	if err != nil {
-		return refuse(fmt.Sprintf(
+		return judgeCall{}, refuse(fmt.Sprintf(
 			"the judge's timeout %q could not be read (%v); refusing rather than judging under a timeout the rule did not specify", c.Timeout, err)), nil
 	}
 
-	return r.runJudge(judgeCall{
+	return judgeCall{
 		Dir:             req.Dir,
 		Template:        c.Judge,
 		InputJSON:       input,
@@ -180,7 +204,7 @@ func (r Runner) Judge(req Request, c declaration.Check, p Prepared) (Verdict, er
 		DisallowedTools: c.DisallowedTools,
 		Workspace:       req.judgeProject(),
 		Env:             req.Env,
-	})
+	}, Verdict{}, nil
 }
 
 // RunScript runs one script check: the payload on stdin, exit code the verdict.
@@ -215,6 +239,9 @@ type preparedResult struct {
 	// check ABSTAINS (reaches no verdict; other checks decide). False is the
 	// unchanged "run the judge" default.
 	Skip bool
+
+	// Fingerprint is prepare's optional "fingerprint" string.
+	Fingerprint string
 }
 
 // runPrepare runs a prepare script and returns what it concluded — the
@@ -262,7 +289,7 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 			"the judge's prepare step produced output this engine could not read as {\"additionalContext\": {...}, \"skip\": <bool>} (%v); "+
 				"refusing rather than asking the model against a half-prepared prompt", err)), nil
 	}
-	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip}, pass(), nil
+	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip, Fingerprint: outcome.Fingerprint}, pass(), nil
 }
 
 // checkPayloadJSON assembles the nature's check payload and marshals it for stdin.

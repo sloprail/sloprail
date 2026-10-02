@@ -93,6 +93,9 @@ the standard payload:
 jq -n --arg rules "$rules" '{additionalContext: {rules: $rules}}'
 ```
 
+`prepare` may also return an optional `"fingerprint": "<string>"` (see
+[A judge is pure](#a-judge-is-pure--what-its-verdict-is-cached-on)).
+
 `prepare` runs **unconditionally** when set and is **not a pass/fail gate of its
 own** — but a `prepare` that **fails to run** fails the check (carrying its words),
 and one whose stdout is not the `{"additionalContext": {…}}` shape fails it closed
@@ -100,6 +103,29 @@ too: a judge fed a half-prepared prompt would judge against something the author
 did not intend. A `prepare` that ran, had nothing to add, and printed nothing is a
 legitimate no-op. `prepare` is meaningful **only** with a `judge` — setting it on a
 script check is a load error.
+
+## A judge is pure — what its verdict is cached on
+
+A judge is **pure**: no side effects, it judges the slice it is handed. Its verdict is
+cached under the rule, the rule's hash, the check, the subject and a **fingerprint**: the
+sha256 of the judge's fully **rendered** prompt (the template with the subject's slice and
+`prepare`'s `additionalContext` folded in), plus `prepare`'s optional `fingerprint` string.
+Nothing else: no run id, timestamp, session id or snapshot path (`SR_TREE` is normalised
+out of the prompt). A passing verdict with the same key is not asked again; a stored fail
+with the same key is replayed by `sr-checks run`; `verify` never calls a judge. (A
+`require: citation` rule's key also covers the commit messages and the citations' quotes,
+since the citations ride in the trailers.)
+
+The contract that follows: **anything else the verdict depends on** — a file the judge
+opens with its own tools, say — must reach the key. Either put it in the prompt through
+`prepare`'s `additionalContext`, or declare it:
+
+```bash
+jq -n --arg v "$(git -C "$SR_TREE" rev-parse HEAD:spec/api.md)" '{fingerprint: $v}'
+```
+
+A judge that reads more than it is shown and declares none of it is served a stale verdict
+when that thing changes. Script checks are never cached.
 
 ## The verdict
 

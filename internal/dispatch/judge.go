@@ -125,32 +125,39 @@ type judgeCall struct {
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
 // a verdict-constraining verify script, and turn the outcome into a Verdict.
 func runJudgeAgent(j judgeCall) (Verdict, error) {
-	// 1. Render the template against the judge input.
-	templatePath := resolveScriptPath(j.Dir, j.Template)
-	src, err := os.ReadFile(templatePath)
-	if err != nil {
-		// The template file is missing or unreadable. Fail-closed: a judge whose
-		// prompt cannot be assembled has judged nothing.
-		return refuse(fmt.Sprintf(
-			"the judge's prompt template %q could not be read (%v); refusing rather than asking the model against no prompt",
-			j.Template, err)), nil
-	}
-	vars, err := decodeJudgeVars(j.InputJSON)
+	rendered, refusal, err := renderJudgePrompt(j)
 	if err != nil {
 		return Verdict{}, err
 	}
-	rendered, err := renderTemplate(string(src), vars)
-	if err != nil {
-		// The template used a construct this engine does not render. Fail-closed
-		// with the diagnostic, so the author learns the template is beyond the
-		// supported subset rather than getting a blank or half prompt.
-		return refuse(fmt.Sprintf(
-			"the judge's prompt template %q could not be rendered: %v. Refusing rather than asking the model against a broken prompt.",
-			j.Template, err)), nil
+	if refusal != "" {
+		return refuse(refusal), nil
 	}
-
 	// 2. Ask the model, constrained to a verdict, through sr-agent.
 	return askJudge(j, rendered)
+}
+
+// renderJudgePrompt renders the judge's template against its input. A template that
+// cannot be read or rendered is a refusal (the reason, fail-closed: a judge whose prompt
+// cannot be assembled has judged nothing), not an error.
+func renderJudgePrompt(j judgeCall) (rendered, refusal string, err error) {
+	templatePath := resolveScriptPath(j.Dir, j.Template)
+	src, err := os.ReadFile(templatePath)
+	if err != nil {
+		return "", fmt.Sprintf(
+			"the judge's prompt template %q could not be read (%v); refusing rather than asking the model against no prompt",
+			j.Template, err), nil
+	}
+	vars, err := decodeJudgeVars(j.InputJSON)
+	if err != nil {
+		return "", "", err
+	}
+	rendered, err = renderTemplate(string(src), vars)
+	if err != nil {
+		return "", fmt.Sprintf(
+			"the judge's prompt template %q could not be rendered: %v. Refusing rather than asking the model against a broken prompt.",
+			j.Template, err), nil
+	}
+	return rendered, "", nil
 }
 
 // decodeJudgeVars decodes the judge input JSON into the map the template renders

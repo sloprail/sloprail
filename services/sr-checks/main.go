@@ -43,7 +43,7 @@ func newRoot() *cobra.Command {
 
 The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
 states the range. A judge's verdict is keyed by the rule, its definition, the check and a
-fingerprint of everything the judge was given — never by a commit, session or agent — so the
+fingerprint of the judge's fully rendered prompt (plus what its prepare step declares) — never by a commit, session or agent — so the
 same content after a rebase, a squash or a revert is a cache hit, and so is the same content
 another clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to
 origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,

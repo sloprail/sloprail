@@ -26,8 +26,9 @@ func newRunCmd() *cobra.Command {
 		Short: "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
 		Long: `Judge every file-guard over merge-base(--base, --head)..--head.
 
-Requirements and scripts run every time. A judge is asked only when the cache holds no PASS for
-exactly what it is about to be given; its verdict (pass or fail) is then stored, as one segment
+Requirements and scripts run every time. A judge is asked only when the cache holds no verdict for
+exactly what it is about to be given: a stored PASS is a hit and a stored FAIL with the same key is
+replayed (terminal until the input changes). A new verdict (pass or fail) is stored, as one segment
 of the sloprail/checks branch, and pushed to origin when the repository has one. Prints each
 refusal, and exits 1 when any rule refuses.`,
 		Args: cobra.NoArgs,

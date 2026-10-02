@@ -2,7 +2,6 @@ package checkrun
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -35,7 +34,12 @@ import (
 //   - A judge's verdict is a fact about (rule, rule hash, kind, subject, fingerprint of
 //     everything it was given) and is kept in the check cache. A finished PASS with the
 //     same key is a cache hit: the judge is not asked again, whatever session, agent,
-//     branch or commit range made it. A FAIL is kept to be shown, never replayed.
+//     branch or commit range made it. A stored FAIL with the same key is
+//     replayed by `run` (terminal until the input changes); `verify` shows it.
+//   - A judge is pure: it judges its slice. The key is the sha256 of its fully rendered
+//     prompt plus prepare's optional "fingerprint" string, so anything else the verdict
+//     depends on (files the judge opens with its own tools) must reach the prompt through
+//     prepare's additionalContext or be declared through that fingerprint.
 //   - `verify` is deterministic: it never calls a judge and never writes. A judge key
 //     with no stored pass is red (missing, or the stored fail's reasons).
 //   - A script is never cached: it is cheap and deterministic, and re-running it is
@@ -736,7 +740,7 @@ func describeCommit(cs changeset.Changeset, sha string) string {
 }
 
 // runCheck runs one check of a rule and records it. A script is run every time. A judge is
-// fingerprinted — everything the model is about to be given — and the store asked before the
+// keyed on its rendered prompt (see judgeKey) — everything the model is about to be given — and the store asked before the
 // model: a stored verdict — a fail too — is reused, whoever recorded it. `verify` never asks
 // the model: a key without a stored verdict is red.
 func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, req dispatchcore.Request,
@@ -801,31 +805,13 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		ev.note(out)
 		return dispatchcore.Verdict{}, nil
 	}
-	extra, err := json.Marshal(prep.Context)
+	fp, refusal, err := judgeKey(ev.runner, g, req, payload, c, prep)
 	if err != nil {
 		return fail(err)
 	}
-	// TODO(subjects): key per subject (a file's own content) once `subjects:` splits a
-	// changeset; today the one subject is the whole changeset.
-	// A rule that requires a citation reads it from the commits' trailers, so for it a reworded
-	// commit is a new input; for any other rule it is not.
-	fingerprint := changeset.Fingerprint
-	for _, r := range g.Require {
-		if r.Citation != nil {
-			fingerprint = changeset.FingerprintWithCommits
-			break
-		}
-	}
-	// The snapshot lives in a fresh temporary directory each time, and prepare may hand its
-	// path to the judge (to measure a file there): the path is not an input, so it is named
-	// the same for every run and every verify.
-	keyed := string(extra)
-	if req.ProjectRoot != "" {
-		keyed = strings.ReplaceAll(keyed, req.ProjectRoot, "<tree>")
-	}
-	fp, err := fingerprint(payload, hash, c.Model, keyed)
-	if err != nil {
-		return fail(err)
+	if refusal != "" {
+		// The prompt cannot be rendered: nothing to key. Judge refuses with the same words.
+		return settle(dispatchcore.Verdict{Refused: true, Reason: refusal}, map[string]any{"model": c.Model})
 	}
 	rec.Fingerprint = fp
 	meta := map[string]any{"model": c.Model}
@@ -876,6 +862,38 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		return fail(err)
 	}
 	return settle(v, meta)
+}
+
+// judgeKey is the fingerprint a judge's verdict is kept under: the sha256 of the prompt the
+// judge is about to be given, fully rendered, plus prepare's own "fingerprint" string and,
+// for a rule that requires a citation, the commit messages and citation quotes (the
+// prompt need not render them). The snapshot's temp path (SR_TREE) is a fresh directory
+// every run and is named the same way, `<tree>`, for every run and every verify, so the
+// run that stored a verdict and the verify that looks it up compute one key. A refusal
+// is the reason the prompt could not be rendered.
+func judgeKey(runner dispatchcore.Runner, g declaration.FileGuard, req dispatchcore.Request,
+	payload changeset.Payload, c declaration.Check, prep dispatchcore.Prepared) (fp, refusal string, err error) {
+
+	prompt, refusal, err := runner.RenderJudge(req, c, prep)
+	if err != nil || refusal != "" {
+		return "", refusal, err
+	}
+	norm := func(s string) string {
+		if req.ProjectRoot != "" {
+			s = strings.ReplaceAll(s, req.ProjectRoot, "<tree>")
+		}
+		return s
+	}
+	citations := ""
+	for _, r := range g.Require {
+		if r.Citation != nil {
+			if citations, err = changeset.CitationPart(payload); err != nil {
+				return "", "", err
+			}
+			break
+		}
+	}
+	return changeset.JudgeFingerprint(norm(prompt), norm(prep.Fingerprint), citations), "", nil
 }
 
 // engineError is the refusal for something that went wrong in the engine while a

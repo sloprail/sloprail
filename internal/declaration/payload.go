@@ -229,6 +229,12 @@ type PreparedOutcome struct {
 	// (see the four-outcome contract above). Absent/false is the unchanged "run the
 	// judge" default.
 	Skip bool `json:"skip"`
+
+	// Fingerprint is an optional string naming what the judge's verdict depends on
+	// that is not in its prompt (a file the judge opens with its own tools). It is
+	// folded into the verdict's cache key: a judge is pure, so anything else it
+	// reads must reach the key through the prompt (additionalContext) or this.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // FileJudgeInput is the wire/type contract for what a file-guard's judge receives
