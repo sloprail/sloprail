@@ -21,9 +21,12 @@ import (
 // refusesOnceThenRelents refuses the first cycle it judges and permits every
 // cycle after.
 //
-// The counter is a file in the file-guard's own folder ($SR_GUARDRAIL_DIR), which
-// for an isolated sub-agent is the folder inside ITS worktree — so the count is
-// per-sub-agent and a second sub-agent does not inherit the first's.
+// The counter is a file at the root of the tree the check runs in (three levels above
+// $SR_GUARDRAIL_DIR), which for an isolated sub-agent is ITS worktree — so the count is
+// per-sub-agent and a second sub-agent does not inherit the first's. Not inside the
+// guard's folder: a verdict is keyed by a hash of everything under `.sloprail`, so a check
+// writing there changes its own key between the run and the verify, and the file would be
+// an uncommitted guarded change at the Stop.
 //
 // A file-guard after-check (a file-guard acts only at Stop): it fires at the sub-agent's
 // SubagentStop against the settled `.md` file it made, and a refusal blocks that
@@ -37,11 +40,11 @@ checks:
 
 const refuseOnceScript = `#!/bin/sh
 payload=$(cat)
-n=$(cat "$SR_GUARDRAIL_DIR/count" 2>/dev/null || echo 0)
+n=$(cat "$SR_GUARDRAIL_DIR/../../../.onceonly.count" 2>/dev/null || echo 0)
 n=$((n + 1))
-echo "$n" > "$SR_GUARDRAIL_DIR/count"
+echo "$n" > "$SR_GUARDRAIL_DIR/../../../.onceonly.count"
 for path in $(` + pathsOfPayload + `); do
-  echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+  echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/../../../.onceonly.log"
 done
 if [ "$n" -le 1 ]; then
   echo '{"reason":"the first attempt is refused"}'
@@ -125,7 +128,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	// tree the root never diffs, and no verdict of the root's is about it. A
 	// root judging it would be the parent handed another session's work as its
 	// own.
-	for _, l := range e.FileGuardLedgerLines(proj, "onceonly", "log") {
+	for _, l := range e.FileGuardLedgerLines(proj, "onceonly", "../../../.onceonly.log") {
 		if pathOf(l) == "first.md" || pathOf(l) == "second.md" {
 			t.Fatalf("the DISPATCHING session's own cycle judged %q — a file that exists only in "+
 				"the sub-agent's separate worktree. The delegated work was attributed to the "+
@@ -142,7 +145,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 
 	// The guardrail ran a bounded number of times: it refused once and relented
 	// on the judged retry, so the sub-agent did not loop.
-	lines := subLedger(t, proj, theWorktree(t, proj), "onceonly", "log")
+	lines := subLedger(t, proj, theWorktree(t, proj), "onceonly", "../../../.onceonly.log")
 	if len(lines) == 0 {
 		t.Fatalf("the guardrail never ran at the sub-agent's cycle at all")
 	}

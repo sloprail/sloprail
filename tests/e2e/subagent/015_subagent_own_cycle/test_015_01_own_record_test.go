@@ -98,12 +98,23 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 // judging the same range at its own stop as well would be one verdict twice, under
 // an identity that owns none of the tree. So the sub-agent's own Stop judges
 // nothing, and the root's judges its work — once, as itself.
+// recordScriptOutsideRules is recordScript with its ledger at the root of the tree, outside the
+// `.sloprail` whose hash keys every verdict.
+const recordScriptOutsideRules = `#!/bin/sh
+payload=$(cat)
+for path in $(` + pathsOfPayload + `); do
+  echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/../../../.recorder.log"
+done
+exit 0
+`
+
 func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
-	// A judge beside the recorder: a script runs every time it is asked (the root's own
-	// run and its Stop's verify both count), so "judged exactly once" is a judge's count.
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScriptOutsideRules})
+	// A judge beside the recorder: "judged exactly once" is a judge's count. The recorder keeps
+	// its ledger outside `.sloprail`, because a verdict is keyed by a hash of everything under
+	// it: a check writing there would change every key between one run and the next.
 	e.FileGuard(proj, "verdict", "match: \"**/*.md\"\nchecks:\n  - judge: ./rubric.md.j2\n",
 		map[string]string{"rubric.md.j2": "Does this change hold up?\n{{ change }}\n"})
 	e.GitInit(proj)
@@ -135,7 +146,7 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	}
 
 	// The root's Stop judges the file the sub-agent committed.
-	lines := e.FileGuardLedgerLines(proj, "recorder", "log")
+	lines := e.FileGuardLedgerLines(proj, "recorder", "../../../.recorder.log")
 	if !containsPath(lines, "from-the-sub.md") {
 		t.Fatalf("the sub-agent's committed file was judged by nobody (%v):\n%s", lines, res.Output)
 	}

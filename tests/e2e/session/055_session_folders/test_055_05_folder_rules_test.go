@@ -144,3 +144,28 @@ func TestT055_08_ASubagentWithoutAnIdentityStillOwesItsCommits(t *testing.T) {
 		t.Fatalf("a sub-agent that could not be identified went unjudged:\n%s", res.Output)
 	}
 }
+
+// T055_09: the root's Stop verifies the range a sub-agent tracked in ANOTHER repository even
+// when the root's tree declares no rule at all: the root must not end its Stop on "no rules
+// here". The other repository's rule refuses; the sub-agent judged its range (`sr-checks run`
+// at its own turn end), and the root's Stop reports that stored verdict.
+func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
+	e, proj, other := two(t)
+	declareNothing(t, e, proj)
+	const sess = "s-055-09"
+	e.FileGuard(other, "docs", "match: \"docs/**\"\nchecks:\n  - script: ./refuse.sh\n",
+		map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"SUBAGENT-RANGE-VERDICT\"}'\nexit 1\n"})
+	e.CommitAll(other, "the rules")
+	script := harness.SubagentScript(t, Turns("sub done",
+		Bash("sb0", "git -C "+other+" commit -q --allow-empty -m 'register this folder'"),
+		Bash("sb1", "mkdir -p "+other+"/docs && echo hi > "+other+"/docs/a.md && git -C "+other+" add -A && git -C "+other+" commit -q -m 'the sub-agent work'"),
+	))
+
+	e.Run(proj, sess, "delegate", Turns("root done",
+		harness.Dispatch("d1", "write the doc elsewhere", script, ""),
+	))
+	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
+		t.Fatalf("the root's Stop did not verify the sub-agent's tracked range when the root declares no rule:\n%s", got)
+	}
+}

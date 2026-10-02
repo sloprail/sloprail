@@ -63,8 +63,10 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	// An unreadable folder registry is not "no folders": it falls through to the steps that refuse.
 	registered, foldersErr := sessionFolders(p)
-	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 && len(registered) == 0 && foldersErr == nil {
-		return "" // no rule here, and no other folder whose rules commit-required covers
+	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 && len(registered) == 0 && foldersErr == nil && !hasTrackedRanges(p) {
+		// No rule here, no other folder whose rules commit-required covers, and no range of the
+		// session (a sub-agent's worktree, another repository) the root's Stop would verify.
+		return ""
 	}
 
 	// The state maps, loaded once and shared across all four steps.
