@@ -54,7 +54,7 @@ match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 # refusal reports damage already done to the oracle, and the agent's remedy would
 # be to edit the task again — the prohibited act itself — is the PreFileWrite gate
 # of the same name, beside this guard under gate/, which carries the same
-# requirement, script and judge. This file-guard is the Stop backstop for a write
+# requirement, script and judge. This file-guard is the backstop (`sr-checks run`, verified at Stop and CI) for a write
 # that reached the tree without passing pre-tool.
 
 require:

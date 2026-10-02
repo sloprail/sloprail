@@ -114,6 +114,7 @@ type Env struct {
 	// runBase, checkHistory and noAutoCheck: see checkrun.go.
 	runBase      map[string]string
 	origins      map[string]string // project -> its local bare origin
+	published    map[string]bool   // project -> origin/main already moved up to its pre-session HEAD
 	preStopRuns  int               // numbers the appended pre-Stop turns, which fire once each
 	checkHistory map[string][]string
 	noAutoCheck  bool
@@ -330,6 +331,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		seenSessions: map[string]bool{},
 		runBase:      map[string]string{},
 		origins:      map[string]string{},
+		published:    map[string]bool{},
 		checkHistory: map[string][]string{},
 	}
 	for _, opt := range opts {

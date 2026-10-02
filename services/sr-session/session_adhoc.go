@@ -238,23 +238,34 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 }
 
 // sessionFoldersOf is the folders the session registered for this agent besides its own
-// tree — ad-hoc repositories a command ran in — whose rules apply to what is done there.
+// tree — ad-hoc repositories a command ran in — whose rules apply to what is done there. One
+// that cannot be read reads as none: for a decision that must not do so, use sessionFolders.
 func sessionFoldersOf(p HookPayload) []sessionstate.Folder {
+	out, _ := sessionFolders(p)
+	return out
+}
+
+// sessionFolders is sessionFoldersOf with the error of a registry that exists but could not be
+// read: a caller that refuses must not take that for "nothing else was committed".
+func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
 	rs, err := resolveRootSession(p)
 	if err != nil {
-		return nil // no session identity, so no registry to read
+		return nil, nil // no session identity, so no registry to read
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer reg.Close()
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []sessionstate.Folder
 	for _, f := range folders {
@@ -266,7 +277,7 @@ func sessionFoldersOf(p HookPayload) []sessionstate.Folder {
 		}
 		out = append(out, f)
 	}
-	return out
+	return out, nil
 }
 
 // foldersTargeted is the registered folders of this agent (besides its own tree) that a Bash

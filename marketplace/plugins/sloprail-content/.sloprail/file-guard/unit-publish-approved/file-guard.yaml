@@ -13,7 +13,7 @@
 #
 # THE COMMITTED CHANGESET. The gate of the same name (../../gate/
 # unit-publish-approved) refuses the pending publish before it lands; this judges
-# every UNIT.md in the commits since the rule last passed — the same require and
+# every UNIT.md in the commits of the range (`sr-checks run --base --head`) — the same require and
 # check — as the backstop. The approval comes from the commits: a
 # `Sloprail-Cites-User: <the user's words>` trailer, resolved against the
 # transcript like sr-file --cite:user.

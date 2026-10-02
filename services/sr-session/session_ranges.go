@@ -87,9 +87,12 @@ func folderHasFileGuards(folder, trustedRev string) bool {
 	return len(loaded.FileGuards) > 0
 }
 
-// trackMissing tracks, at a hook, the folders of this agent that have no range yet: a
-// .sloprail with file-guards that appears mid-session starts being tracked at the next hook. A
-// folder that already has a range costs one query; one without it costs a declaration load.
+// trackMissing tracks, at a hook, the branches of this agent's folders: a .sloprail with
+// file-guards that appears mid-session starts being tracked at the next hook, and so does every
+// branch the agent commits on — a branch it committed on and then left must still be verified at
+// Stop, which only looks at the branch it is on then. A branch already tracked just has its tip
+// refreshed (a branch deleted later is verified at the commit it last pointed at); a branch not
+// tracked yet is tracked once it carries commits beyond where the folder was registered.
 func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
@@ -99,18 +102,32 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	if err != nil {
 		return
 	}
-	has := map[string]bool{}
+	hasFolder := map[string]bool{}
+	hasHead := map[string]bool{}
 	for _, r := range ranges {
-		has[r.Folder] = true
+		hasFolder[r.Folder] = true
+		hasHead[r.Folder+"\x00"+r.Head] = true
 	}
 	for _, f := range folders {
-		if f.AgentID != p.AgentID || has[filepath.Clean(f.Path)] {
+		if f.AgentID != p.AgentID {
 			continue
 		}
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
 			continue
 		}
-		ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
+		folder := filepath.Clean(f.Path)
+		head, sha, ok := trackedHead(folder)
+		if !ok {
+			continue
+		}
+		switch {
+		case hasHead[folder+"\x00"+head]:
+			_ = reg.TrackRange(sessionstate.TrackedRange{
+				SessionID: rs.ID, Folder: folder, Head: head, HeadSHA: sha, AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
+			})
+		case !hasFolder[folder] || sha != f.BaseRef:
+			ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
+		}
 	}
 }
 
@@ -149,17 +166,62 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	}
 }
 
-// untrackGone drops, with the reason, the ranges of folders that no longer exist (a worktree
-// removed): there is nothing left to verify there.
+// untrackGone handles the ranges of folders that no longer exist (a worktree removed).
 func untrackGone(reg sessionstate.Store, sessionID string, ranges []sessionstate.TrackedRange) {
 	for _, r := range ranges {
 		if !r.Tracked() {
 			continue
 		}
 		if st, err := os.Stat(r.Folder); err != nil || !st.IsDir() {
-			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed", r.AgentID)
+			dropRemoved(reg, sessionID, r)
 		}
 	}
+}
+
+// dropRemoved settles a tracked range whose folder is gone. A branch that still exists in the
+// session's own repository keeps being answered for: the range moves to the root's folder (its
+// commits are the session's, and the Stop verifies them there). Only a branch that is gone, with
+// nothing to verify it at, is untracked with the reason.
+func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.TrackedRange) {
+	if home, ok := homeFolder(reg, sessionID, r.Folder); ok {
+		moved := r
+		moved.Folder = home.Path
+		if rev, note := headRevision(moved); note == "" && rev != "" {
+			if err := reg.TrackRange(sessionstate.TrackedRange{
+				SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.Head, HeadSHA: r.HeadSHA,
+				Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
+			}); err == nil {
+				_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID)
+				return
+			}
+		}
+	}
+	_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed", r.AgentID)
+}
+
+// homeFolder is the session's root folder, when it is the same repository as folder.
+func homeFolder(reg sessionstate.Store, sessionID, folder string) (sessionstate.Folder, bool) {
+	folders, err := reg.Folders(sessionID)
+	if err != nil {
+		return sessionstate.Folder{}, false
+	}
+	var repo string
+	for _, f := range folders {
+		if sameDir(f.Path, folder) {
+			repo = f.RepoID
+		}
+	}
+	if repo == "" {
+		return sessionstate.Folder{}, false
+	}
+	for _, f := range folders {
+		if f.Role == sessionstate.FolderRoot && f.RepoID == repo && !sameDir(f.Path, folder) {
+			if st, err := os.Stat(f.Path); err == nil && st.IsDir() {
+				return f, true
+			}
+		}
+	}
+	return sessionstate.Folder{}, false
 }
 
 // verifyTrackedRanges is the Stop's file-guard work: each tracked range of this agent's folders
@@ -176,7 +238,10 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		return nil // no session identity, so no ranges
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil // a session that never recorded anything has no ranges
+		}
+		return []string{fmt.Sprintf("the session's tracked ranges could not be read (%v); refusing because a registry that could not be read must not be read as 'nothing to judge'", err)}
 	}
 	root, err := sessionstate.Open(rs.Path)
 	if err != nil {
@@ -190,7 +255,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	}
 	untrackGone(root, rs.ID, ranges)
 	if ranges, err = root.Ranges(rs.ID); err != nil {
-		return nil
+		return []string{fmt.Sprintf("the session's tracked ranges could not be read (%v); refusing because a registry that could not be read must not be read as 'nothing to judge'", err)}
 	}
 
 	quiet := &cobra.Command{}
