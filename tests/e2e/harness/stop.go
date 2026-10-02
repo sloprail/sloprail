@@ -76,6 +76,19 @@ func (r Result) SubagentStopBlocked(reason string) bool {
 	return strings.Contains(r.Output, "SubagentStop blocked ("+reason)
 }
 
+// SubagentStopBlockedWith reports whether a sub-agent's Stop was refused with a
+// reason carrying text on the refusal's first line (the refusal now opens with the
+// folder and range, so the text is not at the start): the same message, not any
+// text elsewhere in the output.
+func (r Result) SubagentStopBlockedWith(text string) bool {
+	for _, line := range strings.Split(r.Output, "\n") {
+		if i := strings.Index(line, "SubagentStop blocked ("); i >= 0 && strings.Contains(line[i:], text) {
+			return true
+		}
+	}
+	return false
+}
+
 // AnySubagentStopBlocked reports whether any sub-agent's Stop was refused.
 func (r Result) AnySubagentStopBlocked() bool {
 	return strings.Contains(r.Output, "SubagentStop blocked (")

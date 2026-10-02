@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -42,7 +41,7 @@ func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testi
 	res = e2.Run(proj2, "s-003-08b", "delegate into isolation", Turns("root done",
 		harness.Dispatch("d1", "write the doc", sub2, "worktree"),
 	))
-	if !res.AnySubagentStopBlocked() || !strings.Contains(res.Output, "FORBIDDEN text in the changeset") {
+	if !res.SubagentStopBlockedWith("FORBIDDEN text in the changeset") {
 		t.Fatalf("a sub-agent in its own worktree was not judged on its own commit:\n%s", res.Output)
 	}
 }
