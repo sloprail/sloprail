@@ -293,12 +293,12 @@ func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
 	if !containsAll(blocks, "citations-resolve", "must cite a tool's output") {
 		t.Fatalf("an uncited commit of markdown was not refused at Stop:\n%s", blocks)
 	}
-	seen := len(e.StopContinuations(proj, sess))
+	seen := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	// A citation grounds the files its own commit changed, so it is added by amending
 	// the commit that changed them.
 	e.Run(proj, sess, "cite it", Turns("done", harness.AmendLast("amend", "write the summary", harness.CitesTool(sourceLine))))
-	if got := len(e.StopContinuations(proj, sess)); got != seen {
+	if got := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); got != seen {
 		t.Fatalf("a commit citing the source output was still refused (%d refusals, had %d):\n%s", got, seen,
 			joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")))
 	}
