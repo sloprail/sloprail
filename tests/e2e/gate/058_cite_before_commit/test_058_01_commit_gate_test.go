@@ -159,3 +159,17 @@ func TestT058_10_RefusalNamesTheRecordedQuote(t *testing.T) {
 	has(t, res.Output, "recorded")
 	has(t, res.Output, quote)
 }
+
+// T058_11: a multi-line -m value (the trailers harness.Commit writes) is one argument, not several
+// pathspecs.
+func TestT058_11_MultiLineMessageIsOneArgument(t *testing.T) {
+	e, proj := project(t)
+	res := e.Run(proj, "s-058-11", prompt, Turns("done",
+		stage("a", "docs/a.md", "a"),
+		Bash("c", "git commit -q -m 'add a' -m 'Sloprail-Cites-User: "+quote+"\nCo-Authored-By: X <x@example.com>'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a commit with a multi-line message was refused:\n%s", res.Output)
+	}
+	has(t, subjects(e, proj), "add a")
+}
