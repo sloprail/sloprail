@@ -46,26 +46,36 @@ func TestT003_25_ACrashThatLeftARunUnfinishedIsNotAWatermark(t *testing.T) {
 	led, flag := filepath.Join(dir, "ledger"), filepath.Join(dir, "crashed")
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": crashOnce(led, flag)})
 	e.CommitSeedThenRules(proj, "the project")
-	e.Run(proj, "s-003-25", "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "clean words\n", "add a")))
+	e.Run(proj, "s-003-25", "write the doc", Turns("done", Bash("b1", "true")))
+	e.WriteFile(proj, "docs/a.md", "clean words\n")
+	e.CommitAll(proj, "add a")
 
-	// The `sr-checks run` the session itself asked for was the one that crashed: the check
-	// started and never finished (a script is re-run by the Stop's own verification, once).
-	if n := strings.Count(readLedger(t, led), "run"); n != 2 {
-		t.Fatalf("the check should have run once and crashed the evaluation, then once at the Stop; ran %d times", n)
+	// The `sr-checks run` the agent asked for is the one that crashes: the check
+	// starts and never finishes.
+	_ = e.CheckRunCmd(proj, "s-003-25", e.RunBase("s-003-25"), "HEAD").Run()
+	if n := strings.Count(readLedger(t, led), "run"); n != 1 {
+		t.Fatalf("the check should have run once and crashed the evaluation; ran %d times", n)
 	}
+	head := e.Git(proj, "rev-parse", "HEAD")
 	for _, run := range e.CacheRecords(proj) {
-		if run.Complete {
+		// (The empty range the turn's own pre-Stop run judged before the commit is complete, and not this one.)
+		if run.Complete && run.HeadRef == head {
 			t.Fatalf("the crashed evaluation should have left no finished run behind: %+v", run)
 		}
 	}
 
-	// The next Stop, with nothing new committed: had the crashed run counted as a
-	// pass at this head, the range would be empty and no check would run.
-	r := e.StopNow(proj, "s-003-25", false)
-	if n := strings.Count(readLedger(t, led), "run"); n != 3 {
-		t.Fatalf("the range was not judged again after the crash (check ran %d times in all):\n%s", n, r.Output)
+	// The Stop only reads stored verdicts: a crashed run left none, so it is refused as
+	// not judged — had the crash counted as a pass the range would be taken as approved.
+	if r := e.StopNow(proj, "s-003-25", false); !harness.Blocked(r) {
+		t.Fatalf("a crashed run was read as a pass:\n%s", r.Output)
 	}
-	if harness.Blocked(r) {
+
+	// Asking again judges the range afresh, and the Stop then passes.
+	e.CheckRunRaw(proj, "s-003-25", e.RunBase("s-003-25"), "HEAD")
+	if n := strings.Count(readLedger(t, led), "run"); n != 2 {
+		t.Fatalf("the range was not judged again after the crash (check ran %d times in all)", n)
+	}
+	if r := e.StopNow(proj, "s-003-25", false); harness.Blocked(r) {
 		t.Fatalf("the second evaluation should pass:\n%s", r.Output)
 	}
 }

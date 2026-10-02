@@ -35,6 +35,10 @@ func TestT003_60_AStateThatCannotBeOpenedStillJudgesFileGuards(t *testing.T) {
 	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words")
 	e.CommitAll(proj, "add b")
 
+	// The judging turn (`sr-checks run`) needs no session state: it judges and stores the
+	// verdict. The Stop only reads verdicts, and cannot name the session, so it refuses
+	// both for that and for the violation the stored verdict carries.
+	e.CheckRunRaw(proj, "", "origin/main", "HEAD")
 	payload, _ := json.Marshal(map[string]any{"cwd": proj, "stop_hook_active": false, "hook_event_name": "Stop"})
 	res := e.CLIDirectStdinEnv(proj, string(payload), e.SessionEnv(""), "sr-session", "stop")
 	if !harness.Blocked(res) || !strings.Contains(res.Output, refusalText) {
