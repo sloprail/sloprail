@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,17 +10,18 @@ import (
 )
 
 // subagentProject is the judged-docs project; enableSubagentStopCheck says whether the project
-// opted in to a sub-agent's own Stop verifying the tracked ranges (the harness opts in by
-// default, so the default is restored here by rewriting the config).
+// opts in to a sub-agent's own Stop verifying the tracked ranges (the harness does not opt in
+// by default). The config the harness wrote (its `disabled:` list of the shipped guards) stays:
+// only the rule under test applies.
 func subagentProject(t *testing.T, enableSubagentStopCheck bool) (*Env, string) {
 	t.Helper()
 	e, proj := project(t)
-	cfg := ""
 	if enableSubagentStopCheck {
-		cfg = "enable_subagent_stop_check: true\n"
+		path := filepath.Join(proj, ".sloprail", "config.yaml")
+		body, _ := os.ReadFile(path)
+		e.WriteFile(proj, ".sloprail/config.yaml", "enable_subagent_stop_check: true\n"+string(body))
+		e.CommitAll(proj, "the config")
 	}
-	e.WriteFile(proj, ".sloprail/config.yaml", cfg)
-	e.CommitAll(proj, "the config")
 	return e, proj
 }
 
