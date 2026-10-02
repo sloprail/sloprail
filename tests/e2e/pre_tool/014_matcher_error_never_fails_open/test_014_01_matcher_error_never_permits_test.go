@@ -49,7 +49,11 @@
 // explicit.
 package e2e
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
 
 // A gate whose trigger match loads cleanly and cannot be answered at run time:
 // `int(.bin)` on "npm" is refused by the vm. The check PERMITS, so the only thing
@@ -185,7 +189,9 @@ func TestT014_03_AMatcherThatDeclinesStillPermits(t *testing.T) {
 // PreCommandInvoke only, so a PreFileCreate never reaches the erroring match at
 // all: the engine fix must not over-broaden past the binding that failed.
 func TestT014_04_AnErroringMatcherDoesNotBlockAnotherEvent(t *testing.T) {
-	e := New(t)
+	// The harness's own pre-Stop `sr-checks run` is a command this gate's erroring match would
+	// refuse; the test is about the write alone.
+	e := New(t, harness.NoAutoCheck())
 	proj := e.Project()
 	e.Gate(proj, "npm-access", gateMatcherErrorsAtRuntime, map[string]string{
 		"check.sh": permitCheck,
