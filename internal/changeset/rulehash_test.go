@@ -100,3 +100,37 @@ func TestRuleHash_MissingOrNonFolderIsAnError(t *testing.T) {
 	_, err = RuleHash(f)
 	assert.Error(t, err)
 }
+
+// The committed folder is what is hashed: a file a check writes into its own folder while it
+// runs (a ledger, a cache) is not the rule changing, and a new commit of a script is.
+func TestRuleHashAt_IsTheCommittedFolder(t *testing.T) {
+	repo := initRepo(t)
+	dir := filepath.Join(repo, ".sloprail", "file-guard", "r")
+	rev := put(t, repo, "rule", map[string]string{".sloprail/file-guard/r/check.sh": "#!/bin/sh\nexit 0\n", "other.txt": "1"})
+	before, err := RuleHashAt(repo, rev, dir)
+	require.NoError(t, err)
+
+	write(t, dir, "ledger", "run\n", 0o644)
+	after, err := RuleHashAt(repo, rev, dir)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "an untracked file written by a check is not the rule")
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "ledger")))
+	rev2 := put(t, repo, "unrelated", map[string]string{"other.txt": "2"})
+	same, err := RuleHashAt(repo, rev2, dir)
+	require.NoError(t, err)
+	assert.Equal(t, before, same, "a commit elsewhere does not move it")
+
+	rev3 := put(t, repo, "edit", map[string]string{".sloprail/file-guard/r/check.sh": "#!/bin/sh\nexit 1\n"})
+	edited, err := RuleHashAt(repo, rev3, dir)
+	require.NoError(t, err)
+	assert.NotEqual(t, before, edited)
+
+	uncommitted := filepath.Join(repo, ".sloprail", "file-guard", "new")
+	write(t, uncommitted, "check.sh", "#!/bin/sh\n", 0o755)
+	onDisk, err := RuleHashAt(repo, rev3, uncommitted)
+	require.NoError(t, err)
+	want, err := RuleHash(uncommitted)
+	require.NoError(t, err)
+	assert.Equal(t, want, onDisk, "nothing committed: hashed as on disk")
+}

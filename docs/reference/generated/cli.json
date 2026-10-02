@@ -492,7 +492,7 @@
         "path": "sr-checks run",
         "use": "run --base <rev> --head <rev>",
         "short": "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
-        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nEvery check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed\nby the rule hash, the subject, the content of its files, the citation quotes and the state of the contexts\nthe rule reads. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the\ninput changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
+        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nEvery check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed\nby the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the\ninput changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
         "flags": [
           {
             "name": "base",

@@ -7,6 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/sloprail/sloprail/internal/gitrepo"
 )
 
 // RuleHash hashes a rule's whole `.sloprail` ROOT (the project's or its plugin's,
@@ -16,9 +19,8 @@ import (
 // folder alone kept serving passes reached under a schema that had since changed.
 //
 // Editing any of them changes the hash, and a verdict keyed on the old one no
-// longer applies. (A watermark is not keyed on it: work a rule approved stays
-// approved when the rule changes, and only what comes after is judged anew.) a10n's key left the rubric out, and kept
-// serving passes reached under a rubric that no longer existed.
+// longer applies. a10n's key left the rubric out, and kept serving passes reached under a
+// rubric that no longer existed.
 //
 // What is hashed is what is on disk, because that is what will run. Each file
 // contributes its path, whether it is executable (a script losing its bit
@@ -31,6 +33,29 @@ import (
 // folders a person merely looked at, which would otherwise reset a rule's
 // verdicts for no change of the rule.
 func RuleHash(dir string) (string, error) {
+	return ruleHashOnDisk(dir)
+}
+
+// RuleHashAt is the hash of the rule's folder dir as COMMITTED at rev in the repository at
+// repo: every file's mode, path and blob, so `run` and `verify` in different checkouts (and
+// whatever a check writes into its own folder while it runs) compute one hash for one rule.
+// A folder with nothing committed at rev, or outside the repository (a plugin's), is hashed as
+// it is on disk, as RuleHash does.
+func RuleHashAt(repo, rev, dir string) (string, error) {
+	rel, err := filepath.Rel(repo, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return RuleHash(dir)
+	}
+	listing, err := gitrepo.TreeListing(repo, rev, filepath.ToSlash(rel))
+	if err != nil || listing == "" {
+		return RuleHash(dir)
+	}
+	h := sha256.New()
+	writePart(h, "committed", listing)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func ruleHashOnDisk(dir string) (string, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
 		return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)

@@ -488,3 +488,9 @@ func ceilingDirs() map[string]bool {
 	}
 	return set
 }
+
+// TreeListing is `git ls-tree -r -z rev -- rel`: the mode, object name and path of every
+// file committed under rel at rev, NUL-separated. Empty when rel holds nothing at rev.
+func TreeListing(dir, rev, rel string) (string, error) {
+	return run(dir, "ls-tree", "-r", "-z", rev, "--", rel)
+}

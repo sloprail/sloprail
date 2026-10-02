@@ -79,7 +79,7 @@ func runChangeset(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q match %q does not compile: %w", g.Name, g.Match, err)
 	}
-	hash, err := changeset.RuleHash(g.Root())
+	hash, err := changeset.RuleHashAt(t.root, t.rng.Head, g.Dir)
 	if err != nil {
 		return err
 	}
