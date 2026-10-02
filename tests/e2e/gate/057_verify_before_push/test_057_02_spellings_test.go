@@ -77,13 +77,25 @@ func TestT057_03_OnlySrChecksWritesTheResultsBranch(t *testing.T) {
 		"git branch -D sloprail/checks",
 		"git -C " + proj + " update-ref -d refs/heads/sloprail/checks",
 		"echo deadbeef > .git/refs/heads/sloprail/checks",
+		// the ref sr-checks really keeps, and the forms that reach it
+		"git update-ref refs/sloprail/checks HEAD",
+		"git update-ref -d refs/sloprail/checks",
+		"git push origin HEAD:refs/sloprail/checks",
+		"echo deadbeef > .git/refs/sloprail/checks",
 	} {
 		res := e.Run(proj, "s-057-03", "write it", Turns("done", Bash("w"+string(rune('a'+i)), cmd)))
 		if !res.Refused() || !(res.Saw("checks-ref-sr-only") || res.Saw("verify-before-push")) {
 			t.Fatalf("%q was not refused:\n%s", cmd, res.Output)
 		}
 	}
-	for i, cmd := range []string{"git log --oneline sloprail/checks", "git rev-parse sloprail/checks", "sr-checks status"} {
+	// a file write straight into the ref's storage is refused too
+	for i, path := range []string{".git/refs/sloprail/checks", ".git/logs/refs/sloprail/checks", ".git/packed-refs"} {
+		res := e.Run(proj, "s-057-03", "forge it", Turns("done", harness.Write("f"+string(rune('a'+i)), path, "deadbeef\n")))
+		if !res.Refused() || !res.Saw("checks-ref-sr-only") {
+			t.Fatalf("a write to %s was not refused by the results-branch gate:\n%s", path, res.Output)
+		}
+	}
+	for i, cmd := range []string{"git log --oneline sloprail/checks", "git rev-parse refs/sloprail/checks", "sr-checks show --base HEAD --head HEAD"} {
 		res := e.Run(proj, "s-057-03", "read it", Turns("done", Bash("r"+string(rune('a'+i)), cmd)))
 		if strings.Contains(res.Output, "checks-ref-sr-only") {
 			t.Fatalf("%q was refused by the results-branch gate:\n%s", cmd, res.Output)

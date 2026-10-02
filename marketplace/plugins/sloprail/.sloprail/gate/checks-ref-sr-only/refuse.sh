@@ -8,7 +8,7 @@ refuse() {
   jq -n --arg r "$1" '{reason: $r}'
   exit 1
 }
-msg="The sloprail/checks branch holds the verdicts of 'sr-checks run', and only sr-checks writes it: do not write, move, delete, fetch into or push it. To judge commits run 'sr-checks run --base <rev> --head <rev>'; to read the verdicts run 'sr-checks status' or 'sr-checks verify'."
+msg="The sloprail/checks branch holds the verdicts of 'sr-checks run', and only sr-checks writes it: do not write, move, delete, fetch into or push it. To judge commits run 'sr-checks run --base <rev> --head <rev>'; to read the verdicts run 'sr-checks show' or 'sr-checks verify'."
 
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""')" || kind=""
 case "$kind" in
