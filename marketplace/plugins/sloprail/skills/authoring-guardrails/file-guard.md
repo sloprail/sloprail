@@ -46,7 +46,7 @@ sr-checks verify --base origin/main --head HEAD   # deterministic: asks no model
 sr-checks show   --base origin/main --head HEAD   # each subject's latest stored result; always exit 0
 ```
 
-(`sr checks …` is the same command through the `sr` proxy.) `--base` and `--head` are both
+`--base` and `--head` are both
 required (a branch, a tag or a sha). The range is `merge-base(base, head)..head` as one
 squashed net diff, so a base that is behind only widens it. The commands know nothing of
 sessions or branches: the same content in the range is the same input however it got
@@ -56,12 +56,12 @@ is a pass with no `files`, never the same as a range that could not be computed.
 Anything that goes wrong in the engine (git, the rule's folder, a store that cannot be
 read) fails the run closed.
 
-A rule's identity is its whole `.sloprail` root — its own folder, every other rule,
-schemas and shared scripts, whichever of the project's or its plugin's it lives in.
-The rule hash covers all of it, so editing any file there changes the hash and
-invalidates stored verdicts. A file-guard must therefore not
-write into `.sloprail` (ledgers, caches): a write there changes the hash each time. Keep such state in
-`sr-session state` or under `.git/`.
+A rule's identity is the files git tracks under its `.sloprail` root (its own folder, the other
+rules, shared scripts such as `_lib`), as they are on disk, so an uncommitted edit to any of
+them changes the hash and invalidates stored verdicts. Untracked and ignored files (a ledger or
+cache a check writes) do not count, so a check may keep such state there; a new, uncommitted rule
+hashes its unignored files; a plugin's rule hashes its plugin's `.sloprail` root. Anything git cannot
+answer (an error, a folder outside the repository) fails closed.
 
 A rename is selected if `match` holds on its new path **or** on the path it came
 from (with the markers it carried there): moving a file out of a guarded path,
@@ -169,7 +169,7 @@ the job a required status check. Red means some subject has no stored pass: run
 
 `require: skill` and `require: context` belong to gates, not file-guards: a file-guard
 is judged from the repository alone. A `require: citation` counts the `Sloprail-Cites-*` trailer on the commit that last
-changed the file, which the repository alone can show.
+really changed the file (a whitespace-only or empty commit grounds nothing), which the repository alone can show.
 
 ### The rule-age floor
 
@@ -239,7 +239,7 @@ write a rule's `match`, script and rubric against real input, and to find out wh
 selected (or missed) a file. `--rule` is the folder name (`size-limit`) or the qualified
 name a refusal cites (`file-guard/size-limit`, `<plugin>/file-guard/size-limit`). Its
 keys: `rule`; `base`, `head` (the merge base and head, as SHAs); `ruleHash` (a hash of the
-rule's whole `.sloprail` root — edit anything in it and old verdicts stop applying);
+rule's tracked `.sloprail` files as on disk — edit one and old verdicts stop applying);
 `unresolvedCitations` (the `Sloprail-Cites-*` trailers whose quote did not resolve); and
 `payload`, exactly what a check receives on stdin.
 
@@ -405,7 +405,7 @@ records each step's status and reason, so `sr-checks show` says which step faile
   judge): after a rebase, a squash, a revert, or by another session. A stored fail is replayed,
   terminal until the input changes. A miss runs the steps in order, first refusal ends it, and
   stores the verdict.
-- **Changed input is run again.** Editing anything under `.sloprail`, or changing `model`,
+- **Changed input is run again.** Editing a tracked file under the rule's `.sloprail` root, or changing `model`,
   starts the verdicts over.
 - **A check that reads anything beyond its subject's files must declare it**, through that
   subject's `fingerprint` in `subjects:` (a file it opens with `SR_TREE`, an external spec's

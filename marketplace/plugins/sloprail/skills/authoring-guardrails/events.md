@@ -312,7 +312,7 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
 
   A rule's `subjects:` script ([file-guard.md](file-guard.md#subjects--split-a-rule-into-units-each-cached-on-its-own))
   supplies the list instead, in this same shape plus an optional `fingerprint`. A gate's payload has no `subject`: it has `.event`.
-  `transcriptPath` and `context` as everywhere.
+  `transcriptPath` as everywhere.
 
 ### `Stop` — a work cycle ended
 

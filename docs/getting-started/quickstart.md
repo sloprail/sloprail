@@ -44,10 +44,11 @@ And the check — a script whose exit code is the verdict (0 permits,
 non-zero refuses):
 
 ```bash
-# .sloprail/file-guard/no-todo-in-committed-code/check.sh
 #!/usr/bin/env bash
-if grep -q "TODO(no-ship)" "$SR_FILE"; then
-  echo '{"reason": "This file has a TODO(no-ship) marker — resolve it before writing."}'
+# .sloprail/file-guard/no-todo-in-committed-code/check.sh  (chmod +x)
+# stdin is the payload: .changeset.files[] holds each committed file's path and newContent
+if jq -e 'any(.changeset.files[]; (.newContent // "") | contains("TODO(no-ship)"))' >/dev/null; then
+  echo '{"reason": "A file in the committed range has a TODO(no-ship) marker — resolve it before committing."}'
   exit 1
 fi
 ```

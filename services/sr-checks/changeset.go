@@ -36,7 +36,9 @@ The output is JSON on stdout:
   rule                the qualified name
   base, head          the range, as SHAs: the stated one, raised to the rule's own floor
                       (the parent of the commit that last changed the rule), as run judges it
-  ruleHash            the hash of the tracked files of the rule's .sloprail root, as on disk
+  ruleHash            the hash of every git-tracked file under the rule's .sloprail root
+                      (shared _lib included), as on disk; untracked and ignored files do
+                      not count; a plugin rule hashes its plugin's .sloprail root
   unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve
   payload             what a check receives on stdin: event, changeset (commits, files,
                       others, citations — each with the commits that carried it and the

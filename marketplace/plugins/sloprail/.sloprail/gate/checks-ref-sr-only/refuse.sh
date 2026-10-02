@@ -12,7 +12,24 @@ msg="The sloprail/checks branch holds the verdicts of 'sr-checks run', and only 
 
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""')" || kind=""
 case "$kind" in
-  PreFileCreate | PreFileUpdate | PreFileDelete) refuse "$msg" ;;
+  PreFileCreate | PreFileUpdate | PreFileDelete)
+    # packed-refs is the one path that does not name the ref: it is refused only when it is THIS
+    # repository's (a copy of some other clone's .git is not the results branch)
+    path="$(printf '%s' "$payload" | jq -r '.event.path // ""')" || path=""
+    case "$path" in
+      *refs/sloprail/checks* | *refs/heads/sloprail/checks*) refuse "$msg" ;;
+    esac
+    base="${SR_WORKSPACE:-$PWD}"
+    case "$path" in /*) ;; *) path="$base/$path" ;; esac
+    common="$(git -C "$base" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || refuse "$msg"
+    [ -n "$common" ] || refuse "$msg"
+    pdir="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)" || pdir=""
+    cdir="$(cd "$common" 2>/dev/null && pwd -P)" || cdir=""
+    # a parent that does not exist yet cannot be this repository's .git
+    if [ -n "$pdir" ] && [ "$pdir" != "$cdir" ]; then exit 0; fi
+    [ -n "$pdir" ] || exit 0
+    refuse "$msg"
+    ;;
   PreCommandInvoke) ;;
   *) refuse "unexpected event kind '$kind', so this could not be checked" ;;
 esac
@@ -30,8 +47,21 @@ while [ "$i" -lt "$n" ]; do
   inv="$(printf '%s' "$payload" | jq -c --argjson i "$i" '.event.invocations[$i]')" || refuse "an invocation could not be read, so this could not be checked"
   i=$((i + 1))
   [ "$(printf '%s' "$inv" | jq -r '.bin // ""')" = "git" ] || continue
-  printf '%s' "$inv" | jq -e 'any(.argv[]; contains("sloprail/checks"))' >/dev/null 2>&1 || continue
   git_split "$inv"
+  # forms that write a ref without naming it: the ref is in the piped input (update-ref --stdin;
+  # sr-checks writes the ref through its own process, never through an agent's git command), or in a
+  # glob refspec (fetch/push 'refs/*:refs/*', 'refs/sloprail/*:refs/sloprail/*')
+  named="" glob=""
+  printf '%s' "$inv" | jq -e 'any(.argv[]; contains("sloprail/checks"))' >/dev/null 2>&1 && named=1
+  case "$SUB" in
+    update-ref)
+      for a in ${REST[@]+"${REST[@]}"}; do [ "$a" = "--stdin" ] && named=1; done
+      ;;
+    fetch | push | pull)
+      for a in ${REST[@]+"${REST[@]}"}; do case "$a" in *:refs/remotes/*) ;; *\**:* | *:*\**) named=1 glob=1 ;; esac; done
+      ;;
+  esac
+  [ -n "$named" ] || continue
   [[ "$reads" == *" $SUB "* ]] && continue
   case "$SUB" in
     branch)
@@ -44,7 +74,7 @@ while [ "$i" -lt "$n" ]; do
       # `git fetch origin sloprail/checks` only fills FETCH_HEAD; a refspec with a destination writes a ref
       colon=""
       for a in ${REST[@]+"${REST[@]}"}; do case "$a" in *sloprail/checks*:*) colon=1 ;; esac; done
-      [ -z "$colon" ] && continue
+      [ -z "$colon" ] && [ -z "$glob" ] && continue
       ;;
   esac
   refuse "$msg"

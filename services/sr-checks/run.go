@@ -48,7 +48,7 @@ Only reads: it never executes a script, a judge or a requirement and never write
 subject's key (running the rule's subjects script, without a session) and reads the stored verdict, so the
 same repository state and the same stored results read the same anywhere. A key with no stored verdict is
 red ("not judged yet", run sr-checks run); a stored fail shows its reasons. A citation requirement counts a
-Sloprail-Cites-* trailer on the commit that last changed the file, which is checkable from the repository
+Sloprail-Cites-* trailer on the commit that last really changed the file, which is checkable from the repository
 alone.
 
 Prints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when

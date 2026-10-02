@@ -97,7 +97,7 @@ func TestT052_06_RemovalScorerFailsUnlessJudged(t *testing.T) {
 		run  func(f *judgeFixture)
 	}{
 		"the judge was skipped":     {true, func(f *judgeFixture) { f.judge(true) }},
-		"no check-results database": {false, func(f *judgeFixture) {}},
+		"nothing was judged": {false, func(f *judgeFixture) {}},
 	} {
 		t.Run("refused: "+name, func(t *testing.T) {
 			f := prep(t, true, tc.skip)

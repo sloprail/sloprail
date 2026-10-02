@@ -82,6 +82,11 @@ func TestT057_03_OnlySrChecksWritesTheResultsBranch(t *testing.T) {
 		"git update-ref -d refs/sloprail/checks",
 		"git push origin HEAD:refs/sloprail/checks",
 		"echo deadbeef > .git/refs/sloprail/checks",
+		// forms that write the ref without naming it
+		"printf 'update refs/sloprail/checks HEAD\\n' | git update-ref --stdin",
+		"git fetch origin '+refs/*:refs/*'",
+		"git fetch origin '+refs/sloprail/*:refs/sloprail/*'",
+		"git push origin 'refs/*:refs/*'",
 	} {
 		res := e.Run(proj, "s-057-03", "write it", Turns("done", Bash("w"+string(rune('a'+i)), cmd)))
 		if !res.Refused() || !(res.Saw("checks-ref-sr-only") || res.Saw("verify-before-push")) {
