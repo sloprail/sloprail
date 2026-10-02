@@ -41,23 +41,20 @@ while [ "$i" -lt "$n" ]; do
 done
 [ "${#pushes[@]}" -gt 0 ] || exit 0
 if [ -n "$mover" ]; then
-  refuse "This line runs 'git $mover' and a 'git push' together, but the push is checked before the line runs, so it would be judged against commits that are about to change. Run 'git $mover' as its own command, then push on its own."
+  refuse "Run the push as its own command: this line runs 'git $mover' and a 'git push' together, and the push is checked before the line runs, so it would be judged against commits that are about to change. Run 'git $mover' first, then 'sr-checks run --base <base> --head HEAD' if needed, then the push as its own command."
 fi
 
-# default_base SHA — where work on SHA started: the merge base with the remote's default branch
-# (origin's HEAD, else origin/main, origin/master); with no such branch, the root commit.
+# default_base SHA — where work on SHA started, from `sr-checks default-base` (the one
+# implementation, gitrepo.DefaultBase). A repository with no default branch answers git's empty
+# tree, which `verify --base` cannot take: the root commit is the widest base it accepts.
 default_base() {
-  local sha="$1" c mb
-  for c in "$(git "${GOPTS[@]+"${GOPTS[@]}"}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master; do
-    [ -n "$c" ] || continue
-    git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --verify -q "$c^{commit}" >/dev/null 2>&1 || continue
-    mb="$(git "${GOPTS[@]+"${GOPTS[@]}"}" merge-base "$c" "$sha" 2>/dev/null)" || continue
-    if [ -n "$mb" ]; then
-      printf '%s' "$mb"
-      return 0
-    fi
-  done
-  git "${GOPTS[@]+"${GOPTS[@]}"}" rev-list --max-parents=0 --reverse --date-order "$sha" 2>/dev/null | head -n 1
+  local sha="$1" b
+  b="$(sr-checks default-base --head "$sha" 2>/dev/null)" || return 1
+  if [ "$b" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]; then
+    git "${GOPTS[@]+"${GOPTS[@]}"}" rev-list --max-parents=0 --reverse --date-order "$sha" 2>/dev/null | head -n 1
+    return
+  fi
+  printf '%s' "$b"
 }
 
 for inv in "${pushes[@]}"; do

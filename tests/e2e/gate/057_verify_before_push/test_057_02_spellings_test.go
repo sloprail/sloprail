@@ -70,6 +70,8 @@ func TestT057_03_OnlySrChecksWritesTheResultsBranch(t *testing.T) {
 	for i, cmd := range []string{
 		"git push origin sloprail/checks",
 		"git push origin HEAD:refs/heads/sloprail/checks",
+		"git push --all origin",
+		"git push --mirror origin",
 		"git update-ref refs/heads/sloprail/checks HEAD",
 		"git branch -f sloprail/checks HEAD",
 		"git branch -D sloprail/checks",
