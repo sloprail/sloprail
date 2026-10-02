@@ -165,8 +165,7 @@ func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
 		harness.Dispatch("d1", "write the doc elsewhere", script, ""),
 	))
 	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	// (A run from another repository stores no refusal, so the verify says "not judged yet" for the range.)
-	if !strings.Contains(got, "SUBAGENT-RANGE-VERDICT") && !(strings.Contains(got, "not judged yet") && strings.Contains(got, "docs/a.md")) {
+	if !strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
 		t.Fatalf("the root's Stop did not verify the sub-agent's tracked range when the root declares no rule:\n%s", got)
 	}
 }

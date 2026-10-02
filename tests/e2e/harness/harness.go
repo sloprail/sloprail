@@ -2773,6 +2773,11 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 	if e.stopBlockCap > 0 {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=%d", e.stopBlockCap))
 	}
+	// The session the mock stands in for, which a sub-agent's scenario (written before the
+	// session id is known) reads to export CLAUDE_CODE_SESSION_ID as its real Bash has.
+	if n := len(sessionFlags); n > 0 {
+		cmd.Env = append(cmd.Env, "SR_E2E_SESSION_ID="+sessionFlags[n-1])
+	}
 	// A test that lowered the check-execution timeout passes it through to the
 	// sr-session subprocess the mock launches for each hook. See the
 	// checkTimeout field's doc.

@@ -96,20 +96,18 @@ func TestT015_13_AFolderIsFoundByItsPathWhenTheAgentsOwnStoreHasNoStart(t *testi
 	if err := os.WriteFile(sidechain, append(line, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// It judges what it committed: `sr-checks run` over each folder's range. From these folders
-	// the run finds no session record (the record sits under the root's project), so it stores no
-	// refusal: the Stop's verify refuses "not judged yet", naming the files of exactly the range.
+	// It judges what it committed: `sr-checks run` over each folder's range, as the session.
 	e.CheckRunRaw(wt, sess, "origin/main", "HEAD")
 	e.CheckRunRaw(other, sess, "origin/main", "HEAD")
 	stop := func(cwd string) string {
 		return hook("subagent-stop", payload("SubagentStop", cwd, map[string]any{"agent_transcript_path": sidechain}), cwd).Output
 	}
 
-	if out := stop(wt); !strings.Contains(out, "docs/d.md") ||
+	if out := stop(wt); !strings.Contains(out, "FORBIDDEN in: docs/d.md") ||
 		strings.Contains(out, "docs/b.md") || strings.Contains(out, "docs/c.md") {
 		t.Fatalf("the worktree was not judged on exactly its own commit D:\n%s", out)
 	}
-	if out := stop(other); !strings.Contains(out, "docs/new.md") || strings.Contains(out, "docs/old.md") {
+	if out := stop(other); !strings.Contains(out, "FORBIDDEN in: docs/new.md") || strings.Contains(out, "docs/old.md") {
 		t.Fatalf("the repository the sub-agent cd'd into was not judged on exactly the commit made after it was touched:\n%s", out)
 	}
 

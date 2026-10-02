@@ -16,7 +16,7 @@ func SubagentScript(t testing.TB, s Scenario) string {
 	t.Helper()
 	// The turn a real sub-agent takes before it stops: judge the ranges of its own worktree,
 	// which its SubagentStop will verify.
-	s.turns = append(append([]Turn{}, s.turns...), Bash("srsubprestop", runTrackedRanges(true)))
+	s.turns = append(append([]Turn{}, s.turns...), Bash("srsubprestop", `export CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-$SR_E2E_SESSION_ID}"; `+runTrackedRanges(true)))
 	return writeSubagentScript(t, s)
 }
 
