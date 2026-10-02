@@ -108,8 +108,15 @@ sr-session refs untrack --reason TEXT [--folder D] [--head REF]  # stop answerin
 
 Every branch the session commits on is tracked automatically, at every hook, and a branch
 whose tip is a session-made commit that was never verified is tracked even with no new
-commit. The range's base is the merge base with the remote default branch (never past
-the session's own tip).
+commit. Without an explicit `--base`, the range's base is ALWAYS the merge base with the
+remote default branch, read afresh at every Stop, whatever the session made, pulled or pushed:
+a pull or a fast-forward push leaves nothing of that work in the local range. An explicit
+`--base` is used exactly as given (and must be before the head).
+
+Why so plain: CI is the hermetic guarantee. It verifies a pull request's range
+(`merge-base(target, head)..head`) and a push event's `before..after`, so a session that pushes
+straight to the default branch is caught by CI on that push. The local Stop is early feedback
+only; it never has to tell the session's commits from upstream's.
 
 Known limitation: tracking works by observing branch and HEAD movement. A commit created
 without moving any local branch or HEAD (git plumbing such as `commit-tree`) and pushed
