@@ -3,7 +3,6 @@ package gitrepo
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -174,39 +173,3 @@ func IsDefaultBranch(dir, branch string) bool {
 	return branch == "main" || branch == "master"
 }
 
-// CommittedHere reports whether this clone made sha on ref (a branch's full name, or HEAD): the
-// ref's reflog records a commit, amend, merge, cherry-pick or revert that produced sha at or
-// after since (unix seconds, 0 for any time). A branch only checked out, fetched or fast-forwarded
-// carries no such entry, so it is not "committed on" by whoever stood on it.
-func CommittedHere(dir, ref, sha string, since int64) bool {
-	out, err := run(dir, "reflog", "show", "--format=%H %ct %gs", ref)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		fields := strings.SplitN(line, " ", 3)
-		if len(fields) < 3 || fields[0] != sha {
-			continue
-		}
-		at, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil || at < since {
-			continue
-		}
-		for _, kind := range []string{"commit", "cherry-pick", "revert"} {
-			if strings.HasPrefix(fields[2], kind) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// CommitTime is the committer date of rev in unix seconds, 0 when it does not resolve.
-func CommitTime(dir, rev string) int64 {
-	out, err := run(dir, "log", "-1", "--format=%ct", rev)
-	if err != nil {
-		return 0
-	}
-	n, _ := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
-	return n
-}

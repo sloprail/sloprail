@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -92,22 +93,110 @@ func folderHasFileGuards(folder, trustedRev string) bool {
 	return len(loaded.FileGuards) > 0
 }
 
-// trackMissing tracks, at a hook, the branches of this agent's folders the SESSION committed
-// on: a branch whose tip is a commit this clone made since the folder was registered (its
-// reflog says so) or a commit the session recorded as a tip earlier, whether the agent still
-// stands on it or left it within the same call. A branch it merely checked out (a colleague's,
-// a fetched one) carries no such commit and is not the session's to answer for. Tracking needs a
-// file-guard to load in the folder, and a .sloprail that appears mid-session starts being
-// tracked at the next hook. A branch already tracked just has its tip refreshed (a branch
-// deleted later is verified at the commit it last pointed at).
-func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
+// Observation: what the session SAW, never what git remembers. At every hook each session
+// folder's local branches (and a detached HEAD) are recorded with their tips in the session
+// store; a branch whose tip differs from the one recorded before has MOVED, however it moved
+// (commit, merge, rebase, am, cherry-pick, reset to new commits). No reflog is read anywhere.
+const (
+	observedTipPrefix    = "observed-tip:"    // observed-tip:<branch>:<folder> -> tip
+	observedFolderPrefix = "observed-folder:" // observed-folder:<folder> -> "1" once its baseline is taken
+	observedMovedPrefix  = "observed-moved:"  // observed-moved:<branch>:<folder> -> "1" once the branch's tip moved in the session
+	detachedObserved     = "(detached)"
+)
+
+// sessionMoved reports whether the session saw the branch's tip move: a branch whose commits
+// landed on the default branch (a fast-forward push) is still the session's work.
+func sessionMoved(reg sessionstate.Store, folder, branch string) bool {
+	_, moved, err := reg.Meta(observedMovedPrefix + branch + ":" + filepath.Clean(folder))
+	return err != nil || moved // an unreadable observation is read as "moved": over-track
+}
+
+// observedBranch is one local branch (or the detached HEAD) as this hook saw it.
+type observedBranch struct {
+	name, sha string
+	moved     bool // its tip is not the one an earlier hook recorded (or the branch is new)
+}
+
+// observeFolder records the folder's branch tips and reports which moved since the last hook.
+// The folder's first observation takes the baseline: every branch stands where it stands, except
+// the registered branch, which started at the folder's BaseRef. Any git or store error is
+// returned: a tip that could not be observed must not be read as "did not move".
+func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string) ([]observedBranch, error) {
+	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
+	if err != nil {
+		return nil, fmt.Errorf("list branches of %s: %w", folder, err)
+	}
+	var branches []observedBranch
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if ref, sha, found := strings.Cut(line, " "); found {
+			branches = append(branches, observedBranch{name: strings.TrimPrefix(ref, "refs/heads/"), sha: sha})
+		}
+	}
+	if head == headSHA { // detached
+		branches = append(branches, observedBranch{name: detachedObserved, sha: headSHA})
+	}
+	_, baselined, err := reg.Meta(observedFolderPrefix + folder)
+	if err != nil {
+		return nil, fmt.Errorf("read observations of %s: %w", folder, err)
+	}
+	for i, b := range branches {
+		key := observedTipPrefix + b.name + ":" + folder
+		prev, seen, err := reg.Meta(key)
+		if err != nil {
+			return nil, fmt.Errorf("read observations of %s: %w", folder, err)
+		}
+		switch {
+		case seen:
+			branches[i].moved = prev != b.sha
+		case baselined:
+			branches[i].moved = true // a branch the session has not seen before
+		case b.name == head && f.BaseRef != "" && f.BaseRef != sessionstate.FolderBaseUnborn:
+			branches[i].moved = f.BaseRef != b.sha // the registered branch started at BaseRef
+		}
+		if !seen || prev != b.sha {
+			if err := reg.SetMeta(key, b.sha); err != nil {
+				return nil, fmt.Errorf("record observations of %s: %w", folder, err)
+			}
+		}
+		if branches[i].moved {
+			if err := reg.SetMeta(observedMovedPrefix+b.name+":"+folder, "1"); err != nil {
+				return nil, fmt.Errorf("record observations of %s: %w", folder, err)
+			}
+		}
+	}
+	if !baselined {
+		if err := reg.SetMeta(observedFolderPrefix+folder, "1"); err != nil {
+			return nil, fmt.Errorf("record observations of %s: %w", folder, err)
+		}
+	}
+	return branches, nil
+}
+
+// ahead reports whether sha carries commits the default branch does not (the folder's
+// registered HEAD stands in for the default branch when work is on it).
+func ahead(folder, sha, startedAt string) bool {
+	return autoBase(folder, sha, startedAt) != sha
+}
+
+// trackMissing tracks, at a hook, the branches of this agent's folders the SESSION committed on,
+// by observation: a branch whose observed tip moved during the session and has commits beyond
+// the default branch, a branch standing at a commit the session recorded as a tip earlier, and
+// the checked-out branch when it has commits the default branch does not. It errs toward
+// over-tracking (the agent can untrack with a reason) and never toward under-tracking. Tracking
+// needs a file-guard to load in the folder; a .sloprail that appears mid-session starts being
+// tracked at the next hook. A branch already tracked has its tip refreshed (a branch deleted
+// later is verified at the commit it last pointed at).
+//
+// An error (git or the store) is returned, and the Stop refuses on it:
+// a branch that could not be observed is never "not tracked".
+func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
-		return
+		return err
 	}
 	ranges, err := reg.Ranges(rs.ID)
 	if err != nil {
-		return
+		return err
 	}
 	hasFolder := map[string]bool{}
 	hasHead := map[string]bool{}
@@ -124,6 +213,7 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		hasHead[r.Folder+"\x00"+r.Head] = true
 		lastTip[r.Folder+"\x00"+r.Head] = r.HeadSHA
 	}
+	var errs []error
 	for _, f := range folders {
 		if f.AgentID != p.AgentID {
 			continue
@@ -132,51 +222,67 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 			continue
 		}
 		folder := filepath.Clean(f.Path)
-		head, sha, ok := trackedHead(folder)
-		if !ok {
+		if _, err := gitrepo.Head(folder); err != nil {
+			errs = append(errs, fmt.Errorf("read HEAD of %s: %w", folder, err))
 			continue
 		}
-		since := int64(0)
-		if f.BaseRef != "" && f.BaseRef != sessionstate.FolderBaseUnborn {
-			since = gitrepo.CommitTime(folder, f.BaseRef)
+		head, sha, ok := trackedHead(folder)
+		if !ok {
+			continue // no commit yet: nothing to track
 		}
-		// Before this hook refreshes a tip: every local branch standing at a commit the session made.
-		trackSessionBranches(reg, rs.ID, folder, f, hasHead, tipsIn[folder], since)
+		observed, err := observeFolder(reg, folder, f, head, sha)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		// Before this hook refreshes a tip: every branch that moved or stands at a commit the session made.
+		if err := trackSessionBranches(reg, rs.ID, folder, f, hasHead, lastTip, tipsIn[folder], observed); err != nil {
+			errs = append(errs, err)
+		}
 		switch {
 		case hasHead[folder+"\x00"+head]:
 			if broughtIn(folder, lastTip[folder+"\x00"+head], sha) {
 				continue // a fast-forward onto the remote's work: upstream's commits are not the tip the session made
 			}
-			_ = reg.TrackRange(sessionstate.TrackedRange{
+			if err := reg.TrackRange(sessionstate.TrackedRange{
 				SessionID: rs.ID, Folder: folder, Head: head, HeadSHA: sha, AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
-			})
+			}); err != nil {
+				errs = append(errs, fmt.Errorf("track %s in %s: %w", head, folder, err))
+			}
 		case !hasFolder[folder]:
-			ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
-		case head == sha && sha != f.BaseRef && (tipsIn[folder][sha] || gitrepo.CommittedHere(folder, "HEAD", sha, since)):
-			// Commits left on a detached HEAD.
-			trackCurrent(reg, rs.ID, f.Path, f.AgentID, f.BaseRef, true)
+			if err := ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef); err != nil {
+				errs = append(errs, err)
+			}
+		case ahead(folder, sha, f.BaseRef):
+			// The checked-out line of work carries commits the default branch does not, or commits
+			// were left on a detached HEAD: the session stood on it, so it answers for it.
+			if err := trackCurrent(reg, rs.ID, f.Path, f.AgentID, f.BaseRef, true); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
+	return errors.Join(errs...)
 }
 
-// trackSessionBranches tracks every local branch of folder that stands at a tip the session
-// made: a commit this clone's reflog shows being made there since the folder was registered
-// (since), or one the session recorded as a tip earlier (a branch it made, reset away, and
-// recreated at the old SHA: nothing but the session remembers the commit). Its commits are the
-// session's and stay owed until verified. Nothing is tracked where no file-guard loads.
-func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f sessionstate.Folder, hasHead map[string]bool, tips map[string]bool, since int64) {
-	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
-	if err != nil {
-		return
-	}
+// trackSessionBranches tracks every local branch of folder whose observed tip moved during the
+// session and has commits beyond the default branch, or stands at a tip the session recorded
+// earlier (a branch it made, reset away, and recreated at the old SHA: nothing but the session
+// remembers the commit). Its commits stay owed until verified. Nothing is tracked where no
+// file-guard loads. A tracked branch that moved has its tip refreshed.
+func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f sessionstate.Folder, hasHead map[string]bool, lastTip map[string]string, tips map[string]bool, observed []observedBranch) error {
 	guards := 0 // 0 unknown, 1 loads, -1 none
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		ref, sha, found := strings.Cut(line, " ")
-		name := strings.TrimPrefix(ref, "refs/heads/")
-		if !found || hasHead[folder+"\x00"+name] || sha == f.BaseRef {
+	for _, b := range observed {
+		if b.name == detachedObserved || b.sha == f.BaseRef {
 			continue
 		}
-		if !tips[sha] && !gitrepo.CommittedHere(folder, ref, sha, since) {
+		key := folder + "\x00" + b.name
+		if hasHead[key] && !b.moved {
+			continue
+		}
+		if !(b.moved && ahead(folder, b.sha, f.BaseRef)) && !tips[b.sha] {
+			continue
+		}
+		if hasHead[key] && broughtIn(folder, lastTip[key], b.sha) {
 			continue
 		}
 		if guards == 0 {
@@ -186,14 +292,17 @@ func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f se
 			}
 		}
 		if guards < 0 {
-			return
+			return nil
 		}
-		hasHead[folder+"\x00"+name] = true
-		_ = reg.TrackRange(sessionstate.TrackedRange{
-			SessionID: sessionID, Folder: folder, Head: name, HeadSHA: sha,
-			Base: autoBase(folder, sha, f.BaseRef), AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
-		})
+		hasHead[key] = true
+		if err := reg.TrackRange(sessionstate.TrackedRange{
+			SessionID: sessionID, Folder: folder, Head: b.name, HeadSHA: b.sha,
+			Base: autoBase(folder, b.sha, f.BaseRef), AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
+		}); err != nil {
+			return fmt.Errorf("track %s in %s: %w", b.name, folder, err)
+		}
 	}
+	return nil
 }
 
 // trackAtHook is the tracking every hook runs for its agent's folders (the root's store holds
@@ -211,31 +320,33 @@ func trackAtHook(p HookPayload) {
 		return
 	}
 	defer root.Close()
-	trackFolders(root, rs, p)
-	trackMissing(root, rs, p)
+	_ = trackMissing(root, rs, p) // observe first: what tracking the current branch needs to know it sees
+	_ = trackFolders(root, rs, p) // hooks are best-effort; the Stop refuses on the errors
 }
 
 // ensureTracked tracks a folder's current branch, automatically, unless that range is already
 // there (what the agent changed or dropped stays so). startedAt is the folder's registered
 // BaseRef.
-func ensureTracked(reg sessionstate.Store, sessionID, folder, agent, startedAt string) {
-	trackCurrent(reg, sessionID, folder, agent, startedAt, true)
+func ensureTracked(reg sessionstate.Store, sessionID, folder, agent, startedAt string) error {
+	return trackCurrent(reg, sessionID, folder, agent, startedAt, true)
 }
 
 // trackCurrent is ensureTracked; needGuards: only when the folder's own checkout loads a file-guard.
-func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt string, needGuards bool) {
+func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt string, needGuards bool) error {
 	if needGuards && !folderHasFileGuards(folder, startedAt) {
-		return // nothing to answer for here: no range is tracked, and Stop says nothing of it
+		return nil // nothing to answer for here: no range is tracked, and Stop says nothing of it
 	}
 	head, sha, ok := trackedHead(folder)
 	if !ok {
-		return
+		return nil
 	}
-	if rows, err := reg.Ranges(sessionID); err == nil {
-		for _, row := range rows {
-			if row.Folder == filepath.Clean(folder) && row.Head == head && broughtIn(folder, row.HeadSHA, sha) {
-				return // fast-forwarded onto the remote's work: the recorded tip stays the session's own
-			}
+	rows, err := reg.Ranges(sessionID)
+	if err != nil {
+		return fmt.Errorf("read the session's ranges: %w", err)
+	}
+	for _, row := range rows {
+		if row.Folder == filepath.Clean(folder) && row.Head == head && broughtIn(folder, row.HeadSHA, sha) {
+			return nil // fast-forwarded onto the remote's work: the recorded tip stays the session's own
 		}
 	}
 	// Falling back to where the folder was registered is for work on the default branch itself. A
@@ -244,31 +355,23 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	// not "cut at the tip": its commits landed there (a fast-forward push), and the base never
 	// moves past them.
 	if db, ok := gitrepo.DefaultBase(folder, sha); ok && db == sha && !gitrepo.IsDefaultBranch(folder, head) && len(head) < 40 &&
-		!sessionCommittedOn(folder, head, sha, startedAt) {
+		!sessionMoved(reg, folder, head) {
 		startedAt = ""
 	}
-	_ = reg.TrackRange(sessionstate.TrackedRange{
+	return reg.TrackRange(sessionstate.TrackedRange{
 		SessionID: sessionID, Folder: filepath.Clean(folder), Head: head, HeadSHA: sha,
 		Base: autoBase(folder, sha, startedAt), AddedBy: sessionstate.RangeAuto, AgentID: agent,
 	})
 }
 
-// sessionCommittedOn reports whether this clone made sha on branch since the folder was registered.
-func sessionCommittedOn(folder, branch, sha, startedAt string) bool {
-	since := int64(0)
-	if startedAt != "" && startedAt != sessionstate.FolderBaseUnborn {
-		since = gitrepo.CommitTime(folder, startedAt)
-	}
-	return gitrepo.CommittedHere(folder, "refs/heads/"+branch, sha, since)
-}
-
 // trackFolders makes sure the current branch of this agent's folders is tracked: the tree it
 // stands in and the folders registered for it.
-func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
+func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
-		return
+		return err
 	}
+	var errs []error
 	for _, f := range folders {
 		if f.AgentID != p.AgentID {
 			continue
@@ -276,8 +379,11 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
 			continue
 		}
-		ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
+		if err := ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // untrackGone handles the ranges of folders that no longer exist (a worktree removed).
@@ -378,8 +484,11 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		return []string{fmt.Sprintf("the session's tracked ranges could not be read (%v); refusing because a registry that could not be read must not be read as 'nothing to judge'", err)}
 	}
 	defer root.Close()
-	trackFolders(root, rs, p)
-	trackMissing(root, rs, p)
+	var trackRefusal []string
+	err = errors.Join(trackMissing(root, rs, p), trackFolders(root, rs, p))
+	if err != nil {
+		trackRefusal = []string{fmt.Sprintf("the session's branches could not be observed (%v); refusing because what could not be observed must not be read as 'not tracked'. Fix the repository error and stop again.", err)}
+	}
 	ranges, err := root.Ranges(rs.ID)
 	if err != nil {
 		return []string{fmt.Sprintf("the session's tracked ranges could not be read (%v); refusing because a registry that could not be read must not be read as 'nothing to judge'", err)}
@@ -392,7 +501,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet := &cobra.Command{}
 	quiet.SetOut(io.Discard)
 	quiet.SetErr(io.Discard)
-	var out, notes []string
+	out, notes := trackRefusal, []string(nil)
 	for _, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them

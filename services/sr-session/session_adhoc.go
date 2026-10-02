@@ -148,8 +148,8 @@ func notePendingWorktrees(reg sessionstate.Store, p HookPayload) {
 }
 
 // registerPendingWorktrees registers the worktrees earlier calls created, as ad-hoc
-// folders of the agent that made them, started where each was created (its own HEAD
-// reflog's oldest entry), so a commit made in the same call it was created in is judged.
+// folders of the agent that made them, started where each was created (its HEAD
+// at registration), so a commit made in the same call it was created in is judged.
 func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent string) {
 	v, had, err := reg.Meta(pendingWorktreesKey)
 	if err != nil || !had {

@@ -293,9 +293,11 @@ func registered(t *testing.T, proj string) (sessionstate.Store, rootSession) {
 	return reg, rs
 }
 
-// A branch the agent merely stands on (a colleague's, its tip made elsewhere) is not the
-// session's: only a branch whose tip this clone committed is tracked.
-func TestTrackMissing_ACheckedOutBranchTheSessionDidNotCommitOnIsNotTracked(t *testing.T) {
+// A branch the agent merely stands on (a colleague's, its tip made elsewhere) whose tip moved
+// during the session (here: handed a commit) is tracked whoever authored the commits. We accept
+// that over-tracking: the agent can undo it with `sr-session refs untrack --reason`, whereas
+// missing a commit would let it escape the Stop.
+func TestTrackMissing_ACheckedOutBranchWhoseTipMovedIsTrackedEvenIfTheSessionDidNotMakeTheCommits(t *testing.T) {
 	proj := initRepo(t)
 	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
 		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
@@ -315,7 +317,7 @@ func TestTrackMissing_ACheckedOutBranchTheSessionDidNotCommitOnIsNotTracked(t *t
 	runGit(t, proj, "switch", "colleague")
 
 	trackMissing(reg, rs, HookPayload{})
-	assert.ElementsMatch(t, []string{"main"}, trackedHeads(t, reg, rs.ID), "a branch only checked out was tracked as the session's")
+	assert.ElementsMatch(t, []string{"main", "colleague"}, trackedHeads(t, reg, rs.ID), "a checked-out branch whose tip moved must be tracked (over-tracking is accepted; untrack --reason undoes it)")
 }
 
 // A branch committed on and left within ONE call (no hook between the commit and the switch
@@ -370,6 +372,7 @@ func TestTrackAtHook_RunsFromTheStopsAndTheSubagentStops(t *testing.T) {
 	require.NoError(t, err)
 	_, err = reg.RegisterFolder(sessionstate.Folder{SessionID: rs.ID, Path: proj, Role: sessionstate.FolderRoot, GitRoot: proj, BaseRef: runGit(t, proj, "rev-parse", "HEAD")})
 	require.NoError(t, err)
+	trackMissing(reg, rs, p) // the hook that registers the folder observes its branches first
 	reg.Close()
 
 	runGit(t, proj, "switch", "-c", "quick")
@@ -463,6 +466,12 @@ func TestTrackCurrent_FeatureBranchFastForwardedToMainStillJudgesSessionCommits(
 	runGit(t, proj, "fetch", "-q", "origin")
 	runGit(t, proj, "remote", "set-head", "origin", "main")
 
+	reg := openStore(t)
+	folder := sessionstate.Folder{SessionID: "s1", Path: proj, Role: sessionstate.FolderRoot, GitRoot: proj, BaseRef: started, Branch: "main"}
+	_, err := reg.RegisterFolder(folder)
+	require.NoError(t, err)
+	_, err = observeFolder(reg, proj, folder, "main", started) // the session's first hook: the baseline
+
 	runGit(t, proj, "switch", "-q", "-c", "feat")
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "b.txt"), []byte("b"), 0o644))
 	runGit(t, proj, "add", "-A")
@@ -471,11 +480,101 @@ func TestTrackCurrent_FeatureBranchFastForwardedToMainStillJudgesSessionCommits(
 	runGit(t, proj, "push", "-q", "origin", "HEAD:refs/heads/main")
 	runGit(t, proj, "fetch", "-q", "origin")
 
-	reg := openStore(t)
-	trackCurrent(reg, "s1", proj, "", started, false)
+	_, err = observeFolder(reg, proj, folder, "feat", sha) // a later hook sees the branch's tip move
+	require.NoError(t, err)
+	require.NoError(t, trackCurrent(reg, "s1", proj, "", started, false))
 	rows, err := reg.Ranges("s1")
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, sha, rows[0].HeadSHA)
 	assert.Equal(t, started, rows[0].Base, "the landed session commit must stay inside the range")
+}
+
+// ruled stages a repo with a file-guard and a registered root folder whose first hook has run
+// (the baseline observation), the state every observation test starts from.
+func ruledAndObserved(t *testing.T, prepare func(proj string)) (string, sessionstate.Store, rootSession) {
+	t.Helper()
+	proj := initRepo(t)
+	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	if prepare != nil {
+		prepare(proj)
+	}
+	reg, rs := registered(t, proj)
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	return proj, reg, rs
+}
+
+// A branch whose tip moved by a MERGE (no commit made by the agent on it) and was left in the same
+// call is tracked; a branch that merely exists with unlanded commits and never moved is not.
+func TestTrackMissing_AMergedBranchIsTracked(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, func(proj string) {
+		runGit(t, proj, "switch", "-c", "other")
+		commitFile(t, proj, "o.md", "o")
+		runGit(t, proj, "switch", "main")
+		runGit(t, proj, "branch", "work")
+	})
+	runGit(t, proj, "switch", "work")
+	runGit(t, proj, "merge", "--no-ff", "other", "-m", "merge other")
+	runGit(t, proj, "switch", "main")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	heads := trackedHeads(t, reg, rs.ID)
+	assert.Contains(t, heads, "work")
+	assert.NotContains(t, heads, "other", "a branch that never moved in the session is not the session's")
+}
+
+// A rebase moves the tip without a "commit" line anywhere.
+func TestTrackMissing_ARebasedBranchIsTracked(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, func(proj string) {
+		runGit(t, proj, "switch", "-c", "work")
+		commitFile(t, proj, "w.md", "w")
+		runGit(t, proj, "switch", "main")
+		commitFile(t, proj, "m.md", "m")
+	})
+	runGit(t, proj, "switch", "work")
+	runGit(t, proj, "rebase", "main")
+	runGit(t, proj, "switch", "main")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	assert.Contains(t, trackedHeads(t, reg, rs.ID), "work")
+}
+
+// git am applies a patch as commits.
+func TestTrackMissing_AnAppliedPatchIsTracked(t *testing.T) {
+	var patch string
+	proj, reg, rs := ruledAndObserved(t, func(proj string) {
+		runGit(t, proj, "switch", "-c", "src")
+		commitFile(t, proj, "p.md", "p")
+		patch = filepath.Join(t.TempDir(), "p.patch")
+		require.NoError(t, os.WriteFile(patch, []byte(runGit(t, proj, "format-patch", "--stdout", "-1")+"\n"), 0o644))
+		runGit(t, proj, "switch", "main")
+		runGit(t, proj, "branch", "work")
+		runGit(t, proj, "branch", "-D", "src")
+	})
+	runGit(t, proj, "switch", "work")
+	runGit(t, proj, "am", patch)
+	runGit(t, proj, "switch", "main")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	assert.Contains(t, trackedHeads(t, reg, rs.ID), "work")
+}
+
+// No reflog exists at all: the detection never reads one.
+func TestTrackMissing_WithTheReflogDisabledACommittedBranchIsStillTracked(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, func(proj string) {
+		runGit(t, proj, "config", "core.logAllRefUpdates", "false")
+	})
+	runGit(t, proj, "switch", "-c", "quick")
+	commitFile(t, proj, "x.md", "x")
+	runGit(t, proj, "switch", "main")
+	require.NoError(t, os.RemoveAll(filepath.Join(proj, ".git", "logs")))
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	assert.Contains(t, trackedHeads(t, reg, rs.ID), "quick")
+}
+
+// A git error is never "not tracked": the observation returns it, and the Stop refuses on it.
+func TestTrackMissing_AGitErrorIsReturnedNotSwallowed(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, nil)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, ".git", "packed-refs"), []byte("garbage\n"), 0o644))
+	err := trackMissing(reg, rs, HookPayload{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), proj)
 }
