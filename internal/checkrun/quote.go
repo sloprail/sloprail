@@ -25,8 +25,12 @@ type recordedQuote struct {
 func (ev *changesetEvaluation) recordedQuotes(files []string, pools []transcript.SourceType) []recordedQuote {
 	var out []recordedQuote
 	seen := map[string]bool{}
+	recorded := ev.params.Recorded
+	if recorded == nil && ev.params.RecordedFn != nil {
+		recorded = ev.params.RecordedFn()
+	}
 	for _, path := range files {
-		for _, c := range ev.params.Recorded[path] {
+		for _, c := range recorded[path] {
 			q := strings.Join(strings.Fields(c.Quote), " ")
 			trailer, ok := trailerOf(c, pools)
 			if !ok || q == "" || seen[trailer+"\x00"+q] {

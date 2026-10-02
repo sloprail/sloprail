@@ -67,6 +67,10 @@ func EncodeWorkspace(dir string) string {
 	return nonAlnum.ReplaceAllString(WorkspaceAnchor(dir), "-")
 }
 
+// anchorMemo remembers a git root per directory for the process: asking git costs a process,
+// and a Stop asks about the same directory once per sub-agent. Only a found root is kept.
+var anchorMemo sync.Map
+
 // WorkspaceAnchor is the tree a directory belongs to: its git root where there
 // is one, and the directory itself where there is not.
 //
@@ -101,7 +105,11 @@ func EncodeWorkspace(dir string) string {
 // than one it refuses to key state for at all — the same choice ensureBaseline
 // makes about baselineUnavailable.
 func WorkspaceAnchor(dir string) string {
+	if v, ok := anchorMemo.Load(dir); ok {
+		return v.(string)
+	}
 	if root, err := gitrepo.Root(dir); err == nil && root != "" {
+		anchorMemo.Store(dir, root)
 		return root
 	}
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {

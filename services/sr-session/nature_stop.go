@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -56,6 +58,7 @@ import (
 // enters read. A file-guard is not evaluated here: it judges the explicit range
 // `sr check run` is given (changeset_eval.go).
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
+	defer debugTiming(cmd, "stop", time.Now())
 	if store == nil {
 		return dispatchNatureStopStoreless(cmd, p, reg, scope)
 	}
@@ -130,7 +133,9 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	//    Not while work is owed a commit (judging HEAD would judge an incomplete set), and only
 	//    for an agent that owns the tree.
 	if !commitOwed && ownsTree(p) {
+		t0 := time.Now()
 		refusals = append(refusals, verifyTrackedRanges(cmd, p, reg, store)...)
+		debugTiming(cmd, "stop/verify-ranges", t0)
 	}
 
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
@@ -215,4 +220,12 @@ func joinRefusals(refusals []string) string {
 		return refusals[0]
 	}
 	return "the following rules refused this turn's work:\n  - " + strings.Join(refusals, "\n  - ")
+}
+
+// debugTiming prints how long a step took on stderr, only when SLOPRAIL_DEBUG_TIMING=1.
+func debugTiming(cmd *cobra.Command, what string, since time.Time) {
+	if os.Getenv("SLOPRAIL_DEBUG_TIMING") != "1" {
+		return
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: timing %s %s\n", what, time.Since(since).Round(time.Millisecond))
 }

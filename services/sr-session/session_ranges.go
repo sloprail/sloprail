@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -588,6 +589,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet.SetOut(io.Discard)
 	quiet.SetErr(io.Discard)
 	out, notes := trackRefusal, []string(nil)
+	recorded := lazyRecordedCitations(p, store)
 	for _, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
@@ -599,7 +601,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		if coveredByBranch(r, ranges) {
 			continue // commits left on a detached HEAD, since given a branch: that branch's range holds them
 		}
-		if reason := verifyRange(cmd, p, reg, store, quiet, r); reason != "" {
+		if reason := verifyRangeWith(cmd, p, reg, quiet, r, recorded); reason != "" {
 			out = append(out, reason)
 		}
 	}
@@ -660,6 +662,12 @@ func effectiveBase(r sessionstate.TrackedRange, head string) string {
 // verifyRange verifies one tracked range, returning the refusal or "". It only reads what `sr-checks run`
 // stored: no check is executed, so it needs no record or session id.
 func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, quiet *cobra.Command, r sessionstate.TrackedRange) string {
+	return verifyRangeWith(cmd, p, reg, quiet, r, lazyRecordedCitations(p, store))
+}
+
+// verifyRangeWith is verifyRange with the recorded-quotes hint supplied lazily, so a Stop that
+// verifies many ranges builds it at most once, and only if a citation refusal needs it.
+func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, quiet *cobra.Command, r sessionstate.TrackedRange, recorded func() map[string][]transcript.Citation) string {
 	head, goneNote := headRevision(r)
 	r.Base = effectiveBase(r, head)
 	headName := r.Head
@@ -694,7 +702,7 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	refusals, _ := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
-		Store: results, Verify: true, Recorded: recordedCitations(p, store),
+		Store: results, Verify: true, RecordedFn: recorded,
 	})
 	if len(refusals) == 0 && len(broken) == 0 {
 		return ""
@@ -986,6 +994,17 @@ func headRef(folder, head string) string {
 		return head
 	}
 	return "refs/heads/" + head
+}
+
+// lazyRecordedCitations is recordedCitations computed on first call and remembered: one Stop,
+// however many ranges, reads every sub-agent's store at most once.
+func lazyRecordedCitations(p HookPayload, store sessionstate.Store) func() map[string][]transcript.Citation {
+	var once sync.Once
+	var got map[string][]transcript.Citation
+	return func() map[string][]transcript.Citation {
+		once.Do(func() { got = recordedCitations(p, store) })
+		return got
+	}
 }
 
 // recordedCitations is the citations this session (and the sessions sharing its tree) recorded

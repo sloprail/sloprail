@@ -76,6 +76,9 @@ type Params struct {
 	// Recorded is the citations the session already recorded per file (sr-file --cite),
 	// oldest first; a citation refusal hands them back as the trailer to paste.
 	Recorded map[string][]transcript.Citation
+	// RecordedFn, when Recorded is nil, supplies it on first need: only a citation refusal reads
+	// it, and building it can be expensive (it reads every sub-agent's store).
+	RecordedFn func() map[string][]transcript.Citation
 }
 
 // FileGuardResult is one file-guard's outcome: the guard's name, how a refusal should
