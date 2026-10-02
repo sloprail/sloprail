@@ -26,10 +26,15 @@ func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 		"sr-checks verify", "push to the default branch", "github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion", "merge-base",
 		"github.event.pull_request.head.sha", "CI_MERGE_REQUEST_DIFF_BASE_SHA", "System.PullRequest.SourceCommitId",
 		"sloprail/gate/ci-verify-required",
+		"actions/setup-go@v5", "golang:1.25", "GoTool@0",
+		"go install github.com/sloprail/sloprail/services/sr-checks@",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the refusal lacks %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "install.sh | sh") {
+		t.Fatalf("the snippets must not install from a release (none carries sr-checks):\n%s", got)
 	}
 }
 

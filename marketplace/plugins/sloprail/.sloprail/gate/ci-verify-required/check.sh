@@ -33,12 +33,28 @@ case $? in
   *) refuse "'git grep' failed in ${SR_WORKSPACE:-.}, so whether the committed tree carries a '$MARKER' CI marker could not be checked" ;;
 esac
 
+# The sloprail revision the CI job installs sr-checks from: the commit this plugin was installed
+# from (Claude Code records it in installed_plugins.json), so CI runs the engine that is installed
+# here; `main` when that cannot be read. No release tarball carries sr-checks yet, hence `go install`.
+ref=main
+plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)"
+installed="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
+if [ -n "$plugin_root" ] && [ -r "$installed" ]; then
+  sha="$(jq -r --arg root "$plugin_root" '[.plugins[]?[]? | select((.installPath // "") == $root) | .gitCommitSha // empty][0] // empty' "$installed" 2>/dev/null)"
+  case "$sha" in
+    *[!0-9a-f]* | "") ;;
+    *) [ "${#sha}" -eq 40 ] && ref="$sha" ;;
+  esac
+fi
+
 refuse "This project has its own file-guards under .sloprail/file-guard/, but no committed file contains '$MARKER', so nothing shows that CI verifies their verdicts on pull requests and on pushes to the default branch. A file-guard's verdict is only enforced where 'sr-checks verify' runs: on this machine an agent can skip it, in CI it gates the merge.
 
 Add a CI job that runs, on every pull request AND on every push to the default branch,
   pull request:  sr-checks verify --base <merge-base of the target branch and the PR head> --head <PR head sha>
   push to main:  sr-checks verify --base <the push's before sha> --head <the push's after sha>
-(the PR's own head, not the provider's merge commit), put the comment '$MARKER' next to that step, and COMMIT it: the check reads the committed tree, not your working copy. 'sr-checks verify' needs the history (a full clone) and reads the verdicts that 'sr-checks run' stored on the sloprail/checks branch.
+(the PR's own head, not the provider's merge commit), put the comment '$MARKER' next to that step, and COMMIT it: the check reads the committed tree, not your working copy. 'sr-checks verify' needs the history (a full clone); it fetches the verdicts that 'sr-checks run' stored on the sloprail/checks branch from origin itself and only reads them.
+
+Install sr-checks with Go, as below: no sloprail release tarball carries sr-checks yet, so install.sh would leave the job without it. The snippets pin ${ref}, the revision installed here. Plugins the project enables in .claude/settings.json but CI has not installed (such as sloprail itself) are reported on stderr and their rules are NOT verified there; verify checks the project's own rules only, and its exit status is not affected by the missing plugins.
 
 GitHub Actions (.github/workflows/sloprail.yml):
   on:
@@ -53,7 +69,10 @@ GitHub Actions (.github/workflows/sloprail.yml):
           with:
             fetch-depth: 0
             ref: \${{ github.event.pull_request.head.sha || github.sha }}
-        - run: curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+        - uses: actions/setup-go@v5
+          with:
+            go-version: '1.25'
+        - run: GOBIN=\"\$HOME/.local/bin\" go install github.com/sloprail/sloprail/services/sr-checks@${ref}
         # sr-mark: ci-verify
         - env:
             EVENT: \${{ github.event_name }}
@@ -78,8 +97,9 @@ GitLab CI (.gitlab-ci.yml):
       - if: \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH
     variables:
       GIT_DEPTH: \"0\"
+    image: golang:1.25
     script:
-      - curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+      - GOBIN=\"\$HOME/.local/bin\" go install github.com/sloprail/sloprail/services/sr-checks@${ref}
       # sr-mark: ci-verify
       - |
         if [ -n \"\$CI_MERGE_REQUEST_IID\" ]; then
@@ -100,7 +120,10 @@ Azure Pipelines (azure-pipelines.yml; add a build validation policy on the defau
   steps:
     - checkout: self
       fetchDepth: 0
-    - script: curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+    - task: GoTool@0
+      inputs:
+        version: '1.25'
+    - script: GOBIN=\"\$HOME/.local/bin\" go install github.com/sloprail/sloprail/services/sr-checks@${ref}
     # sr-mark: ci-verify
     - script: |
         if [ \"\$(Build.Reason)\" = PullRequest ]; then

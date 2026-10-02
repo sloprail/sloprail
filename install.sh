@@ -152,6 +152,13 @@ fi
 # --- unpack and install ---------------------------------------------------------
 tar -C "${tmp}" -xzf "${tmp}/${archive}"
 mkdir -p "${INSTALL_DIR}"
+# Fail before copying anything if the release lacks a binary this script installs (an older
+# release predates one), instead of a bare `cp: cannot stat` halfway through.
+missing=""
+for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
+  [ -f "${tmp}/sloprail-${platform}/${bin}" ] || missing="${missing} ${bin}"
+done
+[ -z "$missing" ] || die "release ${tag} does not contain:${missing} — it predates those binaries, nothing was installed. Install from source instead: GOBIN=\"${INSTALL_DIR}\" go install github.com/sloprail/sloprail/services/...@main"
 for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
   cp "${tmp}/sloprail-${platform}/${bin}" "${INSTALL_DIR}/${bin}"
   chmod +x "${INSTALL_DIR}/${bin}"
