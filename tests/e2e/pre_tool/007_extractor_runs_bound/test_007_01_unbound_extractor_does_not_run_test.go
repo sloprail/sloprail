@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // extractor_runs_bound: a module runs only when some binding names a kind it
@@ -98,7 +100,9 @@ func gateKindsSeen(t *testing.T, lines []string) []string {
 // NOT arrive; if this build could not produce one at all — a renamed kind, a module
 // dropped from the registry — those assertions would hold for the wrong reason.
 func TestT007_01_BoundCommandModuleRuns(t *testing.T) {
-	e := New(t)
+	// The harness's own pre-Stop `sr-checks run` is itself a command line a gate on commands
+	// would be handed; this test counts only the command the scenario runs.
+	e := New(t, harness.NoAutoCheck())
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "watcher", recordCommandGate, map[string]string{"record.sh": recordScript})
