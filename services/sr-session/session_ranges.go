@@ -528,7 +528,10 @@ produces it. Nothing here judges anything.
   sr-session refs track   [--folder D] [--base REV] [--head REF]   track a range (replaces its base)
   sr-session refs untrack  --reason TEXT [--folder D] [--head REF]  stop answering for a range
 
-Untracking is allowed freely — CI is the backstop — but the Stop lists it with your reason.`,
+Untracking is allowed freely — CI is the backstop — but the Stop lists it with your reason, and
+the range is tracked again by itself when the branch tip moves. A removed worktree's range moves
+to the root folder (pinned at its last tip if the branch is gone too). A sub-agent's ranges are
+verified at the root's Stop unless enable_subagent_stop_check is set.`,
 	}
 	cmd.AddCommand(newRefsListCmd(), newRefsTrackCmd(), newRefsUntrackCmd())
 	return cmd

@@ -1,7 +1,7 @@
 package e2e
 
-// The commit-based after-check judges the SQUASHED range: every commit since the
-// rule last passed, as one diff from the range's base to HEAD. What the range's
+// The commit-based after-check judges the SQUASHED range: every commit of the
+// explicit range, as one diff from the range's base to HEAD. What the range's
 // history did in between is not the question; its net result is — and that is a
 // user decision (a deletion the agent put back is no deletion; one it left is).
 

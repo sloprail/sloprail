@@ -12,7 +12,7 @@ on the commit that carries the change, which is what the file-guards read —
 never by storing a transcript quote or path in the file, so the repository
 holds derived text only. The file-guards judge **commits**: at Stop, uncommitted
 changes to a file they select refuse the turn with "commit these", and each rule
-then runs over the range from where it last passed to `HEAD`. A unit folder is not a unit until its
+is then judged by `sr-checks run` over the range `merge-base(base, HEAD)..HEAD`. A unit folder is not a unit until its
 `UNIT.md` exists — nothing else may be written there first. Four guardrails, in the nature format —
 file-guards under `.sloprail/`, with `match:` / `checks:`, flat `.event`
 fields, and refusals delivered as a non-zero exit carrying `{"reason": …}` on
@@ -263,11 +263,10 @@ must not be able to publish on its own say-so — so this rule, like
 `content-rule-is-grounded` below, is a `PreFileWrite` gate (it refuses before
 the write lands, and refuses a write whose result it cannot derive, such as
 `sed -i`) plus a plain file-guard of the same name. The file-guard is the Stop
-after-check and the backstop: there, "before" is the range's base (the commit the
-rule last passed at), and the citations are the ones the range's commits carry
-(`Sloprail-Cites-User:` trailers, resolved against the transcripts). A rule's base
-does not move until it passes, so the range accumulates its commits and their
-citations. `enters-published.sh` says whether any unit in the changeset entered
+after-check and the backstop: there, "before" is the range's base (the merge base, or the
+rule-age floor when later), and the citations are the ones the range's commits carry
+(`Sloprail-Cites-User:` trailers, resolved against the transcripts). The range is one net
+change, so it carries all its commits and their citations. `enters-published.sh` says whether any unit in the changeset entered
 `published`; if so, the range must cite the user. So a publish that slipped
 through uncited is still refused, with the steps to redo it. The
 citation is required only on the transition, so the guard declares it with a

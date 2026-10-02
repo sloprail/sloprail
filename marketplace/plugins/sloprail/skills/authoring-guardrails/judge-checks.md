@@ -110,7 +110,7 @@ A judge is **pure**: no side effects, it judges the slice it is handed. Like eve
 cached by content, as part of its guard's verdict over a subject (see
 [file-guard.md](file-guard.md#cached-verdicts)): the rule hash (which covers the template), the
 subject, the **content of the subject's files** (always, whether or not the template renders
-them), for a `require: citation` rule the commit messages and the citations' quotes, and the
+them), for a `require: citation` rule the citations' quotes, and the
 subject's `fingerprint` from `subjects:`.
 
 **`prepare`'s output (`additionalContext`) and the rendered prompt are not in the key**: they

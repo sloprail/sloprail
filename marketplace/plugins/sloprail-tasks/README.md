@@ -172,7 +172,7 @@ that can never actually fail. See that guard's own section below.
 
 ### task-md-first — PreFileWrite gate + file-guard
 
-*Prevention is a gate, the committed-changeset check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the committed files at Stop: uncommitted changes to a task file refuse the Stop with "commit these", and the rule then runs over the range of commits since it last passed, each script looping over `changeset.files[]` and reading the committed tree from `$SR_TREE`). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
+*Prevention is a gate, the committed-changeset check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the committed files at Stop: uncommitted changes to a task file refuse the Stop with "commit these", and the rule is then judged by `sr-checks run` over the explicit range `merge-base(base, HEAD)..HEAD`, each script looping over `changeset.files[]` and reading the committed tree from `$SR_TREE`). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
 
 Over any file inside a task folder (`memories/tasks/<group>/<task>/`, gate
 files under its `gates/` included) other than `TASK.md` itself. A task folder
@@ -224,8 +224,8 @@ post-write refusal reports damage already done to the oracle. The Stop after-che
 backstops writes that reached the tree without passing pre-tool.
 
 *Uncited frontmatter edits and the Stop check.* The file-guard judges the squashed
-range: a rule's base does not move until it passes, so the range accumulates its
-commits and their citations. `body-changed.sh` says whether any task in it was
+range, which carries all its commits and their
+citations. `body-changed.sh` says whether any task in it was
 created or had its body changed (a status edit leaves the body unchanged and is
 waived), so a task created with a cited commit and then moved to `in_progress` by
 a plain one still carries its ask's citation. Each uncited *body* change is refused

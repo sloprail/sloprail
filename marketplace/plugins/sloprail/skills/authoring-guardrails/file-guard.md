@@ -106,9 +106,17 @@ sr-session refs track   [--folder D] [--base REV] [--head REF]   # track a range
 sr-session refs untrack --reason TEXT [--folder D] [--head REF]  # stop answering for it
 ```
 
+Every branch the session commits on is tracked automatically, at every hook, and a branch
+whose tip is a session-made commit that was never verified is tracked even with no new
+commit. The range's base is the merge base with the remote default branch (never past
+the session's own tip).
+
 Untracking is allowed freely — CI is the backstop — but the Stop lists what was
-untracked, with the reason. A removed worktree's ranges are untracked for it. A
-folder's own `.sloprail` rules apply in it: gates judge the calls made there and
+untracked, with the reason, and the range is tracked again by itself when the branch tip
+moves. When a worktree is removed, its range moves to the root folder; if its branch is
+gone too, the range stays pinned at the last tip (`refs/sloprail/pins/...`) and is still
+verified. A sub-agent's ranges are verified at the root's Stop, unless
+`enable_subagent_stop_check: true` is set in `.sloprail/config.yaml`. A folder's own `.sloprail` rules apply in it: gates judge the calls made there and
 commit required covers its uncommitted work.
 
 ### Before a push: verify-before-push
@@ -159,10 +167,20 @@ jobs:
 the job a required status check. Red means some subject has no stored pass: run
 `sr-checks run` over the same range and push.
 
-Session-only requirements are not re-checked by `verify` (a skill that must have been
-loaded, a context that must have been open): they are checked where the session ran.
-A `require: citation` counts the `Sloprail-Cites-*` trailer on the commit that last
+`require: skill` and `require: context` belong to gates, not file-guards: a file-guard
+is judged from the repository alone. A `require: citation` counts the `Sloprail-Cites-*` trailer on the commit that last
 changed the file, which the repository alone can show.
+
+### The rule-age floor
+
+A rule judges only the work made after it came into force. Inside the range, a rule's
+effective base is the later of the range's base and the parent of the commit that last changed
+the rule's folder, so a rule added mid-branch applies from its add commit, and what came
+before is not its debt. A rule that already stood at the base keeps the whole range (editing,
+or deleting and re-adding, a rule mid-range is no way to skip judging earlier work). A rule
+the branch's history does not carry (cut before the rule arrived) is in force from the date of
+the commit that last changed it in the checkout. A rule with no commit anywhere, or one that
+lives outside the repository (a plugin's), has no floor and judges the whole range.
 
 ## What a check receives
 
@@ -392,8 +410,9 @@ records each step's status and reason, so `sr-checks show` says which step faile
 - **A check that reads anything beyond its subject's files must declare it**, through that
   subject's `fingerprint` in `subjects:` (a file it opens with `SR_TREE`, an external spec's
   version). An undeclared dependency is served a stale verdict when it changes.
-- An engine error stores nothing; a refusal that read the session (a `require: skill` or
-  `context`, a `prepare` that refused) is not stored either: asked again next `run`.
+- A refusal is a complete fail verdict and is stored, whatever refused (a requirement, a
+  script, a judge). Only an engine-internal error is incomplete: nothing is stored, the
+  subject reads "not judged yet", and the next `run` starts that guard again from its first step.
 
 **`sr-checks verify` only reads.** It never executes a script, a judge or a requirement: it
 computes each subject's key (running the `subjects:` script, without a session), reads the

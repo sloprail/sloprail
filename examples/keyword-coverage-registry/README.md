@@ -256,7 +256,7 @@ agent can still meet it with a search. Only a gate sees a write before it lands
 after-check: the same requirement plus the judge and the record on the committed
 scanners, the backstop for a change the gate could not see. The gate runs no model.
 At Stop, an uncommitted change to a scanner file refuses the turn with "commit
-these", and the rule then judges the range from where it last passed to `HEAD`: each
+these", and the rule is then judged by `sr-checks run` over the range `merge-base(base, HEAD)..HEAD`: each
 scanner at the range's base against head (a rename is the old scanner deleted and the
 new one created), with the user's words taken from the commits'
 `Sloprail-Cites-User:` trailers. One library per script, in the file-guard folder

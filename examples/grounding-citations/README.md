@@ -52,8 +52,8 @@ The two halves are split by what each is for, and each is a separate folder:
 - **`file-guard/citations-resolve`** is the after-check and holds the judge. It acts
   at Stop, on the committed changeset (the markdown files the range touched, as one
   diff), with the same `require`; the citations are the ones the range's commits
-  carry (`changeset.citations`), and since the rule's range does not move until it
-  passes, the commits since it last passed all count. Uncommitted markdown refuses
+  carry (`changeset.citations`), and every commit of the explicit range counts.
+  Uncommitted markdown refuses
   the Stop with "commit these" first. It sees what the gate cannot: a markdown file
   changed by a script the engine did not see as a write.
 
