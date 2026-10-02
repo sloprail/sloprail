@@ -450,10 +450,10 @@ func TestAutoBase_NoRemoteDefaultBranchNeverMakesAnEmptyRange(t *testing.T) {
 	assert.Equal(t, gitrepo.EmptyTree, autoBase(proj, sha, ""), "nothing recorded: the widest range, never base==head")
 }
 
-// A session's feature branch fast-forward-pushed to origin/main (then fetched) keeps its commits
-// in the range: the base never moves past a commit the session made, even when the first
-// tracking happens after the push.
-func TestTrackCurrent_FeatureBranchFastForwardedToMainStillJudgesSessionCommits(t *testing.T) {
+// A session's feature branch fast-forward-pushed to origin/main (then fetched) is an EMPTY range:
+// the base is always the merge base with the remote default branch, whoever made the commits. The
+// local Stop is early feedback; CI verifies a push event's before..after, so it covers this push.
+func TestTrackCurrent_FeatureBranchFastForwardedToMainIsAnEmptyRangeCIOnPushCoversIt(t *testing.T) {
 	bare := t.TempDir()
 	runGit(t, bare, "init", "--bare", "--initial-branch=main")
 	proj := initRepo(t)
@@ -487,7 +487,8 @@ func TestTrackCurrent_FeatureBranchFastForwardedToMainStillJudgesSessionCommits(
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, sha, rows[0].HeadSHA)
-	assert.Equal(t, started, rows[0].Base, "the landed session commit must stay inside the range")
+	assert.Equal(t, sha, rows[0].Base, "the base is the merge base with the default branch: what landed is not in the range")
+	assert.Equal(t, sha, autoBase(proj, sha, started))
 }
 
 // ruled stages a repo with a file-guard and a registered root folder whose first hook has run
@@ -591,4 +592,31 @@ func TestAutoBase_NoRemoteDefaultBranchStartedAtHeadNeverMakesAnEmptyRange(t *te
 
 	assert.Equal(t, started, autoBase(proj, sha, started), "the session's recorded base stands in")
 	assert.Equal(t, gitrepo.EmptyTree, autoBase(proj, sha, ""), "nothing recorded: the widest range, never base==head")
+}
+
+// The default base is the merge base with the remote default branch, always; an explicit base
+// (an agent's `refs track --base`, a row that names one) is used exactly as given, and an
+// automatic row's stored base never outlives a newer merge base.
+func TestAutoBase_IsTheMergeBaseWithTheRemoteDefaultAndExplicitBasesStand(t *testing.T) {
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare", "--initial-branch=main")
+	proj := initRepo(t)
+	first := commitFile(t, proj, "a.md", "a")
+	runGit(t, proj, "remote", "add", "origin", bare)
+	runGit(t, proj, "push", "-q", "origin", "main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	runGit(t, proj, "remote", "set-head", "origin", "main")
+	runGit(t, proj, "switch", "-q", "-c", "feat")
+	own := commitFile(t, proj, "b.md", "b")
+
+	assert.Equal(t, first, autoBase(proj, own, "somewhere-else"), "the registered start never overrides the merge base")
+
+	// Pushed fast-forward and fetched: the head is on the default branch, so the range is empty.
+	runGit(t, proj, "push", "-q", "origin", "HEAD:refs/heads/main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	assert.Equal(t, own, autoBase(proj, own, first), "work the default branch holds is not in the range")
+
+	// An explicit base is as given; the guard still refuses one at or past the head.
+	assert.NoError(t, checkTrackBase(proj, first, own))
+	assert.Error(t, checkTrackBase(proj, own, own))
 }

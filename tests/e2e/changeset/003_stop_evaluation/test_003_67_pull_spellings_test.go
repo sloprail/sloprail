@@ -71,12 +71,10 @@ func TestT003_67_UpstreamCommitsBroughtInAnyWayAreNotTheSessionsWork(t *testing.
 }
 
 // T003_67 (one-command spellings): a fast-forward done in the SAME command that fetches
-// (`git pull --ff-only`, `git fetch && git merge --ff-only`) cannot be told from a commit the
-// session made and pushed, so the pulled commits are over-tracked as session work. Pinned
-// outcome (observed): the range keeps the base it was tracked from, so it is NOT empty; the Stop
-// refuses fail-closed ("not judged yet") naming upstream's file, and no judge is asked for it
-// until the user runs the check or untracks the ref.
-func TestT003_67_OneCommandFastForwardPullIsOverTrackedAndNotJudgedYet(t *testing.T) {
+// (`git pull --ff-only`, `git fetch && git merge --ff-only`) brings in only upstream's commits,
+// and the range base is always the merge base with the remote default branch, so the range is
+// empty: no refusal, no judge for upstream's commit.
+func TestT003_67_OneCommandFastForwardPullIsNotTheSessionsWork(t *testing.T) {
 	spellings := []struct {
 		name string
 		pull func(main string) string
@@ -96,12 +94,12 @@ func TestT003_67_OneCommandFastForwardPullIsOverTrackedAndNotJudgedYet(t *testin
 
 			e.Run(proj, sess, "bring upstream in", Turns("done", Bash("p1", sp.pull(main))))
 			got := stopRefusals(e, proj, sess)
-			if !strings.Contains(got, "not judged yet") || !strings.Contains(got, "docs/upstream.md") {
-				t.Fatalf("a one-command fast-forward should over-track upstream's commit and refuse it as not judged yet:\n%s", got)
+			if got != "" {
+				t.Fatalf("a one-command fast-forward pull of upstream's commit was judged:\n%s", got)
 			}
 			for _, run := range ledger(t, led) {
 				if strings.Contains(strings.Join(paths(run.Files), " "), "upstream.md") {
-					t.Fatalf("no judge may have been asked for upstream's commit: %v", paths(run.Files))
+					t.Fatalf("no judge may be asked for upstream's commit: %v", paths(run.Files))
 				}
 			}
 		})

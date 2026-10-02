@@ -54,12 +54,11 @@ func TestTrackMissing_ASessionCommitPushedFastForwardIsStillTracked(t *testing.T
 	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, "main"), "the pushed session commit escaped the tracked range")
 }
 
-// Commits landed upstream that the remote-tracking refs already held at the previous observation
-// are brought in by a pull: the tracked tip stays where the session left it.
-func TestTrackMissing_APulledUpstreamCommitIsBroughtIn(t *testing.T) {
+// Commits a pull brings in are in no range: the default base is the merge base with the remote
+// default branch, so the tracked head standing on upstream's commit holds nothing to judge.
+func TestTrackMissing_APulledUpstreamCommitIsAnEmptyRange(t *testing.T) {
 	var bare string
 	proj, reg, rs := ruledAndObserved(t, func(proj string) { bare = withOrigin(t, proj) })
-	before := rangeTip(t, reg, rs.ID, "main")
 
 	up := filepath.Join(t.TempDir(), "up")
 	runGit(t, filepath.Dir(up), "clone", "-q", bare, up)
@@ -73,7 +72,8 @@ func TestTrackMissing_APulledUpstreamCommitIsBroughtIn(t *testing.T) {
 
 	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
 	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
-	assert.Equal(t, before, rangeTip(t, reg, rs.ID, "main"), "upstream's commit became the session's tip")
+	tip := runGit(t, proj, "rev-parse", "HEAD")
+	assert.Equal(t, tip, autoBase(proj, tip, ""), "upstream's commit is in a range")
 }
 
 // A registry that cannot be built is an error the Stop refuses on, never "no file-guards".
@@ -187,14 +187,14 @@ func TestCommitRequired_AFolderIsOwedOnceNotTwice(t *testing.T) {
 // A detached HEAD on a commit some ref holds was checked out, not made: not tracked. A commit
 // made on the detached HEAD (on no ref) is.
 func TestCheckedOutOnly_ADetachedCheckoutIsNotTheSessionsButADetachedCommitIs(t *testing.T) {
-	proj, reg, _ := ruledAndObserved(t, nil)
+	proj, _, _ := ruledAndObserved(t, nil)
 	runGit(t, proj, "switch", "-c", "pr")
 	pr := commitFile(t, proj, "p.md", "p")
 	runGit(t, proj, "switch", "-q", "--detach", pr)
-	assert.True(t, checkedOutOnly(reg, proj, pr, nil), "another branch's commit was read as the session's")
-	assert.False(t, checkedOutOnly(reg, proj, pr, []sessionstate.TrackedRange{{HeadSHA: pr}}), "a tip the session recorded is its own")
+	assert.True(t, checkedOutOnly(proj, pr, nil), "another branch's commit was read as the session's")
+	assert.False(t, checkedOutOnly(proj, pr, []sessionstate.TrackedRange{{HeadSHA: pr}}), "a tip the session recorded is its own")
 	own := commitFile(t, proj, "q.md", "q")
-	assert.False(t, checkedOutOnly(reg, proj, own, nil), "a commit on no ref is the session's")
+	assert.False(t, checkedOutOnly(proj, own, nil), "a commit on no ref is the session's")
 }
 
 // A rule only on the default branch still makes an older branch's checkout worth tracking.
@@ -240,9 +240,9 @@ func TestTrackMissing_ADetachedCommitPushedInOneCommandIsTracked(t *testing.T) {
 	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, sha), "the detached, pushed commit escaped as 'held by a ref'")
 }
 
-// A detached checkout of a commit the remote already held at the previous observation is someone
-// else's work, not the session's.
-func TestTrackMissing_ADetachedCheckoutOfARemoteCommitIsNotTracked(t *testing.T) {
+// A detached checkout of a commit the remote holds may be tracked (over-tracking), but its range
+// is empty: the base is the merge base with the remote default branch.
+func TestTrackMissing_ADetachedCheckoutOfARemoteCommitIsAnEmptyRange(t *testing.T) {
 	var bare string
 	proj, reg, rs := ruledAndObserved(t, func(proj string) { bare = withOrigin(t, proj) })
 	up := filepath.Join(t.TempDir(), "up")
@@ -256,5 +256,6 @@ func TestTrackMissing_ADetachedCheckoutOfARemoteCommitIsNotTracked(t *testing.T)
 	runGit(t, proj, "switch", "-q", "--detach", "origin/main")
 	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
 	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
-	assert.Empty(t, rangeTip(t, reg, rs.ID, runGit(t, proj, "rev-parse", "HEAD")), "someone else's commit was tracked as the session's")
+	head := runGit(t, proj, "rev-parse", "HEAD")
+	assert.Equal(t, head, autoBase(proj, head, ""), "someone else's commit is in a range")
 }
