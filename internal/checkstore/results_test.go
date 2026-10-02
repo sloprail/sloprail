@@ -224,49 +224,32 @@ func TestPassedHeads_ScopedToTheRuleNotItsHash(t *testing.T) {
 	assert.Equal(t, []string{"h9", "h0"}, heads, "a pass under an older definition still approved its work; another rule's runs are not this one's")
 }
 
-func TestResolveStale_AFailWhoseInputLeftBecomesSkip(t *testing.T) {
+// ResolveStale is a sanctioned no-op (a skip recorded over a content-keyed fail would hide the
+// refusal from every other branch): whatever the fail's relation to the live run (its input
+// left the range, the live run holds it too, another run is still in flight), it stays stored
+// and replayed, and nothing is written.
+func TestResolveStale_IsANoOpAStoredFailStaysVisible(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("fail", "old"))
-	live := record(t, s, run("h1"), judge("pass", "new"))
+	record(t, s, run("h0"), judge("fail", "same"))
+	inflight, err := s.RecordRun(run("h0")) // another Stop's run, still judging
+	require.NoError(t, err)
+	_, err = s.RecordCheck(inflight, judge("fail", "theirs"))
+	require.NoError(t, err)
+	live := record(t, s, run("h1"), judge("fail", "same"), judge("pass", "new"))
 
 	n, err := s.ResolveStale(rule, "h1", live)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-	rows, err := s.Query(`SELECT status, json_extract(metadata, '$.reason') AS reason FROM checks WHERE fingerprint = 'old'`)
+	assert.Equal(t, 0, n)
+	rows, err := s.Query(`SELECT status FROM checks WHERE fingerprint = 'old'`)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "skip", rows[0]["status"])
-	assert.Contains(t, rows[0]["reason"], "stale")
+	assert.Equal(t, "fail", rows[0]["status"])
 
-	_, found, err := s.cached("changeset", "check[1]:judge:./rubric.md.j2", "old")
+	c, found, err := s.cached("changeset", "check[1]:judge:./rubric.md.j2", "old")
 	require.NoError(t, err)
-	assert.False(t, found, "a stale fail is no longer replayed")
-}
-
-func TestResolveStale_AFailTheLiveRunStillHoldsStaysAFail(t *testing.T) {
-	s := openTestStore(t)
-	record(t, s, run("h0"), judge("fail", "same"))
-	live := record(t, s, run("h1"), judge("fail", "same")) // the replay
-
-	n, err := s.ResolveStale(rule, "h1", live)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
-func TestResolveStale_OnlyTheRuleAtThisHashAndOnlyFails(t *testing.T) {
-	s := openTestStore(t)
-	other := run("h0")
-	other.CheckID = "file-guard/other"
-	record(t, s, other, judge("fail", "x"))
-	oldDef := run("h0")
-	oldDef.Metadata = map[string]any{"ruleHash": "h0"}
-	record(t, s, oldDef, judge("fail", "y"))
-	record(t, s, run("h0"), judge("pass", "z"))
-	live := record(t, s, run("h1"))
-
-	n, err := s.ResolveStale(rule, "h1", live)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
+	require.True(t, found, "the other branch's fail is still replayed")
+	assert.Equal(t, StatusFail, c.Status)
 }
 
 func TestCheckStatus_LatestRunPerRuleAndFailingFilter(t *testing.T) {
@@ -363,17 +346,12 @@ func TestCheckResults_ClosedStoreReportsErrClosed(t *testing.T) {
 	assert.ErrorIs(t, err, ErrClosed)
 }
 
-// Clearing a stale fail must not turn the run that failed into a pass: a
-// watermark there would sweep a refused range into the baseline.
-func TestPassedHeads_ARunWhoseFailWentStaleStillDidNotPass(t *testing.T) {
+// A run that failed is never a watermark, whatever other runs did after it: only the run that
+// passed is a head.
+func TestPassedHeads_AFailedRunIsNotAHeadOnlyTheLaterPassIs(t *testing.T) {
 	s := openTestStore(t)
-	failedRun := record(t, s, run("h0"), judge("fail", "old"))
-	live := record(t, s, run("h1"), judge("pass", "new"))
-
-	n, err := s.ResolveStale(rule, "h1", live)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
-	_ = failedRun
+	record(t, s, run("h0"), judge("fail", "old"))
+	record(t, s, run("h1"), judge("pass", "new"))
 
 	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
@@ -427,20 +405,6 @@ func TestPassedHeads_ACompleteRunWithNothingToCheckIsAPass(t *testing.T) {
 	assert.Equal(t, []string{"h0"}, heads)
 }
 
-func TestResolveStale_LeavesAnotherRunsInFlightFailsAlone(t *testing.T) {
-	s := openTestStore(t)
-	// A concurrent Stop's run for the same rule and hash, still running.
-	inflight, err := s.RecordRun(run("h0"))
-	require.NoError(t, err)
-	_, err = s.RecordCheck(inflight, judge("fail", "theirs"))
-	require.NoError(t, err)
-	live := record(t, s, run("h1"), judge("pass", "mine"))
-
-	n, err := s.ResolveStale(rule, "h1", live)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n, "an unfinished run's failures are not stale: it has not finished judging")
-}
-
 // A `sr-checks run` is one write however many rules it judged: one segment, one push.
 func TestClose_WritesEveryRunAsOneWrite(t *testing.T) {
 	counting := &countingCache{Cache: checkcache.NewMemory()}
@@ -467,33 +431,26 @@ func (c *countingCache) Put(runs []checkcache.Run) error {
 	return c.Cache.Put(runs)
 }
 
-// The cache is append-only: a resolved stale fail is a run of its own, and it holds for a
-// store opened afterwards on the same backend.
-func TestResolveStale_SurvivesTheBackend(t *testing.T) {
+// Nothing ResolveStale does reaches the backend: a store opened afterwards still replays the fail.
+func TestResolveStale_LeavesNothingInTheBackend(t *testing.T) {
 	backend := checkcache.NewMemory()
 	first := Open(backend, false).(*store)
 	record(t, first, run("h0"), judge("fail", "old"))
 	live := record(t, first, run("h1"), judge("pass", "new"))
 	n, err := first.ResolveStale(rule, "h1", live)
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, 0, n)
 	require.NoError(t, first.Close())
 
 	second := Open(backend, false).(*store)
 	defer second.Close()
-	_, found, err := second.cached("changeset", "check[1]:judge:./rubric.md.j2", "old")
+	c, found, err := second.cached("changeset", "check[1]:judge:./rubric.md.j2", "old")
 	require.NoError(t, err)
-	assert.False(t, found, "a stale fail is not replayed")
-	rows, err := second.Query(`SELECT status FROM checks WHERE fingerprint = 'old'`)
+	require.True(t, found, "a fail is replayed")
+	assert.Equal(t, StatusFail, c.Status)
+	runs, err := backend.Runs()
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.Equal(t, "skip", rows[0]["status"])
-	heads, err := second.PassedHeads(rule)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"h1"}, heads, "the resolving run is not a run")
-	again, err := second.ResolveStale(rule, "h1", live)
-	require.NoError(t, err)
-	assert.Equal(t, 0, again, "nothing is left to resolve")
+	assert.Len(t, runs, 2, "no resolving run was written")
 }
 
 func TestCheckResults_ClosedStoreRefusesEveryMethod(t *testing.T) {

@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 // One range, several tasks. A file-guard over task files is evaluated once over
-// the whole changeset (every TASK.md changed since the rule last passed), so a
+// the whole changeset (every TASK.md changed in the range), so a
 // single bad task among good ones must refuse the Stop and be NAMED; the good
 // one is not blamed, and fixing the bad one lets the range pass.
 

@@ -3,7 +3,7 @@
 # (`require: citation`, `when` the write touches a pinned line). Cheap and
 # deterministic only: whether the cited words actually ask for THIS change is the
 # judge's question, and the judge lives in the plain file-guard of the same name,
-# which judges what settled at Stop.
+# which judges what settled (`sr-checks run` judges it, Stop verifies).
 #
 # A write whose result the engine could not compute (sed -i, a notebook create)
 # arrives with `resultKnown: false`; a gate does not fail closed on that by itself,

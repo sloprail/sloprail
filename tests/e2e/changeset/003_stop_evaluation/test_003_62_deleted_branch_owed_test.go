@@ -63,7 +63,7 @@ func TestT003_62_ADeletedBranchWithAnUnjudgedTipIsStillOwed(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e, proj, _ := project(t, docsRule)
 			main := e.Git(proj, "branch", "--show-current")
-			if c.remote {
+			if c.remote && e.Origin(proj) == "" {
 				bare := filepath.Join(t.TempDir(), "origin.git")
 				e.Git(filepath.Dir(bare), "init", "-q", "--bare", bare)
 				e.Git(proj, "remote", "add", "origin", bare)
@@ -84,6 +84,12 @@ func TestT003_62_ADeletedBranchWithAnUnjudgedTipIsStillOwed(t *testing.T) {
 			e.Run(proj, sess, "commit, then delete everything that holds it", Turns("done", turns...))
 
 			got := stopRefusals(e, proj, sess)
+			if strings.Contains(got, "not judged yet") && strings.Contains(got, "docs/a.md") {
+				// The Stop only verifies. It found the range owed and moved it out of the
+				// deleted worktree, saying what to run; the agent's next turn runs it.
+				e.Run(proj, sess, "run what the Stop asked for", Turns("done", Bash("jr", "true")))
+				got = stopRefusals(e, proj, sess)
+			}
 			if !strings.Contains(got, refusalText) || !strings.Contains(got, "docs/a.md") {
 				t.Fatalf("a violation whose every ref was deleted escaped judgement; refusals:\n%s", got)
 			}

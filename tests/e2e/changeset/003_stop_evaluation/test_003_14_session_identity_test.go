@@ -10,7 +10,7 @@ import (
 // Verdicts are keyed by CONTENT (rule, rule hash, step, subject, fingerprint of
 // the rendered judge prompt), not by conversation: any session judging the same
 // content reuses a stored judge verdict, and different content is judged afresh.
-// Scripts are not cached, so these use a model judge.
+// These use a model judge so a count of its prompts shows what was asked.
 
 // T003_14: an unrelated conversation judging IDENTICAL content reuses the cached
 // judge pass (the judge is asked once in total); judging DIFFERENT content asks

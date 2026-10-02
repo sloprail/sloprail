@@ -3,6 +3,7 @@ package transcript
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -55,10 +56,36 @@ func CurrentSessionPath(cwd string) string {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return ""
+			return sessionPathByID(config, sessionID)
 		}
 		dir = parent
 	}
+}
+
+// sessionPathByID is the session's record found by its id alone, under any
+// projects entry, or "" when no file there belongs to the session.
+//
+// The record is filed under the directory the session STARTED in, so a command
+// the agent runs in another repository or folder — outside that tree — finds
+// nothing walking up from its own directory, although the id in its environment
+// names this very session. Without this such a run would be session-less. The
+// file must still hold records of this session (BelongsToSession); the tree
+// check is dropped, since the directory is by definition not the session's.
+func sessionPathByID(config, sessionID string) string {
+	if config == "" {
+		return ""
+	}
+	matches, _ := filepath.Glob(filepath.Join(config, "projects", "*", sessionID+".jsonl"))
+	sort.Strings(matches)
+	for _, path := range matches {
+		if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+			continue
+		}
+		if ok, _ := BelongsToSession(path, sessionID); ok {
+			return path
+		}
+	}
+	return ""
 }
 
 // sessionPathIn is the session's record filed under the projects entry for dir,

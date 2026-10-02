@@ -85,7 +85,7 @@
         "path": "sr-session refs",
         "use": "refs",
         "short": "The ranges of commits this session answers for: list, track, untrack",
-        "long": "The ranges of commits this session answers for, per folder.\n\nWhen the session discovers a folder (its own repository, a sub-agent's worktree, a repository a\ncommand ran in) it tracks the folder's current branch, from where the work started (the merge\nbase with the default branch). At Stop each tracked range is verified: every file-guard must\nhave a stored verdict for the content, or the Stop is refused with the `sr-checks run` command that\nproduces it. Nothing here judges anything.\n\n  sr-session refs list                                   the tracked and untracked ranges\n  sr-session refs track   [--folder D] [--base REV] [--head REF]   track a range (replaces its base)\n  sr-session refs untrack  --reason TEXT [--folder D] [--head REF]  stop answering for a range\n\nUntracking is allowed freely — CI is the backstop — but the Stop lists it with your reason.",
+        "long": "The ranges of commits this session answers for, per folder.\n\nWhen the session discovers a folder (its own repository, a sub-agent's worktree, a repository a\ncommand ran in) it tracks the folder's current branch, from where the work started (the merge\nbase with the default branch). At Stop each tracked range is verified: every file-guard must\nhave a stored verdict for the content, or the Stop is refused with the `sr-checks run` command that\nproduces it. Nothing here judges anything.\n\n  sr-session refs list                                   the tracked and untracked ranges\n  sr-session refs track   [--folder D] [--base REV] [--head REF]   track a range (replaces its base)\n  sr-session refs untrack  --reason TEXT [--folder D] [--head REF]  stop answering for a range\n\nUntracking is allowed freely — CI is the backstop — but the Stop lists it with your reason, and\nthe range is tracked again by itself when the branch tip moves. A removed worktree's range moves\nto the root folder (pinned at its last tip if the branch is gone too). A sub-agent's ranges are\nverified at the root's Stop unless enable_subagent_stop_check is set.",
         "children": [
           {
             "path": "sr-session refs list",
@@ -454,13 +454,13 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks guards --base <rev> --head <rev>   the file-guards this project loads, one name per line\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. A judge's verdict is keyed by the rule, its definition, the check and a\nfingerprint of the judge's fully rendered prompt (plus what its prepare step declares) — never by a commit, session or agent — so the\nsame content after a rebase, a squash or a revert is a cache hit, and so is the same content\nanother clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
         "use": "changeset --rule <name> --base <rev> --head <rev>",
         "short": "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
-        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range is merge-base(--base, --head)..--head, both revisions\nstated by the caller (a branch, a tag or a sha).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified name as a\nrefusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  base, head          the range, as SHAs\n  ruleHash            the hash of the rule's whole .sloprail root (its own folder, every\n                      other rule, schemas and shared scripts)\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits, files,\n                      others, citations — each with the commits that carried it and the\n                      files they changed), subject\n\nNothing is run and nothing is recorded. Where the session cannot be found from the environment\n(no CLAUDE_CODE_SESSION_ID), quotes are not resolved.",
+        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range is merge-base(--base, --head)..--head, both revisions\nstated by the caller (a branch, a tag or a sha).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified name as a\nrefusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  base, head          the range, as SHAs: the stated one, raised to the rule's own floor\n                      (the parent of the commit that last changed the rule), as run judges it\n  ruleHash            the hash of every git-tracked file under the rule's .sloprail root\n                      (shared _lib included), as on disk; untracked and ignored files do\n                      not count; a plugin rule hashes its plugin's .sloprail root\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits, files,\n                      others, citations — each with the commits that carried it and the\n                      files they changed), subject. A rule with a subjects: script\n                      prints subjects, one payload per subject, from running that script.\n\nNothing is run and nothing is recorded. Where the session cannot be found from the environment\n(no CLAUDE_CODE_SESSION_ID), quotes are not resolved.",
         "flags": [
           {
             "name": "base",
@@ -480,24 +480,8 @@
         "path": "sr-checks default-base",
         "use": "default-base --head <rev>",
         "short": "Print where work on head started: its merge base with the default branch",
-        "long": "Print the sha a range over --head starts at when nobody stated one: the merge base of --head with\nthe repository's default branch (origin's HEAD, else origin/main, origin/master, else a local main or\nmaster). Prints git's empty tree (4b825dc642cb6eb9a060e54bf8d69288fbee4904) when there is no default\nbranch or --head shares no history with it: everything is judged. Read-only.",
+        "long": "Print the sha a range over --head starts at when nobody stated one: the merge base of --head with\nthe REMOTE default branch (origin's HEAD, else origin/main, origin/master). Prints git's empty tree\n(4b825dc642cb6eb9a060e54bf8d69288fbee4904) when --head shares no history with it: everything is judged.\nExits non-zero when there is no remote default branch (pass --base instead). Read-only.",
         "flags": [
-          {
-            "name": "head",
-            "usage": "The head revision: a branch, tag or sha (required)"
-          }
-        ]
-      },
-      {
-        "path": "sr-checks guards",
-        "use": "guards --base <rev> --head <rev>",
-        "short": "Print the name of each file-guard that `run` and `verify` would load, one per line",
-        "long": "Print the name of every file-guard this project loads over merge-base(--base, --head)..--head, one per\nline: the project's own and every enabled plugin's, minus what the config at the range's base\nswitches off. The same set run and verify judge. Prints nothing, and exits 0, when there are none.\nRead-only; asks no model and writes nothing.",
-        "flags": [
-          {
-            "name": "base",
-            "usage": "The base revision: a branch, tag or sha (required)"
-          },
           {
             "name": "head",
             "usage": "The head revision: a branch, tag or sha (required)"
@@ -508,7 +492,7 @@
         "path": "sr-checks run",
         "use": "run --base <rev> --head <rev>",
         "short": "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
-        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nRequirements and scripts run every time. A judge is asked only when the cache holds no verdict for\nexactly what it is about to be given: a stored PASS is a hit and a stored FAIL with the same key is\nreplayed (terminal until the input changes). A new verdict (pass or fail) is stored, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
+        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nEvery check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed\nby the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the\ninput changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
         "flags": [
           {
             "name": "base",
@@ -524,11 +508,16 @@
         "path": "sr-checks show",
         "use": "show --base <rev> --head <rev>",
         "short": "Each file-guard subject's latest stored result over the range, without a verdict",
-        "long": "Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it\n(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.",
+        "long": "Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it\n(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.\n\n--failing keeps only what is not passing: a fail, a result still missing, or an error.\n--rule limits the listing to one file-guard, by folder name or qualified name.",
         "flags": [
           {
             "name": "base",
             "usage": "The base revision: a branch, tag or sha (required)"
+          },
+          {
+            "name": "failing",
+            "default": "false",
+            "usage": "Only what is not passing"
           },
           {
             "name": "head",
@@ -538,6 +527,10 @@
             "name": "json",
             "default": "false",
             "usage": "Print the per-subject results as JSON"
+          },
+          {
+            "name": "rule",
+            "usage": "Only this file-guard (folder name or qualified name)"
           }
         ]
       },
@@ -545,7 +538,7 @@
         "path": "sr-checks verify",
         "use": "verify --base <rev> --head <rev>",
         "short": "Check every file-guard over merge-base(base, head)..head against the stored verdicts",
-        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nNever asks a model and never writes: the same repository state and the same stored results\nread the same anywhere, with no session. Scripts are re-run. A judge's key is looked up, and a\nkey with no stored pass is red (missing, or the stored fail's reasons). A requirement that\nneeds the session that made the change (a skill that must have been loaded, a context that\nmust have been open) is not re-checked here: it was checked where the session ran. A citation\nrequirement counts a Sloprail-Cites-* trailer on the commit that last changed the file, which\nis checkable from the repository alone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.",
+        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nOnly reads: it never executes a script, a judge or a requirement and never writes. It computes each\nsubject's key (running the rule's subjects script, without a session) and reads the stored verdict, so the\nsame repository state and the same stored results read the same anywhere. A key with no stored verdict is\nred (\"not judged yet\", run sr-checks run); a stored fail shows its reasons. A citation requirement counts a\nSloprail-Cites-* trailer on the commit that last really changed the file, which is checkable from the repository\nalone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.",
         "flags": [
           {
             "name": "base",

@@ -259,7 +259,7 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 `seen` on a Post file event is delivered to **contexts** (and anything else still
 bound to `PostFile*`). A **file-guard** does not receive Post file events: it
 judges commits. What replaces `seen` for it is the verdict cache — unchanged input is
-never re-judged; see [file-guard.md](file-guard.md#cached-verdicts).
+never run again, whatever the check; see [file-guard.md](file-guard.md#cached-verdicts).
 
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
@@ -285,7 +285,7 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
    "others": [{"path": "README.md", "status": "M"}],
    "citations": [{"quote": "…", "sourceTypes": ["user"], "path": "…", "line": 3, "message": "…"}]},
  "subject": {"id": "changeset", "files": ["…"]},
- "transcriptPath": "…", "context": {}}
+ "transcriptPath": "…"}
 ```
 
 - `base`, `head` — the range, as SHAs: the merge base of `--base` and `--head`, and
@@ -310,9 +310,9 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
   - a **check** (a script or a judge) has ONE subject by default, the whole
     changeset: `{"id": "changeset", "files": [<every selected file>]}`.
 
-  A future `subjects:` key will supply the list, for requirements and checks alike,
-  in this same shape. A gate's payload has no `subject`: it has `.event`.
-  `transcriptPath` and `context` as everywhere.
+  A rule's `subjects:` script ([file-guard.md](file-guard.md#subjects--split-a-rule-into-units-each-cached-on-its-own))
+  supplies the list instead, in this same shape plus an optional `fingerprint`. A gate's payload has no `subject`: it has `.event`.
+  `transcriptPath` as everywhere.
 
 ### `Stop` — a work cycle ended
 
@@ -351,8 +351,7 @@ shapes are in `internal/declaration/payload.go`.
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
- "transcriptPath":"/abs/…session.jsonl",
- "context":{"some-context":{"active":true,"payload":{…}}}}
+ "transcriptPath":"/abs/…session.jsonl"}
 ```
 
 - `event` — the event, flat. A file-guard's check does not get this envelope: it
@@ -361,17 +360,16 @@ shapes are in `internal/declaration/payload.go`.
   `only` ([file-guard.md](file-guard.md)).
 - `transcriptPath` — the session record, for reading what the event does not carry
   (which human message grounds this write). Also on `$SR_TRANSCRIPT`.
-- `context` — every declared context by name, `{active, payload}`, at parity with
-  the match scope.
+- No `context`: a file-guard's payload does not carry session state.
 
 ### GateCheckPayload — a gate's script / prepare / judge
 
-The same three keys, but `event` is any **gate** kind — a gate wakes on command,
+The same two keys plus `context` (every declared context by name,
+`{active, payload}`, at parity with a gate's match scope), and `event` is any **gate** kind — a gate wakes on command,
 tool and `Stop` events too, never a `Post` variant. A gate on a pre-write event
 (`PreFileWrite`, `PreFileDelete`) is where a write or a delete is prevented, and
 it is run **once per file** a call changes. `context` is carried at top
-level, at parity with the gate's match scope, so a gate's checks can read what an
-upstream context left behind.
+level so a gate's checks can read what an upstream context left behind.
 
 ### ContextEnterPayload — a context's `enter`
 

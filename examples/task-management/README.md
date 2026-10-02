@@ -55,8 +55,8 @@ Two natures, both named `ask-is-human-authored`:
 - **The file-guard** is the after-check: at Stop it holds the committed
   `ASK.md` to the same requirement and judge, the backstop for a write the
   gate could not see. It judges commits — uncommitted changes to an `ASK.md`
-  refuse the Stop with "commit these" — over the range from where it last passed
-  to `HEAD`, and never sees the write before it lands.
+  refuse the Stop with "commit these" — over the explicit range
+  `merge-base(base, HEAD)..HEAD` (`sr-checks run`), and never sees the write before it lands.
 
 ## What the requirement and the judge divide
 

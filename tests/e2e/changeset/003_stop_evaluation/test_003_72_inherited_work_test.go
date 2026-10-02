@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -62,6 +63,15 @@ func subagentFolder(t *testing.T, e *Env, proj, sess string) (path, agent string
 func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-72h"
+	// This test is about the root keeping a removed worktree's work: the sub-agent's own Stop (on
+	// for the package) would refuse its violating commit forever, so it is off here.
+	cfg := filepath.Join(proj, ".sloprail", "config.yaml")
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WriteFile(proj, ".sloprail/config.yaml", strings.Replace(string(body), "enable_subagent_stop_check: true", "enable_subagent_stop_check: false", 1))
+	e.CommitAll(proj, "sub-agent stop check off")
 	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
@@ -121,11 +131,69 @@ func sessionRanges(t *testing.T, e *Env, proj, sess string) []sessionstate.Track
 	return out
 }
 
+// realPath is the path with symlinks resolved (the registry holds the git root's real path, a
+// temp dir may be spelled through /var).
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
+}
+
 func trackedIn(rs []sessionstate.TrackedRange, folder, head string) bool {
 	for _, r := range rs {
-		if r.Head == head && r.Tracked() && filepath.Clean(r.Folder) == filepath.Clean(folder) {
+		if r.Head == head && r.Tracked() && realPath(r.Folder) == realPath(folder) {
 			return true
 		}
 	}
 	return false
+}
+
+// worktreeRemoved returns the WorktreeRemove hook call for a worktree, as the harness sends it.
+func worktreeRemoved(t *testing.T, e *Env, proj, sess, wt string) func() harness.Result {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]any{
+		"session_id": sess, "transcript_path": e.TranscriptPath(proj, sess), "cwd": proj,
+		"hook_event_name": "WorktreeRemove", "worktree_path": wt,
+	})
+	return func() harness.Result {
+		return e.CLIDirectStdinEnv(proj, string(payload), e.SessionEnv(""), "sr-session", "worktree-remove")
+	}
+}
+
+// T003_72: the harness removes a finished sub-agent's worktree WITHOUT the hook (or the hook
+// never reaches the session): the stat fallback finds the folder gone at the root's Stop, moves
+// its range to the root, and verifies it there; fixing the branch there passes.
+func TestT003_72_ARemovedSubagentFolderWithoutTheHookIsFoundByStatAndFixingItPasses(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	const sess = "s-003-72s"
+	main := e.Git(proj, "branch", "--show-current")
+	sub := harness.SubagentScript(t, Turns("sub done",
+		Bash("b1", "git switch -q -c sub-a"),
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
+	))
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	wt, _ := subagentFolder(t, e, proj, sess)
+
+	e.Git(proj, "worktree", "remove", "--force", wt)
+	r := e.StopNow(proj, sess, false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "sub-a") || !strings.Contains(r.Output, "docs/a.md") {
+		t.Fatalf("a removed sub-agent folder's range was not kept and verified at the root:\n%s", r.Output)
+	}
+	root, err := filepath.EvalSymlinks(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs := sessionRanges(t, e, proj, sess); !trackedIn(rs, root, "sub-a") || trackedIn(rs, wt, "sub-a") {
+		t.Fatalf("the range did not move from the removed folder %s to the root: %+v", wt, rs)
+	}
+
+	e.Git(proj, "switch", "-q", "sub-a")
+	e.WriteFile(proj, "docs/a.md", "clean words\n")
+	e.CommitAll(proj, "fix a")
+	e.Git(proj, "switch", "-q", main)
+	e.JudgeTracked(proj, sess, false)
+	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+		t.Fatalf("the fixed branch was still refused:\n%s", r.Output)
+	}
 }

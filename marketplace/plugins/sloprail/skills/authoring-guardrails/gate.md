@@ -205,16 +205,16 @@ or a push in the same line as a command that moves refs first, is refused. No us
 citation lifts it: a gate that guards what leaves the machine must not be unlockable by a
 quote (an agent can wash an old, generic instruction into one).
 `sloprail/gate/checks-ref-sr-only` is built the same way to keep the `sloprail/checks`
-results branch writable by `sr-checks` alone. Both ship **on**: a project turns one off
+results branch writable by `sr-checks` alone (it reads the command's argv, so it stops an agent's accidental write, not a determined forger: a ref name the shell builds at run time never appears in it). Both ship **on**: a project turns one off
 with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
 
 `sloprail/gate/ci-verify-required` is the `Stop` gate that closes the loop on the CI side: a
-file-guard's verdict is only enforced where `sr-checks verify` runs, so a project that loads at
-least one file-guard (`sr-checks guards` lists them) may not end a turn until the *committed* tree
+file-guard's verdict is only enforced where `sr-checks verify` runs, so a project with at
+least one file-guard of its own (a committed file under `.sloprail/file-guard/`) may not end a turn until the *committed* tree
 (`git grep HEAD`) has a line containing `sr-mark: ci-verify`, a comment beside the CI step that runs
-`sr-checks verify --base <default branch> --head <PR head sha>`. A marker, not a provider's file
+`sr-checks verify` on pull requests (`--base` the target branch, `--head` the PR head sha) and on pushes to the default branch (`--base` the push's before sha, `--head` its after sha). A marker, not a provider's file
 path, so any CI (GitHub Actions, GitLab, Azure Pipelines, Bitbucket, Jenkins) is the same. The
-refusal carries copy-paste snippets. It fails closed on a git or `sr-checks` error and ships **on**:
+refusal carries copy-paste snippets. It fails closed on a git error and ships **on**:
 `disabled: [sloprail/gate/ci-verify-required]` turns it off.
 
 ### The resolution floor

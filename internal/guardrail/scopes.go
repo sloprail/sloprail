@@ -82,7 +82,7 @@ func CompileFileMatch(src string) (*Matcher, error) {
 //
 // The scope's variables are `event` and `context`, so those are the top-level
 // keys the returned Matcher reads at run time. This differs from a file-guard,
-// whose variables are a file's own flat facts (path, markers, oldMarkers, context) and
+// whose variables are a file's own flat facts (path, status, markers, oldMarkers, trailers) and
 // which therefore reads an event's Fields directly. A gate NESTS: the event
 // handed to Match carries the kind's own fields under an `event` key and the
 // context map under `context` —
@@ -118,7 +118,6 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 //	path       string                  the file's path
 //	markers    []Marker                the sr: markers the file carries
 //	oldMarkers []Marker                the sr: markers it carried before this change
-//	context    map[string]ContextState every declared context, by name
 //	status     string                  the file's status in the changeset: A, M, D or R
 //	trailers   map[string][]string     each commit-message trailer key (canonical case,
 //	                                   e.g. Sloprail-Refactor) to its values across the
@@ -127,8 +126,7 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 // `status` and `trailers` are what a changeset adds to a file's own facts: the
 // file-guard judges the net change between two commits, so it can ask how the
 // file changed and what the commits that made the change said. `trailers` is open
-// (types.Any) like `context`, for the same reason: its keys are whatever the
-// commits carry. A key no commit carries reads as null, so a rule tests
+// (types.Any): its keys are whatever the commits carry. A key no commit carries reads as null, so a rule tests
 // `"move-only" in (trailers["Sloprail-Refactor"] ?? [])`.
 //
 // `oldMarkers` is the one piece of the change a file scope exposes, and for one
@@ -156,27 +154,21 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 // this side states them — kept faithful to the spec's Marker by the test that
 // pins the shape, not by a shared symbol with filemod.
 //
-// context is left open (types.Any), NOT a closed map, and that is deliberate.
-// The keys are project-defined context NAMES not known when the scope is built
-// — `context["research-run"]` names a context this engine has never heard of —
-// so a closed type over enumerated keys would refuse every real read. This is
-// exactly how fieldType treats a map whose keys a module did not enumerate:
-// open at types.Any, because punishing an author for a vocabulary we do not
-// have is the checker being wrong, not the rule. The cost is that
-// `context[<name>].active` is checked at run time rather than at load, the same
-// bare-Any run-time cast a bare `path` gets — see matcher.go's env notes.
+// There is NO `context` here, deliberately: a file-guard judges committed bytes
+// and runs in CI with no session, and a context is session state. A condition
+// on a context belongs on a gate. ValidateFileGuard turns the compile error a
+// `context` reference gets into that advice.
 //
 // No `gates` here: the spec gives a file-guard's scope no gates map (no unit so
 // far has a file-guard reading a gate's verdict), and adding one would be
 // claiming a variable the spec does not.
 func fileMatchScope() types.Map {
 	return types.Map{
-		"path":          types.String,
-		"markers":       types.Array(markerElem()),
-		"oldMarkers":    types.Array(markerElem()),
-		"status":        types.String,
-		"trailers":      types.Any,
-		scopeContextKey: contextMapType(),
+		"path":       types.String,
+		"markers":    types.Array(markerElem()),
+		"oldMarkers": types.Array(markerElem()),
+		"status":     types.String,
+		"trailers":   types.Any,
 	}
 }
 

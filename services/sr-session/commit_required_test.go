@@ -131,7 +131,7 @@ func capturing() (*cobra.Command, *bytes.Buffer) {
 
 func owed(t *testing.T, repo string, guards []declaration.FileGuard, store sessionstate.Store) string {
 	t.Helper()
-	return commitRequired(discard(), HookPayload{Cwd: repo}, guards, store, map[string]any{})
+	return commitRequired(discard(), HookPayload{Cwd: repo}, guards, store)
 }
 
 func TestCommitRequired_AnUncommittedGuardedPathIsOwedACommitAndACleanTreeIsNot(t *testing.T) {
@@ -157,7 +157,7 @@ func TestCommitRequired_NoGuardsNoRepositoryNoSubagentTreeOwesNothing(t *testing
 	record := filepath.Join(t.TempDir(), "root.jsonl")
 	require.NoError(t, os.WriteFile(record, []byte(`{"type":"user","uuid":"u1","parentUuid":null,"cwd":"`+repo+`","message":{"role":"user","content":"hi"}}`+"\n"), 0o644))
 	sub := HookPayload{TranscriptPath: record, Cwd: repo, AgentID: "agent-1"}
-	assert.Equal(t, "", commitRequired(discard(), sub, docsGuard(), nil, map[string]any{}))
+	assert.Equal(t, "", commitRequired(discard(), sub, docsGuard(), nil))
 }
 
 func TestCommitRequired_AMatchThatCannotBeCompiledRefusesRatherThanPassing(t *testing.T) {
@@ -269,7 +269,7 @@ func TestCommitRequired_TheLoopBreakerReleasesAfterTheCapForTheSameSet(t *testin
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "docs", "b.md"), []byte("new"), 0o644))
 	cmd, stderr := capturing()
 	p := HookPayload{Cwd: repo}
-	ask := func() string { return commitRequired(cmd, p, docsGuard(), store, map[string]any{}) }
+	ask := func() string { return commitRequired(cmd, p, docsGuard(), store) }
 
 	assert.NotEmpty(t, ask(), "refusal 1")
 	assert.NotEmpty(t, ask(), "refusal 2")

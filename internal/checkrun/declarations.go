@@ -25,6 +25,18 @@ import (
 // sessionStart, when given, is the commit whose config.yaml may switch off a protected rule.
 // A registry is required so trigger matches can be evaluated.
 func LoadDeclarations(w io.Writer, cwd string, reg *module.Registry, sessionStart ...string) declaration.Loaded {
+	loaded, err := LoadDeclarationsStrict(w, cwd, reg, sessionStart...)
+	if err != nil {
+		fmt.Fprintf(w, "sloprail: the new-format declarations in this project could not be read: %v\n", err)
+		return declaration.Loaded{}
+	}
+	return loaded
+}
+
+// LoadDeclarationsStrict is LoadDeclarations that returns a store that cannot be READ (an I/O or
+// permission error, not an absent `.sloprail`) as an error instead of an empty set. A CLI
+// `run`/`verify` must refuse on it: seeing zero guards there would read as a green CI.
+func LoadDeclarationsStrict(w io.Writer, cwd string, reg *module.Registry, sessionStart ...string) (declaration.Loaded, error) {
 	store, unresolved := DeclarationStore(w, cwd)
 	if len(sessionStart) > 0 {
 		store.WithTrustedRev(sessionStart[0])
@@ -33,8 +45,7 @@ func LoadDeclarations(w io.Writer, cwd string, reg *module.Registry, sessionStar
 
 	loaded, err := store.Load(reg)
 	if err != nil {
-		fmt.Fprintf(w, "sloprail: the new-format declarations in this project could not be read: %v\n", err)
-		return declaration.Loaded{}
+		return declaration.Loaded{}, err
 	}
 	ReportNatureInvalid(w, loaded.Invalid)
 	for _, sh := range loaded.Shadowed {
@@ -43,7 +54,7 @@ func LoadDeclarations(w io.Writer, cwd string, reg *module.Registry, sessionStar
 	for _, o := range loaded.ScopeOverlaps {
 		fmt.Fprintf(w, "sloprail: %s\n", o.Message())
 	}
-	return loaded
+	return loaded, nil
 }
 
 // DeclarationStore builds the plugin-aware declaration store for a folder, resolving the

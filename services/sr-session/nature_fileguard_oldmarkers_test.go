@@ -23,5 +23,5 @@ func TestFileOldMarkers(t *testing.T) {
 		e := event.Event{Kind: kind, Fields: map[string]any{filemod.FieldOldMarkers: was}}
 		assert.Equal(t, was, fileOldMarkers(e), kind)
 	}
-	assert.Equal(t, []any{}, fileMatchScopeEvent(create, nil).Fields["oldMarkers"])
+	assert.Equal(t, []any{}, fileMatchScopeEvent(create).Fields["oldMarkers"])
 }

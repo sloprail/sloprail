@@ -164,9 +164,6 @@ cites="$(printf '%s' "$event" | jq -c '(.changeset.citations // [])[] | select((
 # here is this prepare's own re-read failing — reported inline rather than
 # silently dropped, so the judge can say the evidence was not legible.
 cited_results=""
-# What the verdict is keyed by: the quotes alone. The expansion below reads the transcript, which
-# a `verify` (trusting the commit trailers) does not have; run and verify must key alike.
-key_results=""
 idx=0
 while IFS= read -r c; do
   [ -n "$c" ] || continue
@@ -175,9 +172,6 @@ while IFS= read -r c; do
   cline="$(printf '%s' "$c" | jq -r '.line')"
   # The call that printed the output: `echo 'tests passed'` proves nothing.
   ccall="$(printf '%s' "$c" | jq -r '.call // ""')"
-  key_results="${key_results}### cited_results[$idx]
-quoted: ${quote}
-"
   cited_results="${cited_results}### cited_results[$idx] ${cpath}:${cline}
 produced by: ${ccall:-(unknown)}
 quoted: ${quote}
@@ -295,7 +289,5 @@ evidence_ok=false
 jq -n \
   --argjson tasks "$tasks" \
   --arg results "$cited_results" \
-  --arg keyresults "$key_results" \
   --argjson ok "$evidence_ok" \
-  '{additionalContext: {tasks: $tasks, cited_results: $results, evidence_ok: $ok},
-    keyContext: {tasks: $tasks, cited_results: $keyresults, evidence_ok: $ok}}'
+  '{additionalContext: {tasks: $tasks, cited_results: $results, evidence_ok: $ok}}'

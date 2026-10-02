@@ -205,84 +205,19 @@ func decode(s string) map[string]any {
 	return m
 }
 
-// ResolveStale is a10n's ResolveStale for a rule (only COMPLETE runs: another Stop's
-// run still in flight is not this evaluation's to clear): a failing check whose input is
-// no longer one the live run holds is an orphan — the files it judged have left
-// the range — and stays a failure forever unless it is cleared. It becomes skip,
-// with the reason, and is no longer outstanding.
-//
-// A check without a fingerprint (a requirement, a script) has no input identity to
-// compare, so its identity is (subject, kind): it stays failing while the live run
-// refuses it again, or has not evaluated that kind at all (an earlier check
-// refused first); it is stale once the live run passes it, or evaluates the kind
-// for other subjects only (its subject left the range).
-//
-// The cache is append-only: the marks are one more run, recorded here and written on Close,
-// that names the (run, subject, kind) of each check it resolves and carries no range of its own.
+// ResolveStale is a no-op: it resolves nothing and returns 0. a10n's ResolveStale cleared a
+// failing check whose input had left the range, by recording a skip over it. That was sound
+// when a result belonged to one range. The cache is content-keyed and shared by every branch,
+// session and worktree: a stored fail is a fact about (rule, subject, content), and a skip
+// recorded over it would be the NEWEST result of that key, so it would hide the refusal from
+// every other branch that holds the same content (its verify would say "not judged yet" and
+// its run would re-roll the judge). A fail whose input left THIS range needs no clearing: no
+// lookup of this range asks for its key. The method stays so the Store keeps a10n's shape;
+// views still honour "resolves" runs an earlier build may have written.
 func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 	s.mu.Lock()
-	err := s.writable()
-	s.mu.Unlock()
-	if err != nil {
-		return 0, err
-	}
-	db, done, err := s.view()
-	if err != nil {
-		return 0, err
-	}
-	defer done()
-	at := stamp()
-	_, err = db.Exec(`
-		UPDATE checks
-		SET status = 'skip',
-		    metadata = json_set(metadata, '$.reason', 'stale: its input is no longer in the range', '$.staleFrom', 'fail'),
-		    checked_at = ?
-		WHERE status = 'fail'
-		  AND run_id IN (SELECT id FROM check_runs
-		                 WHERE check_id = ? AND json_extract(metadata, '$.ruleHash') = ? AND id <> ?
-		                   AND json_extract(metadata, '$.state') = 'complete')
-		  AND NOT EXISTS (SELECT 1 FROM checks live
-		                  WHERE live.run_id = ? AND live.subject = checks.subject
-		                    AND live.kind = checks.kind AND live.fingerprint = checks.fingerprint)
-		  AND NOT (checks.fingerprint IS NULL AND (
-		        EXISTS (SELECT 1 FROM checks live
-		                WHERE live.run_id = ? AND live.subject = checks.subject AND live.kind = checks.kind
-		                  AND live.status IN ('fail', 'error', 'interrupted'))
-		        OR NOT EXISTS (SELECT 1 FROM checks live WHERE live.run_id = ? AND live.kind = checks.kind)))`,
-		at, rule, ruleHash, liveRunID, liveRunID, liveRunID, liveRunID)
-	if err != nil {
-		return 0, fmt.Errorf("checkstore: resolve stale for %q: %w", rule, err)
-	}
-	rows, err := db.Query(`SELECT run_id, subject, kind, COALESCE(fingerprint, '') FROM checks WHERE checked_at = ? AND status = 'skip'`, at)
-	if err != nil {
-		return 0, fmt.Errorf("checkstore: resolve stale for %q: %w", rule, err)
-	}
-	defer rows.Close()
-	var marks []resolution
-	var skips []checkcache.Check // each mark's check, a skip that supersedes the fail it resolves
-	for rows.Next() {
-		var m resolution
-		var fp string
-		if err := rows.Scan(&m.Run, &m.Subject, &m.Kind, &fp); err != nil {
-			return 0, err
-		}
-		marks = append(marks, m)
-		skips = append(skips, checkcache.Check{Subject: m.Subject, Kind: m.Kind, Status: StatusSkip, Fingerprint: fp,
-			Metadata: map[string]any{"reason": "stale: its input is no longer in the range", "staleFrom": StatusFail}})
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if len(marks) == 0 {
-		return 0, nil
-	}
-	s.mu.Lock()
 	defer s.mu.Unlock()
-	run := &checkcache.Run{ID: newID("run"), RunAt: at, Rule: rule, RuleHash: ruleHash, Complete: true,
-		Metadata: map[string]any{resolvesKey: marks}, Checks: skips}
-	s.runs = append(s.runs, run)
-	s.byID[run.ID] = run
-	return len(marks), nil
+	return 0, s.writable()
 }
 
 func (s *store) RunRefs(rule string) (RunRefs, error) {

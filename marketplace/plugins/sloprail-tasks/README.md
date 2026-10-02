@@ -172,7 +172,7 @@ that can never actually fail. See that guard's own section below.
 
 ### task-md-first — PreFileWrite gate + file-guard
 
-*Prevention is a gate, the committed-changeset check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the committed files at Stop: uncommitted changes to a task file refuse the Stop with "commit these", and the rule then runs over the range of commits since it last passed, each script looping over `changeset.files[]` and reading the committed tree from `$SR_TREE`). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
+*Prevention is a gate, the committed-changeset check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the committed files at Stop: uncommitted changes to a task file refuse the Stop with "commit these", and the rule is then judged by `sr-checks run` over the explicit range `merge-base(base, HEAD)..HEAD`, each script looping over `changeset.files[]` and reading the committed tree from `$SR_TREE`). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
 
 Over any file inside a task folder (`memories/tasks/<group>/<task>/`, gate
 files under its `gates/` included) other than `TASK.md` itself. A task folder
@@ -202,7 +202,7 @@ describe that 70%, and from then on every verification passes because the spec w
 rewritten to match the work.
 
 Two checks, cheap first. The gate half runs only the first — no model runs before a
-write lands — and the file-guard runs both at Stop:
+write lands — and the file-guard runs both (`sr-checks run` judges, Stop verifies):
 1. **Script** (gate and file-guard) — a write that **creates** the task, or **changes its body** (the
    prose after the frontmatter, compared with the file on disk at Pre and, in the
    file-guard, at the range's base against head), must carry at least one citation
@@ -210,7 +210,7 @@ write lands — and the file-guard runs both at Stop:
    trailer). None is refused deterministically before the model, and
    the refusal spells out the `sr-file` form to use. A write that leaves the body
    byte-identical — a status change — is permitted uncited.
-2. **Judge** (file-guard, at Stop) — the body must correspond to the cited words and hold that **and
+2. **Judge** (file-guard, judged by `sr-checks run`, verified at Stop) — the body must correspond to the cited words and hold that **and
    nothing else**. It is handed each cited quote and the transcript `path:line` it
    resolved to. A valid citation wrapped in agent-authored elaboration — inferred
    requirements, a suggested approach, invented rationale — is slop around a
@@ -224,8 +224,8 @@ post-write refusal reports damage already done to the oracle. The Stop after-che
 backstops writes that reached the tree without passing pre-tool.
 
 *Uncited frontmatter edits and the Stop check.* The file-guard judges the squashed
-range: a rule's base does not move until it passes, so the range accumulates its
-commits and their citations. `body-changed.sh` says whether any task in it was
+range, which carries all its commits and their
+citations. `body-changed.sh` says whether any task in it was
 created or had its body changed (a status edit leaves the body unchanged and is
 waived), so a task created with a cited commit and then moved to `in_progress` by
 a plain one still carries its ask's citation. Each uncited *body* change is refused
@@ -344,7 +344,7 @@ half runs only the script, the file-guard both:
 1. **Script**: every `gates/*.sh`, run in name order with `SR_WORKSPACE` set.
    `exit 0` passes; the first failing (or non-executable, or unrunnable) gate
    refuses, naming it. `.md` files are untouched here.
-2. **Prepare + judge** (file-guard, at Stop): reached only once every `.sh` gate passed. The prepare
+2. **Prepare + judge** (file-guard, judged by `sr-checks run`, verified at Stop): reached only once every `.sh` gate passed. The prepare
    collects every `gates/*.md` file's text (skipping the model call entirely
    — `{"skip": true}` — when none exist, the same transition-gate discipline
    the script uses); the judge decides, by actually looking (it may Read

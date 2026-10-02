@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -32,14 +34,19 @@ func TestT001_12_RunPushesItsRunsToTheResultsBranch(t *testing.T) {
 		if r.HeadRef != head || r.BaseRef != base || !r.Complete {
 			t.Fatalf("the run does not record its range and finish: %+v", r)
 		}
+		// One verdict per guard x subject: the guard's record holds the pass and its
+		// fingerprint, and the steps inside it include the judge's pass.
 		for _, c := range r.Checks {
-			if strings.Contains(c.Kind, "judge") && c.Status == "pass" && c.Fingerprint != "" {
+			if c.Kind != "guard" || c.Status != "pass" || c.Fingerprint == "" {
+				continue
+			}
+			if steps, _ := json.Marshal(c.Metadata["steps"]); regexp.MustCompile(`"kind":"[^"]*judge[^"]*","status":"pass"`).Match(steps) {
 				judgeRun = true
 			}
 		}
 	}
 	if !judgeRun {
-		t.Fatalf("no finished run of file-guard/docs holds the judge's pass with its fingerprint: %+v", runs)
+		t.Fatalf("no finished run of file-guard/docs holds a guard pass with its fingerprint and the judge's pass among its steps: %+v", runs)
 	}
 	if status := e.Git(proj, "status", "--porcelain"); strings.Contains(status, "sloprail") {
 		t.Fatalf("the results branch touched the working tree:\n%s", status)

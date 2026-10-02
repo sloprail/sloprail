@@ -40,6 +40,20 @@ fi
 exit 0
 `
 
+// checkRefuseSecretFileGuard is checkRefuseSecret for an after-check file-guard: its ledger
+// is kept in the plugin's root, outside its `.sloprail`, because a file-guard's verdicts are keyed by
+// a hash of everything under `.sloprail`, so a check that writes there changes its own key
+// between the run that stored a verdict and the verify that reads it.
+const checkRefuseSecretFileGuard = `#!/bin/sh
+payload="$(cat)"
+echo asked >> "$SR_GUARDRAIL_DIR/../../../$(basename "$SR_GUARDRAIL_DIR").ledger"
+if printf '%s' "$payload" | grep -q SECRET; then
+  echo '{"reason":"this write holds a SECRET and is not fine"}'
+  exit 1
+fi
+exit 0
+`
+
 // T035_01: the headline for pre-tool. A project that installed a plugin shipping a
 // NEW-format GATE, and copied nothing, has that guard blocking a
 // not-fine write BEFORE it lands — and the refusal NAMES THE PLUGIN.
@@ -129,7 +143,7 @@ func TestT035_03_PluginAfterCheckGuardFiresAtStopAndNamesThePlugin(t *testing.T)
 	e.GitInit(proj)
 
 	e.EnablePluginShippingFileGuard(proj, "acme-guards", "no-secret-memories", afterGuardYAML,
-		map[string]string{"check.sh": checkRefuseSecret})
+		map[string]string{"check.sh": checkRefuseSecretFileGuard})
 
 	e.Run(proj, "s-035-03", "write a memory with a secret", Turns("done",
 		Write("w1", "memories/note.md", "the password is SECRET"),
@@ -161,7 +175,7 @@ func TestT035_04_PluginAfterCheckGuardAdmitsFineFile(t *testing.T) {
 	e.GitInit(proj)
 
 	pluginRoot := e.EnablePluginShippingFileGuard(proj, "acme-guards", "no-secret-memories", afterGuardYAML,
-		map[string]string{"check.sh": checkRefuseSecret})
+		map[string]string{"check.sh": checkRefuseSecretFileGuard})
 
 	e.Run(proj, "s-035-04", "write a clean memory", Turns("done",
 		Write("w1", "memories/note.md", "a perfectly ordinary note"),
@@ -173,7 +187,7 @@ func TestT035_04_PluginAfterCheckGuardAdmitsFineFile(t *testing.T) {
 	}
 	// It DID run — it just passed (proving the pass is a real check, not a guard
 	// that never fired at Stop).
-	if n := e.PluginFileGuardLedger(pluginRoot, "no-secret-memories", "ledger"); n == 0 {
+	if n := e.PluginFileGuardLedger(pluginRoot, "no-secret-memories", "../../../no-secret-memories.ledger"); n == 0 {
 		t.Errorf("the plugin after-check guard never ran on a matching settled file")
 	}
 }

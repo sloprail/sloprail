@@ -25,12 +25,15 @@ facts directly:
 | `markers` | list | the `sr:` markers the file carries at `head`, elements `{kind, fqn, line}` (a deleted file's are the ones it carried) |
 | `oldMarkers` | list | the markers it carried at the range's base (empty on a create) |
 | `trailers` | map | each commit-message trailer key in the range to its list of values |
-| `context` | map | every declared context, by name, `{active, payload}` |
+
+There is **no `context`** here: a file-guard judges committed bytes, in CI, with no
+session, and a context is session state. A file-guard whose `match` reads `context`
+fails to load; put the condition on a gate (a gate's `match` reads `context`).
 
 ```
 path endsWith "SKILL.md"
 any(markers, .kind == "invariant")
-context["refactoring"].active and any(markers, .kind == "moved-from")
+any(markers, .kind == "moved-from")
 any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
 status == "A" and "move-only" in (trailers["Sloprail-Refactor"] ?? [])
 ```

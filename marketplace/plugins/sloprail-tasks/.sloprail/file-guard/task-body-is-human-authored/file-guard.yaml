@@ -15,8 +15,8 @@
 #
 # The session resolves every quote against its transcripts before any check runs
 # and puts the ones that resolve on `changeset.citations`, so a citation a check
-# sees EXISTS. A rule's range does not move until it passes, so the commits since
-# it last passed all count.
+# sees EXISTS. Every commit of the explicit range
+# counts.
 #
 # THE REQUIREMENT IS DECLARED, CONDITIONALLY. `require` below demands a user
 # citation, but only `when` body-changed.sh says the changeset sets an ask: a task

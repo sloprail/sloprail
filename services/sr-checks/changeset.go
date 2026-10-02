@@ -10,7 +10,6 @@ import (
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/declaration"
-	"github.com/sloprail/sloprail/internal/guardrail"
 )
 
 // newChangesetCmd shows what a file-guard would be judged on, without judging it.
@@ -35,13 +34,16 @@ refusal cites it (` + "`file-guard/size-limit`" + `, ` + "`plugin/file-guard/siz
 The output is JSON on stdout:
 
   rule                the qualified name
-  base, head          the range, as SHAs
-  ruleHash            the hash of the rule's whole .sloprail root (its own folder, every
-                      other rule, schemas and shared scripts)
+  base, head          the range, as SHAs: the stated one, raised to the rule's own floor
+                      (the parent of the commit that last changed the rule), as run judges it
+  ruleHash            the hash of every git-tracked file under the rule's .sloprail root
+                      (shared _lib included), as on disk; untracked and ignored files do
+                      not count; a plugin rule hashes its plugin's .sloprail root
   unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve
   payload             what a check receives on stdin: event, changeset (commits, files,
                       others, citations — each with the commits that carried it and the
-                      files they changed), subject
+                      files they changed), subject. A rule with a subjects: script
+                      prints subjects, one payload per subject, from running that script.
 
 Nothing is run and nothing is recorded. Where the session cannot be found from the environment
 (no CLAUDE_CODE_SESSION_ID), quotes are not resolved.`,
@@ -56,12 +58,19 @@ Nothing is run and nothing is recorded. Where the session cannot be found from t
 
 // changesetOutput is what `sr-checks changeset` prints.
 type changesetOutput struct {
-	Rule                string            `json:"rule"`
-	Base                string            `json:"base"`
-	Head                string            `json:"head"`
-	RuleHash            string            `json:"ruleHash"`
-	UnresolvedCitations []string          `json:"unresolvedCitations"`
-	Payload             changeset.Payload `json:"payload"`
+	Rule                string   `json:"rule"`
+	Base                string   `json:"base"`
+	Head                string   `json:"head"`
+	RuleHash            string   `json:"ruleHash"`
+	UnresolvedCitations []string `json:"unresolvedCitations"`
+	// Payload: what a check receives on stdin; with a `subjects:` script, one per subject.
+	Payload  *changeset.Payload `json:"payload,omitempty"`
+	Subjects []changesetSubject `json:"subjects,omitempty"`
+}
+
+type changesetSubject struct {
+	ID      string            `json:"id"`
+	Payload changeset.Payload `json:"payload"`
 }
 
 func runChangeset(cmd *cobra.Command, _ []string) error {
@@ -75,30 +84,22 @@ func runChangeset(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	match, err := guardrail.CompileFileMatch(g.Match)
-	if err != nil {
-		return fmt.Errorf("sloprail: file-guard %q match %q does not compile: %w", g.Name, g.Match, err)
-	}
-	hash, err := changeset.RuleHash(g.Root())
-	if err != nil {
-		return err
-	}
-	ctx := checkrun.ContextMatchValue(t.contexts(cmd))
-	cs, err := changeset.Build(t.root, t.rng, changeset.Options{
-		Deletions: changeset.DeletionMode(g.Deletions),
-		Scan:      checkrun.Markers,
-		Select:    checkrun.Selector(match, ctx),
-	})
+	shown, err := checkrun.Show(checkrun.Params{Root: t.root, Range: t.rng, Cwd: t.root, Transcript: t.sess.record}, g)
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: %w", g.Name, err)
 	}
 	unresolved := []string{}
-	for _, u := range checkrun.ResolveCitations(&cs, t.sess.record, t.root) {
+	for _, u := range shown.Unresolved {
 		unresolved = append(unresolved, u.String())
 	}
 	out := changesetOutput{
-		Rule: g.Qualified(), Base: t.rng.Base, Head: t.rng.Head, RuleHash: hash, UnresolvedCitations: unresolved,
-		Payload: changeset.NewPayload(cs, changeset.Whole(cs), t.sess.record, ctx),
+		Rule: g.Qualified(), Base: shown.Range.Base, Head: shown.Range.Head, RuleHash: shown.RuleHash, UnresolvedCitations: unresolved,
+	}
+	for _, s := range shown.Subjects {
+		out.Subjects = append(out.Subjects, changesetSubject{ID: s.ID, Payload: s.Payload})
+	}
+	if g.Subjects == "" && len(out.Subjects) == 1 {
+		out.Payload, out.Subjects = &out.Subjects[0].Payload, nil
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,8 +149,8 @@ func notePendingWorktrees(reg sessionstate.Store, p HookPayload) {
 }
 
 // registerPendingWorktrees registers the worktrees earlier calls created, as ad-hoc
-// folders of the agent that made them, started where each was created (its own HEAD
-// reflog's oldest entry), so a commit made in the same call it was created in is judged.
+// folders of the agent that made them, started where each was created (its HEAD
+// at registration), so a commit made in the same call it was created in is judged.
 func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent string) {
 	v, had, err := reg.Meta(pendingWorktreesKey)
 	if err != nil || !had {
@@ -245,6 +246,12 @@ func sessionFoldersOf(p HookPayload) []sessionstate.Folder {
 	return out
 }
 
+// unreadableRegistry is the error for a session registry that exists but cannot be read (corrupt
+// or unreadable): it names the file and the way out. It is never read as "absent".
+func unreadableRegistry(path string, err error) error {
+	return fmt.Errorf("the session registry %s exists but cannot be read (%w); to recover, delete that file (the session re-registers its folders at the next hook) or fix its permissions, then stop again", path, err)
+}
+
 // sessionFolders is sessionFoldersOf with the error of a registry that exists but could not be
 // read: a caller that refuses must not take that for "nothing else was committed".
 func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
@@ -254,18 +261,18 @@ func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil // an absent registry is no registry: a project without rules is never blocked by it
 		}
-		return nil, err
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return nil, err
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	defer reg.Close()
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
-		return nil, err
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	var out []sessionstate.Folder
 	for _, f := range folders {
@@ -276,39 +283,6 @@ func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
 			continue
 		}
 		out = append(out, f)
-	}
-	return out, nil
-}
-
-// foldersTargeted is the registered folders of this agent (besides its own tree) that a Bash
-// call's git commands run in: the repositories whose own rules apply to the call.
-// A registry that cannot be read is an error, never "no folders": the call is then refused.
-func foldersTargeted(p HookPayload) ([]string, error) {
-	dirs := commandFolders(p)
-	if len(dirs) == 0 {
-		return nil, nil
-	}
-	registered, err := sessionFolders(p)
-	if err != nil {
-		return nil, err
-	}
-	if len(registered) == 0 {
-		return nil, nil
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, dir := range dirs {
-		tree, err := gitrepo.Root(dir)
-		if err != nil || tree == "" {
-			continue
-		}
-		tree = filepath.Clean(tree)
-		for _, f := range registered {
-			if sameDir(f.Path, tree) && !seen[f.Path] {
-				seen[f.Path] = true
-				out = append(out, f.Path)
-			}
-		}
 	}
 	return out, nil
 }

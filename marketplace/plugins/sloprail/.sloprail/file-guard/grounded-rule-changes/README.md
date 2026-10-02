@@ -66,7 +66,7 @@ plugin's claims its name first and the project's is reported as shadowed.
 
 ## The gate
 
-A file-guard judges commits at Stop, against the config the commit itself wrote, so a
+A file-guard judges commits (`sr-checks run` judges, Stop verifies), against the config the commit itself wrote, so a
 change that adds this rule to `disabled:` would switch off the one rule that could refuse
 it. `gate/grounded-rule-changes` therefore refuses a write or a delete of
 `.sloprail/config.yaml` before it lands, unless it cites. Cite it with `sr-file`:

@@ -31,6 +31,9 @@ type TrackedRange struct {
 	AddedBy string
 	// UntrackedReason is "" while tracked; the reason the agent gave for dropping it.
 	UntrackedReason string
+	// AbandonedTip is the tip the range was untracked at; "" while tracked. An untracked range
+	// whose branch tip moves past it is tracked again by the next automatic tracking.
+	AbandonedTip string
 	// AgentID names the sub-agent the range belongs to; empty for the root.
 	AgentID string
 }
@@ -57,7 +60,9 @@ func (s *store) TrackRange(r TrackedRange) error {
 			INSERT INTO session_refs (session_id, folder, ref, first_tip, tip, agent_id, base, added_by)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (session_id, folder, ref) DO UPDATE SET tip = excluded.tip,
-				base = CASE WHEN session_refs.base = '' THEN excluded.base ELSE session_refs.base END`,
+				base = CASE WHEN session_refs.base = '' THEN excluded.base ELSE session_refs.base END,
+				untracked_reason = CASE WHEN session_refs.untracked_reason <> '' AND session_refs.abandoned_tip <> '' AND session_refs.abandoned_tip <> excluded.tip THEN '' ELSE session_refs.untracked_reason END,
+				abandoned_tip = CASE WHEN session_refs.untracked_reason <> '' AND session_refs.abandoned_tip <> '' AND session_refs.abandoned_tip <> excluded.tip THEN '' ELSE session_refs.abandoned_tip END`,
 			r.SessionID, r.Folder, r.Head, r.HeadSHA, r.HeadSHA, r.AgentID, r.Base, r.AddedBy)
 	} else {
 		_, err = db.Exec(`
@@ -75,20 +80,26 @@ func (s *store) TrackRange(r TrackedRange) error {
 
 // UntrackRange stops answering for a range, saying why. An untracked range stays listed,
 // reason and all, so the Stop can name it; a range that was never tracked is recorded as
-// untracked so an automatic tracking does not bring it back.
-func (s *store) UntrackRange(sessionID, folder, head, reason, agentID string) error {
+// untracked so an automatic tracking does not bring it back while its branch stays at tip (the
+// tip it was untracked at, never empty). A branch whose tip moves is tracked again.
+func (s *store) UntrackRange(sessionID, folder, head, reason, agentID, tip string) error {
 	if reason == "" {
 		return errors.New("sessionstate: untracking a range needs a reason")
+	}
+	if tip == "" {
+		// "" would make the untrack permanent: an unknown tip never does.
+		return errors.New("sessionstate: untracking a range needs the tip it is untracked at")
 	}
 	db, err := s.conn()
 	if err != nil {
 		return err
 	}
 	if _, err := db.Exec(`
-		INSERT INTO session_refs (session_id, folder, ref, first_tip, tip, agent_id, base, added_by, untracked_reason)
-		VALUES (?, ?, ?, '', '', ?, '', ?, ?)
-		ON CONFLICT (session_id, folder, ref) DO UPDATE SET untracked_reason = excluded.untracked_reason`,
-		sessionID, folder, head, agentID, RangeAgent, reason); err != nil {
+		INSERT INTO session_refs (session_id, folder, ref, first_tip, tip, agent_id, base, added_by, untracked_reason, abandoned_tip)
+		VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+		ON CONFLICT (session_id, folder, ref) DO UPDATE SET untracked_reason = excluded.untracked_reason,
+			abandoned_tip = excluded.abandoned_tip, tip = CASE WHEN excluded.tip = '' THEN session_refs.tip ELSE excluded.tip END`,
+		sessionID, folder, head, tip, tip, agentID, RangeAgent, reason, tip); err != nil {
 		return fmt.Errorf("sessionstate: untrack range %q in %q: %w", head, folder, err)
 	}
 	return nil
@@ -114,7 +125,7 @@ func (s *store) Ranges(sessionID string) ([]TrackedRange, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT session_id, folder, ref, base, tip, added_by, untracked_reason, agent_id
+		SELECT session_id, folder, ref, base, tip, added_by, untracked_reason, agent_id, abandoned_tip
 		FROM session_refs WHERE session_id = ? ORDER BY folder, ref`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("sessionstate: list ranges: %w", err)
@@ -123,7 +134,7 @@ func (s *store) Ranges(sessionID string) ([]TrackedRange, error) {
 	var out []TrackedRange
 	for rows.Next() {
 		var r TrackedRange
-		if err := rows.Scan(&r.SessionID, &r.Folder, &r.Head, &r.Base, &r.HeadSHA, &r.AddedBy, &r.UntrackedReason, &r.AgentID); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Folder, &r.Head, &r.Base, &r.HeadSHA, &r.AddedBy, &r.UntrackedReason, &r.AgentID, &r.AbandonedTip); err != nil {
 			return nil, fmt.Errorf("sessionstate: list ranges: %w", err)
 		}
 		out = append(out, r)

@@ -87,14 +87,8 @@ func project(t *testing.T) (*harness.Env, string, string) {
 // everything the rule was handed.
 func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.Scenario) []changesetkit.Observed {
 	t.Helper()
-	// The harness's pre-Stop check and the Stop's verify each dispatch the script too
-	// (script checks are not cached); what this cycle's range hands the rule is the
-	// entry its own `sr check run --base --head` adds, read from after the Run.
-	base := e.Git(proj, "rev-parse", "HEAD")
 	e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
-	seen := len(harness.ReadLedgerLines(t, ledger))
-	e.CheckRunRange(proj, sess, base, "HEAD")
-	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger)[seen:])
+	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
 }
 
 // T026_01: a file whose only change is its MODE is reported as an update.

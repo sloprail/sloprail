@@ -11,7 +11,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// Each folder of a session is judged by ITS OWN rules (adapted from 003_08, 003_40, 003_61b
+// Each folder of a session owes commits under ITS OWN rules (adapted from 003_08, 003_40, 003_61b
 // on main before the cut: only the folder/rules parts; which commits a file-guard judges is
 // `sr-checks run`'s and the tracked ranges', not these tests').
 
@@ -40,28 +40,19 @@ func declareNothing(t *testing.T, e *Env, proj string) {
 	e.CommitAll(proj, "no rules here")
 }
 
-// T055_05: a repository's rules apply in it even when the session's own project declares no
-// rule at all: its gate refuses a command run there, and commit-required covers its tree.
-func TestT055_05_AFoldersRulesApplyWhenTheOwnProjectHasNone(t *testing.T) {
+// T055_05: commit-required covers a registered folder's tree even when the session's own
+// project declares no rule at all (the folder's own file-guard owes a commit there).
+func TestT055_05_AFoldersCommitsAreOwedWhenTheOwnProjectHasNoRules(t *testing.T) {
 	e, proj, other := two(t)
 	declareNothing(t, e, proj)
 	const sess = "s-055-05"
-	e.Gate(other, "no-commits-here", `on:
-  - event: PreCommandInvoke
-    match: any(event.invocations, .bin == "git")
-checks:
-  - script: ./refuse.sh
-`, map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"OTHER-REPO-GATE\"}'\nexit 1\n"})
 	e.FileGuard(other, "docs", docsGuard, passing)
 	e.CommitAll(other, "the rules")
 
-	res := e.Run(proj, sess, "work elsewhere", Turns("done",
-		Bash("b1", "git -C "+other+" commit -q --allow-empty -m 'refused'"),
-		Bash("b2", "mkdir -p "+other+"/docs && echo hi > "+other+"/docs/new.md"),
+	e.Run(proj, sess, "work elsewhere", Turns("done",
+		Bash("b0", "git -C "+other+" commit -q --allow-empty -m 'register this folder'"),
+		Bash("b1", "mkdir -p "+other+"/docs && echo hi > "+other+"/docs/new.md"),
 	))
-	if got := strings.Join(res.Refusals(), "\n"); !strings.Contains(got, "OTHER-REPO-GATE") {
-		t.Fatalf("the other repository's gate did not judge a command run there when the project declares nothing:\n%s", got)
-	}
 	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 	if !strings.Contains(got, "Commit your work") || !strings.Contains(got, "docs/new.md") {
 		t.Fatalf("commit-required did not cover the other folder when the project declares nothing:\n%s", got)
@@ -151,5 +142,30 @@ func TestT055_08_ASubagentWithoutAnIdentityStillOwesItsCommits(t *testing.T) {
 	res := e.CLIDirectStdinEnv(proj, string(payload), e.SessionEnv(""), "sr-session", "subagent-stop")
 	if !harness.Blocked(res) || !strings.Contains(res.Output, "docs/b.md") {
 		t.Fatalf("a sub-agent that could not be identified went unjudged:\n%s", res.Output)
+	}
+}
+
+// T055_09: the root's Stop verifies the range a sub-agent tracked in ANOTHER repository even
+// when the root's tree declares no rule at all: the root must not end its Stop on "no rules
+// here". The other repository's rule refuses; the sub-agent judged its range (`sr-checks run`
+// at its own turn end), and the root's Stop reports that stored verdict.
+func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
+	e, proj, other := two(t)
+	declareNothing(t, e, proj)
+	const sess = "s-055-09"
+	e.FileGuard(other, "docs", "match: \"docs/**\"\nchecks:\n  - script: ./refuse.sh\n",
+		map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"SUBAGENT-RANGE-VERDICT\"}'\nexit 1\n"})
+	e.CommitAll(other, "the rules")
+	script := harness.SubagentScript(t, Turns("sub done",
+		Bash("sb0", "git -C "+other+" commit -q --allow-empty -m 'register this folder'"),
+		Bash("sb1", "mkdir -p "+other+"/docs && echo hi > "+other+"/docs/a.md && git -C "+other+" add -A && git -C "+other+" commit -q -m 'the sub-agent work'"),
+	))
+
+	e.Run(proj, sess, "delegate", Turns("root done",
+		harness.Dispatch("d1", "write the doc elsewhere", script, ""),
+	))
+	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
+		t.Fatalf("the root's Stop did not verify the sub-agent's tracked range when the root declares no rule:\n%s", got)
 	}
 }

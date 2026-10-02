@@ -146,3 +146,31 @@ func TestPreTool_NoDeclarationDirectoryStillPermits(t *testing.T) {
 	assert.Empty(t, stdout.String(),
 		"a project with no guards at all is not a project whose guards could not be read")
 }
+
+// TestDispatch_UnreadableDeclarationStoreWithoutSessionDoesNotBlockTheTurn.
+//
+// The sessionless case: no file-guard can load from an unreadable folder, so no identity is
+// asked for and the turn is not held.
+func TestDispatch_UnreadableDeclarationStoreWithoutSessionDoesNotBlockTheTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root lists a 0000 directory, so the store cannot be made unreadable")
+	}
+
+	proj := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("s"), 0o644))
+	runGit(t, proj, "add", ".")
+	runGit(t, proj, "commit", "-m", "base")
+	unreadableDeclarationDir(t, proj)
+	t.Chdir(proj)
+
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&stdout)
+
+	assert.Empty(t, natureDispatchStop(cmd, HookPayload{Cwd: proj}, reg))
+	assert.NotContains(t, stdout.String(), `"decision":"block"`)
+}

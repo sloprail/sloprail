@@ -35,7 +35,7 @@ is held to it and no other file is.
 
 It judges **commits**: at Stop, uncommitted changes to a file the rule selects
 refuse the turn with "commit these" (nothing is committed for the agent), and the
-rule then runs once over the range from where it last passed to `HEAD`, handed to
+rule is judged by `sr-checks run` once over the range `merge-base(base, HEAD)..HEAD`, handed to
 the judge as one squashed diff (`{{ change }}`) and the files (`changeset.files`).
 A refused range is never partly passed, so a fix is judged together with the
 commit it fixes.

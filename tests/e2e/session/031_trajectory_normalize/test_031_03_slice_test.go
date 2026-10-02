@@ -30,14 +30,14 @@ import (
 // it reconstructs the payload from SR_TRANSCRIPT/SR_WORKSPACE the way the shipped
 // examples do — the same idiom 018's askScript uses.
 
-// sliceWatch is a Stop gate, so it runs at a cycle's end and records both a
-// default and a whole-session normalize read of the session. A file-guard is no
-// longer the vehicle: it is judged by `sr check run` over a commit range, outside
-// any session, so it has no session record to read. The check reaches the
-// session's record and read mark through SR_TRANSCRIPT / SR_WORKSPACE, which the
-// dispatch sets on a gate's check.
-const sliceWatch = `on:
-  - event: Stop
+// sliceWatch is a NEW-FORMAT file-guard, after-check , so it runs at a cycle's
+// end and records both a default and a whole-session normalize read of the session.
+// `match: "**/*.md"` fires on every committed change. The
+// check reaches the session's record and read mark through SR_TRANSCRIPT /
+// SR_WORKSPACE, which the new dispatch sets on a file-guard check exactly as the
+// old-format hook env did. The `scoped`/`whole` ledgers have no `.md` suffix, so
+// the guard is never handed its own bookkeeping.
+const sliceWatch = `match: "**/*.md"
 checks:
   - script: ./slice.sh
 `
@@ -67,20 +67,22 @@ exit 0
 `
 
 func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T) {
-	e := New(t)
+	e := NewJudging(t)
 	proj := e.Project()
-	// A repository, the same setup 018 needs.
+	// A repository, so the cycle has a baseline and its Post file event fires the
+	// hook — the same setup 018 needs.
 	e.GitInit(proj)
 	// The ledgers are outside the repository: in the rule's own folder they would be
 	// committed with the agent's work, and a rule whose folder changed forgets its
 	// earlier passes.
 	ledgers := t.TempDir()
-	e.Gate(proj, "slicer", sliceWatch, map[string]string{"slice.sh": strings.ReplaceAll(sliceTemplate, "DIR", ledgers)})
+	e.FileGuard(proj, "slicer", sliceWatch, map[string]string{"slice.sh": strings.ReplaceAll(sliceTemplate, "DIR", ledgers)})
 	e.CommitAll(proj, "before the session")
 
 	const sess = "s-031-09"
 	// Distinctive command lines, one per cycle, that show up as a PreCommandInvoke
-	// raw field — the token each read is searched for.
+	// raw field — the token each read is searched for. Each cycle also writes a
+	// file so the Post-bound hook fires.
 	e.Run(proj, sess, "first cycle", Turns("done",
 		Bash("b1", "echo CYCLEONECOMMAND"),
 		Write("w1", "one.md", "first\n"),

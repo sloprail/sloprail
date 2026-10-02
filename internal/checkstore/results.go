@@ -66,7 +66,7 @@ type CheckRecord struct {
 	// require:citation.
 	Kind   string
 	Status string
-	// Fingerprint is the cache key part; "" is never cached.
+	// Fingerprint is the cache key part; only a guard's verdict carries one.
 	Fingerprint string
 	Metadata    map[string]any
 	Items       []CheckItem

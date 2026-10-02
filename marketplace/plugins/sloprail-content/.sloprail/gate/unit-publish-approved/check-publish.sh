@@ -22,7 +22,7 @@
 # publish is the irreversible step, so it is refused before it lands. A result
 # the engine could not derive (resultKnown false: sed -i, an unresolvable
 # sr-file line) is REFUSED, not waved through: a gate does not fail closed on
-# its own. The file-guard of the same name re-checks the settled file at Stop.
+# its own. The file-guard of the same name re-checks the settled file (`sr-checks run` judges it, Stop verifies).
 #
 # REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}` on
 # stdout. `set -uo pipefail`, never `set -e`.

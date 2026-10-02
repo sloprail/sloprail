@@ -44,10 +44,11 @@ And the check — a script whose exit code is the verdict (0 permits,
 non-zero refuses):
 
 ```bash
-# .sloprail/file-guard/no-todo-in-committed-code/check.sh
 #!/usr/bin/env bash
-if grep -q "TODO(no-ship)" "$SR_FILE"; then
-  echo '{"reason": "This file has a TODO(no-ship) marker — resolve it before writing."}'
+# .sloprail/file-guard/no-todo-in-committed-code/check.sh  (chmod +x)
+# stdin is the payload: .changeset.files[] holds each committed file's path and newContent
+if jq -e 'any(.changeset.files[]; (.newContent // "") | contains("TODO(no-ship)"))' >/dev/null; then
+  echo '{"reason": "A file in the committed range has a TODO(no-ship) marker — resolve it before committing."}'
   exit 1
 fi
 ```
@@ -67,8 +68,9 @@ The rule **refuses**, and the reason you wrote is shown back to the agent.
 stored verdicts with `sr-checks verify`, without asking a model.)
 
 A file-guard's verdict only binds where it is enforced. Add a CI job that runs
-`sr-checks verify --base <default branch> --head <PR head sha>` on every pull
-request and put a comment `sr-mark: ci-verify` beside that step (any provider:
+`sr-checks verify` on every pull request (`--base` the target branch, `--head`
+the PR head sha) and on every push to the default branch (`--base` the push's
+before sha, `--head` its after sha), and put a comment `sr-mark: ci-verify` beside that step (any provider:
 GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, ...). Until a committed file
 carries that marker, the shipped `sloprail/gate/ci-verify-required` refuses the
 end of the agent's turn and prints a snippet per provider; switch it off with

@@ -43,8 +43,10 @@ func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
 		return r, nil
 	}
 	if r.Base != EmptyTree {
-		if later, err := IsAncestor(dir, floor, r.Base); err != nil || later {
-			return r, err // the base is already at or after the floor
+		// Only ever RAISE: the floor must descend from the base. One on a side branch
+		// (before the merge-base, or unrelated to it) would widen the range to landed work.
+		if desc, err := IsAncestor(dir, r.Base, floor); err != nil || !desc {
+			return r, err
 		}
 	}
 	r.Base = floor

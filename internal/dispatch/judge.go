@@ -216,7 +216,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	if err != nil {
 		// Could not stage the verifier — a full temp dir, a permissions problem.
 		// Fail-closed: without the verifier the verdict is unconstrained.
-		return refuse(fmt.Sprintf(
+		return refuseNoVerdict(fmt.Sprintf(
 			"the judge could not be prepared (%v); refusing rather than asking the model with no verdict constraint", err)), nil
 	}
 	defer cleanup()
@@ -246,12 +246,12 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 		j.Timeout,
 	)
 	if startErr != nil {
-		return refuse(fmt.Sprintf(
+		return refuseNoVerdict(fmt.Sprintf(
 			"the judge substrate (sr-agent) could not be started: %v. Refusing because a check that cannot run must not be read as approval.%s",
 			startErr, quoted(stderr))), nil
 	}
 	if expired {
-		return refuse(fmt.Sprintf(
+		return refuseNoVerdict(fmt.Sprintf(
 			"the judge did not answer within the time limit and was stopped. Refusing because a check that did not answer must not be read as approval.%s",
 			quoted(stderr))), nil
 	}
@@ -264,7 +264,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// Non-zero: either the verdict was `pass:false` (the verifier rejected it and
 	// sr-agent's attempts ran out) or the substrate failed. Both refuse; the
 	// reason is the verifier's complaint, which sr-agent writes to stderr.
-	return refuse(judgeRefusalReason(stdout, stderr)), nil
+	return judgeRefusal(stdout, stderr), nil
 }
 
 // judgeCommand is the shell line that runs sr-agent for a judge.
@@ -356,6 +356,31 @@ func judgeEnv(j judgeCall) []string {
 		env = append(env, launchedByEnv+"="+j.LaunchedBy)
 	}
 	return append(env, j.Env...)
+}
+
+// judgeRefusal is the refusal of a judge that exited non-zero, typed: NoVerdict when it
+// produced no parseable answer at all, so no caller reads the reason text to tell.
+func judgeRefusal(stdout, stderr []byte) Verdict {
+	reason := judgeRefusalReason(stdout, stderr)
+	v := refuse(reason)
+	// Only the verifier's own reasoning of a pass:false answer is a verdict. Anything else —
+	// nothing written, an unparseable answer, an old sr-agent, the model's or the transport's
+	// failure text — is the judge failing to judge.
+	v.NoVerdict = true
+	for _, b := range [][]byte{stderr, stdout} {
+		if r := reasonFromVerifierOutput(b); r != "" {
+			v.NoVerdict = strings.HasPrefix(r, noVerdictReason)
+			break
+		}
+	}
+	return v
+}
+
+// refuseNoVerdict is a refusal that is no verdict: the judge could not run or did not answer.
+func refuseNoVerdict(reason string) Verdict {
+	v := refuse(reason)
+	v.NoVerdict = true
+	return v
 }
 
 // judgeRefusalReason extracts what to tell the agent from a rejected judge.

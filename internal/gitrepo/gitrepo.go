@@ -488,3 +488,32 @@ func ceilingDirs() map[string]bool {
 	}
 	return set
 }
+
+// TreeListing is `git ls-tree -r -z rev -- rel`: the mode, object name and path of every
+// file committed under rel at rev, NUL-separated. Empty when rel holds nothing at rev.
+// TrackedFiles lists the files git tracks under rel (repo-relative, slash-separated), paths
+// relative to the repository root. A git error is returned, never swallowed.
+func TrackedFiles(dir, rel string) ([]string, error) {
+	out, err := run(dir, "ls-files", "-z", "--", rel)
+	return splitNul(out), err
+}
+
+// UnignoredFiles lists the untracked files under rel that git does not ignore.
+func UnignoredFiles(dir, rel string) ([]string, error) {
+	out, err := run(dir, "ls-files", "-z", "-o", "--exclude-standard", "--", rel)
+	return splitNul(out), err
+}
+
+func splitNul(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, "\x00") {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func TreeListing(dir, rev, rel string) (string, error) {
+	return run(dir, "ls-tree", "-r", "-z", rev, "--", rel)
+}

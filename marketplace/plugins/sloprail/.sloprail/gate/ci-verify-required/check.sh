@@ -20,22 +20,11 @@ fi
 # An unborn HEAD has no commit for any file-guard to have judged: nothing to verify yet.
 git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 || exit 0
 
-command -v sr-checks >/dev/null 2>&1 ||
-  refuse "sr-checks is not on PATH, so the file-guards this project loads could not be listed to tell whether CI must verify them. Install the sloprail plugin's binaries."
-
-# The config at the default-branch base is what loading honours, as for `sr-checks verify`; a
-# repository with no default branch answers git's empty tree, which --base cannot take: the root
-# commit is the widest base it accepts.
-base="$(sr-checks default-base --head HEAD 2>/dev/null)" || refuse "ci-verify-required could not find the default branch's base for HEAD, so the file-guards could not be listed"
-if [ "$base" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]; then
-  base="$(git rev-list --max-parents=0 --reverse --date-order HEAD 2>/dev/null | head -n 1)"
-fi
-[ -n "$base" ] || refuse "ci-verify-required could not resolve a base for HEAD, so the file-guards could not be listed"
-
-if ! guards="$(sr-checks guards --base "$base" --head HEAD 2>/dev/null)"; then
-  refuse "'sr-checks guards --base $base --head HEAD' failed, so the file-guards this project loads could not be listed. Run it to see why."
-fi
-[ -n "$guards" ] || exit 0
+# Applies only where the project has its OWN file-guards: a committed file under .sloprail/file-guard/.
+# Guards a plugin ships are not the project's to enforce in its CI.
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || refuse "ci-verify-required could not find the repository root, so its file-guards could not be listed"
+own="$(git -C "$top" ls-tree -r --name-only HEAD -- .sloprail/file-guard 2>/dev/null)" || refuse "'git ls-tree' failed in $top, so whether the project has file-guards could not be checked"
+[ -n "$own" ] || exit 0
 
 git grep -q -F -e "$MARKER" HEAD -- 2>/dev/null
 case $? in
@@ -44,15 +33,18 @@ case $? in
   *) refuse "'git grep' failed in ${SR_WORKSPACE:-.}, so whether the committed tree carries a '$MARKER' CI marker could not be checked" ;;
 esac
 
-n="$(printf '%s\n' "$guards" | wc -l | tr -d ' ')"
-refuse "This project loads $n file-guard(s), but no committed file contains '$MARKER', so nothing shows that CI verifies their verdicts on pull requests. A file-guard's verdict is only enforced where 'sr-checks verify' runs: on this machine an agent can skip it, in CI it gates the merge.
+refuse "This project has its own file-guards under .sloprail/file-guard/, but no committed file contains '$MARKER', so nothing shows that CI verifies their verdicts on pull requests and on pushes to the default branch. A file-guard's verdict is only enforced where 'sr-checks verify' runs: on this machine an agent can skip it, in CI it gates the merge.
 
-Add a CI job that runs, on every pull request,
-  sr-checks verify --base <default branch> --head <pull request head sha>
+Add a CI job that runs, on every pull request AND on every push to the default branch,
+  pull request:  sr-checks verify --base <merge-base of the target branch and the PR head> --head <PR head sha>
+  push to main:  sr-checks verify --base <the push's before sha> --head <the push's after sha>
 (the PR's own head, not the provider's merge commit), put the comment '$MARKER' next to that step, and COMMIT it: the check reads the committed tree, not your working copy. 'sr-checks verify' needs the history (a full clone) and reads the verdicts that 'sr-checks run' stored on the sloprail/checks branch.
 
 GitHub Actions (.github/workflows/sloprail.yml):
-  on: pull_request
+  on:
+    pull_request:
+    push:
+      branches: [main]
   jobs:
     sloprail-verify:
       runs-on: ubuntu-latest
@@ -60,31 +52,48 @@ GitHub Actions (.github/workflows/sloprail.yml):
         - uses: actions/checkout@v4
           with:
             fetch-depth: 0
-            ref: \${{ github.event.pull_request.head.sha }}
+            ref: \${{ github.event.pull_request.head.sha || github.sha }}
         - run: curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
         # sr-mark: ci-verify
-        - run: ~/.local/bin/sr-checks verify --base origin/\${{ github.event.pull_request.base.ref }} --head \${{ github.event.pull_request.head.sha }}
+        - run: |
+            if [ \"\${{ github.event_name }}\" = pull_request ]; then
+              ~/.local/bin/sr-checks verify --base origin/\${{ github.event.pull_request.base.ref }} --head \${{ github.event.pull_request.head.sha }}
+            else
+              ~/.local/bin/sr-checks verify --base \${{ github.event.before }} --head \${{ github.sha }}
+            fi
 
 GitLab CI (.gitlab-ci.yml):
   sloprail-verify:
     rules:
       - if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"
+      - if: \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH
     variables:
       GIT_DEPTH: \"0\"
     script:
       - curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
       # sr-mark: ci-verify
-      - ~/.local/bin/sr-checks verify --base origin/\$CI_MERGE_REQUEST_TARGET_BRANCH_NAME --head \$CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
+      - |
+        if [ -n \"\$CI_MERGE_REQUEST_IID\" ]; then
+          ~/.local/bin/sr-checks verify --base origin/\$CI_MERGE_REQUEST_TARGET_BRANCH_NAME --head \$CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
+        else
+          ~/.local/bin/sr-checks verify --base \$CI_COMMIT_BEFORE_SHA --head \$CI_COMMIT_SHA
+        fi
 
 Azure Pipelines (azure-pipelines.yml; add a build validation policy on the default branch):
+  trigger: [main]
   pr: [main]
   steps:
     - checkout: self
       fetchDepth: 0
     - script: curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
     # sr-mark: ci-verify
-    - script: ~/.local/bin/sr-checks verify --base origin/\$(System.PullRequest.TargetBranchName) --head \$(System.PullRequest.SourceCommitId)
+    - script: |
+        if [ \"\$(Build.Reason)\" = PullRequest ]; then
+          ~/.local/bin/sr-checks verify --base origin/\$(System.PullRequest.TargetBranchName) --head \$(System.PullRequest.SourceCommitId)
+        else
+          ~/.local/bin/sr-checks verify --base \$(Build.SourceVersion)~1 --head \$(Build.SourceVersion)
+        fi
 
-Any other provider (Bitbucket Pipelines, Jenkins, CircleCI, ...): run the same 'sr-checks verify --base <default branch> --head <PR head sha>' as a required check on pull requests, with the line '$MARKER' in a comment beside it in the committed pipeline file. Jenkinsfile: '// $MARKER'.
+Any other provider (Bitbucket Pipelines, Jenkins, CircleCI, ...): run the same 'sr-checks verify' on pull requests (--base the target branch, --head the PR head sha) and on pushes to the default branch (--base the push's before sha, --head its after sha), with the line '$MARKER' in a comment beside it in the committed pipeline file. Jenkinsfile: '// $MARKER'. On the first push of a branch the before sha is all zeros: use the default branch as --base.
 
 To turn this off, list 'sloprail/gate/ci-verify-required' under 'disabled:' in .sloprail/config.yaml."

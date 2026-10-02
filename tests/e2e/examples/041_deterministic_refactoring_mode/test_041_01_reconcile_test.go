@@ -158,11 +158,11 @@ func TestT041_03_UnfetchableOriginRefused(t *testing.T) {
 // T041_04: a NORMAL write — a file carrying NO `sr:moved-from` marker — is NOT
 // touched by the guard, even with a non-reconciling body.
 //
-// The control that proves the guard narrows to marked files: the guard's match is
-// `... and any(markers, .kind == "moved-from")`. A file without that marker is not
-// a declared move and must pass untouched. (Measured: the context half of the
-// match is effectively always active on a PreToolUse — the enter-decline is a
-// no-op — so the marker is what actually narrows the guard; this pins that.)
+// The control that proves the guard narrows to marked files: the file-guard's match is
+// `any(markers, .kind == "moved-from")`. A file without that marker is not
+// a declared move and must pass untouched. (The gate's context half is effectively
+// always active on a PreToolUse — the enter-decline is a no-op — so the marker is
+// what actually narrows the guard; this pins that.)
 //
 // The declaration here carries `#refactor` with NO `scope=`, so the completeness
 // gate has nothing to complete (empty declared_markers → the gate permits): this

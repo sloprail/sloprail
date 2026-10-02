@@ -112,14 +112,14 @@ type Env struct {
 	// Keyed by sessionID; the value is unused (presence is the fact).
 	seenSessions map[string]bool
 
-	// runBase, checkHistory and noAutoCheck: see checkrun.go.
+	// runBase and noAutoCheck: see checkrun.go.
 	runBase      map[string]string
 	origins      map[string]string // project -> its local bare origin
 	published    map[string]bool   // project -> origin/main already moved up to its pre-session HEAD
 	preStopRuns  int               // numbers the appended pre-Stop turns, which fire once each
-	checkHistory map[string][]string
 	noAutoCheck  bool
 	keepOrigin   bool
+	subagentStop bool
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
@@ -283,6 +283,11 @@ type Option func(*Env)
 // exist to judge. A package about authoring must not use it.
 func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards = true } }
 
+// WithSubagentStopCheck writes `enable_subagent_stop_check: true` into every project the Env
+// initialises, for a package that tests a sub-agent's own Stop. Without it the default (off:
+// sub-agent ranges are verified at the root's Stop) is what runs.
+func WithSubagentStopCheck() Option { return func(e *Env) { e.subagentStop = true } }
+
 // WithoutShipped switches off the named shipped rules (qualified names, a file-guard or a
 // gate) in the initial commit, for a package whose setup commits `.sloprail/` files inside
 // the session, which the plugin's grounded-rule-changes judges. The rest stay in force.
@@ -339,7 +344,6 @@ func New(t *testing.T, opts ...Option) *Env {
 		runBase:      map[string]string{},
 		origins:      map[string]string{},
 		published:    map[string]bool{},
-		checkHistory: map[string][]string{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -1130,12 +1134,13 @@ func (e *Env) GitInitUnborn(dir string) {
 		}
 		e.DisablePluginGuardrail(dir, others...)
 	}
-	e.enableSubagentStopCheck(dir)
+	if e.subagentStop {
+		e.enableSubagentStopCheck(dir)
+	}
 }
 
-// enableSubagentStopCheck opts the project in to a sub-agent's own Stop verifying the tracked ranges
-// (`enable_subagent_stop_check: true`), so the tests of sub-agents keep seeing their folders verified. The
-// key goes first: `disabled:` stays the config's last key, which tests append list items to.
+// enableSubagentStopCheck opts a project in to a sub-agent's own Stop verifying the tracked ranges
+// (`enable_subagent_stop_check: true`). The key goes first: `disabled:` stays the config's last key.
 func (e *Env) enableSubagentStopCheck(dir string) {
 	e.t.Helper()
 	cfgDir := filepath.Join(dir, ".sloprail")
@@ -1239,6 +1244,21 @@ func (e *Env) DeleteMeta(projDir, sessionID, key string) {
 	defer db.Close()
 	if err := db.DeleteMeta(key); err != nil {
 		e.t.Fatalf("harness: delete meta %s: %v", key, err)
+	}
+}
+
+// CorruptSessionState overwrites a session's state database with bytes that are not a
+// database: the registry of its tracked ranges and folders becomes unreadable, the way a
+// damaged or half-written file would.
+func (e *Env) CorruptSessionState(projDir, sessionID string) {
+	e.t.Helper()
+	path := e.sessionDBPath(projDir, sessionID)
+	if err := os.WriteFile(path, []byte("this is not a database, it is garbage that cannot be read\n"), 0o644); err != nil {
+		e.t.Fatalf("harness: corrupt session state: %v", err)
+	}
+	// A WAL or journal left beside it would be replayed over the garbage.
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		_ = os.Remove(path + suffix)
 	}
 }
 
@@ -2193,15 +2213,9 @@ func (e *Env) AllBlockingErrorsFrom(projDir, sessionID, hookEvent string) []stri
 func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) []string {
 	e.t.Helper()
 
+	// Only what the hooks refused: the output of the harness's own pre-Stop `sr-checks run` is
+	// never read as a Stop refusal.
 	out := blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
-	if hookEvent == "" || hookEvent == "Stop" {
-		// File-guards are judged by `sr check run`, not by the Stop hook: what it refused
-		// after each Run reads as a Stop's refusal (see checkrun.go).
-		out = append(out, e.checkHistory[sessionID]...)
-		if dedupe {
-			out = dedupeStrings(out)
-		}
-	}
 	return out
 }
 
@@ -2767,6 +2781,11 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 	// the mock's own default (8). See the stopBlockCap field's doc.
 	if e.stopBlockCap > 0 {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=%d", e.stopBlockCap))
+	}
+	// The session the mock stands in for, which a sub-agent's scenario (written before the
+	// session id is known) reads to export CLAUDE_CODE_SESSION_ID as its real Bash has.
+	if n := len(sessionFlags); n > 0 {
+		cmd.Env = append(cmd.Env, "SR_E2E_SESSION_ID="+sessionFlags[n-1])
 	}
 	// A test that lowered the check-execution timeout passes it through to the
 	// sr-session subprocess the mock launches for each hook. See the

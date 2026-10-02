@@ -134,31 +134,29 @@ func HeadPushed(dir string) (bool, error) {
 }
 
 // DefaultBase is where work on head started, for a range nobody stated: the merge base of head
-// with the repository's default branch — origin's (refs/remotes/origin/HEAD, else origin/main,
-// origin/master), else a local main or master — and git's empty tree (everything is judged)
-// when there is none or head shares no history with it. Never an error: a base that cannot be
-// found is the widest range, not a skipped one.
-func DefaultBase(dir, head string) string {
-	candidates := []string{}
-	if out, err := run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		if ref := strings.TrimSpace(out); ref != "" {
-			candidates = append(candidates, ref)
+// with the REMOTE default branch (origin's HEAD, else origin/main, origin/master). A local main
+// is never taken for it: on a clone without a remote, or on main itself, it would make base ==
+// head, an empty range that silently passes. ok is false when there is no remote default branch,
+// so the caller must use a base it recorded or refuse; when the remote default branch exists but
+// head shares no history with it, the base is git's empty tree (the branch truly has no base).
+func DefaultBase(dir, head string) (sha string, ok bool) {
+	if mb, found := RemoteDefaultBase(dir, head); found {
+		return mb, true
+	}
+	if remoteDefaultRef(dir) != "" {
+		return EmptyTree, true
+	}
+	return "", false
+}
+
+// remoteDefaultRef is the first remote default branch that exists, or "".
+func remoteDefaultRef(dir string) string {
+	for _, c := range remoteDefaultCandidates(dir) {
+		if _, err := commitOf(dir, c, "--base"); err == nil {
+			return c
 		}
 	}
-	candidates = append(candidates, "origin/main", "origin/master", "main", "master")
-	for _, c := range candidates {
-		if _, err := commitOf(dir, c, "--base"); err != nil {
-			continue
-		}
-		out, err := run(dir, "merge-base", c, head)
-		if err != nil {
-			continue
-		}
-		if mb := strings.TrimSpace(out); isObjectName(mb) {
-			return mb
-		}
-	}
-	return EmptyTree
+	return ""
 }
 
 // IsDefaultBranch reports whether branch is the repository's default branch: the one origin's

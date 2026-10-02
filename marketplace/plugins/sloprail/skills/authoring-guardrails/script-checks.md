@@ -24,6 +24,15 @@ checks:
   the execute bit is not in this list: the engine runs it through its `#!`
   interpreter, or `sh`, so no `chmod` is needed.)
 
+**A script's verdict is cached by content**, like every check ([file-guard.md](file-guard.md#cached-verdicts)):
+with the same rule hash, subject, files' content and citation quotes, `sr-checks run` does not
+execute it again (a fail is replayed) and `sr-checks verify` never executes it, it reads the stored
+verdict. A script that reads anything beyond its subject's files (a file under `SR_TREE`, a
+registry, an external spec) must declare it through the subject's `fingerprint` in the rule's
+`subjects:` script, or a change to it is not seen. An optional `prepare:` on the script check
+runs first and its `additionalContext` reaches the script on its payload; `prepare` has no
+fingerprint of its own.
+
 The last point is the whole reason a check runs inside the engine rather than
 being trusted to signal for itself: every way it can fail lands on the safe side
 without the author arranging it. A missing script (exit 127), a crash, an OOM

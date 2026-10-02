@@ -13,8 +13,9 @@ import (
 // folder's file-guards run with what is known and refuse what they find.
 func TestT003_61_ASubagentWithoutAnIdentityIsStillJudged(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
-	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words")
-	e.CommitAll(proj, "add b")
+	// The judging a real agent asks for before it stops runs inside its session (a run without one
+	// stores no refusal: it cannot know what a check reading the transcript would say).
+	e.Run(proj, "s-003-61b", "add b", Turns("done", harness.CommitFile("c1", "docs/b.md", "FORBIDDEN words", "add b")))
 
 	payload, _ := json.Marshal(map[string]any{
 		"cwd": proj, "agent_id": "a-unresolvable", "agent_transcript_path": filepath.Join(t.TempDir(), "gone.jsonl"),

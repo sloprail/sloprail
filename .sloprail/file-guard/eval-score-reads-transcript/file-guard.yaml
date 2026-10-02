@@ -4,7 +4,7 @@
 # the other half — a scorer whose EXIT CODE does not genuinely depend on the
 # transcript's content is indistinguishable from a fixed `exit 0`/`exit 1`,
 # and would report every run the same way regardless of what the guardrail
-# under test actually did. This file-guard judges the settled scorer at Stop, so
+# under test actually did. This file-guard judges the settled scorer (`sr-checks run` judges, Stop verifies), so
 # it is caught before a run silently "passes" against nothing. There is no gate for
 # it: a data-flow question is a judge's, and a judge runs only in a file-guard.
 match: path matches "^examples/.+/eval/.+/score\\.sh$"

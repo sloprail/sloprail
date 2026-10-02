@@ -150,17 +150,15 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	}
 	afterFix := led.Count()
 
-	// Cycle 4: unrelated work. The rule's script is asked twice for the one new range: by the
-	// `sr-checks run` the agent takes before it stops, and by the Stop's verify, which looks
-	// judges up but still runs a script check (session_ranges.go verifyRange). Never more: a
-	// passed range is judged with its own commit only. The fixed range passes.
+	// Cycle 4: unrelated work. The rule is asked once more (one check of the
+	// range per Run), and the fixed range with the new commit passes.
 	e.Run(proj, sess, "more unrelated work", Turns("done",
 		Write("w4", "memories/third.md", "clean"),
 	).ThenCommit("add a third memory"))
 	afterUnrelated := led.Count()
-	if afterUnrelated != afterFix+2 {
+	if afterUnrelated != afterFix+1 {
 		t.Errorf("after a pass the next cycle judged more than its own commit: asked %d times after the fix, "+
-			"%d after one unrelated cycle (want exactly two more: the run and the Stop's verify)", afterFix, afterUnrelated)
+			"%d after one unrelated cycle (want exactly one more)", afterFix, afterUnrelated)
 	}
 	if n := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); n != blocked {
 		t.Errorf("the unrelated clean commit was refused: %d blocking errors, had %d", n, blocked)

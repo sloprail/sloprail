@@ -178,7 +178,7 @@ commit-required, the verify of the session's tracked ranges (no model; see
 all read the contexts this turn entered, not last turn's state. Exits come last, so
 a context that closes at this Stop is still active for every rule checked at that
 same Stop, and is closed afterwards. A file-guard is not judged at Stop: `sr-checks
-run` judges it, and reads the contexts of the session it is run from. (Before a tool call the order is enters, then structure
+run` judges it, and it reads no context (a file-guard's match cannot name one). (Before a tool call the order is enters, then structure
 gates, then gates.)
 
 Note that a `match` reads `context[...]` at **run time** (context names are

@@ -116,17 +116,11 @@ var (
 	// runtime, since the shape is checkable without reading the trajectory.
 	ErrBadFilesEntry = errors.New("declaration: prerequisite's files entry is invalid")
 
-	// ErrStrayPrepare: a check sets `prepare` without a `judge`. A prepare adds to
-	// what a judge's prompt sees, so a script-only check has nothing to prepare
-	// for — the field can only be a mistake. Declaration fault.
-	ErrStrayPrepare = errors.New("declaration: prepare set on a check with no judge")
-
 	// ErrStrayModel: a check sets `model` or `timeout` without a `judge`. Both
 	// tune a model call, so a script-only check — which makes no model call and
 	// bounds its own runtime — has nothing to apply them to. The field can only
 	// be a mistake, refused rather than ignored so the author learns it does
-	// nothing. Declaration fault. (One sentinel for both, the same way
-	// ErrStrayPrepare covers the single stray-on-script case.)
+	// nothing. Declaration fault.
 	ErrStrayModel = errors.New("declaration: model/timeout set on a check with no judge")
 
 	// ErrBadModel: a check's `model` is not a well-formed modelset — an empty

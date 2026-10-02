@@ -7,8 +7,8 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T003_45: a grounded abandon. A left branch is judged until the USER's own words drop it:
-// no citation, or an assistant's words, do not; a user quote does, until the tip moves.
+// T003_45: an abandon. A left branch is judged until the agent untracks it with a reason (no reason
+// does not drop it); the untracking holds only while the tip stays: new commits judge it again.
 func TestT003_45_AGroundedAbandonDropsABranchUntilItsTipMoves(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	main := e.Git(proj, "branch", "--show-current")
@@ -20,45 +20,35 @@ func TestT003_45_AGroundedAbandonDropsABranchUntilItsTipMoves(t *testing.T) {
 		Bash("b2", "git switch -q "+main),
 	))
 	got := stopRefusals(e, proj, sess)
-	if !strings.Contains(got, "feat-a") || !strings.Contains(got, "sr-session refs abandon") {
+	if !strings.Contains(got, "feat-a") || !strings.Contains(got, "sr-session refs untrack") {
 		t.Fatalf("the refusal must name the branch and mention the abandon option:\n%s", got)
 	}
 	blocks := stopBlocks(e, proj, sess)
 
-	// No citation at all: refused, and the branch is still judged.
-	e.Run(proj, sess, "nothing cited", Turns("done",
-		Bash("a1", "sr-session refs abandon --ref feat-a"),
+	// No reason at all: refused, and the branch is still judged.
+	e.Run(proj, sess, "nothing said", Turns("done",
+		Bash("a1", "sr-session refs untrack --head feat-a"),
 	))
 	if n := stopBlocks(e, proj, sess); n <= blocks {
-		t.Fatal("an abandon without a citation dropped the branch")
+		t.Fatal("an untrack without a reason dropped the branch")
 	}
 	blocks = stopBlocks(e, proj, sess)
 
-	// An assistant's words are not the user's: refused.
-	e.Run(proj, sess, "assistant words", Turns("done",
-		harness.Say("s1", "I decided the pineapple branch is abandoned by me"),
-		Bash("a2", "sr-session refs abandon --ref feat-a --cite-user 'pineapple branch is abandoned by me'"),
-	))
-	if n := stopBlocks(e, proj, sess); n <= blocks {
-		t.Fatal("an assistant's quote dropped the branch")
-	}
-	blocks = stopBlocks(e, proj, sess)
-
-	// The user's own words: dropped.
+	// With the reason: dropped.
 	e.Run(proj, sess, "go on", Turns("done",
-		Bash("a3", "sr-session refs abandon --ref feat-a --cite-user 'it is dead, do not keep it'"),
+		Bash("a3", "sr-session refs untrack --head feat-a --reason 'the user said feat-a is dead, do not keep it'"),
 	))
 	if n := stopBlocks(e, proj, sess); n != blocks {
-		t.Fatalf("a user-cited abandon did not drop the branch:\n%s", newBlocks(e, proj, sess, blocks))
+		t.Fatalf("an untracked branch was still judged:\n%s", newBlocks(e, proj, sess, blocks))
 	}
 
-	// The tip moves: judged again.
+	// The tip moves: judged again, by itself.
 	e.Run(proj, sess, "one more commit", Turns("done",
 		Bash("m1", "git switch -q feat-a"),
 		harness.CommitFile("c2", "docs/a2.md", "FORBIDDEN again", "more on a"),
 		Bash("m2", "git switch -q "+main),
 	))
 	if got := newBlocks(e, proj, sess, blocks); !strings.Contains(got, "feat-a") {
-		t.Fatalf("a branch whose tip moved after the abandon was not judged again:\n%s", got)
+		t.Fatalf("a branch whose tip moved after the untrack was not judged again:\n%s", got)
 	}
 }

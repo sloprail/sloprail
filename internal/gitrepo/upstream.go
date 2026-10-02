@@ -41,14 +41,7 @@ func sameFile(a, b string) bool {
 // origin/main, origin/master): what is already on it is not work still to answer for. ok is false
 // when there is no such branch or no shared history; a local main is never taken for it.
 func RemoteDefaultBase(dir, head string) (sha string, ok bool) {
-	candidates := []string{}
-	if out, err := run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		if ref := strings.TrimSpace(out); ref != "" {
-			candidates = append(candidates, ref)
-		}
-	}
-	candidates = append(candidates, "origin/main", "origin/master")
-	for _, c := range candidates {
+	for _, c := range remoteDefaultCandidates(dir) {
 		if _, err := commitOf(dir, c, "--base"); err != nil {
 			continue
 		}
@@ -61,6 +54,26 @@ func RemoteDefaultBase(dir, head string) (sha string, ok bool) {
 		}
 	}
 	return "", false
+}
+
+// RemoteDefaultTip is the commit the remote default branch stands at; ok is false without one.
+func RemoteDefaultTip(dir string) (sha string, ok bool) {
+	for _, c := range remoteDefaultCandidates(dir) {
+		if tip, err := commitOf(dir, c, "--base"); err == nil {
+			return tip, true
+		}
+	}
+	return "", false
+}
+
+func remoteDefaultCandidates(dir string) []string {
+	candidates := []string{}
+	if out, err := run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			candidates = append(candidates, ref)
+		}
+	}
+	return append(candidates, "origin/main", "origin/master")
 }
 
 // PinRef points ref at the commit sha, so garbage collection keeps it after the branch that held

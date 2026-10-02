@@ -122,8 +122,8 @@ func (e FlatEvent) Event() event.Event { return event.Event(e) }
 // what a judge receives when no prepare is set (dot-dir-file-store/main.tsp
 // CheckPayload). `event` carries the file's own state; `transcriptPath` names the
 // session record a check can query for context the event itself does not carry
-// (which human message grounds this write); `context` is every declared context
-// by name, at parity with the file-guard's match scope.
+// (which human message grounds this write). It carries no `context`: a file-guard
+// judges committed bytes and cannot see session state.
 type CheckPayload struct {
 	// Event is the file event — a FileEvent variant (always a Post*: a file-guard
 	// judges the settled file at Stop and never sees a Pre*). A FlatEvent, so its `kind` and fields are
@@ -135,9 +135,6 @@ type CheckPayload struct {
 	// TranscriptPath names the session record a check reads for what the event
 	// does not carry.
 	TranscriptPath string `json:"transcriptPath"`
-
-	// Context is every declared context, by name, carrying `{active, payload}`.
-	Context map[string]natures.ContextState `json:"context"`
 }
 
 // GateCheckPayload is what a gate's script, prepare and judge receive on stdin
@@ -229,15 +226,6 @@ type PreparedOutcome struct {
 	// (see the four-outcome contract above). Absent/false is the unchanged "run the
 	// judge" default.
 	Skip bool `json:"skip"`
-
-	// Fingerprint is an optional string naming what the judge's verdict depends on
-	// that is not in its prompt (a file the judge opens with its own tools). It is
-	// folded into the verdict's cache key. prepare's additionalContext is NOT in the
-	// key (it may carry text derived from the session, which `verify` cannot
-	// reproduce), so what the verdict depends on beyond the template, the matched files
-	// and the citation quotes must be named here. It must be session-independent: the
-	// same value with or without a transcript.
-	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // FileJudgeInput is the wire/type contract for what a file-guard's judge receives

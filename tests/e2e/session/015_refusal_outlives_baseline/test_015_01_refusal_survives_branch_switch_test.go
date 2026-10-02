@@ -58,6 +58,51 @@ checks:
   - script: ./judge.sh
 `
 
+// T015_06: a refusal is one session's state. Two sessions in one tree hold their own: session
+// one's unfixed refusal is not session two's — session two's first Stop verifies the range ITS
+// folder tracks (its range holds the bad file session one committed: the branch is shared, so it
+// arrives as an addition), is handed the file again and refused by that verdict — while session
+// one's record of refusals is untouched by anything session two did.
+func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.CommitAll(proj, "the guardrail before the sessions")
+
+	e.Run(proj, "s-015-06-one", "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+	).ThenCommit("the bad file"))
+	oneBefore := len(e.StopContinuations(proj, "s-015-06-one"))
+	if oneBefore == 0 {
+		t.Fatalf("premise: session one's bad file was not refused")
+	}
+	first := changesetkit.Files(t, led.Lines())
+
+	e.Run(proj, "s-015-06-two", "write something else", Turns("done",
+		Write("w2", "unrelated.md", "fine\n"),
+	).ThenCommit("unrelated work"))
+
+	after := changesetkit.Files(t, led.Lines())
+	second := after[len(first):]
+	if len(second) == 0 {
+		t.Fatalf("session two's range was never judged: session one's state stood in for it")
+	}
+	if !changesetkit.Saw(second, "unrelated.md") {
+		t.Fatalf("session two was not handed its own work: %v", second)
+	}
+	if got := changesetkit.Statuses(second, "bad-file.md"); len(got) == 0 || got[0] != "A" {
+		t.Fatalf("session two's range did not hold the file session one was refused for (as an addition): %v", second)
+	}
+	if len(e.StopContinuations(proj, "s-015-06-two")) == 0 {
+		t.Fatalf("session two, whose range holds the bad file, was not refused at its own Stop")
+	}
+	if n := len(e.StopContinuations(proj, "s-015-06-one")); n != oneBefore {
+		t.Fatalf("session one's refusals changed from %d to %d because of session two", oneBefore, n)
+	}
+}
+
 // judgeScript records the FLAT CheckPayload, then refuses when the path contains
 // "bad".
 //
@@ -340,8 +385,9 @@ exit 0
 // where the file does not exist at all, and does unrelated work there. The range of
 // main is still one the session answers for (a tracked range is per branch), so the
 // Stop still verifies it: the rule is put the file again and the Stop refuses it,
-// naming main. A refusal tied to the branch the agent happens to be on would drop
-// the broken file out of view at exactly this moment.
+// naming main (the stored verdict of the unchanged range is replayed, not re-asked). A
+// refusal tied to the branch the agent happens to be on would drop the broken file out of
+// view at exactly this moment.
 //
 // There is no re-creation of the file after the switch (unlike T015_02): the file is
 // absent from the tree and from feature's range, so the only way it can be reported
@@ -387,9 +433,12 @@ func TestT015_04_ARefusedFileOnAnotherBranchIsStillReported(t *testing.T) {
 	if !changesetkit.Saw(second, "unrelated.md") {
 		t.Fatalf("the cycle's own work is missing from %v — the claim below would be vacuous", second)
 	}
-	if countPath(second, "bad-file.md") == 0 {
-		t.Fatalf("an unfixed refusal was dropped once its branch was left: the rule was not put "+
-			"bad-file.md again (%v)", second)
+	// Every check is cached by content: main's range holds the same bytes it held when the rule
+	// refused them, so the rule is NOT asked again — the stored refusal is replayed, and it is
+	// the Stop's refusal below that proves the broken file stayed in view.
+	if countPath(second, "bad-file.md") != 0 {
+		t.Fatalf("main's unchanged range was judged again after the switch (%v): a stored verdict "+
+			"for the same content must be replayed, not re-asked", second)
 	}
 	later := e.AllBlockingErrorsFrom(proj, sess, "Stop")[stops:]
 	if got := strings.Join(later, "\n"); !strings.Contains(got, "this file is not acceptable") || !strings.Contains(got, "(main") {
