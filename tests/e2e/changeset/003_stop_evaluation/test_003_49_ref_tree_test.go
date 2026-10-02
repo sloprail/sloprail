@@ -98,3 +98,27 @@ func TestT003_50_TheRefusalNamesTheWorktreeAndNeverSwitchesTheCheckout(t *testin
 		t.Fatalf("the branch fixed in its own worktree was still refused:\n%s", newBlocks(e, proj, "s-003-50", blocks))
 	}
 }
+
+// T003_51: a branch somebody else made BEFORE the session, which the coordinator only started a
+// rebase onto and moved on from, is not the coordinator's work: its tip never moved during the
+// session, so it is not tracked and its judges never run against it here.
+func TestT003_51_ARebaseStartedOntoAForeignBranchDoesNotClaimIt(t *testing.T) {
+	e, proj, _ := requiredProject(t)
+	main := e.Git(proj, "branch", "--show-current")
+	e.Git(proj, "switch", "-q", "-c", "feat-x")
+	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
+	e.CommitAll(proj, "somebody else's work")
+	e.Git(proj, "switch", "-q", main)
+
+	e.Run(proj, "s-003-51", "integrate", Turns("done",
+		Bash("b1", "git switch -q -c coordination"),
+		Bash("b2", "mkdir -p notes && printf '%s' 'plan' > notes/plan.md && git add -A && git commit -q -m 'plan'"),
+		Bash("b3", "git rebase --exec false feat-x >/dev/null 2>&1; git rebase --abort"),
+	))
+	if got := stopRefusals(e, proj, "s-003-51"); got != "" {
+		t.Fatalf("the coordinator answered for a branch it only started a rebase onto:\n%s", got)
+	}
+	if trackedIn(sessionRanges(t, e, proj, "s-003-51"), proj, "feat-x") {
+		t.Fatal("a foreign branch the session never moved is tracked")
+	}
+}

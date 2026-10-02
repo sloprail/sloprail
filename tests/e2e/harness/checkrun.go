@@ -11,13 +11,13 @@ import (
 	"github.com/sloprail/sloprail/internal/checkcache"
 )
 
-// File-guards are judged by `sr check run --base --head`, not by the Stop hook. The harness
+// File-guards are judged by `sr-checks run --base --head`, not by the Stop hook. The harness
 // stands in for the caller that states the range: after every Run it records what a session
 // produced, so the refusals the Stop hook used to deliver are still there to assert on.
 //
 //   - the base is HEAD as it was when the session's first Run began (RunBase), so the range
 //     is what the session committed, accumulating over repeated Runs;
-//   - after each Run the harness runs `sr check run --base <RunBase> --head HEAD` and keeps
+//   - after each Run the harness runs `sr-checks run --base <RunBase> --head HEAD` and keeps
 //     its refusals under the session; BlockingErrors / BlockingErrorsFrom(..., "Stop") return
 //     them after the gates' and contexts' own Stop refusals, so tests that asserted a
 //     file-guard's refusal at Stop read the same on either side;
@@ -32,7 +32,7 @@ const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // not be what excludes or includes them.
 func KeepOrigin() Option { return func(e *Env) { e.keepOrigin = true } }
 
-// NoAutoCheck stops the harness from running `sr check run` after each Run.
+// NoAutoCheck stops the harness from running `sr-checks run` after each Run.
 func NoAutoCheck() Option { return func(e *Env) { e.noAutoCheck = true } }
 
 // RunBase is HEAD as it was before the session's first Run (the empty tree for a project
@@ -88,26 +88,27 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 }
 
 // runTrackedRanges is the shell a real agent runs before it stops: `sr-checks run` over EVERY range
-// the session tracks (`sr-session refs list --json`: folder, head, base, tip), in the range's own
-// folder — sub-agent worktrees, other repositories, branches it left. The ranges are read when the
-// step runs, since the commits they cover do not exist when the scenario is written. A sub-agent
-// (own=true) runs only the ranges of its own worktree. A folder that is gone (a removed worktree) is judged from the folder the agent is in: the range moves there. Failures are ignored: the Stop reports.
+// the session tracks (`sr-session refs list --json`: folder, head, base), in the range's own
+// folder — sub-agent worktrees, other repositories, branches it left — exactly as `refs list`
+// prints them. The ranges are read when the step runs, since the commits they cover do not exist
+// when the scenario is written. A sub-agent (own=true) runs only the ranges of its own worktree.
+// A refusal is the judges' answer (the Stop reports it); anything else that goes wrong —
+// `refs list` failing, a folder or range `run` cannot use (nothing on stdout, a non-zero exit) — is
+// printed and fails the turn, never swallowed.
 func runTrackedRanges(own bool) string {
 	filter := `select(.UntrackedReason=="")`
 	if own {
 		filter += ` | select(.Folder==$top)`
 	}
 	return `top=$(git rev-parse --show-toplevel 2>/dev/null); ` +
-		`sr-session refs list --json 2>/dev/null | jq -r --arg top "$top" '.[]? | ` + filter + ` | [.Folder,.Head,.Base,.HeadSHA] | @tsv' 2>/dev/null | ` +
-		`while IFS="	" read -r f h b t; do ` +
-		`[ -d "$f" ] || f="$top"; [ -n "$f" ] || continue; ` +
-		`git -C "$f" rev-parse --verify -q "$h^{commit}" >/dev/null 2>&1 || h="$t"; ` +
-		`[ -n "$h" ] || continue; ` +
-		`if [ -z "$b" ]; then b=$(git -C "$f" merge-base origin/main "$h" 2>/dev/null || git -C "$f" rev-list --max-parents=0 "$h" | head -1); fi; ` +
-		`mb=$(git -C "$f" merge-base origin/main "$h" 2>/dev/null); ` +
-		`if [ -n "$mb" ] && git -C "$f" merge-base --is-ancestor "$b" "$mb" 2>/dev/null; then b="$mb"; fi; ` +
-		`(cd "$f" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "$b" --head "$h" >/dev/null 2>&1); ` +
-		`done; true`
+		`refs=$(sr-session refs list --json 2>&1) || { echo "harness: sr-session refs list failed: $refs" >&2; exit 1; }; ` +
+		`rows=$(printf '%s' "$refs" | jq -r --arg top "$top" '.[]? | ` + filter + ` | [.Folder,.Head,.Base] | @tsv') || { echo "harness: sr-session refs list printed no ranges: $refs" >&2; exit 1; }; ` +
+		`printf '%s\n' "$rows" | { rc=0; while IFS="	" read -r f h b; do ` +
+		`[ -n "$f" ] || continue; ` +
+		`out=$(cd "$f" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "$b" --head "$h" 2>&1); st=$?; ` +
+		`if [ "$st" -ne 0 ] && [ -z "$out" ]; then echo "harness: sr-checks run --base $b --head $h in $f failed ($st) with no output" >&2; rc=1; ` +
+		`elif [ "$st" -ne 0 ] && ! printf '%s' "$out" | grep -q "file-guard"; then echo "harness: sr-checks run --base $b --head $h in $f failed ($st): $out" >&2; rc=1; fi; ` +
+		`done; exit $rc; }`
 }
 
 // stopBase is the base of the range a Stop verifies: the merge base with origin's default
@@ -128,7 +129,7 @@ func (e *Env) StopJudged(projDir, sessionID string, active bool) Result {
 	return e.StopNow(projDir, sessionID, active)
 }
 
-// checkCmd runs `sr check <verb> --base --head` in projDir as the session, returning
+// checkCmd runs `sr-checks <verb> --base --head` in projDir as the session, returning
 // stdout (the refusals) apart from the combined output.
 func (e *Env) checkCmd(projDir, sessionID, verb, base, head string) (stdout string, res Result) {
 	e.t.Helper()
@@ -140,13 +141,13 @@ func (e *Env) checkCmd(projDir, sessionID, verb, base, head string) (stdout stri
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
 	} else if err != nil {
-		e.t.Fatalf("harness: sr check %s: %v\n%s", verb, err, errb.String())
+		e.t.Fatalf("harness: sr-checks %s: %v\n%s", verb, err, errb.String())
 	}
-	e.t.Logf("sr check %s --base %s --head %s (exit %d):\n%s%s", verb, base, head, code, out.String(), errb.String())
+	e.t.Logf("sr-checks %s --base %s --head %s (exit %d):\n%s%s", verb, base, head, code, out.String(), errb.String())
 	return out.String(), Result{Output: out.String() + errb.String(), Code: code}
 }
 
-// checkExec is the `sr checks <verb> --base --head` command, built and not started.
+// checkExec is the `sr-checks <verb> --base --head` command, built and not started.
 func (e *Env) checkExec(projDir, sessionID, verb, base, head string) *exec.Cmd {
 	cmd := exec.Command(filepath.Join(e.binDir, "sr"), "checks", verb, "--base", base, "--head", head)
 	cmd.Dir = projDir
@@ -155,21 +156,21 @@ func (e *Env) checkExec(projDir, sessionID, verb, base, head string) *exec.Cmd {
 	return cmd
 }
 
-// CheckRunCmd is `sr checks run --base --head` as the session, built and not started, for a
+// CheckRunCmd is `sr-checks run --base --head` as the session, built and not started, for a
 // test that must interrupt a run part-way (it owns the process: start it, kill it, wait for it).
 func (e *Env) CheckRunCmd(projDir, sessionID, base, head string) *exec.Cmd {
 	e.t.Helper()
 	return e.checkExec(projDir, sessionID, "run", base, head)
 }
 
-// CheckRunRaw is `sr check run --base --head` as the session: exit code and output.
+// CheckRunRaw is `sr-checks run --base --head` as the session: exit code and output.
 func (e *Env) CheckRunRaw(projDir, sessionID, base, head string) Result {
 	e.t.Helper()
 	_, res := e.checkCmd(projDir, sessionID, "run", base, head)
 	return res
 }
 
-// CheckVerify is `sr check verify --base --head` as the session (read-only; a non-zero
+// CheckVerify is `sr-checks verify --base --head` as the session (read-only; a non-zero
 // exit is unsatisfied).
 func (e *Env) CheckVerify(projDir, sessionID, base, head string) Result {
 	e.t.Helper()
@@ -177,7 +178,7 @@ func (e *Env) CheckVerify(projDir, sessionID, base, head string) Result {
 	return res
 }
 
-// CheckRunRange runs `sr check run` over an explicit range and returns its refusals: the
+// CheckRunRange runs `sr-checks run` over an explicit range and returns its refusals: the
 // text of the refusal (every rule that refused, as one block, the form a Stop blocked with),
 // or nil when nothing refused.
 func (e *Env) CheckRunRange(projDir, sessionID, base, head string) []string {
@@ -205,7 +206,7 @@ func (e *Env) FileGuardRefusals(projDir, sessionID string) []string {
 
 // addOrigin gives a project a LOCAL BARE origin (in a temporary directory removed with the
 // test): the initial commit is pushed to it and origin/HEAD points at main, so `--base origin/main`
-// works, `sr checks run` pushes the results branch sloprail/checks there, and a second clone sees
+// works, `sr-checks run` pushes the results branch sloprail/checks there, and a second clone sees
 // them. Done once, by GitInit.
 func (e *Env) addOrigin(dir string) {
 	e.t.Helper()
@@ -250,7 +251,7 @@ func (e *Env) PushBranch(projDir, branch string) {
 }
 
 // CacheRecords reads back every run the results branch (sloprail/checks) holds, as a10n-shaped
-// runs with their checks and items, newest first: what a test asserts a `sr checks run` stored.
+// runs with their checks and items, newest first: what a test asserts a `sr-checks run` stored.
 // With an origin it is origin's branch that is read, so a push that never happened shows as empty.
 func (e *Env) CacheRecords(projDir string) []checkcache.Run {
 	e.t.Helper()
@@ -283,6 +284,6 @@ func (e *Env) JudgeTracked(dir, sessionID string, subagent bool) {
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "SLOP_SUBBIN_DIR="+e.binDir)
 	cmd.Env = append(cmd.Env, e.hookEnv(sessionID)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		e.t.Logf("harness: judging the tracked ranges: %v\n%s", err, out)
+		e.t.Fatalf("harness: judging the tracked ranges: %v\n%s", err, out)
 	}
 }
