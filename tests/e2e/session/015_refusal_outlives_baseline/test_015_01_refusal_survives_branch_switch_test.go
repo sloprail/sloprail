@@ -58,6 +58,51 @@ checks:
   - script: ./judge.sh
 `
 
+// T015_06: a refusal is one session's state. Two sessions in one tree hold their own: session
+// one's unfixed refusal is not session two's — session two's first Stop verifies the range ITS
+// folder tracks (its range holds the bad file session one committed: the branch is shared, so it
+// arrives as an addition), is handed the file again and refused by that verdict — while session
+// one's record of refusals is untouched by anything session two did.
+func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.CommitAll(proj, "the guardrail before the sessions")
+
+	e.Run(proj, "s-015-06-one", "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+	).ThenCommit("the bad file"))
+	oneBefore := len(e.StopContinuations(proj, "s-015-06-one"))
+	if oneBefore == 0 {
+		t.Fatalf("premise: session one's bad file was not refused")
+	}
+	first := changesetkit.Files(t, led.Lines())
+
+	e.Run(proj, "s-015-06-two", "write something else", Turns("done",
+		Write("w2", "unrelated.md", "fine\n"),
+	).ThenCommit("unrelated work"))
+
+	after := changesetkit.Files(t, led.Lines())
+	second := after[len(first):]
+	if len(second) == 0 {
+		t.Fatalf("session two's range was never judged: session one's state stood in for it")
+	}
+	if !changesetkit.Saw(second, "unrelated.md") {
+		t.Fatalf("session two was not handed its own work: %v", second)
+	}
+	if got := changesetkit.Statuses(second, "bad-file.md"); len(got) == 0 || got[0] != "A" {
+		t.Fatalf("session two's range did not hold the file session one was refused for (as an addition): %v", second)
+	}
+	if len(e.StopContinuations(proj, "s-015-06-two")) == 0 {
+		t.Fatalf("session two, whose range holds the bad file, was not refused at its own Stop")
+	}
+	if n := len(e.StopContinuations(proj, "s-015-06-one")); n != oneBefore {
+		t.Fatalf("session one's refusals changed from %d to %d because of session two", oneBefore, n)
+	}
+}
+
 // judgeScript records the FLAT CheckPayload, then refuses when the path contains
 // "bad".
 //
