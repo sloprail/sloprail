@@ -193,8 +193,9 @@ func TestT020_03_ContentPutBackAcrossCyclesIsReplayedFromItsVerdict(t *testing.T
 		t.Fatalf("content put back to a body whose verdict is stored was judged again (%d then %d): "+
 			"the verdict for these bytes at this path is replayed, not asked for again", was, got)
 	}
-	if res := e.CheckVerify(proj, sess, base, "HEAD"); strings.Contains(res.Output, "missing") || strings.Contains(res.Output, "not judged yet") {
-		t.Fatalf("content put back to an earlier body has no verdict over its own range — it was skipped, "+
-			"not evaluated by its content:\n%s", res.Output)
+	// A passed verdict is replayed, so verify over the put-back's own range is satisfied: exit 0.
+	if res := e.CheckVerify(proj, sess, base, "HEAD"); res.Code != 0 || strings.Contains(res.Output, "missing") || strings.Contains(res.Output, "not judged yet") {
+		t.Fatalf("content put back to an earlier body has no satisfied verdict over its own range (exit %d) — it was skipped, "+
+			"not found by its content:\n%s", res.Code, res.Output)
 	}
 }
