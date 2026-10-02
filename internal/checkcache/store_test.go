@@ -1,7 +1,6 @@
 package checkcache
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"math/rand"
@@ -418,36 +417,6 @@ func TestShow(t *testing.T) {
 	}
 }
 
-func TestDefaultDictIsStable(t *testing.T) {
-	if len(defaultDictBytes) < 1024 {
-		t.Fatal("embedded default dictionary missing; run go generate ./internal/checkcache")
-	}
-	sum := sha256.Sum256(defaultDictBytes)
-	if _, err := newZdict(defaultDictBytes); err != nil {
-		t.Fatal(err, hex.EncodeToString(sum[:4]))
-	}
-}
-
-// TestGenerateDefaultDict rewrites default.zdict from synthetic judge-shaped
-// records. Run it via `go generate` only.
-func TestGenerateDefaultDict(t *testing.T) {
-	if os.Getenv("SR_GEN_DICT") == "" {
-		t.Skip("set SR_GEN_DICT=1 (go generate)")
-	}
-	var samples [][]byte
-	for _, r := range genRuns(424242, 3000) {
-		raw, _ := marshalRun(r)
-		samples = append(samples, raw)
-	}
-	d, err := trainDict(samples)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("default.zdict", d, 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // Bound: looking up the 40 keys of one PR among 10k stored records.
 func TestLookupBound40In10k(t *testing.T) {
 	s := newRepo(t, "")
@@ -503,6 +472,63 @@ func BenchmarkLookup40In10k(b *testing.B) {
 		w, _ := Open(s.opt)
 		if _, err := w.Lookup(ks); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestNoDictionaryWriteRead(t *testing.T) {
+	s := newRepo(t, "")
+	rs := genRuns(77, 6)
+	if err := s.Put(rs); err != nil {
+		t.Fatal(err)
+	}
+	sn, _ := s.snapshotAt(s.tip())
+	if len(sn.Dicts) != 0 || sn.Segs[0].Dict != "" || sn.ManifestDict != "" || !sn.HasManifest {
+		t.Fatalf("a young store keeps no dictionary: %+v", sn)
+	}
+	cold, _ := Open(s.opt)
+	got, err := cold.Lookup([]Key{keyOf(rs[0]), keyOf(rs[5])})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("%v %d", err, len(got))
+	}
+}
+
+func TestGcBelowTrainMinKeepsNoDictionary(t *testing.T) {
+	s := newRepo(t, "")
+	_ = s.Put(genRuns(78, 20))
+	st, err := s.Gc()
+	if err != nil || st.Retrained {
+		t.Fatalf("%v %+v", err, st)
+	}
+	sn, _ := s.snapshotAt(s.tip())
+	if len(sn.Dicts) != 0 || sn.ManifestDict != "" || sn.Segs[0].Dict != "" {
+		t.Fatalf("no dictionary below TrainMin: %+v", sn)
+	}
+}
+
+func TestGcAtTrainMinTrainsAndOldSegmentsStillRead(t *testing.T) {
+	s := newRepo(t, "")
+	old := genRuns(79, 20)
+	_ = s.Put(old)
+	_ = s.Put(genRuns(80, TrainMin+50))
+	st, err := s.Gc()
+	if err != nil || !st.Retrained {
+		t.Fatalf("%v %+v", err, st)
+	}
+	sn, _ := s.snapshotAt(s.tip())
+	if len(sn.Dicts) != 1 || sn.ManifestDict == "" || sn.Segs[0].Dict != sn.ManifestDict {
+		t.Fatalf("gc at TrainMin trains one: %+v", sn)
+	}
+	cold, _ := Open(s.opt)
+	if got, err := cold.Lookup([]Key{keyOf(old[0])}); err != nil || len(got) != 1 {
+		t.Fatalf("%v %d", err, len(got))
+	}
+	// a later Put uses the trained dictionary; a dict-less segment from before still reads
+	_ = cold.Put(genRuns(81, 3))
+	sn, _ = cold.snapshotAt(cold.tip())
+	for _, sg := range sn.Segs {
+		if sg.Dict != sn.ManifestDict {
+			t.Fatalf("new segments use the manifest dictionary: %q", sg.Dict)
 		}
 	}
 }

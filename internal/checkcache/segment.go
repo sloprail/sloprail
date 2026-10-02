@@ -13,15 +13,13 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-//go:generate sh -c "SR_GEN_DICT=1 go test -run TestGenerateDefaultDict ."
-
 // A segment is one write-once blob of per-record zstd frames (all with the same
-// dictionary), named by the sha256 of its bytes, plus a sorted index so a lookup inflates
+// dictionary, or none: below Gc's TrainMin records segments are plain zstd), named by the sha256 of its bytes, plus a sorted index so a lookup inflates
 // only the frames it needs. A record is a RUN (a rule evaluated once, with its checks and
 // their items); the index has one entry per findable check, so several entries may point
 // at one frame: key16 -> (offset, length, position of the check in the run).
 //
-// idx layout: "SRIDX002" | dictSha[32] | n u32 | n x (key16 | off u32 | len u32 | pos u16), big endian.
+// idx layout: "SRIDX002" | dictSha[32] (all zero = no dictionary) | n u32 | n x (key16 | off u32 | len u32 | pos u16), big endian.
 
 const (
 	idxMagic = "SRIDX002"
@@ -37,7 +35,7 @@ const (
 type segIdx struct {
 	Name   string // sha256 hex of the .zst bytes
 	ZstOid string // git blob id of seg/<Name>.zst
-	Dict   string // sha256 hex of the dictionary
+	Dict   string // sha256 hex of the dictionary; "" = none (plain zstd)
 	Keys   [][keyLen]byte
 	Offs   []uint32
 	Lens   []uint32
@@ -62,7 +60,8 @@ func key16(id string) ([keyLen]byte, error) {
 	return k, nil
 }
 
-// zdict is a loaded dictionary with its codecs.
+// zdict is a loaded dictionary with its codecs. sha "" is the no-dictionary codec
+// (plain zstd): what segments use until Gc has enough records to train a dictionary.
 type zdict struct {
 	sha   string
 	bytes []byte
@@ -81,6 +80,18 @@ func newZdict(b []byte) (*zdict, error) {
 		return nil, fmt.Errorf("%w: dictionary: %v", ErrCorrupt, err)
 	}
 	return &zdict{sha: hex.EncodeToString(sum[:]), bytes: b, enc: enc, dec: dec}, nil
+}
+
+func newPlainZdict() (*zdict, error) {
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression), zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: zstd: %v", ErrCorrupt, err)
+	}
+	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: zstd: %v", ErrCorrupt, err)
+	}
+	return &zdict{enc: enc, dec: dec}, nil
 }
 
 // trainDict builds a dictionary from sample records. The zstd dictionary id is
@@ -157,7 +168,10 @@ func encodeSegment(runs []Run, d *zdict) (name string, zst, idx []byte, err erro
 		frames[ri] = [2]uint32{uint32(data.Len()), uint32(len(frame))}
 		data.Write(frame)
 	}
-	dsha, _ := hex.DecodeString(d.sha)
+	dsha := make([]byte, 32) // zero = no dictionary
+	if d.sha != "" {
+		dsha, _ = hex.DecodeString(d.sha)
+	}
 	ix.WriteString(idxMagic)
 	ix.Write(dsha)
 	_ = binary.Write(&ix, binary.BigEndian, uint32(len(entries)))
@@ -199,7 +213,11 @@ func parseIdx(name, oid string, b []byte) (*segIdx, error) {
 	if len(b) != idxHeader+n*idxEntry {
 		return nil, fmt.Errorf("%w: index of %s has wrong length", ErrCorrupt, name)
 	}
-	s := &segIdx{Name: name, ZstOid: oid, Dict: hex.EncodeToString(b[len(idxMagic) : len(idxMagic)+32]),
+	dict := ""
+	if sha := b[len(idxMagic) : len(idxMagic)+32]; !bytes.Equal(sha, make([]byte, 32)) {
+		dict = hex.EncodeToString(sha)
+	}
+	s := &segIdx{Name: name, ZstOid: oid, Dict: dict,
 		Keys: make([][keyLen]byte, n), Offs: make([]uint32, n), Lens: make([]uint32, n), Pos: make([]uint16, n)}
 	p := idxHeader
 	for i := 0; i < n; i++ {

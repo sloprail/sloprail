@@ -3,7 +3,6 @@ package checkcache
 import (
 	"bytes"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
@@ -29,15 +28,12 @@ var ErrFutureSchema = errors.New("checkcache: ref uses a newer schema; upgrade s
 // be decoded. It is never reported as a miss.
 var ErrCorrupt = errors.New("checkcache: corrupt segment")
 
-//go:embed default.zdict
-var defaultDictBytes []byte
-
 const (
 	defaultRef    = "refs/sloprail/checks"
 	defaultBranch = "refs/heads/sloprail/checks"
 	maxAttempts   = 30
 	// TrainMin is how many records Gc needs before it trains a dictionary
-	// from them instead of keeping the embedded default.
+	// from them; below it segments are written with no dictionary (plain zstd).
 	TrainMin = 300
 	// SegmentTarget is the record count Gc compacts segments to.
 	SegmentTarget = 1000
@@ -90,12 +86,13 @@ type snapshot struct {
 	DirTree      string
 	Segs         []*segIdx
 	Dicts        map[string]string // dict sha -> blob oid
-	ManifestDict string
+	ManifestDict string            // "" = no dictionary
+	HasManifest  bool
 }
 
 type manifest struct {
 	Schema string `json:"schema"`
-	Dict   string `json:"dict"`
+	Dict   string `json:"dict"` // sha of the dictionary new segments use; "" = none
 }
 
 // tip returns the commit the local ref points at, "" if none.
@@ -284,6 +281,7 @@ func (s *Store) snapshotAt(tip string) (*snapshot, error) {
 			return nil, fmt.Errorf("%w: MANIFEST.json", ErrCorrupt)
 		}
 		sn.ManifestDict = m.Dict
+		sn.HasManifest = true
 	}
 	s.snap = sn
 	s.saveCache(sn)
@@ -291,6 +289,9 @@ func (s *Store) snapshotAt(tip string) (*snapshot, error) {
 }
 
 func (s *Store) dictByOid(sha, oid string) (*zdict, error) {
+	if sha == "" {
+		return s.plainDict()
+	}
 	if d, ok := s.dicts[sha]; ok {
 		return d, nil
 	}
@@ -313,31 +314,28 @@ func (s *Store) dictByOid(sha, oid string) (*zdict, error) {
 	return d, nil
 }
 
-func (s *Store) defaultDict() (*zdict, error) {
-	sum := sha256.Sum256(defaultDictBytes)
-	sha := hex.EncodeToString(sum[:])
-	if d, ok := s.dicts[sha]; ok {
+// plainDict is the no-dictionary codec, keyed by the empty sha.
+func (s *Store) plainDict() (*zdict, error) {
+	if d, ok := s.dicts[""]; ok {
 		return d, nil
 	}
-	if len(defaultDictBytes) == 0 {
-		return nil, errors.New("checkcache: embedded default dictionary is empty")
-	}
-	d, err := newZdict(defaultDictBytes)
+	d, err := newPlainZdict()
 	if err != nil {
 		return nil, err
 	}
-	s.dicts[sha] = d
+	s.dicts[""] = d
 	return d, nil
 }
 
-// writeDict returns the dictionary new segments should use for a snapshot.
+// writeDict returns the dictionary new segments should use for a snapshot: the one the
+// manifest names, or none.
 func (s *Store) writeDict(sn *snapshot) (*zdict, error) {
 	if sn.ManifestDict != "" {
 		if oid, ok := sn.Dicts[sn.ManifestDict]; ok {
 			return s.dictByOid(sn.ManifestDict, oid)
 		}
 	}
-	return s.defaultDict()
+	return s.plainDict()
 }
 
 type hit struct {
@@ -434,9 +432,11 @@ func (s *Store) Put(runs []Run) error {
 		return err
 	}
 	files := map[string][]byte{
-		"seg/" + name + ".zst":     zst,
-		"seg/" + name + ".idx":     idx,
-		"dict/" + d.sha + ".zdict": d.bytes,
+		"seg/" + name + ".zst": zst,
+		"seg/" + name + ".idx": idx,
+	}
+	if d.sha != "" {
+		files["dict/"+d.sha+".zdict"] = d.bytes
 	}
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -457,7 +457,7 @@ func (s *Store) Put(runs []Run) error {
 		for k, v := range files {
 			f[k] = v
 		}
-		if sn.ManifestDict == "" {
+		if !sn.HasManifest {
 			m, _ := json.Marshal(manifest{Schema: SchemaDir, Dict: d.sha})
 			f["MANIFEST.json"] = m
 		}

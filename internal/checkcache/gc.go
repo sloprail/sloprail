@@ -62,7 +62,8 @@ func (s *Store) readAll(sn *snapshot) (map[string]Found, int, error) {
 
 // Gc squashes the branch to a single root commit holding the latest result of
 // every key in segments of about SegmentTarget records, with a dictionary
-// trained on the records when there are enough of them. A concurrent writer
+// trained on the records when there are TrainMin or more of them, and none (plain zstd)
+// below that. A concurrent writer
 // makes the lease fail; Gc then replays on the new tip.
 func (s *Store) Gc() (GcStats, error) {
 	s.mu.Lock()
@@ -103,7 +104,7 @@ func (s *Store) Gc() (GcStats, error) {
 				runs = append(runs, r)
 			}
 		}
-		d, err := s.defaultDict()
+		d, err := s.plainDict()
 		if err != nil {
 			return st, err
 		}
@@ -121,8 +122,9 @@ func (s *Store) Gc() (GcStats, error) {
 				}
 			}
 		}
-		files := map[string][]byte{
-			"dict/" + d.sha + ".zdict": d.bytes,
+		files := map[string][]byte{}
+		if d.sha != "" {
+			files["dict/"+d.sha+".zdict"] = d.bytes
 		}
 		m, _ := json.Marshal(manifest{Schema: SchemaDir, Dict: d.sha})
 		files["MANIFEST.json"] = m
