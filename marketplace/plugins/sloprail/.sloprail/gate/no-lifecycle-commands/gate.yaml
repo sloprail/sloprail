@@ -9,7 +9,7 @@
 #
 # Only commands the AGENT runs reach this gate (PreCommandInvoke is the agent's Bash tool);
 # the hook wrapper invokes the binary itself, outside it. Read-only commands stay allowed:
-# `sr-session trajectory`, `refs list`, `state get/list`, `changeset`, `sr-checks status|sql`.
+# `sr-session trajectory`, `state get/list`, `changeset`, `sr check`.
 # `start` is refused too, even as `sr-session start < /dev/null`: load errors are reported to
 # the agent at every hook and at Stop, so an agent never needs to run it.
 #

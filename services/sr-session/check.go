@@ -9,9 +9,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/checkcache"
+	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionpath"
+	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // newCheckCmd is `sr check`: the file-guards judged over an EXPLICIT range of commits.
@@ -113,25 +116,41 @@ func runCheck(cmd *cobra.Command, verify bool) error {
 	}
 
 	p := HookPayload{Cwd: root, TranscriptPath: os.Getenv(TranscriptEnv), SessionID: os.Getenv(SessionEnv)}
+	if p.TranscriptPath == "" {
+		// The session this is run from, when there is one: its record is where a citation resolves.
+		p.TranscriptPath = transcript.CurrentSessionPath(root)
+	}
 	reg, err := modules.Registry()
 	if err != nil {
 		return err
 	}
-	scope := natureHookScope(cmd, p)
+	// A run from outside any session has no record: nothing to resolve citations in, and no
+	// session state to read contexts from.
+	scope := hookScope{Workspace: workspaceAnchor(root)}
+	if p.TranscriptPath != "" {
+		scope = natureHookScope(cmd, p)
+	}
 	loaded := newNatureDeclarations(cmd, root, reg)
 	if len(loaded.FileGuards) == 0 {
 		return nil
 	}
-	store := natureStore(cmd, p)
-	if store != nil {
-		defer store.Close()
+	var store sessionstate.Store
+	if p.TranscriptPath != "" {
+		if store = natureStore(cmd, p); store != nil {
+			defer store.Close()
+		}
 	}
 	cache, err := openCheckCache(root)
 	if err != nil {
 		return err
 	}
+	results := checkstore.Open(cache, verify)
 	contextMap := contextsOf(cmd, store, loaded.Contexts)
-	refusals, outcomes := evaluateChangesets(cmd, loaded.FileGuards, p, scope, root, r, contextMap, store, cache, verify)
+	refusals, outcomes := evaluateChangesets(cmd, loaded.FileGuards, p, scope, root, r, contextMap, store, results, verify)
+
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)
+	}
 
 	var out []string
 	for _, f := range refusals {

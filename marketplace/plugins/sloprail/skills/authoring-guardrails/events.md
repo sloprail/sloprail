@@ -258,9 +258,8 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 
 `seen` on a Post file event is delivered to **contexts** (and anything else still
 bound to `PostFile*`). A **file-guard** does not receive Post file events: it
-judges commits. What replaces `seen` for it is the watermark — a passed range is
-never re-delivered — and the verdict cache — unchanged input is never re-judged; see
-[file-guard.md](file-guard.md#passed-ranges-and-replayed-fails).
+judges commits. What replaces `seen` for it is the verdict cache — unchanged input is
+never re-judged; see [file-guard.md](file-guard.md#cached-verdicts).
 
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before

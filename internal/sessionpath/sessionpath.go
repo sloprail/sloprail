@@ -1,7 +1,7 @@
 // Package sessionpath is where a session's data lives, and who the session is.
 //
 // Both `sr-session` (which writes a session's state and check results) and
-// `sr-checks` (which reads the check results) have to find the SAME files, so
+// `sr check` (which reads and writes the check results) have to find the SAME files, so
 // the answer lives once, here: the platform's data directory, the encoding of a
 // workspace, the per-session directory, and the session's stable identity — the
 // uuid of where the conversation began, not the id the harness currently

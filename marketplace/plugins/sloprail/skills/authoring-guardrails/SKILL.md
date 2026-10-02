@@ -227,10 +227,11 @@ Loading clean is not the same as firing. What still never fires:
 - a mistyped key **inside** a list element, or a flag read off an open map
 - a check whose logic permits where it meant to refuse
 
-For a file-guard, `sr-session changeset --rule <name>` prints the range and the
-payload its checks will get without running anything
+For a file-guard, `sr-session changeset --rule <name> --base <rev> --head <rev>` prints the
+range and the payload its checks will get without running anything
 ([file-guard.md](file-guard.md#seeing-what-a-rule-will-be-handed)), and
-`sr-checks status` / `sr-checks sql` show each recorded verdict.
+`sr check run --base <rev> --head <rev>` judges it (`sr check verify` re-reads the stored
+verdicts without asking a model).
 
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.

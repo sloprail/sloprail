@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/changeset"
-	"github.com/sloprail/sloprail/internal/checkcache"
+	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
@@ -27,7 +25,6 @@ import (
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
-	"github.com/sloprail/sloprail/internal/version"
 )
 
 // Evaluating file-guards over an explicit range: one changeset per rule.
@@ -64,14 +61,15 @@ type changesetEvaluation struct {
 	contextMap map[string]natures.ContextState
 	context    map[string]any
 	state      sessionstate.Store // optional: only the quotes the session recorded read it
-	cache      checkcache.Cache
+	store      checkstore.Store   // nil: nothing is recorded or looked up
+	identity   checkstore.RunIdentity
+	batch      string
 	verify     bool // judges are looked up, never asked; nothing is written
 	rng        gitrepo.Range
 	runner     dispatchcore.Runner
 	snapshots  sync.Mutex // `git worktree add/remove` race on the worktree names
 
 	mu       sync.Mutex
-	pending  []checkcache.Result // verdicts to Put, once, when every rule is done
 	outcomes []checkOutcome
 }
 
@@ -136,6 +134,7 @@ type ruleRun struct {
 	unresolved []changeset.Unresolved
 	tree       *gitrepo.Snapshot
 	head       string
+	runID      string
 	next       int // index of the first check not yet run
 
 	cheap, slow time.Duration // time spent before / at the first judge
@@ -146,7 +145,7 @@ type ruleRun struct {
 
 // evaluateChangesets evaluates every file-guard over rng and returns each refusal, in
 // the order the guards were declared, with every check's outcome. root is the
-// repository root.
+// repository root; store may be nil. In verify mode nothing is recorded.
 //
 // Rules are independent, so they run concurrently (SLOPRAIL_STOP_CONCURRENCY, default
 // 6) in three steps:
@@ -161,15 +160,17 @@ type ruleRun struct {
 // Within a rule the declared order and first-refusal-ends are kept. The judged
 // verdicts are put in the cache once, at the end (one write per run).
 func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p HookPayload, scope hookScope, root string, rng gitrepo.Range,
-	contextMap map[string]natures.ContextState, state sessionstate.Store, cache checkcache.Cache, verify bool) ([]fileGuardResult, []checkOutcome) {
+	contextMap map[string]natures.ContextState, state sessionstate.Store, store checkstore.Store, verify bool) ([]fileGuardResult, []checkOutcome) {
 	if len(guards) == 0 {
 		return nil, nil
 	}
 	start := time.Now()
 	ev := &changesetEvaluation{
 		cmd: cmd, diags: map[string]*bytes.Buffer{}, root: root, p: p, scope: scope, contextMap: contextMap,
-		context: contextMatchValue(contextMap), state: state, cache: cache, verify: verify, rng: rng,
+		context: contextMatchValue(contextMap), state: state, store: store, verify: verify, rng: rng,
+		batch: "check-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}
+	ev.identity = ev.runIdentity()
 	limit := stopConcurrency()
 	for _, g := range guards {
 		ev.diags[g.Qualified()] = &bytes.Buffer{} // filled before the pool: read-only map after
@@ -226,12 +227,6 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 			cmd.ErrOrStderr().Write(b.Bytes())
 		}
 	}
-	if !verify && len(ev.pending) > 0 {
-		if err := cache.Put(ev.pending); err != nil {
-			refusals = append(refusals, fileGuardResult{Name: "file-guards", Attribution: "file-guards", Refused: true,
-				Reason: fmt.Sprintf("the verdicts could not be stored (%v); refusing because a verdict that was not recorded cannot be trusted", err)})
-		}
-	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
 		time.Since(start).Round(time.Millisecond), len(guards), limit)
 	sort.SliceStable(ev.outcomes, func(i, j int) bool {
@@ -252,25 +247,69 @@ func refusal(g declaration.FileGuard, reason string) fileGuardResult {
 	return fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason}
 }
 
-// engineFailure is the refusal for a rule that could not be evaluated: nothing is passed.
-func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, err error) (fileGuardResult, bool) {
+// runIdentity fills the provenance columns: the repository (its root commit), the branch and
+// the session. Best effort — an unreadable one is left empty rather than costing the run.
+func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
+	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID, AgentID: ev.p.AgentID}
+	if root, err := gitrepo.RootCommit(ev.root); err == nil {
+		id.RepoID = root
+	}
+	if pos, err := gitrepo.Head(ev.root); err == nil {
+		id.Branch = pos.Branch
+	}
+	return id
+}
+
+// record stores a run, returning its id ("" when nothing is recorded: verify, or no store).
+func (ev *changesetEvaluation) record(run checkstore.CheckRun) (string, error) {
+	if ev.store == nil || ev.verify {
+		return "", nil
+	}
+	run.RunIdentity, run.BatchID = ev.identity, ev.batch
+	return ev.store.RecordRun(run)
+}
+
+// recordCheck stores one check of a run. A check that could not be stored is an ENGINE
+// failure, not something to print and carry on past: the run would hold fewer checks than it
+// ran, and read as more passed than it was.
+func (ev *changesetEvaluation) recordCheck(runID string, c checkstore.CheckRecord) error {
+	if ev.store == nil || ev.verify || runID == "" {
+		return nil
+	}
+	if _, err := ev.store.RecordCheck(runID, c); err != nil {
+		return fmt.Errorf("could not record the %s check: %w", c.Kind, err)
+	}
+	return nil
+}
+
+// engineFailure records a run that failed as an engine — it passes nothing — and returns the
+// refusal that holds the caller.
+func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checkstore.CheckRun, err error) (fileGuardResult, bool) {
 	fmt.Fprintf(ev.log(g), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
+	run.ExitCode, run.Error, run.Complete = 1, err.Error(), true
+	if _, recErr := ev.record(run); recErr != nil {
+		fmt.Fprintln(ev.log(g), "sloprail:", recErr) // already refusing
+	}
 	return refusal(g, namingFiles(fmt.Sprintf(
 		"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
 		g.Name, err), nil)), true
 }
 
-// prepare readies one rule over the range: the changeset and the snapshot. A nil
-// ruleRun means there is nothing more to do — the result and whether it refused are
-// the outcome.
+// prepare readies one rule over the range: the changeset, the snapshot, and the run recorded
+// RUNNING. A nil ruleRun means there is nothing more to do — the result and whether it
+// refused are the outcome.
 func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileGuardResult, bool) {
+	rule := g.Qualified()
+	run := checkstore.CheckRun{CheckID: rule, BaseRef: ev.rng.Base, HeadRef: ev.rng.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
+
 	hash, err := changeset.RuleHash(g.Root())
 	if err != nil {
-		return ev.fail(g, err)
+		return ev.fail(g, run, err)
 	}
+	run.RuleHash = hash
 	match, err := guardrail.CompileFileMatch(g.Match)
 	if err != nil {
-		return ev.fail(g, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
+		return ev.fail(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
 	r := ev.rng
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
@@ -279,10 +318,14 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		Select:    changesetSelector(match, ev.context),
 	})
 	if err != nil {
-		return ev.fail(g, err)
+		return ev.fail(g, run, err)
 	}
 	if len(cs.Files) == 0 {
 		// `match` selected nothing in a range that WAS computed: a pass.
+		run.Complete = true
+		if _, err := ev.record(run); err != nil {
+			return ev.fail(g, run, err)
+		}
 		return nil, fileGuardResult{}, false
 	}
 
@@ -292,7 +335,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 	tree, err := gitrepo.AddSnapshot(ev.root, "", r.Head)
 	ev.snapshots.Unlock()
 	if err != nil {
-		return ev.fail(g, err)
+		return ev.fail(g, run, err)
 	}
 
 	payload := changeset.NewPayload(cs, changeset.Whole(cs), ev.scope.Transcript, ev.context)
@@ -312,12 +355,20 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		// SR_SESSION_START is kept for rules written against it: what stood before the work is the base.
 		Env: append(changeset.Env(tree.Path, r.Base, r.Head), "SR_SESSION_START="+r.Base),
 	}
-	return &ruleRun{g: g, hash: hash, req: req, payload: payload, unresolved: unresolved, tree: tree, head: r.Head}, fileGuardResult{}, false
+
+	// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
+	// never reads as a pass.
+	runID, err := ev.record(run)
+	if err != nil {
+		ev.dropTree(g, tree, r.Head)
+		return ev.fail(g, run, err)
+	}
+	return &ruleRun{g: g, hash: hash, req: req, payload: payload, runID: runID, unresolved: unresolved, tree: tree, head: r.Head}, fileGuardResult{}, false
 }
 
 // fail is engineFailure in prepare's three-value shape.
-func (ev *changesetEvaluation) fail(g declaration.FileGuard, err error) (*ruleRun, fileGuardResult, bool) {
-	r, refused := ev.engineFailure(g, err)
+func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.CheckRun, err error) (*ruleRun, fileGuardResult, bool) {
+	r, refused := ev.engineFailure(g, run, err)
 	return nil, r, refused
 }
 
@@ -338,7 +389,7 @@ func (ev *changesetEvaluation) runCheap(rr *ruleRun) {
 	v, err := ev.runRequires(rr)
 	if err == nil && !v.Refused {
 		for rr.next < len(rr.g.Checks) && rr.g.Checks[rr.next].Script != "" {
-			if v, err = ev.runCheck(rr.g, rr.hash, rr.req, rr.payload, rr.next, rr.g.Checks[rr.next]); err != nil || v.Refused {
+			if v, err = ev.runCheck(rr.g, rr.hash, rr.req, rr.payload, rr.runID, rr.next, rr.g.Checks[rr.next]); err != nil || v.Refused {
 				break
 			}
 			rr.next++
@@ -360,29 +411,34 @@ func (ev *changesetEvaluation) runRest(rr *ruleRun) {
 	var v dispatchcore.Verdict
 	var err error
 	for ; rr.next < len(rr.g.Checks); rr.next++ {
-		if v, err = ev.runCheck(rr.g, rr.hash, rr.req, rr.payload, rr.next, rr.g.Checks[rr.next]); err != nil || v.Refused {
+		if v, err = ev.runCheck(rr.g, rr.hash, rr.req, rr.payload, rr.runID, rr.next, rr.g.Checks[rr.next]); err != nil || v.Refused {
 			break
 		}
 	}
 	ev.finish(rr, v, err)
 }
 
-// skipDeferred says, for a rule that refused on a cheap check, which judges it did not
-// reach, so a judge is never silently absent.
+// skipDeferred records, for a rule that refused on a cheap check, each judge it did not
+// reach as a skip with the reason, so a judge is never silently absent.
 func (ev *changesetEvaluation) skipDeferred(rr *ruleRun) {
 	for i := rr.next; i < len(rr.g.Checks); i++ {
 		c := rr.g.Checks[i]
 		if c.Judge == "" {
 			continue
 		}
+		reason := "judge deferred: this rule refused on a cheap check (" + rr.g.Qualified() + "); fix that and the judge runs next"
 		fmt.Fprintf(ev.log(rr.g), "sloprail: file-guard %s: judge %q not run; the rule's own cheap check refused first\n", rr.g.Attribution(), c.Judge)
-		ev.note(checkOutcome{Rule: rr.g.Qualified(), Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: "skipped", Source: "ran",
-			Reason: "judge deferred: this rule refused on a cheap check; fix that and the judge runs next"})
+		ev.note(checkOutcome{Rule: rr.g.Qualified(), Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: "skipped", Source: "ran", Reason: reason})
+		rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: checkstore.StatusSkip,
+			Metadata: map[string]any{"reasoning": reason, "model": c.Model}}
+		if err := ev.recordCheck(rr.runID, rec); err != nil {
+			fmt.Fprintln(ev.log(rr.g), "sloprail:", err)
+		}
 	}
 }
 
-// finish settles a rule: its outcome is the verdict (or the engine error, which is a
-// refusal).
+// finish settles a rule: its run is finished, and its outcome is the verdict (or the engine
+// error, which is a refusal and leaves the run unfinished).
 func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict, failed error) {
 	g := rr.g
 	defer func() { rr.settled = true }()
@@ -390,6 +446,12 @@ func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict,
 	if failed != nil {
 		rr.result, rr.refused = refusal(g, namingFiles(failed.Error(), rr.payload.Changeset.Files)), true
 		return
+	}
+	if ev.store != nil && !ev.verify && rr.runID != "" {
+		if err := ev.store.FinishRun(rr.runID); err != nil {
+			rr.result, rr.refused = refusal(g, fmt.Sprintf("the file-guard %q could not finish recording its run (%v); refusing because a run that was not recorded cannot be trusted", g.Name, err)), true
+			return
+		}
 	}
 	if verdict.Refused {
 		rr.result, rr.refused = refusal(g, namingFiles(verdict.Reason, rr.payload.Changeset.Files)), true
@@ -436,7 +498,7 @@ func (ev *changesetEvaluation) runRequires(rr *ruleRun) (dispatchcore.Verdict, e
 		}
 		seen[requireKind(p)]++
 
-		v, err := ev.runRequirement(g, rr.req, p, kind, rr.payload, rr.unresolved)
+		v, err := ev.runRequirement(g, rr.req, p, kind, rr.payload, rr.runID, rr.unresolved)
 		if err != nil {
 			return dispatchcore.Verdict{}, err
 		}
@@ -457,7 +519,7 @@ func (ev *changesetEvaluation) runRequires(rr *ruleRun) (dispatchcore.Verdict, e
 // file does not ground another, and an uncited change on top of a cited one is
 // refused. Every subject that fails is named.
 func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispatchcore.Request, p declaration.Prerequisite,
-	kind string, whole changeset.Payload, unresolved []changeset.Unresolved) (dispatchcore.Verdict, error) {
+	kind string, whole changeset.Payload, runID string, unresolved []changeset.Unresolved) (dispatchcore.Verdict, error) {
 
 	cs := whole.Changeset
 	var failed, reasons []string
@@ -471,12 +533,27 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 			grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.ForSubject(s))),
 		}}
 		v, err := ev.runner.CheckRequire(one)
-		out := checkOutcome{Rule: g.Qualified(), Subject: s.ID, Kind: kind, Status: checkcache.StatusPass, Source: "ran"}
+		out := checkOutcome{Rule: g.Qualified(), Subject: s.ID, Kind: kind, Status: checkstore.StatusPass, Source: "ran"}
+		rec := checkstore.CheckRecord{Subject: s.ID, Kind: kind}
 		switch {
 		case err != nil:
+			rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
+			_ = ev.recordCheck(runID, rec) // already failing
 			return dispatchcore.Verdict{}, engineError(g, err)
 		case v.Refused:
-			out.Status, out.Reason = checkcache.StatusFail, v.Reason
+			rec.Status, rec.Metadata = checkstore.StatusFail, map[string]any{"reasoning": v.Reason}
+			out.Status, out.Reason = checkstore.StatusFail, v.Reason
+		default:
+			rec.Status = checkstore.StatusPass
+		}
+		if p.Citation != nil {
+			rec.Items = citationItems(one.Event, unresolved)
+			if v.Refused {
+				rec.Metadata["reasoning"] = v.Reason + unresolvedNote(unresolved)
+			}
+		}
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
 		}
 		ev.note(out)
 		if v.Refused {
@@ -600,19 +677,41 @@ func describeCommit(cs changeset.Changeset, sha string) string {
 	return short(sha)
 }
 
-// runCheck runs one check of a rule. A script is run every time. A judge is
-// fingerprinted — everything the model is about to be given — and the cache asked
-// before the model: a stored PASS is reused, whatever recorded it. `verify` never
-// asks the model: a key without a stored pass is red.
+// runCheck runs one check of a rule and records it. A script is run every time. A judge is
+// fingerprinted — everything the model is about to be given — and the store asked before the
+// model: a stored PASS is reused, whoever recorded it. `verify` never asks the model: a key
+// without a stored pass is red.
 func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, req dispatchcore.Request,
-	payload changeset.Payload, i int, c declaration.Check) (dispatchcore.Verdict, error) {
+	payload changeset.Payload, runID string, i int, c declaration.Check) (dispatchcore.Verdict, error) {
 
-	rule, kind := g.Qualified(), checkKind(i, c)
-	out := checkOutcome{Rule: rule, Subject: changeset.DefaultSubjectID, Kind: kind, Source: "ran"}
-	settle := func(v dispatchcore.Verdict) (dispatchcore.Verdict, error) {
-		out.Status = checkcache.StatusPass
+	rule := g.Qualified()
+	rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c)}
+	out := checkOutcome{Rule: rule, Subject: rec.Subject, Kind: rec.Kind, Source: "ran"}
+	fail := func(err error) (dispatchcore.Verdict, error) {
+		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
+		_ = ev.recordCheck(runID, rec) // already failing
+		return dispatchcore.Verdict{}, engineError(g, err)
+	}
+	settle := func(v dispatchcore.Verdict, meta map[string]any) (dispatchcore.Verdict, error) {
+		rec.Status = checkstore.StatusPass
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		// Every verdict keeps its reasoning, a pass included: what the judge said is the
+		// record of why the range was let through.
 		if v.Refused {
-			out.Status, out.Reason = checkcache.StatusFail, v.Reason
+			rec.Status = checkstore.StatusFail
+		}
+		if v.Refused || v.Reason != "" {
+			meta["reasoning"] = v.Reason
+		}
+		rec.Metadata = meta
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
+		}
+		out.Status, out.Reason = rec.Status, ""
+		if v.Refused {
+			out.Reason = v.Reason
 		}
 		ev.note(out)
 		return v, nil
@@ -621,74 +720,87 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 	if c.Script != "" {
 		v, err := ev.runner.RunScript(req, c)
 		if err != nil {
-			return dispatchcore.Verdict{}, engineError(g, err)
+			return fail(err)
 		}
-		return settle(v)
+		return settle(v, nil)
 	}
 
-	// A judge: prepare first, then — unless it asked to skip — fingerprint exactly
-	// what the model is about to be given and ask the cache before asking the model.
+	// A judge: prepare first, then — unless it asked to skip — fingerprint exactly what the
+	// model is about to be given and ask the store before asking the model.
 	prep, v, err := ev.runner.PrepareJudge(req, c)
 	if err != nil {
-		return dispatchcore.Verdict{}, engineError(g, err)
+		return fail(err)
 	}
 	if v.Refused {
-		return settle(v)
+		return settle(v, map[string]any{"model": c.Model})
 	}
 	if prep.Skip {
+		rec.Status, rec.Metadata = checkstore.StatusSkip, map[string]any{"reasoning": "prepare asked to skip the judge", "model": c.Model}
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
+		}
 		out.Status, out.Reason = "skipped", "prepare asked to skip the judge"
 		ev.note(out)
 		return dispatchcore.Verdict{}, nil
 	}
 	extra, err := json.Marshal(prep.Context)
 	if err != nil {
-		return dispatchcore.Verdict{}, engineError(g, err)
+		return fail(err)
 	}
 	// TODO(subjects): key per subject (a file's own content) once `subjects:` splits a
 	// changeset; today the one subject is the whole changeset.
 	fp, err := changeset.Fingerprint(payload, hash, c.Model, string(extra))
 	if err != nil {
-		return dispatchcore.Verdict{}, engineError(g, err)
+		return fail(err)
 	}
-	key := checkcache.Key{Rule: rule, RuleHash: hash, Kind: kind, Subject: out.Subject, Fingerprint: fp}
-	found, err := ev.cache.Lookup([]checkcache.Key{key})
-	if err != nil {
-		return dispatchcore.Verdict{}, engineError(g, err)
-	}
-	stored, have := found[key.ID()]
-	if have && stored.Hit() {
-		out.Source = "cached"
-		return settle(dispatchcore.Verdict{Reason: stored.Reasoning})
-	}
-	if ev.verify {
-		out.Source = "stored"
-		if have {
-			out.Status, out.Reason = checkcache.StatusFail, stored.Reasoning
+	rec.Fingerprint = fp
+	meta := map[string]any{"model": c.Model}
+
+	if ev.store != nil {
+		if ev.verify {
+			stored, have, err := ev.store.LatestCheck(rule, hash, rec.Subject, rec.Kind, fp)
+			if err != nil {
+				return fail(err)
+			}
+			out.Source = "stored"
+			reasoning, _ := stored.Metadata["reasoning"].(string)
+			switch {
+			case have && stored.Status == checkstore.StatusPass:
+				out.Status, out.Source = checkstore.StatusPass, "cached"
+				ev.note(out)
+				return dispatchcore.Verdict{Reason: reasoning}, nil
+			case have:
+				out.Status, out.Reason = checkstore.StatusFail, reasoning
+				ev.note(out)
+				return dispatchcore.Verdict{Refused: true, Reason: reasoning}, nil
+			}
+			out.Status = "missing"
+			out.Reason = "no recorded verdict for " + rec.Kind + " on this input; run `sr check run` with this --base and --head"
 			ev.note(out)
-			return dispatchcore.Verdict{Refused: true, Reason: stored.Reasoning}, nil
+			return dispatchcore.Verdict{Refused: true, Reason: out.Reason}, nil
 		}
-		out.Status = "missing"
-		out.Reason = "no recorded verdict for " + kind + " on this input; run `sr check run` with this --base and --head"
+		cached, hit, err := ev.store.CachedCheck(rule, hash, rec.Subject, rec.Kind, fp)
+		if err != nil {
+			return fail(err)
+		}
+		if hit {
+			// Asked before, on exactly this input, and it passed: reuse the verdict.
+			reasoning, _ := cached.Metadata["reasoning"].(string)
+			meta["replayed"] = true
+			out.Source = "cached"
+			return settle(dispatchcore.Verdict{Reason: reasoning}, meta)
+		}
+	} else if ev.verify {
+		out.Status, out.Reason = "missing", "no results are kept here; run `sr check run`"
 		ev.note(out)
 		return dispatchcore.Verdict{Refused: true, Reason: out.Reason}, nil
 	}
 
 	v, err = ev.runner.Judge(req, c, prep)
 	if err != nil {
-		return dispatchcore.Verdict{}, engineError(g, err)
+		return fail(err)
 	}
-	status := checkcache.StatusPass
-	if v.Refused {
-		status = checkcache.StatusFail
-	}
-	resp := sha256.Sum256([]byte(v.Reason))
-	ev.mu.Lock()
-	ev.pending = append(ev.pending, checkcache.Result{Key: key, Status: status, Reasoning: v.Reason, Prov: checkcache.Provenance{
-		Model: c.Model, Response: hex.EncodeToString(resp[:]), At: time.Now().UTC().Format(time.RFC3339Nano),
-		SR: version.Version, Session: ev.scope.SessionID, Agent: ev.p.AgentID,
-	}})
-	ev.mu.Unlock()
-	return settle(v)
+	return settle(v, meta)
 }
 
 // engineError is the refusal for something that went wrong in the engine while a
@@ -714,6 +826,21 @@ func checkKind(i int, c declaration.Check) string {
 		return fmt.Sprintf("check[%d]:script:%s", i, c.Script)
 	}
 	return fmt.Sprintf("check[%d]:judge:%s", i, c.Judge)
+}
+
+// citationItems records what the citation prerequisite saw: each citation that resolved,
+// and each trailer that did not.
+func citationItems(e event.Event, unresolved []changeset.Unresolved) []checkstore.CheckItem {
+	var items []checkstore.CheckItem
+	for _, c := range grounding.FromWire(e.Fields[grounding.FieldCitations]) {
+		items = append(items, checkstore.CheckItem{Key: c.Quote, Passed: true,
+			Metadata: map[string]any{"path": c.Path, "line": c.Line, "sourceTypes": c.SourceTypes}})
+	}
+	for _, u := range unresolved {
+		items = append(items, checkstore.CheckItem{Key: u.Quote, Passed: false,
+			Metadata: map[string]any{"trailer": u.Trailer, "commit": u.Commit, "error": u.Err.Error()}})
+	}
+	return items
 }
 
 // unresolvedNote says which citation trailers did not resolve, so an agent that

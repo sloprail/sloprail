@@ -118,19 +118,16 @@ The name is qualified by the plugin AND the nature (`<plugin>/<nature>/<name>`),
 so disabling a shipped rule cannot also disable a project rule that happens to
 share its name — nor a differently-natured rule of the same name.
 
-## Opt-in rules
+## Judging file-guards
 
-Three gates ship off (`enabled: false`) and a project turns them on from its own
-`.sloprail/config.yaml`:
+File-guards are judged over an explicit range, not at Stop:
 
-    enabled:
-      - sloprail/gate/judge-before-push
-      - sloprail/gate/no-merge-over-refusals
-      - sloprail/gate/no-destroying-owed-work
+    sr check run    --base origin/main --head HEAD
+    sr check verify --base origin/main --head HEAD
 
-`no-merge-over-refusals` refuses `gh pr merge` (and a push to the default branch) over
-refusals or unjudged commits; `no-destroying-owed-work` refuses the git commands that
-would destroy such commits (`branch -D`, `worktree remove`, hard resets, prunes).
+`run` asks a model where no stored pass exists for exactly that content and stores the
+verdicts; `verify` is deterministic (no model, no writes) and exits 1 on anything failing
+or unjudged, so it can be a required CI check.
 
 ## Changes to a project's rules
 

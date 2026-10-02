@@ -193,23 +193,6 @@ the command and watch it fire before trusting one) — are set out in full in
 [events.md](events.md). The gate-specific point is only that you match against the
 flattened list.
 
-### Example: a shipped command gate
-
-The plugin's `sloprail/gate/no-merge-over-refusals` is a command gate with all its
-policy in YAML and one script. It matches `gh pr merge` (any flags, `--admin` too),
-and a single `checks:` script refuses it on facts only: the branch being merged has open
-refusals in this session's check results (read with `sr-checks sql`), or commits no rule
-has judged yet, or the target cannot be told. A merge with none is untouched; one with
-open refusals is refused until the fix is committed and judged. No user citation lifts
-it: a gate that guards irreversible work must not be unlockable by a quote (an agent
-can wash an old, generic instruction into one). Engine failures (a run that errored
-without refusing anything) are not listed as refusals; the unjudged tip they leave is
-judged at the next Stop. `no-destroying-owed-work` is built the same way for branch
-deletion, `worktree remove`, hard resets and prunes; dropping owed work stays the user's
-through `sr-session refs abandon --cite-user`. Both ship **off** (opt-in): a project turns them on with
-`enabled: [sloprail/gate/no-merge-over-refusals, sloprail/gate/no-destroying-owed-work]` in
-`.sloprail/config.yaml`.
-
 ### The resolution floor
 
 A program named by a variable, a payload decoded and piped to a shell, splitting
@@ -306,11 +289,8 @@ project switches it on, by qualified name, in the same config:
 
 ```yaml
 enabled:
-  - sloprail/gate/judge-before-push
+  - <plugin>/gate/<name>
 ```
-
-(The plugin's `judge-before-push` gate is the example: it runs `sr-session judge` before a
-`git push` / `gh pr create` and refuses while a file-guard refuses the commits that would leave.)
 
 The nature is part of the key — `.../gate/<name>` — because a gate and a context
 may share a bare name. Keep the sibling prose that records why the gate exists.

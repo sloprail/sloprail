@@ -509,7 +509,7 @@ func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
 	if err := os.MkdirAll(stage, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, bin := range []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval", "sr-checks"} {
+	for _, bin := range []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval"} {
 		body := "#!/bin/sh\nexit 0\n"
 		if bin == "sr-session" {
 			body = "#!/bin/sh\necho \"installed sr-session ran: $1\"\n"

@@ -10,21 +10,21 @@ import (
 	"path/filepath"
 )
 
-// File is a Cache kept as an append-only JSON-lines file: the local, single-machine
-// store until the git-ref store (an orphan branch of content-addressed segments)
-// replaces it behind the same interface. Appending a line is atomic enough for several
-// processes writing at once, and a reader resolves duplicates as Cache.Lookup says.
+// File is a Cache kept as an append-only JSON-lines file of runs: the local, single-machine
+// store until the git-ref store (an orphan branch of content-addressed segments) replaces it
+// behind the same interface. Appending a line is atomic enough for several processes
+// writing at once, and a reader resolves duplicates as Cache.Lookup says.
 type File struct{ path string }
 
 // OpenFile returns the cache kept at path. The file is created on the first Put.
 func OpenFile(path string) *File { return &File{path: path} }
 
-func (f *File) Lookup(keys []Key) (map[string]Result, error) {
+func (f *File) Lookup(keys []Key) (map[string]Found, error) {
 	want := make(map[string]struct{}, len(keys))
 	for _, k := range keys {
 		want[k.ID()] = struct{}{}
 	}
-	out := make(map[string]Result, len(keys))
+	out := make(map[string]Found, len(keys))
 	fh, err := os.Open(f.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return out, nil
@@ -34,37 +34,43 @@ func (f *File) Lookup(keys []Key) (map[string]Result, error) {
 	}
 	defer fh.Close()
 	sc := bufio.NewScanner(fh)
-	sc.Buffer(make([]byte, 1<<20), 1<<26)
+	sc.Buffer(make([]byte, 1<<20), 1<<28)
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 {
 			continue
 		}
-		var r Result
+		var r Run
 		if err := json.Unmarshal(line, &r); err != nil {
-			return nil, fmt.Errorf("checkcache: unreadable result in %s: %w", f.path, err)
+			return nil, fmt.Errorf("checkcache: unreadable run in %s: %w", f.path, err)
 		}
-		id := r.Key.ID()
-		if _, ok := want[id]; !ok {
-			continue
+		for _, c := range r.Checks {
+			if !Findable(c) {
+				continue
+			}
+			id := r.CheckKey(c).ID()
+			if _, ok := want[id]; !ok {
+				continue
+			}
+			found := Found{Run: r, Check: c}
+			if prior, ok := out[id]; ok && !Newer(found, prior) {
+				continue
+			}
+			out[id] = found
 		}
-		if prior, ok := out[id]; ok && !Newer(r, prior) {
-			continue
-		}
-		out[id] = r
 	}
 	return out, sc.Err()
 }
 
-func (f *File) Put(results []Result) error {
-	if len(results) == 0 {
+func (f *File) Put(runs []Run) error {
+	if len(runs) == 0 {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
 		return fmt.Errorf("checkcache: %w", err)
 	}
 	var buf bytes.Buffer
-	for _, r := range results {
+	for _, r := range runs {
 		b, err := json.Marshal(r)
 		if err != nil {
 			return fmt.Errorf("checkcache: %w", err)

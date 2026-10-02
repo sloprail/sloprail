@@ -1,14 +1,16 @@
-// Package checkcache is where what a judge concluded is kept, so that no one asks
-// it the same question twice.
+// Package checkcache is where what file-guards concluded about commits is kept, so that no
+// one asks a judge the same question twice.
 //
-// A result is a FACT about its Key and nothing else: which session, agent, branch or
-// commit range produced it is provenance (Result.Prov), never part of a lookup. A
-// finished pass with the same key is a cache hit; a stored fail is kept so a reader can
-// say why it is red, but it is never a hit for the judge.
+// The unit it stores is a RUN: one rule evaluated once over one commit range, with its
+// Checks (one per subject and kind, each with its Items) — a10n's check-results shape, which
+// internal/checkstore speaks. What makes a check reusable is its KEY and nothing else: which
+// session, agent, branch or range recorded it is provenance on the run, never part of a
+// lookup. A finished pass with the same key is a cache hit; a stored fail is kept so a reader
+// can say why it is red.
 //
 // This file is the whole contract the engine depends on: Lookup and Put. The in-memory
-// implementation below is the reference and what the unit tests use; the git-ref store
-// (an orphan branch of content-addressed zstd segments) implements the same interface.
+// implementation below is the reference and what the unit tests use; the git-ref store (an
+// orphan branch of content-addressed zstd segments) implements the same interface.
 package checkcache
 
 import (
@@ -21,7 +23,7 @@ import (
 // fingerprints are derived never collides with an older result.
 const SchemaVersion = "sr1"
 
-// Key is what a result is a fact about.
+// Key is what a check's result is a fact about.
 type Key struct {
 	// Rule is the rule's qualified name (<plugin>/file-guard/<name>).
 	Rule string `json:"rule"`
@@ -30,7 +32,7 @@ type Key struct {
 	RuleHash string `json:"ruleHash"`
 	// Kind names the check inside the rule: check[1]:judge:./rubric.md.j2.
 	Kind string `json:"kind"`
-	// Subject is the unit judged. Today the one subject of a rule is "changeset".
+	// Subject is the unit judged. Today the one subject of a rule's checks is "changeset".
 	Subject string `json:"subject"`
 	// Fingerprint covers EVERY input of the check — the subject's content, the model,
 	// what `prepare` supplied — and never a commit SHA.
@@ -48,92 +50,130 @@ func (k Key) ID() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Result statuses. Only a pass is a cache hit.
+// Check statuses. Only a pass is a cache hit.
 const (
-	StatusPass = "pass"
-	StatusFail = "fail"
+	StatusPass        = "pass"
+	StatusFail        = "fail"
+	StatusSkip        = "skip"
+	StatusError       = "error"
+	StatusInterrupted = "interrupted"
 )
 
-// Cite is a citation a result depended on, kept so a reader can see why it passed
-// without holding the transcript.
-type Cite struct {
-	Quote string `json:"quote"`
-	Path  string `json:"path,omitempty"`
-	Line  int    `json:"line,omitempty"`
+// Item is one finding inside a check (a file a judge named, a citation a prerequisite saw).
+type Item struct {
+	Key      string         `json:"key,omitempty"`
+	Passed   bool           `json:"passed"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// Provenance says who produced a result and how. None of it is part of the key.
-type Provenance struct {
-	Model    string `json:"model,omitempty"`
-	Prompt   string `json:"prompt,omitempty"` // sha256 of the rendered prompt
-	Response string `json:"resp,omitempty"`   // sha256 of the judge's response
-	At       string `json:"at,omitempty"`     // RFC 3339, UTC
-	SR       string `json:"sr,omitempty"`     // the sloprail version that ran it
-	Session  string `json:"session,omitempty"`
-	Agent    string `json:"agent,omitempty"`
+// Check is one (subject, kind) of a run.
+type Check struct {
+	Subject string `json:"subject"`
+	Kind    string `json:"kind"`
+	Status  string `json:"status"`
+	// Fingerprint is the cache key part; "" (a script, a requirement) is never cached.
+	Fingerprint string         `json:"fingerprint,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Items       []Item         `json:"items,omitempty"`
 }
 
-// Result is one judged key.
-type Result struct {
-	Key       Key        `json:"key"`
-	Status    string     `json:"status"`
-	Reasoning string     `json:"reasoning,omitempty"`
-	Cites     []Cite     `json:"cites,omitempty"`
-	Prov      Provenance `json:"prov"`
+// Run is one rule evaluated once over one commit range.
+type Run struct {
+	ID      string `json:"id"`
+	RunAt   string `json:"run_at"` // fixed-width UTC, so stamps compare as strings
+	BatchID string `json:"batch,omitempty"`
+	// Rule is the rule's qualified name; RuleHash its definition's hash.
+	Rule     string `json:"rule"`
+	RuleHash string `json:"ruleHash"`
+	BaseRef  string `json:"base_ref"`
+	HeadRef  string `json:"head_ref"`
+	// ExitCode and Error record an ENGINE failure (git, a range that could not be read):
+	// such a run passes nothing.
+	ExitCode int            `json:"exit_code,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Complete bool           `json:"complete"` // every check it was going to run is stored
+	Metadata map[string]any `json:"metadata,omitempty"`
+	// Provenance: who ran it. Never part of a key.
+	RepoID    string  `json:"repo_id,omitempty"`
+	Branch    string  `json:"branch,omitempty"`
+	SessionID string  `json:"session_id,omitempty"`
+	AgentID   string  `json:"agent_id,omitempty"`
+	Checks    []Check `json:"checks"`
 }
 
-// Hit reports whether this result may be reused instead of asking the judge again.
-func (r Result) Hit() bool { return r.Status == StatusPass }
-
-// Cache is the whole contract: look keys up, put results in.
-type Cache interface {
-	// Lookup returns the stored result of each key it has, by Key.ID(). A key with no
-	// result is simply absent from the map. When several results share a key (two
-	// writers), the latest Prov.At wins, a tie broken by the larger Prov.Response.
-	Lookup(keys []Key) (map[string]Result, error)
-	// Put stores results. Writing a key that already has a result adds to it, never
-	// rewrites it; a reader resolves duplicates as Lookup says.
-	Put(results []Result) error
+// CheckKey is the key of one check of a run.
+func (r Run) CheckKey(c Check) Key {
+	return Key{Rule: r.Rule, RuleHash: r.RuleHash, Kind: c.Kind, Subject: c.Subject, Fingerprint: c.Fingerprint}
 }
 
-// Newer reports whether a should be preferred over b when both are results for one key.
-func Newer(a, b Result) bool {
-	if a.Prov.At != b.Prov.At {
-		return a.Prov.At > b.Prov.At
+// Found is the stored check for a key, with the run it was recorded in.
+type Found struct {
+	Run   Run
+	Check Check
+}
+
+// Newer reports whether a should be preferred over b when both hold a result for one key:
+// the latest run wins, a tie broken deterministically.
+func Newer(a, b Found) bool {
+	if a.Run.RunAt != b.Run.RunAt {
+		return a.Run.RunAt > b.Run.RunAt
 	}
-	return a.Prov.Response > b.Prov.Response
+	return a.Run.ID > b.Run.ID
+}
+
+// Cache is the whole contract: look keys up, put runs in.
+type Cache interface {
+	// Lookup returns, for each key it has a pass or fail for, the check and its run, by
+	// Key.ID(). A key with no result is absent. When several runs hold the key (two
+	// writers), the latest wins. Only checks with a fingerprint are findable.
+	Lookup(keys []Key) (map[string]Found, error)
+	// Put stores runs. Writing a key that already has a result adds to it, never rewrites
+	// it; a reader resolves duplicates as Lookup says.
+	Put(runs []Run) error
+}
+
+// Findable is whether a check can be looked up: it has a fingerprint and finished as a
+// pass or a fail.
+func Findable(c Check) bool {
+	return c.Fingerprint != "" && (c.Status == StatusPass || c.Status == StatusFail)
 }
 
 // Memory is the in-memory Cache.
 type Memory struct {
 	mu   sync.Mutex
-	byID map[string]Result
+	byID map[string]Found
 }
 
 // NewMemory returns an empty in-memory cache.
-func NewMemory() *Memory { return &Memory{byID: map[string]Result{}} }
+func NewMemory() *Memory { return &Memory{byID: map[string]Found{}} }
 
-func (m *Memory) Lookup(keys []Key) (map[string]Result, error) {
+func (m *Memory) Lookup(keys []Key) (map[string]Found, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make(map[string]Result, len(keys))
+	out := make(map[string]Found, len(keys))
 	for _, k := range keys {
-		if r, ok := m.byID[k.ID()]; ok {
-			out[k.ID()] = r
+		if f, ok := m.byID[k.ID()]; ok {
+			out[k.ID()] = f
 		}
 	}
 	return out, nil
 }
 
-func (m *Memory) Put(results []Result) error {
+func (m *Memory) Put(runs []Run) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, r := range results {
-		id := r.Key.ID()
-		if prior, ok := m.byID[id]; ok && !Newer(r, prior) {
-			continue
+	for _, r := range runs {
+		for _, c := range r.Checks {
+			if !Findable(c) {
+				continue
+			}
+			id := r.CheckKey(c).ID()
+			f := Found{Run: r, Check: c}
+			if prior, ok := m.byID[id]; ok && !Newer(f, prior) {
+				continue
+			}
+			m.byID[id] = f
 		}
-		m.byID[id] = r
 	}
 	return nil
 }
