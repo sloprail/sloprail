@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -153,15 +154,17 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 	}
 }
 
-// T020_03: content put back across cycles is a change, judged as what it is.
+// T020_03: content put back across cycles is evaluated by what it is, not skipped and not
+// mistaken for new.
 //
-// The cross-cycle half of T020_01. The file is A and passed; B and passed (the
-// next range starts at B); then A again. On the changeset model nothing "already
-// judged" is remembered per file: the rule judges the difference between the
-// range's base and head, and A against B is a real one — so it IS judged, handed B as
-// the old content and A as the new. Identity is derived from what the file holds
-// against what it held, not from having seen those bytes before (which would skip
-// the revert, leaving a file silently changed back) nor from when they were written.
+// The cross-cycle half of T020_01. The file is A and passed; B and passed; then A again.
+// Every check is cached by content: the verdict for these bytes at this path is the one
+// already stored for A, so the rule is not asked a second time (that would be identity
+// from when the bytes were written, a fresh model call for a verdict the engine already
+// holds). Silence from the rule is not proof the put-back was looked at, so the proof is
+// the read side: `verify` over the put-back's own range finds a verdict for it. An engine
+// that skipped a revert as "nothing new" would leave it unjudged, and verify would say so.
+// The control is the changed content in between: B IS judged, so the rule runs here.
 func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
 	e := NewJudgingEachRun(t)
 	led := e.NewLedger("seen")
@@ -184,13 +187,14 @@ func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
 	if countPath(afterB, "subject.md") <= countPath(afterA, "subject.md") {
 		t.Fatalf("changed content was not judged, so the revert below proves nothing")
 	}
+	base := e.Git(proj, "rev-parse", "HEAD")
 	afterBack := cycle("put A back", a)
-	if countPath(afterBack, "subject.md") <= countPath(afterB, "subject.md") {
-		t.Fatalf("content put back to an earlier body was not judged at all (%d then %d): "+
-			"a revert is a change against what the file held last", countPath(afterB, "subject.md"), countPath(afterBack, "subject.md"))
+	if got, was := countPath(afterBack, "subject.md"), countPath(afterB, "subject.md"); got != was {
+		t.Fatalf("content put back to a body whose verdict is stored was judged again (%d then %d): "+
+			"the verdict for these bytes at this path is replayed, not asked for again", was, got)
 	}
-	last := afterBack[len(afterBack)-1]
-	if last.Path != "subject.md" || last.Status != "M" || last.OldContent != b || last.NewContent != a {
-		t.Fatalf("the revert was handed %+v; want an M of subject.md from B to A", last)
+	if res := e.CheckVerify(proj, sess, base, "HEAD"); strings.Contains(res.Output, "missing") || strings.Contains(res.Output, "not judged yet") {
+		t.Fatalf("content put back to an earlier body has no verdict over its own range — it was skipped, "+
+			"not evaluated by its content:\n%s", res.Output)
 	}
 }
