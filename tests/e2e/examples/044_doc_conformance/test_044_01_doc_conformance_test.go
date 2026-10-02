@@ -178,7 +178,7 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 //   - Cycle 2 writes an UNMARKED file (nothing the guard matches); a block here can
 //     only be the re-judged outstanding marked file (R2) — proving the re-fire.
 //   - Cycle 3 FIXES the marked file (rewrites it to conforming); the judge passes.
-//   - Cycle 4 writes another unmarked file with the judge armed to refuse (R4); R4
+//   - Cycle 4 edits that unmarked file with the judge armed to refuse (R4); R4
 //     must NOT appear, proving the fixed file cleared and stopped re-firing.
 func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	e := New(t)
@@ -211,10 +211,13 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 		Write("w3", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"type\":\"assistant\"}` }")),
 	).ThenCommit("write the files"))
 
-	// Cycle 4: another unmarked file, judge armed to refuse. Nothing should re-fire.
+	// Cycle 4: the unmarked helper is edited (a verdict is keyed by what the judge is
+	// given, and the range's other files are part of it by name — a NEW unmarked file
+	// would be a new input; an edit of one already in the range is not), judge armed
+	// to refuse. Nothing should re-fire.
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R4 must not appear if the fix cleared the file"}`)
-	e.Run(proj, sess, "write another unmarked helper", Turns("done",
-		Write("w4", "internal/mock/helper2.go", "package mock\n\nfunc Helper2() {}\n"),
+	e.Run(proj, sess, "edit the unmarked helper", Turns("done",
+		Write("w4", "internal/mock/helper.go", "package mock\n\nfunc Helper() int { return 2 }\n"),
 	).ThenCommit("write the files"))
 	if hasReason(e, proj, sess, "R4") {
 		t.Errorf("a FIXED marked file kept re-firing: cycle 4 touched nothing the guard matches, yet a fresh block appeared")
