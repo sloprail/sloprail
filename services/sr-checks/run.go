@@ -154,11 +154,13 @@ func resolveTarget(cmd *cobra.Command) (target, error) {
 	if err != nil {
 		return target{}, fmt.Errorf("sloprail: %w", err)
 	}
+	// The config at the range's base is what the user committed before this work began: it alone
+	// may switch off a protected rule. A disable the range itself introduces is not honoured.
 	reg, err := modules.Registry()
 	if err != nil {
 		return target{}, err
 	}
-	return target{root: root, rng: r, loaded: checkrun.LoadDeclarations(cmd.ErrOrStderr(), root, reg), sess: openSession(root)}, nil
+	return target{root: root, rng: r, loaded: checkrun.LoadDeclarations(cmd.ErrOrStderr(), root, reg, r.Base), sess: openSession(root)}, nil
 }
 
 func execute(cmd *cobra.Command, m mode) error {

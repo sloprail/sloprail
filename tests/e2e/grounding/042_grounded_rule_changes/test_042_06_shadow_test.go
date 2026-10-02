@@ -39,7 +39,6 @@ func TestT042_18_AProjectRuleCannotShadowIt(t *testing.T) {
 // own decision and is honoured (the control for T042_15, where the same entries written
 // during the session are not).
 func TestT042_19_ADisableCommittedBeforeTheSessionIsHonoured(t *testing.T) {
-	t.Skip("engine gap: `sr checks run` loads declarations with no trusted rev, so no protected disable is honoured; it should trust the config at --base (services/sr-checks/run.go: checkrun.LoadDeclarations(..., root, reg, <resolved base>))")
 	e := New(t)
 	proj := e.Project()
 	e.WriteFile(proj, ".sloprail/file-guard/demo/file-guard.yaml", demoYAML)
