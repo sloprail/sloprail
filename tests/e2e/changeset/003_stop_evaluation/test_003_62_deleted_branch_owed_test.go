@@ -63,7 +63,7 @@ func TestT003_62_ADeletedBranchWithAnUnjudgedTipIsStillOwed(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e, proj, _ := project(t, docsRule)
 			main := e.Git(proj, "branch", "--show-current")
-			if c.remote {
+			if c.remote && e.Origin(proj) == "" {
 				bare := filepath.Join(t.TempDir(), "origin.git")
 				e.Git(filepath.Dir(bare), "init", "-q", "--bare", bare)
 				e.Git(proj, "remote", "add", "origin", bare)
