@@ -52,3 +52,16 @@ func TestRaiseBaseToRuleFloor_FromTheEmptyTreeAndLastChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, beforeEdit, r.Base, "the rule's LAST change sets the floor")
 }
+
+func TestRaiseBaseToRuleFloor_ARuleStandingAtTheBaseStaysStrict(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	base := commitIn(t, dir, "seed.txt", "s")
+	commitIn(t, dir, "bad.txt", "work under the rule")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v2")
+	head := commitIn(t, dir, "y.txt", "y")
+
+	r, err := RaiseBaseToRuleFloor(dir, Range{Base: base, Head: head}, ruleDir)
+	require.NoError(t, err)
+	assert.Equal(t, base, r.Base, "a rule that stood at the base is not raised by a later edit")
+}

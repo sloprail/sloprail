@@ -10,7 +10,7 @@ import (
 // reachable from r.Head that touched the rule's folder (repository-relative), so a rule
 // added mid-branch applies from its add commit and what came before it is grandfathered.
 // The effective base is the later of the range's base and that floor; a range already
-// starting at or after the floor, a rule committed nowhere on head's history, or a folder
+// starting at or after the floor, a rule that already stood at the base, a rule committed nowhere on head's history, or a folder
 // outside the repository is returned as it was.
 func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
 	if strings.TrimSpace(folder) == "" || r.Head == "" || r.Base == r.Head {
@@ -26,6 +26,13 @@ func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
 	}
 	if !isObjectName(last) {
 		return r, fmt.Errorf("gitrepo: floor for %q resolved to %q, not an object name", folder, last)
+	}
+	if r.Base != EmptyTree {
+		// A rule that already stood at the base keeps the strict range: editing, or deleting and
+		// re-adding, it mid-range is no way to skip judging the earlier work.
+		if _, err := run(dir, "cat-file", "-e", r.Base+":"+folder); err == nil {
+			return r, nil
+		}
 	}
 	floor, err := parentOrEmptyTree(dir, last)
 	if err != nil {
