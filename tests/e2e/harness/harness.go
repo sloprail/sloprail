@@ -110,6 +110,11 @@ type Env struct {
 	// build a genuine multi-human-turn transcript by Running the same session id twice.
 	// Keyed by sessionID; the value is unused (presence is the fact).
 	seenSessions map[string]bool
+
+	// runBase, checkHistory and noAutoCheck: see checkrun.go.
+	runBase      map[string]string
+	checkHistory map[string][]string
+	noAutoCheck  bool
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
@@ -321,6 +326,8 @@ func New(t *testing.T, opts ...Option) *Env {
 		repoRoot:     repoRoot(t),
 		mock:         mock,
 		seenSessions: map[string]bool{},
+		runBase:      map[string]string{},
+		checkHistory: map[string][]string{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -1172,27 +1179,6 @@ func (e *Env) DeleteMeta(projDir, sessionID, key string) {
 // sessionDBPath mirrors where the engine puts a session's state, having asked
 // the engine itself for the only part a test could get wrong: the conversation
 // identity, which is not the id the harness reports.
-// SessionFolders is the folders the engine registered for a session — its own
-// repository and the worktrees its sub-agents were dispatched into — as the root
-// session's store holds them. The session's identity is the one `sr-session id`
-// resolved, which names the store's directory.
-func (e *Env) SessionFolders(projDir, sessionID string) []sessionstate.Folder {
-	e.t.Helper()
-
-	path := e.sessionDBPath(projDir, sessionID)
-	db, err := sessionstate.Open(path)
-	if err != nil {
-		e.t.Fatalf("harness: open session state: %v", err)
-	}
-	defer db.Close()
-
-	folders, err := db.Folders(filepath.Base(filepath.Dir(path)))
-	if err != nil {
-		e.t.Fatalf("harness: read session folders: %v", err)
-	}
-	return folders
-}
-
 func (e *Env) sessionDBPath(projDir, sessionID string) string {
 	e.t.Helper()
 
@@ -2120,7 +2106,16 @@ func (e *Env) AllBlockingErrorsFrom(projDir, sessionID, hookEvent string) []stri
 func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) []string {
 	e.t.Helper()
 
-	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
+	out := blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
+	if hookEvent == "" || hookEvent == "Stop" {
+		// File-guards are judged by `sr check run`, not by the Stop hook: what it refused
+		// after each Run reads as a Stop's refusal (see checkrun.go).
+		out = append(out, e.checkHistory[sessionID]...)
+		if dedupe {
+			out = dedupeStrings(out)
+		}
+	}
+	return out
 }
 
 // StopContinuations returns the reason of every time a Stop hook refused to let
@@ -2442,7 +2437,10 @@ func (e *Env) RunForked(projDir, fromSessionID, newSessionID, prompt string, s S
 		e.t.Fatalf("harness: fork of %s: that session was never run, so there is nothing to fork", fromSessionID)
 	}
 	e.seenSessions[newSessionID] = true
-	return e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
+	e.noteRunBase(projDir, newSessionID)
+	res := e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
+	e.afterRun(projDir, newSessionID)
+	return res
 }
 
 // DeleteTranscript removes a session's transcript, the way Claude Code's own
@@ -2618,7 +2616,10 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	if resume {
 		sessionFlag = "--resume"
 	}
-	return e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
+	e.noteRunBase(projDir, sessionID)
+	res := e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
+	e.afterRun(projDir, sessionID)
+	return res
 }
 
 // drive runs the mock once with the given session flags — the part of run

@@ -11,9 +11,6 @@
     ],
     "SubagentStop": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh\" subagent-stop", "timeout": 3600 }] }
-    ],
-    "WorktreeRemove": [
-      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh\" worktree-remove", "timeout": 60 }] }
     ]
   }
 }

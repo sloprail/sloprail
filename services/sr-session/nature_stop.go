@@ -9,7 +9,6 @@ import (
 	"github.com/sloprail/sloprail/internal/cyclemod"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
-	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -33,9 +32,8 @@ import (
 //	1. commit required
 //	     — uncommitted work on a path some file-guard selects (its match may read
 //	       context[]) is refused first.
-//	2. file-guards: each rule evaluated over its changeset of commits
-//	     — every run recorded in the check results, a failing judge replayed
-//	       until its input changes; refusals block the turn.
+//	   (File-guards are NOT evaluated at Stop: they judge an explicit commit range,
+//	   `sr check run --base --head`, which the Stop hook cannot know.)
 //	3. Stop GATES
 //	     — a gate bound to Stop reads context[]/gates[] and blocks the turn on a
 //	       refusal. It must see the contexts from step 0 already active.
@@ -54,25 +52,16 @@ import (
 // text to block the turn with (or "" to let it end).
 //
 // It computes the cycle's Post events itself (postEvents), which the contexts'
-// enters read; a file-guard does not — it judges the commits of its own range, and
-// its verdicts are recorded in the session's check results (changeset_eval.go),
-// where a refusal stays until a run passes.
+// enters read. A file-guard is not evaluated here: it judges the explicit range
+// `sr check run` is given (changeset_eval.go).
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
 	if store == nil {
 		return dispatchNatureStopStoreless(cmd, p, reg, scope)
 	}
-	adoptOrphans(cmd, p)
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
-	recordRulesSeen(cmd, store, loaded.FileGuards)
 	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
-		// The root declares nothing, but a repository the agent worked in outside it may:
-		// each is judged under its own rules.
-		var out []string
-		for _, r := range evaluateAdHocFolders(cmd, p, scope, reg, map[string]natures.ContextState{}, store) {
-			out = append(out, r.Reason+" (file-guard "+r.Attribution+")")
-		}
-		return joinRefusals(out)
+		return ""
 	}
 
 	// The state maps, loaded once and shared across all four steps.
@@ -124,29 +113,8 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 1. commit required: a file-guard judges commits, so uncommitted work on a
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
-	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap)); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
-		commitOwed = true
-	}
-
-	// 2. file-guards: each rule is evaluated once, over the changeset of commits it
-	//    has not yet passed, and every run is recorded (changeset_eval.go). Not while
-	//    work is owed a commit: judging HEAD would judge an incomplete set, and the
-	//    agent has a commit to make first. And only for an agent that owns the
-	//    tree: a sub-agent working in the session's own tree leaves its commits
-	//    where the root's Stop judges them, and refusing the sub-agent for the
-	//    root's work is a10n's "blocked 17 times in a row".
-	if !commitOwed && ownsTree(p) {
-		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, store) {
-			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
-		}
-	}
-
-	// 2b. repositories this agent worked in outside its own tree, each under its own
-	//     rules. Not subject to commit-required or the shared-tree rule above.
-	for _, r := range evaluateAdHocFolders(cmd, p, scope, reg, contextMap, store) {
-		refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
 	}
 
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
@@ -171,9 +139,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 }
 
 // dispatchNatureStopStoreless is the Stop dispatch when the session's state cannot be
-// opened. Judging never depends on it for the rules that judge commits: commit-required,
-// the file-guards (git and the check results) and the ad-hoc folders run exactly as
-// usual, and Stop gates run over empty context and gate maps. What is lost is
+// opened. Commit-required runs exactly as usual, and Stop gates run over empty context and gate maps. What is lost is
 // bookkeeping only (context enter/exit, seen marks, cited-change history), none of which
 // is read here. The caller says the state was unavailable; this never skips a rule.
 func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope) string {
@@ -182,18 +148,8 @@ func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.
 	gatesMap := map[string]natures.GateState{}
 	var refusals []string
 
-	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap)); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
-		commitOwed = true
-	}
-	if !commitOwed && ownsTree(p) {
-		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, nil) {
-			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
-		}
-	}
-	for _, r := range evaluateAdHocFolders(cmd, p, scope, reg, contextMap, nil) {
-		refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
 	}
 	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{cyclemod.Event()}, scope, nil, contextMap, gatesMap, resolveNotes{}) {
 		if r.Refused {
@@ -236,27 +192,4 @@ func joinRefusals(refusals []string) string {
 		return refusals[0]
 	}
 	return "the following rules refused this turn's work:\n  - " + strings.Join(refusals, "\n  - ")
-}
-
-// evaluateStopChangesets opens what a changeset evaluation needs — the repository
-// and the session's check results — and evaluates every file-guard. A tree that
-// is not a repository has no commits to judge; a repository that cannot be read
-// refuses, since a state that could not be read must not be read as clean.
-func evaluateStopChangesets(cmd *cobra.Command, p HookPayload, scope hookScope, guards []declaration.FileGuard,
-	contextMap map[string]natures.ContextState, state sessionstate.Store) []fileGuardResult {
-	if len(guards) == 0 {
-		return nil
-	}
-	root, err := gitrepo.Root(p.Cwd)
-	if err != nil {
-		if isNotARepo(err) {
-			return nil
-		}
-		return []fileGuardResult{{Name: "file-guards", Attribution: "file-guards", Refused: true, Reason: failClosed(err)}}
-	}
-	results := openChecksStore(cmd, p, scope)
-	if results != nil {
-		defer results.Close()
-	}
-	return evaluateChangesets(cmd, guards, p, scope, root, contextMap, state, results)
 }

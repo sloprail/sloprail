@@ -15,13 +15,13 @@ mkdir -p "$out"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-binaries=(sr sr-session sr-file sr-mark sr-agent sr-checks)
+binaries=(sr sr-session sr-file sr-mark sr-agent)
 for b in "${binaries[@]}"; do
   GEN_CLI_DOCS="$tmp/$b.json" go test "./services/$b" -run TestGenerateCLIDocs -count=1 >/dev/null
 done
 
 # Merge the trees into one array, in binary order.
 jq -s '.' "$tmp/sr.json" "$tmp/sr-session.json" "$tmp/sr-file.json" \
-  "$tmp/sr-mark.json" "$tmp/sr-agent.json" "$tmp/sr-checks.json" > "$out/cli.json"
+  "$tmp/sr-mark.json" "$tmp/sr-agent.json" > "$out/cli.json"
 
 echo "[clidocs] wrote $out/cli.json ($(jq 'length' "$out/cli.json") binaries)"

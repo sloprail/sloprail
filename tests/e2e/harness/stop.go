@@ -64,28 +64,9 @@ func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
 	return cmd
 }
 
-// ChecksDBs lists every check-results database the engine wrote under the harness's data home,
-// one per session family (the root's), never one per sub-agent.
-func (e *Env) ChecksDBs() []string {
-	paths, _ := filepath.Glob(filepath.Join(dataHome(e.home), "sloprail", "sessions", "*", "*", "checks.db"))
-	return paths
-}
-
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the
 // harness honours.
 func Blocked(r Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }
-
-// ChecksStatus is `sr-checks status` for a session, with the given flags.
-func (e *Env) ChecksStatus(projDir, sessionID string, args ...string) string {
-	e.t.Helper()
-	return e.CLIDirectEnv(projDir, e.SessionEnv(sessionID), "sr-checks", append([]string{"status"}, args...)...).Output
-}
-
-// ChecksSQL is `sr-checks sql` for a session.
-func (e *Env) ChecksSQL(projDir, sessionID, query string) Result {
-	e.t.Helper()
-	return e.CLIDirectEnv(projDir, e.SessionEnv(sessionID), "sr-checks", "sql", query)
-}
 
 // SubagentStopBlocked reports whether the run's stream shows a sub-agent's Stop
 // refused with a reason starting with the given text. The mock prints each as

@@ -311,14 +311,24 @@ func ProjectDirOf(path, cwd string) string {
 	return filepath.Dir(path)
 }
 
-// ChecksDB is where the session's check results are kept: beside its state.db,
-// in the same per-session directory, so one identity finds both.
-func ChecksDB(cwd, sessionID string) (string, error) {
-	state, err := StateDB(cwd, sessionID)
+// ChecksDB is where a repository's check results are kept (checkcache.OpenFile):
+//
+//	{data home}/sloprail/checks/{root commit}/results.jsonl
+//
+// Keyed by the repository (its root commit, which every worktree and clone of it shares)
+// and by nothing else: a check result is a fact about a rule, a subject and an input,
+// whichever session, agent or worktree recorded it. A repository with no commit has no
+// results.
+func ChecksDB(repoRoot string) (string, error) {
+	id, err := gitrepo.RootCommit(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("sloprail: no repository identity for %s: %w", repoRoot, err)
+	}
+	home, err := DataHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(state), "checks.db"), nil
+	return filepath.Join(home, AppName, "checks", id, "results.jsonl"), nil
 }
 
 // StateCwd is the directory a ROOT session's stores are keyed by: where its record

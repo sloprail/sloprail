@@ -1,29 +1,13 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
-	"github.com/sloprail/sloprail/internal/sessionpath"
-	"github.com/sloprail/sloprail/internal/sessionstate"
 )
-
-func TestRepoRelative_InsideTheRepoIsRelativeOutsideIsEmpty(t *testing.T) {
-	root := t.TempDir()
-	inside := filepath.Join(root, ".sloprail", "file-guard", "size")
-	require.NoError(t, os.MkdirAll(inside, 0o755))
-	outside := t.TempDir() // a plugin cache, elsewhere on disk
-
-	assert.Equal(t, ".sloprail/file-guard/size", repoRelative(root, inside))
-	assert.Equal(t, "", repoRelative(root, outside), "a rule outside the repo has no folder for a floor")
-	assert.Equal(t, "", repoRelative(root, root), "the root itself is not a rule folder")
-}
 
 func fileGuards(names ...string) declaration.Loaded {
 	var l declaration.Loaded
@@ -68,45 +52,4 @@ func TestContextsOf_WithoutAStoreEveryDeclaredContextIsInactive(t *testing.T) {
 	require.Len(t, got, 2)
 	assert.False(t, got["goal"].Active)
 	assert.NotNil(t, got["goal"].Payload, "a match reading context[...] never meets nil")
-}
-
-func TestOpenChangesetSession_ReadsWhatExistsAndCreatesNothing(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	repo := initRepo(t)
-	record := userRecord(t, "hello")
-	p := HookPayload{Cwd: repo, TranscriptPath: record}
-
-	// A session that has recorded nothing yet has no state and no results, and
-	// looking must not make either.
-	sess, err := openChangesetSession(&p)
-	require.NoError(t, err)
-	defer sess.close()
-	assert.Equal(t, record, sess.record)
-	assert.Nil(t, sess.state)
-	assert.Nil(t, sess.checks)
-	id, err := stableID(p)
-	require.NoError(t, err)
-	statePath, err := sessionDBPath(p.stateCwd(), id)
-	require.NoError(t, err)
-	_, statErr := os.Stat(statePath)
-	assert.True(t, os.IsNotExist(statErr), "showing a changeset records nothing")
-
-	// Once the session has both, both are opened.
-	st, err := sessionstate.Open(statePath)
-	require.NoError(t, err)
-	st.Close()
-	checksPath, err := sessionpath.ChecksDB(p.stateCwd(), id)
-	require.NoError(t, err)
-	cs, err := checkstore.Open(checksPath)
-	require.NoError(t, err)
-	cs.Close()
-
-	p2 := HookPayload{Cwd: repo, TranscriptPath: record}
-	sess2, err := openChangesetSession(&p2)
-	require.NoError(t, err)
-	defer sess2.close()
-	assert.NotNil(t, sess2.state)
-	assert.NotNil(t, sess2.checks)
-	_, err = sess2.checks.PassedHeads("file-guard/x")
-	assert.NoError(t, err, "a readable, read-only results store")
 }
