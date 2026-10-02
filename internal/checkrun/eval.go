@@ -372,7 +372,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	}
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 
-	hash, err := changeset.RuleHashAt(ev.root, ev.rng.Head, g.Dir)
+	hash, err := changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin())
 	if err != nil {
 		return ev.fail(g, run, err)
 	}

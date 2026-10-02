@@ -155,10 +155,9 @@ type FileGuard struct {
 }
 
 // Root is the `.sloprail` directory this guard was loaded from — the project's own
-// or a plugin's, the two layouts being the same: `<root>/file-guard/<name>`. What
-// the guard's identity covers: its rule hash and the floor of its range are both
-// read over the whole root, not the guard's folder alone, because a schema, a
-// shared script or another rule's lib changes what the guard does.
+// or a plugin's: `<root>/file-guard/<name>`. The guard's rule hash does not read it: it
+// covers the guard's own folder (g.Dir), the files git tracks there (changeset.RuleHashAt);
+// the floor of its range is over the guard's folder too.
 func (g FileGuard) Root() string { return filepath.Dir(filepath.Dir(g.Dir)) }
 
 // Deletions is a file-guard's `deletions:` value — whether the guard is asked
