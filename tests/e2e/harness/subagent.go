@@ -17,6 +17,18 @@ func SubagentScript(t testing.TB, s Scenario) string {
 	// The turn a real sub-agent takes before it stops: judge the ranges of its own worktree,
 	// which its SubagentStop will verify.
 	s.turns = append(append([]Turn{}, s.turns...), Bash("srsubprestop", runTrackedRanges(true)))
+	return writeSubagentScript(t, s)
+}
+
+// SubagentScriptUnjudged is SubagentScript without that turn: a sub-agent that stops with its
+// committed range never judged, for a test of what the Stop says to a range nobody judged.
+func SubagentScriptUnjudged(t testing.TB, s Scenario) string {
+	t.Helper()
+	return writeSubagentScript(t, s)
+}
+
+func writeSubagentScript(t testing.TB, s Scenario) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "sub.sh")
 	if err := s.Script(path); err != nil {
 		t.Fatalf("harness: write sub-agent scenario: %v", err)

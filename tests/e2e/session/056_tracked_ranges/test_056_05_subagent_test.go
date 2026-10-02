@@ -23,7 +23,8 @@ func subagentProject(t *testing.T, enableSubagentStopCheck bool) (*Env, string) 
 }
 
 func runSubagentCommit(t *testing.T, e *Env, proj, sess string) harness.Result {
-	sub := harness.SubagentScript(t, harness.Turns("sub done",
+	// The sub-agent stops without judging its range: that is what both tests are about.
+	sub := harness.SubagentScriptUnjudged(t, harness.Turns("sub done",
 		Bash("sb1", "mkdir -p docs && echo 'the release is Friday' > docs/a.md"),
 	).ThenCommit("the sub-agent's doc"))
 	return e.Run(proj, sess, "delegate the doc", Turns("root done", harness.Dispatch("d1", "write the doc", sub, "worktree")))
