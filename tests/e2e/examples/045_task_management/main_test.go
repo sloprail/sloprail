@@ -121,3 +121,11 @@ func readProj(proj, rel string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(proj, rel))
 	return string(b), err
 }
+
+// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
+// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
+// the gate on, the agent could not make that commit at all. The gate is exercised in
+// tests/e2e/gate/058_cite_before_commit.
+func NewUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
+}

@@ -53,7 +53,7 @@ func TestT046_30_AnUncitedEditOfMarkedCodeBesideACitedSpecChangePasses(t *testin
 // file edited beside it, and the refusal's own command (a follow-up commit that changes SPEC.md and
 // carries the quote) grounds it.
 func TestT046_31_AnUncitedSpecChangeIsRefusedNamingOnlyTheSpec(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := pinnedSpecProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to relax rule 2 for goodwill refunds"}`)
 

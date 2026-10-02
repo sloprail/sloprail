@@ -175,7 +175,7 @@ func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
 		t.Fatalf("a whitespace-only commit with a trailer washed the earlier uncited change:\n%s", blocks)
 	}
 
-	e2, proj2 := guarded(t, afterCitationGuard)
+	e2, proj2 := guardedUncited(t, afterCitationGuard)
 	e2.Run(proj2, "s-041-70b", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# log\nthe decision\n"),
 		harness.Commit("x", "write the decision"),
