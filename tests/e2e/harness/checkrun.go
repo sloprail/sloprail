@@ -153,6 +153,7 @@ func (e *Env) checkCmd(projDir, sessionID, verb, base, head string) (stdout stri
 
 // checkExec is the `sr-checks <verb> --base --head` command, built and not started.
 func (e *Env) checkExec(projDir, sessionID, verb, base, head string) *exec.Cmd {
+	e.ensureTranscript(projDir, sessionID)
 	cmd := exec.Command(filepath.Join(e.binDir, "sr"), "checks", verb, "--base", base, "--head", head)
 	cmd.Dir = projDir
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
@@ -289,5 +290,25 @@ func (e *Env) JudgeTracked(dir, sessionID string, subagent bool) {
 	cmd.Env = append(cmd.Env, e.hookEnv(sessionID)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		e.t.Fatalf("harness: judging the tracked ranges: %v\n%s", err, out)
+	}
+}
+
+// ensureTranscript gives a session that has not run a turn the record its agent would have: a
+// refusal reached without a transcript is stored for no key (any check may read it), so a test
+// that judges "as the session" before any turn would otherwise find nothing stored.
+func (e *Env) ensureTranscript(projDir, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	tp := e.transcriptPath(projDir, sessionID)
+	if _, err := os.Stat(tp); err == nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(tp), 0o755); err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	rec := `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}` + "\n"
+	if err := os.WriteFile(tp, []byte(rec), 0o644); err != nil {
+		e.t.Fatalf("harness: %v", err)
 	}
 }
