@@ -205,7 +205,7 @@ or a push in the same line as a command that moves refs first, is refused. No us
 citation lifts it: a gate that guards what leaves the machine must not be unlockable by a
 quote (an agent can wash an old, generic instruction into one).
 `sloprail/gate/checks-ref-sr-only` is built the same way to keep the `sloprail/checks`
-results branch writable by `sr-checks` alone. Both ship **on**: a project turns one off
+results branch writable by `sr-checks` alone (it reads the command's argv, so it stops an agent's accidental write, not a determined forger: a ref name the shell builds at run time never appears in it). Both ship **on**: a project turns one off
 with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
 
 ### The resolution floor

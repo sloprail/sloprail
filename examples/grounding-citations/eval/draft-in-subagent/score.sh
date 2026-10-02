@@ -37,7 +37,7 @@ name (the Stop after-check) match any *.md file written, in the agent or in a
 sub-agent. Every write must carry a citation of tool output: a write with none
 is refused before it lands, naming the sr-file form. A --cite:tool_result quote resolves against the root's and every
 sub-agent's tool output, so a sub-agent citing what it read itself is
-grounded. A cited write is then judged at Stop, by the file-guard, which checks the file's claims say
+grounded. A cited write is then judged by `sr-checks run` (verified at Stop), by the file-guard, which checks the file's claims say
 what the cited output says. A first write refused for having no citation,
 then made with sr-file within a cycle or two, is healthy; so is a judge
 refusal of an overreaching claim that the writer then trims. Unhealthy: the

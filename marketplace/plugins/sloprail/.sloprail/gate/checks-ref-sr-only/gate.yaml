@@ -4,12 +4,16 @@
 # ref and is not a read (log, show, rev-parse, ls-tree, ...), and a file write into the ref's
 # storage under .git (the loose ref, its reflog, and packed-refs). Reading it, and running sr-checks, stay allowed.
 #
+# This guards against an agent's ACCIDENTAL write, not a determined forger: it reads the command's
+# argv, and a ref name built by the shell at run time ("$(printf refs/sloprail/ch)ecks") is not in
+# the argv to be read. `git fast-import` (the ref name travels in its input) is refused outright.
+#
 # On by default, like every shipped rule, and switched off by listing
 # `sloprail/gate/checks-ref-sr-only` under `disabled:` in .sloprail/config.yaml.
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and any(.argv, # contains "sloprail/checks" or # == "--stdin" or # contains "*" or # contains "remote." or # contains "--mirror"))
+      any(event.invocations, .bin == "git" and any(.argv, # contains "sloprail/checks" or # == "--stdin" or # contains "*" or # contains "remote." or # contains "--mirror" or # == "fast-import"))
   - event: PreFileWrite
     match: 'event.path contains "refs/sloprail/checks" or event.path contains "refs/heads/sloprail/checks" or event.path contains ".git/packed-refs"'
   - event: PreFileDelete

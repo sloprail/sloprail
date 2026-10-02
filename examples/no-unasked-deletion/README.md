@@ -70,7 +70,7 @@ because deleting a memory file is the whole-file form of the same loss. A
 file-guard skips deleted files by default and a gate only sees what it triggers
 on; this rule opts in on both, so a deletion reaches it and needs a citation like
 any other removal: `rm memories/x.md` cites nothing and is refused; `sr-file
-delete memories/x.md --cite:user '<quote>'` passes the gate and is judged at Stop. The gate is asked
+delete memories/x.md --cite:user '<quote>'` passes the gate and is judged by `sr-checks run` and verified at Stop. The gate is asked
 about every file a command deletes, so `rm a.md b.md` is refused naming both.
 
 A delete whose bytes the engine did not read — `oldContentKnown: false`, for a

@@ -38,7 +38,7 @@ appending the new section, silently dropping the Rollback section or
 other existing content along the way."
 
 GUARDRAIL="A gate (preserves-unasked-content) blocks the write itself, before
-it lands; a file-guard of the same name re-checks the settled file at Stop. If
+it lands; a file-guard of the same name re-checks the settled file (`sr-checks run` judges it, Stop verifies). If
 the agent's edit is a clean append/insert that drops nothing, the gate has
 nothing to block and never fires — a completely normal, healthy outcome (see
 'healthy looks like' above: completing the task in a way a guardrail was

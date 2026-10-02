@@ -170,7 +170,7 @@ wrote a draft into a unit folder before its `UNIT.md` existed. The check is
 purely path-based: it refuses the write unless `<unit folder>/UNIT.md`
 already exists on disk, and says to write that first. It is a `PreFileWrite`
 gate (refuses before the write lands) plus a plain file-guard of the same name
-that re-checks the committed files at Stop (a `UNIT.md` still uncommitted does not
+that re-checks the committed files (`sr-checks run` judges, Stop verifies) (a `UNIT.md` still uncommitted does not
 count: the file-guard reads the committed head). Deletions are not this rule's
 business (no `PreFileDelete` trigger; the file-guard skips deletions).
 
@@ -285,7 +285,7 @@ plays for a task's ask. Grounding is unconditional: every create or update of
 a rule must cite the user. A `PreFileWrite` gate refuses an ungrounded rule
 before it lands (and refuses a write whose result it cannot derive, such as one
 mixing `sr-file` with another program); a plain file-guard of the same name runs
-the same require, script and judge on the committed rules at Stop.
+the same require, script and judge on the committed rules (`sr-checks run` judges, Stop verifies).
 
 0. **`require: [{citation: {source_types: [user]}}]`.** A change carrying no citation that
    resolves to the user's own words is refused by the engine before any

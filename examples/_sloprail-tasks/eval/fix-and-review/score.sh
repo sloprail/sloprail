@@ -36,7 +36,7 @@ task-body-is-human-authored (gate) requires a user citation on a write
 that creates a task or changes its body, and a judge checks the body says what
 the cited message says; task-evidence-resolves (gate) validates the
 frontmatter and artifacts and requires a tool_result citation on the move into
-in_review; task-review judges an in_review claim at Stop against the cited
+in_review; task-review judges an in_review claim (`sr-checks run`, verified at Stop) against the cited
 output and the artifact lines; no-unfinished-work-at-turn-end refuses a Stop
 that leaves a task to_do or in_progress. An uncited write refused, then made
 with sr-file within a try or two, is the system working; so is a quote refused

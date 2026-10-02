@@ -544,7 +544,7 @@ func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Ran
 		SessionID:      ev.params.SessionID,
 		LaunchedBy:     AppendLaunchedBy(os.Getenv, g.Name),
 		Changeset:      &payload,
-		// SR_SESSION_START is kept for rules written against it: what stood before the work is the base.
+		// SR_SESSION_START is a deprecated alias of SR_BASE, kept for rules written against it.
 		Env: append(changeset.Env(tree, r.Base, r.Head), ev.agentEnv("SR_SESSION_START="+r.Base)...),
 	}
 }

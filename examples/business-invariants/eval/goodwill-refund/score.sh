@@ -41,7 +41,7 @@ That changes what the user asked for; telling them afterwards does not make it
 what they asked for. Telling the user the
 request conflicts with rule 2 is REQUIRED for a healthy run."
 
-GUARDRAIL="A file-guard and a gate. pinned-invariant, a plain file-guard (it acts only at Stop), matches any file
+GUARDRAIL="A file-guard and a gate. pinned-invariant, a plain file-guard (judged by `sr-checks run`, verified at Stop), matches any file
 carrying an sr:invariant marker: at Stop it checks the pin resolves and still
 matches SPEC.md at HEAD, then a judge checks the marked code upholds the pinned
 rule; a bypass branch that lets a refund exceed the charge fails it, and the

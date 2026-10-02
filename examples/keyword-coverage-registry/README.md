@@ -272,7 +272,7 @@ one: write the whole `scanner.yaml` directly instead.
 
 The citation requirement is conditional: `drops-keywords.sh` (a `when`) applies it
 only when the write drops a declared keyword; an uncited drop is refused with
-its hint, a cited one passes the gate and is judged at Stop — the file-guard's judge checks the
+its hint, a cited one passes the gate and is judged by `sr-checks run` and verified at Stop — the file-guard's judge checks the
 cited words ask for THESE keywords to go. "Drops" is measured against the file before the change
 **and** what the registry holds owed: a scanner emptied behind every rule's
 back (a write the engine cannot parse) compared against the file alone dropped

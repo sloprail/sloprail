@@ -70,7 +70,7 @@ redirect) before the judge is paid for, and the refusal names the `sr-file`
 form. That is the cheap, deterministic half: does the write carry a citation that
 resolved.
 
-The judge (`claims-match-cited-output.md.j2`, in the file-guard, at Stop) answers what existence cannot: does
+The judge (`claims-match-cited-output.md.j2`, in the file-guard, judged by `sr-checks run` and verified at Stop) answers what existence cannot: does
 the file say what the cited output says? It is handed the change (a unified
 diff, so it judges only the lines the write adds or alters), the whole file for
 context, and each citation — the quote, the whole tool output it came from, and

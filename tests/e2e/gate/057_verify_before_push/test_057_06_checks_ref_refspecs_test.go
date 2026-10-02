@@ -21,6 +21,9 @@ func TestT057_06_OnlyRefspecsThatCanWriteTheResultsRefAreRefused(t *testing.T) {
 		"git config remote.origin.fetch '+refs/*:refs/*'",
 		"git fetch origin '+refs/heads/*:refs/sloprail/*'",
 		"git fetch origin '+*:*'",
+		"git fast-import --force < /dev/null",
+		"git config --add remote.origin.fetch '+refs/heads/*:refs/sloprail/*'",
+		"git config set remote.origin.fetch '+refs/heads/main:refs/sloprail/checks'",
 	} {
 		res := e.Run(proj, "s-057-06", "write it", Turns("done", Bash("w"+string(rune('a'+i)), cmd)))
 		if !res.Refused() || !(res.Saw("checks-ref-sr-only") || res.Saw("verify-before-push")) {

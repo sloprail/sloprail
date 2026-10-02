@@ -1,7 +1,7 @@
 # The PREVENTION half of rule-quality: a write of a RULE.md whose bytes exceed the size
 # cap is refused before it lands. ONLY the deterministic cap lives here — the quality
 # judgement stays in the plain file-guard of the same name (.sloprail/file-guard/rule-quality/),
-# which judges the committed changeset at Stop; a judge never runs in a gate. The cap
+# which judges the committed changeset (`sr-checks run` judges, Stop verifies); a judge never runs in a gate. The cap
 # itself is the one library both share (size-cap-lib.sh, in the file-guard folder).
 on:
   - event: PreFileWrite

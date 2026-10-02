@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Refuses an agent write to the sloprail/checks ref. Contract: stdin is the GateCheckPayload;
 # exit 1 with {"reason": ...} refuses. Fails closed on an unreadable event.
+#
+# SCOPE: this guards against an agent's ACCIDENTAL write to the results ref, not a determined forger.
+# It reads the command's argv; a ref name the shell builds at run time ("$(printf refs/sloprail/ch)ecks")
+# is not in the argv, so no argv parsing can catch it. The ref's integrity against a forger comes from
+# `sr-checks verify` being re-run in CI on a clone, not from this gate.
 set -uo pipefail
 
 payload="$(cat)"
@@ -72,6 +77,10 @@ while [ "$i" -lt "$n" ]; do
   named="" glob=""
   printf '%s' "$inv" | jq -e 'any(.argv[]; contains("sloprail/checks"))' >/dev/null 2>&1 && named=1
   case "$SUB" in
+    fast-import)
+      # the ref it writes (and --force) is in its input stream, which is not visible here
+      named=1
+      ;;
     update-ref)
       for a in ${REST[@]+"${REST[@]}"}; do [ "$a" = "--stdin" ] && named=1; done
       ;;
@@ -84,7 +93,7 @@ while [ "$i" -lt "$n" ]; do
       for a in ${REST[@]+"${REST[@]}"}; do case "$a" in --mirror | --mirror=*) named=1 glob=1 ;; esac; done
       ;;
     config)
-      # a persistent refspec / mirror setting on a remote
+      # a persistent refspec / mirror setting on a remote (`git config [--add|set] remote.x.fetch <refspec>`)
       keyed=""
       for a in ${REST[@]+"${REST[@]}"}; do case "$a" in remote.*.mirror) named=1 glob=1 ;; remote.*.fetch) keyed=fetch ;; remote.*.push) keyed=push ;; esac; done
       if [ -n "$keyed" ]; then
