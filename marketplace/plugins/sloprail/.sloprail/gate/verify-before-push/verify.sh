@@ -45,17 +45,34 @@ if [ -n "$mover" ]; then
   refuse "Run the push as its own command: this line runs 'git $mover' and a 'git push' together, and the push is checked before the line runs, so it would be judged against commits that are about to change. Run 'git $mover' first, then 'sr-checks run --base <base> --head HEAD' if needed, then the push as its own command."
 fi
 
+# root_commit SHA — the widest base `verify --base` accepts: the first root commit of SHA's history.
+root_commit() {
+  git "${GOPTS[@]+"${GOPTS[@]}"}" rev-list --max-parents=0 --reverse --date-order "$1" 2>/dev/null | head -n 1
+}
+
 # default_base SHA — where work on SHA started, from `sr-checks default-base` (the one
-# implementation, gitrepo.DefaultBase). A repository with no default branch answers git's empty
-# tree, which `verify --base` cannot take: the root commit is the widest base it accepts.
+# implementation, gitrepo.DefaultBase). A repository with no remote default branch (a first push to
+# a new remote, no origin/HEAD) has none to ask: the session's recorded base for the range being
+# pushed stands in when there is one (an ancestor of SHA), else the whole history is judged from the
+# root commit. Never an empty range, and never a push that cannot be pushed.
 default_base() {
-  local sha="$1" b
-  b="$(sr-checks default-base --head "$sha" 2>/dev/null)" || return 1
-  if [ "$b" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]; then
-    git "${GOPTS[@]+"${GOPTS[@]}"}" rev-list --max-parents=0 --reverse --date-order "$sha" 2>/dev/null | head -n 1
+  local sha="$1" b rec
+  if b="$(sr-checks default-base --head "$sha" 2>/dev/null)"; then
+    if [ "$b" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]; then
+      root_commit "$sha"
+      return
+    fi
+    printf '%s' "$b"
     return
   fi
-  printf '%s' "$b"
+  rec="$(sr-session refs list --json 2>/dev/null | jq -r --arg sha "$sha" --arg dir "$PWD" \
+    '[.[] | select(.HeadSHA == $sha and .Base != "" and (.UntrackedReason // "") == "") | .Base][0] // empty' 2>/dev/null)"
+  if [ -n "$rec" ] && [ "$rec" != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ] &&
+    git "${GOPTS[@]+"${GOPTS[@]}"}" merge-base --is-ancestor "$rec" "$sha" 2>/dev/null; then
+    printf '%s' "$rec"
+    return
+  fi
+  root_commit "$sha"
 }
 
 for inv in "${pushes[@]}"; do

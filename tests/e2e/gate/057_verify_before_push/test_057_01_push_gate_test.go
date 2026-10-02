@@ -60,3 +60,30 @@ func TestT057_01_APushOfRefusedCommitsIsBlockedThenAllowedOnceFixedByDefault(t *
 		t.Fatal("the fixed commits were not pushed")
 	}
 }
+
+// A repository with no remote default branch (a first push to a new remote: no origin/main, no
+// origin/HEAD) is not a dead end: the gate judges from the root commit, blocks what a file-guard
+// refuses, and lets the same push through once the commits are judged clean.
+func TestT057_01_ThePushGateWorksWithNoRemoteDefaultBranch(t *testing.T) {
+	e, proj, pushed := pushSetup(t, "")
+	e.Git(proj, "remote", "set-head", "origin", "-d")
+	e.Git(proj, "update-ref", "-d", "refs/remotes/origin/main")
+	e.Git(proj, "update-ref", "-d", "refs/remotes/origin/master")
+
+	e.Run(proj, "s-057-01c", "commit and push", Turns("done",
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
+		Bash("p1", "git push -q origin HEAD:refs/heads/work"),
+	))
+	if pushed() {
+		t.Fatal("commits a file-guard refuses were pushed when the repo had no remote default branch")
+	}
+
+	e.Run(proj, "s-057-01c", "fix and push", Turns("done",
+		harness.CommitFile("c2", "docs/a.md", "clean words", "fix a"),
+		Bash("j2", "sr-checks run --base "+e.Git(proj, "rev-list", "--max-parents=0", "HEAD")+" --head HEAD"),
+		Bash("p2", "git push -q origin HEAD:refs/heads/work"),
+	))
+	if !pushed() {
+		t.Fatal("with no remote default branch the verified commits could not be pushed: the gate is a dead end")
+	}
+}
