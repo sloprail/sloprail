@@ -98,8 +98,9 @@ func TestT001_09_AChangedSubjectIsJudged(t *testing.T) {
 	}
 }
 
-// T001_10: a fail is kept and shown, never a hit: run asks the judge again.
-func TestT001_10_AFailIsShownByVerifyAndNotReused(t *testing.T) {
+// T001_10: a fail is terminal until the input changes: verify shows it, and run replays it
+// instead of asking the judge again.
+func TestT001_10_AFailIsShownByVerifyAndReplayedByRun(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictFail)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
 
@@ -118,9 +119,13 @@ func TestT001_10_AFailIsShownByVerifyAndNotReused(t *testing.T) {
 		t.Fatalf("verify asked the judge (%d calls)", n)
 	}
 
-	run(e, proj, base, "HEAD")
-	if n := judged(e, proj); n != 2 {
-		t.Fatalf("a stored fail was reused instead of judged again (%d calls)", n)
+	r = run(e, proj, base, "HEAD")
+	if r.Code != 1 {
+		t.Fatalf("run after the fail was stored: exit %d, want 1:\n%s", r.Code, r.Output)
+	}
+	mustContain(t, r.Output, "JUDGE-SAYS-NO")
+	if n := judged(e, proj); n != 1 {
+		t.Fatalf("a stored fail was judged again instead of replayed (%d calls)", n)
 	}
 }
 

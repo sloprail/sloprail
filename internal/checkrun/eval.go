@@ -737,8 +737,8 @@ func describeCommit(cs changeset.Changeset, sha string) string {
 
 // runCheck runs one check of a rule and records it. A script is run every time. A judge is
 // fingerprinted — everything the model is about to be given — and the store asked before the
-// model: a stored PASS is reused, whoever recorded it. `verify` never asks the model: a key
-// without a stored pass is red.
+// model: a stored verdict — a fail too — is reused, whoever recorded it. `verify` never asks
+// the model: a key without a stored verdict is red.
 func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, req dispatchcore.Request,
 	payload changeset.Payload, runID string, i int, c declaration.Check) (dispatchcore.Verdict, error) {
 
@@ -825,7 +825,7 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 
 	if ev.store != nil {
 		if ev.verify {
-			stored, have, err := ev.store.LatestCheck(rule, hash, rec.Subject, rec.Kind, fp)
+			stored, have, err := ev.store.CachedCheck(rule, hash, rec.Subject, rec.Kind, fp)
 			if err != nil {
 				return fail(err)
 			}
@@ -851,11 +851,12 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 			return fail(err)
 		}
 		if hit {
-			// Asked before, on exactly this input, and it passed: reuse the verdict.
+			// Asked before, on exactly this input: replay the verdict — a fail included, which
+			// is terminal until the input changes.
 			reasoning, _ := cached.Metadata["reasoning"].(string)
 			meta["replayed"] = true
 			out.Source = "cached"
-			return settle(dispatchcore.Verdict{Reason: reasoning}, meta)
+			return settle(dispatchcore.Verdict{Refused: cached.Status == checkstore.StatusFail, Reason: reasoning}, meta)
 		}
 	} else if ev.verify {
 		out.Status, out.Reason = "missing", "no results are kept here; run `sr check run`"
