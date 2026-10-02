@@ -134,7 +134,7 @@ automatically). CI runs `sr-checks verify` as a required check. Two gates ship o
 around it: `sloprail/gate/verify-before-push` refuses an agent's `git push` until
 `sr-checks verify` passes for the commits it would send, and `sloprail/gate/checks-ref-sr-only`
 refuses any agent git write to the `sloprail/checks` results branch (only `sr-checks` writes
-it; reading stays allowed; it guards against an agent's accidental write, not a determined forger, since a ref name the shell builds at run time is not in the command's argv). Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
+it; reading stays allowed; it guards against an agent's accidental write, not a determined forger, since a ref name the shell builds at run time is not in the command's argv). The push gate sees the command line the agent runs, not the commands inside a script it runs; CI verify is the backstop for those. Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
 `pre-push` hook and the CI job are in
 `skills/authoring-guardrails/file-guard.md`.
 

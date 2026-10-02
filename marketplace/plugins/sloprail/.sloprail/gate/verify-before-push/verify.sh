@@ -89,27 +89,6 @@ results_pending() {
   [ -n "$ahead" ]
 }
 
-# pending_attempts DIR — records one more refusal for the pending results set (keyed by the remote tip they sit on) and prints
-# the count. The loop breaker: a results push that fails permanently (no permission on the branch,
-# a rejecting hook) would otherwise refuse every push forever while the code push itself works.
-pending_attempts() {
-  local common tip f n=0 last
-  common="$(git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || { echo 0; return; }
-  # The pending set is what the local branch holds beyond the remote's: each `sr-checks run` adds a
-  # local commit, so the count is keyed by the remote tip the set sits on, not by the local tip.
-  git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse -q --verify "refs/sloprail/checks^{commit}" >/dev/null 2>&1 || { echo 0; return; }
-  tip="$(git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse -q --verify "refs/sloprail/checks-remote^{commit}" 2>/dev/null)" || tip=none
-  f="$common/sloprail-results-refusals"
-  if [ -r "$f" ]; then
-    read -r last n <"$f" || true
-    [ "$last" = "$tip" ] || n=0
-    case "$n" in '' | *[!0-9]*) n=0 ;; esac
-  fi
-  n=$((n + 1))
-  printf '%s %s\n' "$tip" "$n" >"$f" 2>/dev/null || true
-  echo "$n"
-}
-
 # push_error — why `sr-checks run`'s last push of the results failed, as it recorded it.
 push_error() {
   local common
@@ -157,12 +136,8 @@ for inv in "${pushes[@]}"; do
       refuse "This push would send $to ($sha) in $dir, and its commits are not verified clean. Judge them with: cd $dir && sr-checks run --base $base --head $sha — fix what it refuses, commit, run it again, then push. verify said: $(printf '%s' "$res" | head -c 1500)"
     fi
     if (cd "$dir" && results_pending); then
-      attempts="$(cd "$dir" && pending_attempts)"
       perr="$(cd "$dir" && push_error)"
-      if [ "$attempts" -le 2 ]; then
-        refuse "results not pushed — the judged results of $dir are stored locally only, so the remote and CI would read these commits as not judged. Run: cd $dir && sr-checks run --base $base --head $sha (it retries the push), then push again.${perr:+ The push of the results failed with: $perr}"
-      fi
-      echo "WARNING: verify-before-push is letting this push go although the judged results of $dir could not be pushed (${perr:-the results push keeps failing}). CI verify will report these commits as not judged until the results are pushed." >&2
+      refuse "results not pushed — the judged results of $dir are stored locally only, so the remote and CI would read these commits as not judged. Run: cd $dir && sr-checks run --base $base --head $sha (it retries the push), then push again.${perr:+ The push of the results failed with: $perr} If that keeps failing it is an environment problem (for example no permission to push refs/sloprail/checks) that the USER has to fix: the user can push the results themselves, or turn this gate off in .sloprail/config.yaml. Do not retry in a loop and do not work around it."
     fi
   done <<<"$out"
 

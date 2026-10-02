@@ -9,10 +9,11 @@ import (
 )
 
 // T057_05: a results push that fails PERMANENTLY (the remote rejects refs/heads/sloprail/checks) while
-// the code push would work must not trap the agent. The pending-results refusal names the actual push
-// error and says to retry; after one failed retry it refuses once more; then the push is permitted (the gate warns on
-// stderr that CI verify will say "not judged" until the results are pushed; `sr-checks run` says so too).
-func TestT057_05_APermanentlyFailingResultsPushIsRefusedRetriedThenPermittedWithAWarning(t *testing.T) {
+// the code push would work keeps the gate refusing, every time: the gate never permits a push whose
+// results are unpushed (no counter, nothing the agent can write to get past it). It quotes the actual
+// push error and says this is an environment problem the USER must fix (push themselves, or disable
+// the gate in .sloprail/config.yaml).
+func TestT057_05_APermanentlyFailingResultsPushKeepsRefusingAndNamesTheUserFix(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	origin := e.Origin(proj)
 	hook := "#!/bin/sh\nwhile read old new ref; do\n  case \"$ref\" in refs/heads/sloprail/checks) echo \"results branch locked by policy\" >&2; exit 1 ;; esac\ndone\nexit 0\n"
@@ -31,20 +32,17 @@ func TestT057_05_APermanentlyFailingResultsPushIsRefusedRetriedThenPermittedWith
 	if !res.Refused() || !res.Saw("results not pushed") || !res.Saw("results branch locked by policy") {
 		t.Fatalf("first push: not refused with the actual push error:\n%s", res.Output)
 	}
-	if reached(origin, "refs/heads/work") {
-		t.Fatal("the refused push reached the remote")
+	if !res.Saw("environment problem") || !res.Saw("USER") || !res.Saw(".sloprail/config.yaml") {
+		t.Fatalf("the refusal does not say the user must fix the environment or disable the gate:\n%s", res.Output)
 	}
 
-	res = e.Run(proj, "s-057-05", "retry once", Turns("done", Bash("j2", run), Bash("p2", push)))
-	if !res.Refused() || !res.Saw("results not pushed") {
-		t.Fatalf("second push (after a failed retry) must be refused once more:\n%s", res.Output)
-	}
-	if reached(origin, "refs/heads/work") {
-		t.Fatal("the second refused push reached the remote")
-	}
-
-	res = e.Run(proj, "s-057-05", "retry again", Turns("done", Bash("j3", run), Bash("p3", push)))
-	if !reached(origin, "refs/heads/work") {
-		t.Fatalf("the loop breaker did not permit the push:\n%s", res.Output)
+	for i, name := range []string{"retry", "retry again", "and again"} {
+		res = e.Run(proj, "s-057-05", name, Turns("done", Bash("j"+string(rune('2'+i)), run), Bash("p"+string(rune('2'+i)), push)))
+		if !res.Refused() || !res.Saw("results not pushed") {
+			t.Fatalf("push %d (after a failed retry) must still be refused:\n%s", i+2, res.Output)
+		}
+		if reached(origin, "refs/heads/work") {
+			t.Fatalf("a refused push reached the remote on try %d", i+2)
+		}
 	}
 }

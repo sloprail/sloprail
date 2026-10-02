@@ -16,6 +16,9 @@
 # Pushing the results branch sloprail/checks is refused here too: only `sr-checks run`
 # writes it.
 #
+# Limit: this gate sees the command line the agent runs, not the commands inside a script it
+# runs (`sh ship.sh` that pushes). CI verify is the backstop for those.
+#
 # On by default, like every shipped rule, and switched off by listing
 # `sloprail/gate/verify-before-push` under `disabled:` in .sloprail/config.yaml.
 on:
