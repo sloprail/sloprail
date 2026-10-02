@@ -412,7 +412,11 @@ func verifyRangeAs(cmd *cobra.Command, p HookPayload, reg *module.Registry, stor
 	for _, f := range refusals {
 		parts = append(parts, f.Reason+" (file-guard "+f.Attribution+")")
 	}
-	return where + ": " + joinRefusals(parts) + goneNote
+	out := where + ": " + joinRefusals(parts) + goneNote
+	if len(r.Head) < 40 && !strings.HasPrefix(r.Head, "refs/") {
+		out += fmt.Sprintf("\nIf %s is not yours to answer for (the user said to drop it), stop answering for it: `sr-session refs untrack --head %s --reason '<why>'`, and `sr-session refs track --head %s` takes it back.", r.Head, r.Head, r.Head)
+	}
+	return out
 }
 
 // advanceBase moves a range's base up to the head's merge base with the remote default branch,
