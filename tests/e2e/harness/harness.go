@@ -557,6 +557,15 @@ exit 0
 func (e *Env) InstallJudgeClaudeCapturing(projDir, relPromptFile, verdict string) {
 	e.t.Helper()
 	promptPath := filepath.Join(projDir, relPromptFile)
+	// The capture is the harness's, not the project's work: a prompt that quotes a marked file
+	// carries the marker itself, and left untracked it would be a guarded file with
+	// uncommitted changes — a commit-required refusal at the Stop. Excluded, git does not see it.
+	if exclude := filepath.Join(projDir, ".git", "info", "exclude"); os.MkdirAll(filepath.Dir(exclude), 0o755) == nil && fileExists(filepath.Join(projDir, ".git", "HEAD")) {
+		if f, err := os.OpenFile(exclude, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "/%s\n/%s.calls\n", relPromptFile, relPromptFile)
+			f.Close()
+		}
+	}
 	// The prompt argument is the one sr-agent appends its answer-file line to and
 	// is the whole rendered template; the shim picks that argument and writes it
 	// out verbatim, then recovers the output path from it and writes the verdict —
