@@ -44,6 +44,22 @@ func (e *Env) noteRunBase(projDir, sessionID string) {
 		}
 	}
 	e.runBase[sessionID] = base
+	e.publishPreSession(projDir, base)
+}
+
+// publishPreSession moves origin/main (the local remote-tracking ref) up to where the project
+// stood before the project's first session: what a test committed before it ran is what a real
+// project already has pushed, so the range `--base origin/main` is only the session's work.
+// Once per project; only when origin/main is an ancestor of that point.
+func (e *Env) publishPreSession(projDir, base string) {
+	if e.origins[projDir] == "" || base == emptyTree || e.published[projDir] {
+		return
+	}
+	e.published[projDir] = true
+	if exec.Command("git", "-C", projDir, "merge-base", "--is-ancestor", "origin/main", base).Run() != nil {
+		return
+	}
+	Git(e.t, projDir, "update-ref", "refs/remotes/origin/main", base)
 }
 
 // withPreStopRun appends, to a scenario, the turn a real agent takes before it ends its turn: it
@@ -151,11 +167,12 @@ func (e *Env) CheckRun(projDir, sessionID string) []string {
 	return e.CheckRunRange(projDir, sessionID, e.RunBase(sessionID), "HEAD")
 }
 
-// FileGuardRefusals is every refusal the automatic `sr check run` recorded for a session,
-// de-duplicated, in order: BlockingErrorsFrom(..., "Stop") without the gates'.
+// FileGuardRefusals is every refusal the Stop delivered for a session, de-duplicated, in
+// order. File-guards are judged by `sr-checks run` (the pre-Stop turn) and the Stop VERIFIES
+// the stored results, so a file-guard's refusal reaches the agent as a Stop refusal.
 func (e *Env) FileGuardRefusals(projDir, sessionID string) []string {
 	e.t.Helper()
-	return dedupeStrings(e.checkHistory[sessionID])
+	return e.BlockingErrorsFrom(projDir, sessionID, "Stop")
 }
 
 func dedupeStrings(in []string) []string {
