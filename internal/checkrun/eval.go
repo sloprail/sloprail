@@ -865,12 +865,8 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		return fail(err)
 	}
 	if pv.Refused {
-		rr.volatile = true // it read the session
-		if req.TranscriptPath == "" && c.Prepare != "" {
-			// No session transcript here, and prepare refused: running blind would store a
-			// verdict about a question the check was never fully asked.
-			return fail(fmt.Errorf("this check needs a session: its prepare step refused and no session transcript is available (%s); run `sr-checks run` inside the session", pv.Reason))
-		}
+		// A refusal of prepare is the check's verdict (fail-closed): stored and replayed like
+		// any other, so the Stop's verify reads it instead of "not judged yet".
 		return settle(pv, map[string]any{"model": c.Model})
 	}
 	if prep.Skip {

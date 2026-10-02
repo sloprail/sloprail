@@ -623,3 +623,25 @@ func TestEvaluate_SubjectsScriptKeysEachSubjectOnItsOwn(t *testing.T) {
 	assert.Empty(t, got, "verify computes the same keys, without a session")
 	assert.Equal(t, 3, f.runs(t))
 }
+
+// A check whose prepare refuses (no transcript to read, fail-closed) has a verdict, a FAIL: it
+// is stored, so verify reads it instead of "not judged yet", and run replays it.
+func TestEvaluate_APrepareRefusalIsAStoredFailNotAnEngineError(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		require.NoError(t, os.WriteFile(filepath.Join(g.Dir, "prepare.sh"),
+			[]byte("#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"no standard to judge\"}'\nexit 1\n"), 0o755))
+		g.Checks = []declaration.Check{{Script: "./check.sh", Prepare: "./prepare.sh"}}
+	})
+	f.commitDoc(t, "docs/a.md", "clean")
+
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "no standard to judge")
+
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "no standard to judge")
+	assert.NotContains(t, got[0].Reason, "not judged yet")
+}
