@@ -102,6 +102,12 @@ type Request struct {
 	// refuses, because a precondition it cannot check has not passed.
 	TranscriptPath string
 
+	// Subagent is true when the agent being judged is a sub-agent — decided by
+	// the hook that fired (SubagentStop), never read from a record. A refusal for
+	// want of the user's words then tells it to hand the change back to its
+	// parent, which can ask the user, rather than to ask the user itself.
+	Subagent bool
+
 	// Context is every declared context by name, at parity with the nature's match
 	// scope — what a check reads as `context[<name>]`, and what a `{context}`
 	// prerequisite consults. Nil is an empty map.

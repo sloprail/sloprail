@@ -416,6 +416,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		Nature:         dispatchcore.NatureFileGuard,
 		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.Citations))}},
 		TranscriptPath: ev.scope.Transcript,
+		Subagent:       ev.p.IsSubagent(),
 		Context:        ev.contextMap,
 		Dir:            g.Dir,
 		GuardName:      g.Name,

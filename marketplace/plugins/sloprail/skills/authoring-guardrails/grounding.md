@@ -47,6 +47,22 @@ messages in the main conversation, quoted exactly as the user wrote them. When
 dispatching work that must cite the user, paste the user's exact words into the
 sub-agent's prompt.
 
+A sub-agent that cannot cite the user cannot ask the user either, so it hands
+the change back to its parent instead of asking for a trailer to be added at
+merge (a trailer put on a whole squash grounds nothing). It saves the change as
+a patch **file** outside the repository
+(`git diff --binary <base>..HEAD -- <files> > "${TMPDIR:-/tmp}/handback.patch"`),
+reverts those files on its own branch in a real commit
+(`git apply -R --index "${TMPDIR:-/tmp}/handback.patch" && git commit -m '…'`),
+and tells the parent where the patch is and exactly what needs the user's
+approval. The backup is never a branch, a tag or a stash: every branch is
+judged at the sub-agent's Stop, so a backup branch would be refused again (a
+stash is not judged, but it is not a hand-back either, and the work is lost to
+the parent). The parent asks the user (AskUserQuestion), re-applies the patch
+(`git apply --index <patch>`), and commits it with
+`Sloprail-Cites-User: <the user's exact answer>`. The root's own refusal stays
+as it was: ask the user now.
+
 Run `sr-file` **on its own**, by its bare name, in the command line — it must
 be on PATH (`command -v sr-file`; if that fails, put sloprail's binaries on
 PATH, or name the engine's own `sr-file` by its full path, which is dry-run as

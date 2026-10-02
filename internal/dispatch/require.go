@@ -607,6 +607,9 @@ func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
 func (r Runner) checkCitation(req Request, p declaration.Prerequisite, hint string) (Verdict, error) {
 	pools := p.Citation.Pools()
 	if !citedIn(req.Event, pools) {
+		if req.Subagent && req.Event.Kind == changeset.Kind && slices.Contains(pools, transcript.SourceUser) {
+			return refuse(subagentHandback(citationSubject(req.Event.Fields, pools), req)), nil
+		}
 		return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools, hint) + subagentCitationNote(req.TranscriptPath, pools)), nil
 	}
 	if req.History == nil {
@@ -628,6 +631,16 @@ func (r Runner) checkCitation(req Request, p declaration.Prerequisite, hint stri
 		return refuse(uncitedRemedy(req.Event.Fields, pools, u)), nil
 	}
 	return pass(), nil
+}
+
+// citationSubject is the first line of a changeset's citation refusal: what
+// must cite, and that no commit's trailer does.
+func citationSubject(fields map[string]any, pools []transcript.SourceType) string {
+	what := citedWhat(pools)
+	if path, _ := fields["path"].(string); path != "" {
+		return path + " must cite " + what + " in the commit that last changed it, and that commit carries none that resolves."
+	}
+	return "this change must cite " + what + ", and no commit in its range carries a citation that resolves."
 }
 
 // citedIn reports whether e carries a citation that resolved in one of pools.
