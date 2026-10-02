@@ -272,6 +272,7 @@ REST_PKGS := \
   ./tests/e2e/fileguard/... \
   ./tests/e2e/changeset/... \
   ./tests/e2e/check/... \
+  ./tests/e2e/checks/... \
   ./tests/e2e/grounding/... \
   ./tests/e2e/structure/... \
   ./tests/e2e/proxy/... \
