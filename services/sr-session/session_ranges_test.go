@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,4 +110,45 @@ func TestVerifyTrackedRanges_AnUnidentifiableSessionIsRefusedNotPassed(t *testin
 	assert.Contains(t, got[0], "cannot be identified")
 	assert.Contains(t, got[0], "transcript_path")
 	assert.Contains(t, got[0], "To recover")
+}
+
+// corruptRegistry stages a session whose registry exists but cannot be read, and returns the
+// payload that names it.
+func corruptRegistry(t *testing.T, proj string) HookPayload {
+	t.Helper()
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	record := filepath.Join(t.TempDir(), "sess-corrupt.jsonl")
+	require.NoError(t, os.WriteFile(record, []byte(`{"type":"user","uuid":"origin","parentUuid":null,"message":{"role":"user","content":"hi"}}`+"\n"), 0o644))
+	p := HookPayload{Cwd: proj, SessionID: "sess-corrupt", TranscriptPath: record}
+	rs, err := resolveRootSession(p)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(rs.Path), 0o755))
+	require.NoError(t, os.WriteFile(rs.Path, []byte("this is not a registry\x00\xff{{{"), 0o644))
+	return p
+}
+
+// An unreadable folder registry is an error, never "this session registered no folders".
+func TestSessionFolders_AnUnreadableRegistryIsAnError(t *testing.T) {
+	p := corruptRegistry(t, initRepo(t))
+	_, err := sessionFolders(p)
+	require.Error(t, err)
+	_, err = foldersTargeted(HookPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: p.TranscriptPath,
+		ToolName: "Bash", ToolInput: []byte(`{"command":"git -C /tmp commit -m x"}`)})
+	assert.Error(t, err, "a Bash call's folders cannot be told from an unreadable registry")
+}
+
+// The Stop does not exit early on "no rules here" while the folder registry is unreadable: it
+// falls through to the steps that refuse.
+func TestDispatchStop_AnUnreadableFolderRegistryDoesNotEndTheStopEarly(t *testing.T) {
+	proj := initRepo(t) // no rules in the working directory
+	p := corruptRegistry(t, proj)
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+	store := openStore(t)
+	t.Chdir(proj)
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+	got := dispatchNatureStop(cmd, p, reg, hookScope{}, store)
+	assert.NotEmpty(t, got, "an unreadable registry was read as 'no other folder has rules'")
 }

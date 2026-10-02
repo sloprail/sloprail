@@ -51,7 +51,10 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	grounds := requiresCitation(loaded)
-	folders := folderGates(p, reg)
+	folders, ferr := folderGates(p, reg)
+	if ferr != nil {
+		return natureVerdict{Blocked: fmt.Sprintf("the session's registered folders could not be read (%v); refusing because a registry that could not be read must not be read as 'no other folder has rules'", ferr)}
+	}
 	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds && len(folders) == 0 {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
 		// gate, no context to enter, no other folder's gate. (File-guards act only at Stop.)
@@ -441,14 +444,18 @@ type folderRules struct {
 // folderGates is each registered folder a Bash call's git commands run in (foldersTargeted)
 // that declares a gate, with its rules: the gates that judge the call there besides the
 // agent's own tree's.
-func folderGates(p HookPayload, reg *module.Registry) []folderRules {
+func folderGates(p HookPayload, reg *module.Registry) ([]folderRules, error) {
 	var out []folderRules
-	for _, dir := range foldersTargeted(p) {
+	dirs, err := foldersTargeted(p)
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
 		if loaded := newNatureDeclarations(quietCmd(), dir, reg); len(loaded.Gates) > 0 {
 			out = append(out, folderRules{dir: dir, loaded: loaded})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // quietCmd is a command whose output goes nowhere: loading another folder's rules reports
