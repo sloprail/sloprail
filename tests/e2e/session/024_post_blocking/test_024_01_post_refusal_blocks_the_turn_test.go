@@ -17,7 +17,7 @@ import (
 //   - It cannot undo the write. The file is on disk and the cycle is over; an
 //     engine claiming otherwise would be promising a rollback it never
 //     performed.
-//   - It MUST stop the turn from ending. That is the entire mechanism by which
+//   - It MUST refuse the work. That is the entire mechanism by which
 //     an after-the-fact rule gets a correction rather than merely complaining
 //     once.
 //
@@ -26,13 +26,10 @@ import (
 // permits, so a test asserting only that passes against an engine with no
 // blocking at all.
 //
-// HOW A STOP REFUSAL IS OBSERVED. It never appears on the mock's stream — this
-// command exits 0 and blocks by writing {"decision":"block"} on stdout, so its
-// stderr reaches no agent. The reason travels as a `hook_blocking_error`
-// attachment the agent is handed on its next turn, which harness.BlockingErrors
-// reads. A test scanning the stream for the hook's words asserts on a channel
-// the refusal does not use and passes or fails for unrelated reasons; that is
-// how a premise check in 019 failed against a working engine.
+// HOW A REFUSAL IS OBSERVED. A file-guard is judged by `sr check run --base
+// --head` over the commits the session made, not at Stop; the harness runs it
+// after every Run and BlockingErrors returns its refusals alongside the Stop's
+// own. "The turn is blocked" is now "the session's range is refused".
 
 // refuseCreates is a NEW-FORMAT file-guard, after-check (a file-guard acts only at Stop),
 // that objects to every markdown file the cycle produces . An
@@ -46,11 +43,12 @@ checks:
   - script: ./refuse.sh
 `
 
-// continuations is how many times, so far, a Stop refusal drove the session's
-// agent on past the end of its turn — read from the record, as a person would
-// see it (harness.StopContinuations).
-func continuations(e *harness.Env, proj, sess string) int {
-	return len(e.StopContinuations(proj, sess))
+// refused is whether a file-guard refused the session's work. A file-guard no
+// longer holds the turn at Stop: it is judged by `sr check run` over the
+// commits the session made, which the harness runs after every Run
+// (harness.FileGuardRefusals).
+func refused(e *harness.Env, proj, sess string) bool {
+	return len(e.FileGuardRefusals(proj, sess)) > 0
 }
 
 // refusingGuardrail writes a file-guard whose check logs OUTSIDE the project and
@@ -119,11 +117,10 @@ func TestT024_01_OneRefusalBlocksTheTurnWithoutUndoingTheWrite(t *testing.T) {
 			"must demand a correction, not perform one")
 	}
 
-	// FACT TWO: the turn did not end.
-	if continuations(e, proj, "s-024-01") == 0 {
-		t.Errorf("the turn ended despite a guardrail refusing (%d continuations) — a Post refusal "+
-			"must stop the turn, which is the only way it gets anything corrected:\n%s",
-			continuations(e, proj, "s-024-01"), got.Output)
+	// FACT TWO: the work was refused.
+	if !refused(e, proj, "s-024-01") {
+		t.Errorf("the session's work passed despite a guardrail refusing — a refusal "+
+			"is the only way it gets anything corrected:\n%s", got.Output)
 	}
 
 	// FACT THREE: the agent was told why, and by whom. Read from the blocking
@@ -175,8 +172,8 @@ func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 		}
 	}
 
-	if continuations(e, proj, "s-024-02") == 0 {
-		t.Fatalf("three guardrails refused and the turn was not blocked:\n%s", got.Output)
+	if !refused(e, proj, "s-024-02") {
+		t.Fatalf("three guardrails refused and the work was not refused:\n%s", got.Output)
 	}
 
 	blocking := e.BlockingErrors(proj, "s-024-02")
@@ -228,56 +225,13 @@ checks:
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the refusing hook never ran, so there is no refusal here to survive:\n%s", got.Output)
 	}
-	if continuations(e, proj, "s-024-03") == 0 {
-		t.Fatalf("the turn ended despite a refusal, so this is not the case being tested:\n%s", got.Output)
+	if !refused(e, proj, "s-024-03") {
+		t.Fatalf("the work passed despite a refusal, so this is not the case being tested:\n%s", got.Output)
 	}
 	if _, err := os.Stat(afterLog); err != nil {
 		t.Fatalf("a rule bound after the refusing one never ran — one guardrail objecting " +
 			"silenced the rest of the cycle, and the agent is fixing violations one turn at a time")
 	}
-}
-
-// T024_04: a session whose every cycle refuses still terminates.
-//
-// A refused Stop is judged again on every retry; what ends a loop is the
-// project's stop_hook_block_cap (default 8) or, failing that, the harness's own
-// cap. Measured against this harness: the mock re-runs the refused turn and does
-// not set stop_hook_active on a root re-run, so each pass here is a fresh
-// sequence and the bound comes from the harness's retry cap. So what is asserted
-// is the observable thing: a session where the rule refuses on every pass
-// terminates rather than running forever. The count is logged rather than
-// asserted exactly — it is the harness's behaviour, not the engine's contract.
-// The engine's cap is covered at unit level (TestStopHookBlockCap_*), where the
-// payload can be constructed directly.
-func TestT024_04_ARefusingSessionStillTerminates(t *testing.T) {
-	e, proj := project(t)
-	ranLog := refusingGuardrail(t, e, proj, "looper", "still not acceptable")
-	e.CommitAll(proj, "the project before the session")
-
-	got := e.Run(proj, "s-024-04", "write a file", Turns("done",
-		Write("w1", "looped.md", "the subject\n"),
-	).ThenCommit("the agent's work"))
-
-	body, err := os.ReadFile(ranLog)
-	if err != nil {
-		t.Fatalf("the refusing hook never ran:\n%s", got.Output)
-	}
-	runs := strings.Count(string(body), "ran")
-	if runs == 0 {
-		t.Fatalf("the refusing hook logged nothing, so nothing here can be counted")
-	}
-	// The turn really was blocked at least once, or "it did not loop" is a
-	// statement about a cycle that never refused.
-	if continuations(e, proj, "s-024-04") == 0 {
-		t.Fatalf("the turn ended without ever being blocked, so there is no loop to avoid:\n%s", got.Output)
-	}
-	// And it ended. The mock stops driving a session that keeps blocking, so a
-	// run that terminated at all is the observable form of "the loop is bounded".
-	if got.Code != 0 && got.Code != 1 {
-		t.Fatalf("the session ended with an unexpected code %d, which is not the bounded "+
-			"outcome this test is about:\n%s", got.Code, got.Output)
-	}
-	t.Logf("the refusing hook ran %d time(s) before the session ended", runs)
 }
 
 // T024_05: a rule that PASSES is not reported as an objection.
@@ -308,9 +262,8 @@ func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 		t.Fatalf("the passing hook never ran, so the absence of a block below proves nothing:\n%s",
 			got.Output)
 	}
-	if continuations(e, proj, "s-024-05") > 0 {
-		t.Errorf("a cycle in which every rule passed was blocked anyway (%d continuations):\n%s",
-			continuations(e, proj, "s-024-05"), got.Output)
+	if refused(e, proj, "s-024-05") {
+		t.Errorf("a cycle in which every rule passed was refused anyway:\n%s", got.Output)
 	}
 	if b := e.BlockingErrors(proj, "s-024-05"); len(b) > 0 {
 		t.Errorf("a cycle in which every rule passed produced a blocking reason:\n%s",
@@ -346,8 +299,8 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 			t.Fatalf("guardrail %q never ran, so this is not the mixed case:\n%s", name, got.Output)
 		}
 	}
-	if continuations(e, proj, "s-024-06") == 0 {
-		t.Fatalf("the turn ended despite one rule refusing:\n%s", got.Output)
+	if !refused(e, proj, "s-024-06") {
+		t.Fatalf("the work passed despite one rule refusing:\n%s", got.Output)
 	}
 
 	blocking := e.BlockingErrors(proj, "s-024-06")
@@ -387,9 +340,8 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the rule never ran in the first cycle:\n%s", first.Output)
 	}
-	firstBlocks := continuations(e, proj, sess)
-	if firstBlocks == 0 {
-		t.Fatalf("the first cycle was not blocked, so there is no outstanding refusal:\n%s", first.Output)
+	if !refused(e, proj, sess) {
+		t.Fatalf("the first cycle was not refused, so there is no outstanding refusal:\n%s", first.Output)
 	}
 
 	// A second cycle that does not touch the offending file at all.
@@ -397,8 +349,8 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 		Write("w2", "unrelated.md", "fine\n"),
 	).ThenCommit("the agent's work"))
 
-	if continuations(e, proj, sess) <= firstBlocks {
-		t.Fatalf("a cycle that left an unfixed violation in place was allowed to end:\n%s\n"+
+	if len(e.CheckRun(proj, sess)) == 0 {
+		t.Fatalf("a cycle that left an unfixed violation in place passed:\n%s\n"+
 			"the file is still broken and the rule has stopped saying so — an after-the-fact "+
 			"rule that complains once is not enforcement", second.Output)
 	}

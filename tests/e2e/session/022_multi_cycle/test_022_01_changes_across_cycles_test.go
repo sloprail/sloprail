@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -15,17 +14,15 @@ import (
 // answers are not.
 //
 // THE MODEL, stated once here because getting it wrong is what makes these
-// tests assert the opposite of the truth. A file-guard judges COMMITS: at each
-// Stop it is handed the net change of the range of commits it has not yet
-// passed, from its watermark (the head of its last passing run) to HEAD. So the
-// measuring point MOVES with every pass: a file one cycle added is already in the
-// base of the next cycle's range, and editing it there is a modification (M), not
-// another addition. Within one range, several commits squash into one net change:
-// a file added and removed, or removed and restored to the bytes it had, is not in
-// the changeset at all.
+// tests assert the opposite of the truth. A file-guard judges COMMITS: `sr check
+// run --base --head` hands it the net change of the range its caller states. Here
+// each cycle is judged over the commits it added (changesetkit.JudgeRun), so a
+// file one cycle added is already in the base of the next cycle's range, and
+// editing it there is a modification (M), not another addition. Within one range,
+// several commits squash into one net change: a file added and removed, or
+// removed and restored to the bytes it had, is not in the changeset at all.
 //
-// The agent commits its work before it stops (ThenCommit); uncommitted guarded
-// work is refused at Stop instead of judged.
+// The agent commits its work before it stops (ThenCommit).
 //
 // Each test drives several Run calls under ONE session id, which is what makes
 // them cycles of one session rather than unrelated sessions. The ledger
@@ -59,7 +56,7 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	var out [][]changesetkit.Observed
 	seen := 0
 	for i, s := range scenarios {
-		e.Run(proj, sess, "cycle", s)
+		changesetkit.JudgeRun(t, e, proj, sess, "cycle", s)
 		lines := harness.ReadLedgerLines(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
@@ -74,13 +71,11 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 // rule's own folder is part of the history rather than an uncommitted guarded
 // change of every cycle. It returns the path of the ledger the check records to.
 //
-// seed is content that exists before the rule does, committed in its own commit
-// BEFORE the rule's: a rule's range floors at the parent of the last commit
-// touching its own folder, so the seed must sit at or below that parent to be
-// part of the base rather than of the first range.
+// seed is content that exists before the session, committed before the rule, so
+// it is part of the base rather than of the first range.
 func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 	t.Helper()
-	e := New(t)
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
 	proj := e.Project()
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
@@ -98,11 +93,10 @@ func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 // T022_01: a file added in one cycle and edited in the next is a modification in
 // the second.
 //
-// The measuring point is the rule's watermark, and a passing cycle moves it. Cycle
-// one's range holds the file as an addition; once that range passed, the file is
-// part of the base of cycle two's, so the edit is an M of a file the range's base
-// holds. (On the old session-baseline model it stayed a create forever.) The
-// discriminator is the range's base, not "have we mentioned it before".
+// The measuring point is the range's base. Cycle one's range holds the file as an
+// addition; the file is part of the base of cycle two's, so the edit is an M of a
+// file the range's base holds. The discriminator is the range's base, not "have
+// we mentioned it before".
 func TestT022_01_AFileAddedInOneCycleIsModifiedInTheNext(t *testing.T) {
 	e, proj, ledger := project(t)
 
@@ -118,11 +112,10 @@ func TestT022_01_AFileAddedInOneCycleIsModifiedInTheNext(t *testing.T) {
 	k := changesetkit.Statuses(second, "subject.md")
 	if len(k) != 1 {
 		t.Fatalf("cycle two did not report the file it edited exactly once: %v — the cycle "+
-			"dispatched nothing, or its range still reached back before the pass", second)
+			"dispatched nothing", second)
 	}
 	if k[0] != "M" {
-		t.Fatalf("cycle two reported %v for a file the passed range already added; want M — "+
-			"the watermark did not advance past cycle one", k)
+		t.Fatalf("cycle two reported %v for a file its range's base already holds; want M", k)
 	}
 }
 
@@ -186,7 +179,7 @@ func TestT022_02_AddedAndDeletedInTheSameRangeIsSilent(t *testing.T) {
 
 // T022_03: a file deleted in one cycle and recreated in the next is a D, then an A.
 //
-// Each cycle's range starts where the last passing one ended. Cycle one removes the
+// Each cycle's range starts where the last one ended. Cycle one removes the
 // file: it was in that range's base and is gone at its head, a delete. Cycle two's
 // base is the tree without it, so putting it back is an addition, whatever bytes
 // it holds. An engine that kept measuring from the session's start would report
@@ -206,11 +199,11 @@ func TestT022_03_DeletedThenRecreatedIsADeleteThenAnAddition(t *testing.T) {
 	}
 	k := changesetkit.Statuses(second, "revenant.md")
 	if len(k) != 1 {
-		t.Fatalf("cycle two never reported the recreated file: %v — content the passed range "+
+		t.Fatalf("cycle two never reported the recreated file: %v — content the previous range "+
 			"did not hold went unjudged entirely", second)
 	}
 	if k[0] != "A" {
-		t.Fatalf("cycle two reported %v for a path the passed range's head lacks; want A", k)
+		t.Fatalf("cycle two reported %v for a path the previous range's head lacks; want A", k)
 	}
 }
 
@@ -245,81 +238,5 @@ func TestT022_03b_RestoredWithTheBasesBytesWithinARangeIsSilent(t *testing.T) {
 		t.Fatalf("a file restored to its base bytes was reported as %v: %v\n"+
 			"the changeset is the net difference between two trees, not a log of what was "+
 			"done to the path along the way", k, second)
-	}
-}
-
-// T022_04: a file left alone after a rule passed it is not put in front of that
-// rule again.
-//
-// The passing run moved the rule's watermark to its head, so the next range
-// starts after everything that was judged: the untouched file is in the base, not
-// in the change. What it catches is an engine whose range keeps reaching back to
-// the session's start and re-judges everything it can still see.
-//
-// The positive is asserted in the same cycle and the same ledger slice that the
-// negative is read from.
-func TestT022_04_AFileLeftAloneAfterBeingReportedFallsSilent(t *testing.T) {
-	e, proj, ledger := project(t)
-
-	got := cycles(t, e, proj, ledger, "s-022-04",
-		Turns("done",
-			Write("w1", "kept.md", "one\n"),
-			Write("w2", "moved-on.md", "one\n"),
-		).ThenCommit("add both"),
-		Turns("done", Write("w3", "kept.md", "two\n")).ThenCommit("edit kept"),
-	)
-	first, second := got[0], got[1]
-
-	if !changesetkit.Saw(first, "kept.md") || !changesetkit.Saw(first, "moved-on.md") {
-		t.Fatalf("cycle one did not report both files: %v", first)
-	}
-	if !changesetkit.Saw(second, "kept.md") {
-		t.Fatalf("cycle two did not report the file it edited: %v — nothing was observed, so "+
-			"the silence about the other file proves nothing", second)
-	}
-	if k := changesetkit.Statuses(second, "moved-on.md"); len(k) > 0 {
-		t.Fatalf("a file untouched since the previous cycle was reported again as %v: %v\n"+
-			"the range starts at the last pass; reporting it again puts settled work in front "+
-			"of every rule forever", k, second)
-	}
-}
-
-// T022_05: five cycles in one session, each putting only its own work in front
-// of the rule.
-//
-// The compounding case. Every cycle writes and commits a file named for itself;
-// what keeps the rule from being re-asked about the earlier ones is that its
-// watermark moved past them when they passed. An engine whose range did not
-// advance hands the rule a growing pile: by cycle five, five files where one
-// belongs, each re-ask a fresh model call free to come back with a different
-// answer about work the agent has moved on from.
-//
-// Each cycle is checked as it goes rather than only at the end, so a failure
-// names the cycle the advance stopped holding on.
-func TestT022_05_FiveCyclesEachReportOnlyTheirOwnWork(t *testing.T) {
-	e, proj, ledger := project(t)
-
-	names := []string{"c1.md", "c2.md", "c3.md", "c4.md", "c5.md"}
-	var scenarios []harness.Scenario
-	for i, n := range names {
-		scenarios = append(scenarios, Turns("done",
-			Write(strings.Repeat("w", i+1), n, "written in cycle\n")).ThenCommit("cycle "+n))
-	}
-
-	got := cycles(t, e, proj, ledger, "s-022-05", scenarios...)
-
-	for i, own := range names {
-		this := got[i]
-		if !changesetkit.Saw(this, own) {
-			t.Fatalf("cycle %d did not report its own file %q: %v — this cycle observed "+
-				"nothing, so what it left out proves nothing", i+1, own, this)
-		}
-		for _, earlier := range names[:i] {
-			if k := changesetkit.Statuses(this, earlier); len(k) > 0 {
-				t.Fatalf("cycle %d was handed %q again as %v: %v\nthe watermark stopped "+
-					"advancing, so every later cycle re-reports the whole session's work",
-					i+1, earlier, k, this)
-			}
-		}
 	}
 }
