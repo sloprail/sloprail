@@ -206,4 +206,6 @@ func eventsOf(e normalized) []string {
 // is about other rules, and the authoring guards would judge the rules' own files.
 // NoAutoCheck: these tests read the trajectory the scenario wrote, and the harness's
 // pre-Stop `sr-checks run` turn would be a second Bash entry they did not script.
-func New(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck()) }
+func New(t *testing.T) *Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
+}
