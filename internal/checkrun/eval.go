@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -340,7 +341,17 @@ func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checks
 // refused are the outcome.
 func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, FileGuardResult, bool) {
 	rule := g.Qualified()
-	run := checkstore.CheckRun{CheckID: rule, BaseRef: ev.rng.Base, HeadRef: ev.rng.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
+	// RULE AGE: the range is the stated one, raised to the rule's floor (the parent of its last
+	// change) when that is later, so work made before the rule existed is not its debt.
+	r := ev.rng
+	if rel, err := filepath.Rel(ev.root, g.Dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		raised, err := gitrepo.RaiseBaseToRuleFloor(ev.root, r, filepath.ToSlash(rel))
+		if err != nil {
+			return ev.fail(g, checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}, fmt.Errorf("its range is not computable: %w", err))
+		}
+		r = raised
+	}
+	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 
 	hash, err := changeset.RuleHash(g.Root())
 	if err != nil {
@@ -351,7 +362,6 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, FileG
 	if err != nil {
 		return ev.fail(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
-	r := ev.rng
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
 		Deletions: changeset.DeletionMode(g.Deletions),
 		Scan:      Markers,
