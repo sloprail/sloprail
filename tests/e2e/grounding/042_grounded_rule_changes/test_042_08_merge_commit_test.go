@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,20 +13,14 @@ const asUpstream = "-c user.name=upstream -c user.email=up@example.com"
 // different places merge with no conflict.
 const bigScript = "#!/bin/sh\ncat >/dev/null\n# 1\n# 2\n# 3\n# 4\n# 5\n# 6\n# 7\n# 8\n# 9\nexit 0\n"
 
-// remoteWithUpstream gives proj an origin whose default branch is main, and returns a
-// function that lands one more commit upstream (from a second clone).
+// remoteWithUpstream pushes proj's default branch to the origin GitInit gave it, and returns
+// a function that lands one more commit upstream (from a second clone).
 func remoteWithUpstream(t *testing.T, e *harness.Env, proj string) (land func(path, content, msg string)) {
 	t.Helper()
 	main := e.Git(proj, "branch", "--show-current")
-	bare := filepath.Join(t.TempDir(), "origin.git")
-	e.Git(filepath.Dir(bare), "init", "-q", "--bare", bare)
-	e.Git(bare, "symbolic-ref", "HEAD", "refs/heads/"+main)
-	e.Git(proj, "remote", "add", "origin", bare)
 	e.Git(proj, "push", "-q", "origin", "HEAD:refs/heads/"+main)
 	e.Git(proj, "fetch", "-q", "origin")
-	e.Git(proj, "remote", "set-head", "origin", main)
-	up := filepath.Join(t.TempDir(), "up")
-	e.Git(filepath.Dir(up), "clone", "-q", bare, up)
+	up := e.CloneFresh(proj)
 	return func(path, content, msg string) {
 		t.Helper()
 		e.WriteFile(up, path, content)
@@ -65,7 +58,9 @@ func citedEditThenMerge(t *testing.T, e *harness.Env, proj, sess, ask, edited, m
 // T042_30: a clean merge of upstream into the session's branch is not the commit that
 // "last changed" the protected file. The session edited the rule at the end (cited),
 // upstream at the top; the merge resolved nothing, so it needs no citation of its own
-// and the refusal never names it.
+// and the refusal never names it. The range is the branch against the upstream it
+// merged (base origin/<main>), the way a caller judges a branch for its target: the
+// upstream commit is the target's, not the branch's.
 func TestT042_30_ACleanMergeIsNotTheLastChanger(t *testing.T) {
 	e := New(t)
 	proj := project(t, e)
@@ -78,7 +73,8 @@ func TestT042_30_ACleanMergeIsNotTheLastChanger(t *testing.T) {
 	const ask = "tighten the demo rule at its end"
 	e.Run(proj, "s-042-30", ask, citedEditThenMerge(t, e, proj, "s-042-30", ask,
 		strings.Replace(bigScript, "# 9\n", "# 9\n# tighter\n", 1), main))
-	if got, out := blocked(e, proj, "s-042-30"); got {
+	res := e.CheckRunRaw(proj, "s-042-30", "origin/"+main, "HEAD")
+	if got, out := res.Code != 0 && strings.Contains(res.Output, "grounded-rule-changes"), res.Output; got {
 		t.Fatalf("a clean merge of upstream was refused for the rule change it carried:\n%s", out)
 	}
 }

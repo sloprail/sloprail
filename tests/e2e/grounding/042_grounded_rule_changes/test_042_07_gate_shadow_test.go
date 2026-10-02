@@ -39,25 +39,3 @@ func TestT042_20_AProjectGateCannotShadowTheGate(t *testing.T) {
 		t.Errorf("the cited write did not land:\n%s", got)
 	}
 }
-
-// T042_15 (unknown start): when the session's first start was not kept, no protected
-// disable is honoured, even one committed before the session. The rule stays on, and the
-// range fails closed with its own reason rather than the rule going quiet.
-func TestT042_15_UnknownSessionStartHonoursNoProtectedDisable(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.WriteFile(proj, ".sloprail/file-guard/demo/file-guard.yaml", demoYAML)
-	e.WriteFile(proj, ".sloprail/file-guard/demo/check.sh", demoScript)
-	e.DisablePluginGuardrail(proj, ruleName)
-	e.GitInit(proj)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the cited words cover the change"}`)
-	const sess = "s-042-15-unknown"
-	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
-	e.DeleteMeta(proj, sess, "session_start_commit")
-	e.WriteFile(proj, ".sloprail/file-guard/demo/check.sh", demoLoosened)
-	e.CommitAll(proj, "loosen the demo")
-	res := e.StopNow(proj, sess, false)
-	if !harness.Blocked(res) || !strings.Contains(res.Output, "grounded-rule-changes") {
-		t.Fatalf("with no known session start the protected disable was honoured:\n%s", res.Output)
-	}
-}

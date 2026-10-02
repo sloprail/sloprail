@@ -28,7 +28,6 @@ import (
 // citation after that, and a rule that refused it passes.
 func TestT041_37_TheRemedySettlesAnUncitedChange(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
-	e.SetStopBlockCap(1)
 	e.Run(proj, "s-041-37", prompt, Turns("done",
 		Write("w1", "memories/a.md", "v1 nobody asked for"),
 	).ThenCommit("write a note"))

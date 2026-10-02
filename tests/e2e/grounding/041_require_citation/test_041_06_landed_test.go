@@ -31,6 +31,12 @@ func stopRefusal(e *harness.Env, proj, sess string) string {
 	return strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 }
 
+// stopRefusals counts the session's refusals, one per Run whose `sr check run` refused,
+// so a test asks whether a Run added one.
+func stopRefusals(e *harness.Env, proj, sess string) int {
+	return len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+}
+
 // T041_33: a cited sr-file call that FAILS changes nothing and grounds nothing: an
 // uncited rewrite of the same file, committed with no trailer, is refused at Stop
 // for want of a citation (not merely for want of a commit).
@@ -57,10 +63,9 @@ func TestT041_33_AFailedCitedCallGroundsNothing(t *testing.T) {
 // T041_07 and T041_35 pin. The per-change history is gone with per-file citations.
 
 // T041_35: a rule whose `when` waives some changes keeps a cited file grounded
-// through an uncited change `when` waives — the tasks shape: the ask is written
-// with a citation, and a later status flip made with a plain edit needs none.
-// An uncited change `when` does NOT waive is refused. The two are different
-// ranges: the rule passes the cited commit, so its next range starts there.
+// through an uncited change `when` waives — the tasks shape: the ask stands
+// committed before the range, and a later status flip made with a plain edit needs
+// none. An uncited change `when` does NOT waive is refused.
 func TestT041_35_WhenDecidesAnUncitedChangeSince(t *testing.T) {
 	const whenGuard = `match: "memories/**"
 require:
@@ -82,15 +87,10 @@ exit 0
 		proj := e.Project()
 		e.GitInit(proj)
 		e.FileGuard(proj, "grounded-memories", whenGuard, map[string]string{"body-changed.sh": bodyChanged})
+		// The ask stands before the session: the range judged starts after it.
+		e.WriteFile(proj, "memories/task.md", "status: todo\nadopt a decision log\n")
 		e.CommitAll(proj, "baseline")
-		// The ask, written with a citation: passed, so the rule's next range starts here.
-		e.Run(proj, id, prompt, Turns("done",
-			Write("w0", "memories/task.md", "status: todo\nadopt a decision log\n"),
-		).ThenCommit("write the ask", harness.CitesUser("adopt a decision log")))
-		if blocks := stopRefusal(e, proj, id); blocks != "" {
-			t.Fatalf("the cited ask was refused: %s", blocks)
-		}
-		e.Run(proj, id, "carry on", Turns("done", turns...).ThenCommit("carry on"))
+		e.Run(proj, id, prompt, Turns("done", turns...).ThenCommit("carry on"))
 		return stopRefusal(e, proj, id)
 	}
 
