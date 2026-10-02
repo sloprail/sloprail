@@ -50,7 +50,7 @@ func TestT048_06_NotFineEndpointBlocksUntilFixed(t *testing.T) {
 	harness.CommitInstalled(t, proj)
 
 	sess := "s-048-06"
-	refusals := func() int { return len(e.StopContinuations(proj, sess)) }
+	refusals := func() int { return len(e.AllBlockingErrorsFrom(proj, sess, "Stop")) }
 
 	e.Run(proj, sess, "add a forbidden endpoint", Turns("done",
 		Write("w1", "get-users.ts", "// sr:endpoint users.list\nFORBIDDEN construct here\n"),
