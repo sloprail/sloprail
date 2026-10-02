@@ -1128,6 +1128,13 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if !have {
 		return dispatchcore.Verdict{}, nil, false
 	}
+	if !ev.verify && cached.Status == checkstore.StatusFail && len(rr.unresolved) == 0 {
+		if n, _ := cached.Metadata["unresolvedCitations"].(float64); n > 0 {
+			// The stored refusal was "these quotes are not in the session"; they all resolve
+			// now, so it is no longer the verdict on this key: judge again.
+			return dispatchcore.Verdict{}, nil, false
+		}
+	}
 	steps := storedSteps(cached.Metadata)
 	reasoning, _ := cached.Metadata["reasoning"].(string)
 	reasoning = ev.currentAdvice(reasoning)
@@ -1188,6 +1195,12 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 			return
 		}
 		rec.Status, meta["reasoning"] = checkstore.StatusFail, verdict.Reason
+		if len(rr.unresolved) > 0 {
+			// The key is over the quotes, not over how the session resolved them: say that
+			// this refusal rests on quotes the session did not hold, so `run` asks again once
+			// they resolve (a tool printed them since).
+			meta["unresolvedCitations"] = len(rr.unresolved)
+		}
 	default:
 		rec.Status = checkstore.StatusPass
 		if verdict.Reason != "" {
