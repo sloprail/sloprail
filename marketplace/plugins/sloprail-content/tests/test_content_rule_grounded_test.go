@@ -95,15 +95,13 @@ func TestRuleGrounded_UnresolvedQuoteRefused(t *testing.T) {
 
 // TestRuleGrounded_CitedWritePasses: a rule written with sr-file citing the
 // user's own words, which the judge accepts, lands — and the judge was handed
-// the cited quote and where it lives in the transcript (off event.citations,
-// assembled by prepare), not a link parsed out of the body. The rule file
+// the cited quote as written (off changeset.citations), not a link parsed out of the body. The rule file
 // itself carries no transcript link.
 func TestRuleGrounded_CitedWritePasses(t *testing.T) {
 	e, proj := installRuleProject(t, "")
 	e.InstallJudgeClaudeCapturing(proj, judgePromptFile, `{"pass": true, "reasoning": ""}`)
 
 	sess := "s-rule-ok"
-	tp := e.TranscriptPath(proj, sess)
 	res := e.Run(proj, sess, rulePrompt, Turns("done",
 		Bash("b1", srFileWrite(rulePath, ruleBody, ruleQuote)),
 	).ThenCommit("Add the rule", CitesUser(ruleQuote)))
@@ -117,11 +115,11 @@ func TestRuleGrounded_CitedWritePasses(t *testing.T) {
 	if prompt == "" {
 		t.Fatalf("the judge never ran on a cited rule write:\n%s", res.Output)
 	}
-	if !strings.Contains(prompt, "<citations>") || !strings.Contains(prompt, "<quote>"+ruleQuote) || !strings.Contains(prompt, "<message>") {
+	if !strings.Contains(prompt, "<citations>") || !strings.Contains(prompt, "<quote>"+ruleQuote) {
 		t.Errorf("the judge was not handed the cited quote %q:\n%s", ruleQuote, prompt)
 	}
-	if !strings.Contains(prompt, tp) {
-		t.Errorf("the judge was not told where the cited quote lives (%s):\n%s", tp, prompt)
+	if strings.Contains(prompt, ".jsonl") {
+		t.Errorf("the judge was handed a session-record path; it judges committed bytes and the quote as written:\n%s", prompt)
 	}
 	if body := readProj(t, proj, rulePath); strings.Contains(body, ".jsonl") {
 		t.Errorf("the rule file carries a transcript link; it should hold derived text only:\n%s", body)

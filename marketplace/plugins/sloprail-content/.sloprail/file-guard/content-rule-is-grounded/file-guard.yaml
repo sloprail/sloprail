@@ -5,9 +5,9 @@
 #
 # GROUNDING RIDES ON THE COMMIT, NOT IN THE FILE. Every commit that changes a
 # RULE.md / CONSTRAINT.md carries `Sloprail-Cites-User: <exact quote>` trailers
-# (`git commit -m '...' -m 'Sloprail-Cites-User: <quote>'`), and the session
-# resolves each quote against its own transcripts into `changeset.citations`
-# before any check runs. The rule file itself stores only the derived rule text —
+# (`git commit -m '...' -m 'Sloprail-Cites-User: <quote>'`), and the engine hands
+# each quote, as written, to every check as `changeset.citations`. This guard reads
+# only the committed bytes and those trailers; it never needs the session. The rule file itself stores only the derived rule text —
 # no `[quote](/abs/session.jsonl:N)` link, which would not resolve on any other
 # machine. (Rules written before this carry such links; they are NOT forbidden
 # and are simply not read — see the plugin README.)
@@ -55,10 +55,8 @@ checks:
   # Stage 2 — reached only because require and stage 1 passed. model: size-md
   # (engine default judge modelset); no explicit timeout — it runs under the
   # engine's own default (internal/dispatch/exec.go's defaultCheckTimeout).
-  # allowed_tools: [Read] — the cited quotes and the body are both already IN
-  # the prompt; Read lets the judge open a cited transcript line for its
-  # surrounding context, matching task-body-is-human-authored's grant.
+  # The cited quotes and the body are both already IN the prompt; the judge
+  # needs nothing else, so it is granted no tools.
   - prepare: ./resolve-cited-rule-quotes.sh
     judge: ./judge-rule-body.md.j2
     model: size-md
-    allowed_tools: [Read]
