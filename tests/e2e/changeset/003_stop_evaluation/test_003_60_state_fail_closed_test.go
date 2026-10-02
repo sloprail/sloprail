@@ -27,6 +27,21 @@ func damageState(t *testing.T, e *Env, proj, sess string) string {
 	return db
 }
 
+// (a) the engine's state cannot be opened at Stop (no identity to key it by): the
+// file-guards still run and the violation is refused. It used to return before any rule
+// ran, with a line on stderr and a pass.
+func TestT003_60_AStateThatCannotBeOpenedStillJudgesFileGuards(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words")
+	e.CommitAll(proj, "add b")
+
+	payload, _ := json.Marshal(map[string]any{"cwd": proj, "stop_hook_active": false, "hook_event_name": "Stop"})
+	res := e.CLIDirectStdinEnv(proj, string(payload), e.SessionEnv(""), "sr-session", "stop")
+	if !harness.Blocked(res) || !strings.Contains(res.Output, refusalText) {
+		t.Fatalf("with its state unopenable, Stop let a violating commit through unjudged:\n%s", res.Output)
+	}
+}
+
 // (b) the session's registry (its folder and ref rows) cannot be read: Stop refuses,
 // naming the error, rather than reading it as "no other branches".
 func TestT003_60_AnUnreadableRegistryIsARefusalNotNoOtherTips(t *testing.T) {
