@@ -410,44 +410,21 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	})
 }
 
-// checkedOutOnly reports whether a detached HEAD at sha stands on commits a local branch or tag
-// holds (another pull request's), and not a tip the session recorded: only checked out, never
-// the session's. A commit on no such ref is the session's. An unreadable answer is read as
-// "made": over-track. (A commit the remote default branch holds is an empty range anyway.)
+// checkedOutOnly reports whether a detached HEAD at sha stands on commits a local branch, a tag
+// or a remote-tracking ref holds NOW (another pull request's, or work already pushed, which CI
+// verifies), and not a tip the session recorded: only checked out, never the session's. A commit
+// on no such ref is the session's. An unreadable answer is read as "made": over-track.
 func checkedOutOnly(folder, sha string, rows []sessionstate.TrackedRange) bool {
 	for _, r := range rows {
 		if r.HeadSHA == sha {
 			return false
 		}
 	}
-	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--count=1", "--contains", sha, "--format=%(refname)", "refs/heads", "refs/tags").Output()
+	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--count=1", "--contains", sha, "--format=%(refname)", "refs/heads", "refs/tags", "refs/remotes").Output()
 	if err != nil {
 		return false
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		return true
-	}
-	return heldByFetchedRemoteRef(folder, sha)
-}
-
-// heldByFetchedRemoteRef reports whether a remote-tracking ref that holds sha was last moved
-// by a fetch or pull (the remote's work, brought in), not by a push (a commit made here and
-// sent in the same command). A ref with no readable reflog is not read as fetched: over-track.
-func heldByFetchedRemoteRef(folder, sha string) bool {
-	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--contains", sha, "--format=%(refname)", "refs/remotes").Output()
-	if err != nil {
-		return false
-	}
-	for _, ref := range strings.Fields(string(out)) {
-		msg, err := exec.Command("git", "-C", folder, "reflog", "show", "-1", "--format=%gs", ref).Output()
-		if err != nil {
-			continue
-		}
-		if m := strings.TrimSpace(string(msg)); strings.HasPrefix(m, "fetch") || strings.HasPrefix(m, "pull") {
-			return true
-		}
-	}
-	return false
+	return strings.TrimSpace(string(out)) != ""
 }
 
 // trackFolders makes sure the current branch of this agent's folders is tracked: the tree it

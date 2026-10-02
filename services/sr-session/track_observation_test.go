@@ -227,9 +227,9 @@ func TestTrackMissing_AForgedIdentityCommitPushedInOneCommandIsStillTracked(t *t
 	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, "main"), "a commit under another identity escaped the tracked range")
 }
 
-// A commit made on a detached HEAD and pushed in the same command stands on a remote-tracking ref
-// by the next hook, but none held it at the previous observation: it is the session's.
-func TestTrackMissing_ADetachedCommitPushedInOneCommandIsTracked(t *testing.T) {
+// A commit made on a detached HEAD and pushed stands on a remote-tracking ref: it exists on a
+// remote, where CI verifies it, so the local Stop does not track it.
+func TestTrackMissing_ADetachedCommitHeldByARemoteTrackingRefIsNotTracked(t *testing.T) {
 	proj, reg, rs := ruledAndObserved(t, func(proj string) { withOrigin(t, proj) })
 	runGit(t, proj, "switch", "-q", "--detach")
 	sha := commitFile(t, proj, "d.md", "d")
@@ -237,7 +237,7 @@ func TestTrackMissing_ADetachedCommitPushedInOneCommandIsTracked(t *testing.T) {
 	runGit(t, proj, "fetch", "-q", "origin")
 	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
 	require.NoError(t, trackFolders(reg, rs, HookPayload{}))
-	assert.Equal(t, sha, rangeTip(t, reg, rs.ID, sha), "the detached, pushed commit escaped as 'held by a ref'")
+	assert.Empty(t, rangeTip(t, reg, rs.ID, sha), "a detached commit a remote-tracking ref holds was tracked")
 }
 
 // A detached checkout of a commit the remote holds may be tracked (over-tracking), but its range

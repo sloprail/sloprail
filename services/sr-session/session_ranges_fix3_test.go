@@ -77,3 +77,17 @@ func TestSessionFolders_UnreadableNamesFileAndRecovery_AbsentIsFine(t *testing.T
 	require.NoError(t, err, "an absent registry must not block")
 	assert.Empty(t, folders)
 }
+
+// A detached HEAD whose commit a remote-tracking ref holds is checked out, not the session's
+// work; one no ref holds is the session's.
+func TestCheckedOutOnly_RemoteTrackingRefHoldingTheCommitCountsUnheldDoesNot(t *testing.T) {
+	proj := initRepo(t)
+	commitFile(t, proj, "a.txt", "a")
+	withOrigin(t, proj)
+	runGit(t, proj, "checkout", "-q", "--detach")
+	commitFile(t, proj, "b.txt", "b")
+	sha := runGit(t, proj, "rev-parse", "HEAD")
+	assert.False(t, checkedOutOnly(proj, sha, nil), "a detached commit on no ref was read as checked out")
+	runGit(t, proj, "update-ref", "refs/remotes/origin/other", sha)
+	assert.True(t, checkedOutOnly(proj, sha, nil), "a commit a remote-tracking ref holds was read as the session's")
+}
