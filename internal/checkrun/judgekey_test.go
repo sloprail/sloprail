@@ -46,7 +46,7 @@ func key(t *testing.T, g declaration.FileGuard, c declaration.Check, p changeset
 	t.Helper()
 	req := dispatchcore.Request{Dir: g.Dir, GuardName: g.Name, ProjectRoot: tree, Changeset: &p}
 	prep := dispatchcore.Prepared{Context: declaration.PreparedContext{"where": tree + "/a.go"}, Fingerprint: prepFP}
-	fp, refusal, err := judgeKey(dispatchcore.Runner{}, g, req, p, c, prep)
+	fp, refusal, err := judgeKey(g, req, p, c, prep)
 	require.NoError(t, err)
 	require.Empty(t, refusal)
 	return fp
@@ -118,4 +118,53 @@ func TestJudgeKey_ATemplateRenderingTranscriptFoundCitationDataKeysTheSameInRunA
 	assert.Equal(t, key(t, g, c, run, "/t1", ""), key(t, g, c, verify, "/t2", ""))
 	verify.Changeset.Citations[0].Citation.Quote = "another"
 	assert.NotEqual(t, key(t, g, c, run, "/t1", ""), key(t, g, c, verify, "/t2", ""))
+}
+
+// The key is the template, the matched files' content, prepare's fingerprint and (citation
+// rules) the quotes. Not the rendered prompt, not prepare's context, not the transcript, not
+// the history.
+func TestJudgeKey_AFileChangeTheTemplateDoesNotRenderChangesTheKey(t *testing.T) {
+	g, c, dir := keyRule(t, false)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte("Judge the file at {{ subject.id }}.\n"), 0o644))
+	other := keyPayload()
+	other.Changeset.Files[0].NewContent = "3"
+	assert.NotEqual(t, key(t, g, c, keyPayload(), "/t1", ""), key(t, g, c, other, "/t1", ""))
+}
+
+func TestJudgeKey_ATemplateChangeChangesTheKey(t *testing.T) {
+	g, c, dir := keyRule(t, false)
+	before := key(t, g, c, keyPayload(), "/t1", "")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte("Judge differently:\n{{ change }}\n"), 0o644))
+	assert.NotEqual(t, before, key(t, g, c, keyPayload(), "/t1", ""))
+}
+
+func TestJudgeKey_TranscriptAndPrepareContextAloneDoNotChangeTheKey(t *testing.T) {
+	g, c, _ := keyRule(t, true)
+	a, b := keyPayload(), keyPayload()
+	b.TranscriptPath = "/another-session.jsonl"
+	prepFor := func(where string) dispatchcore.Prepared {
+		return dispatchcore.Prepared{Context: declaration.PreparedContext{"where": where, "expanded": "text only the session has " + where}, Fingerprint: "fp"}
+	}
+	k := func(p changeset.Payload, prep dispatchcore.Prepared) string {
+		req := dispatchcore.Request{Dir: g.Dir, GuardName: g.Name, Changeset: &p}
+		fp, refusal, err := judgeKey(g, req, p, c, prep)
+		require.NoError(t, err)
+		require.Empty(t, refusal)
+		return fp
+	}
+	assert.Equal(t, k(a, prepFor("run")), k(b, prepFor("verify")), "run (with a session) and verify (without) share the key")
+}
+
+// Two branches carrying identical content share their verdicts: SHAs, the range's ends and
+// the commits' own identities are not input.
+func TestJudgeKey_TwoBranchesWithIdenticalContentShareTheKey(t *testing.T) {
+	for _, citation := range []bool{true, false} {
+		g, c, _ := keyRule(t, citation)
+		a, b := keyPayload(), keyPayload()
+		b.Changeset.Base, b.Changeset.Head = "other-base", "other-head"
+		b.Changeset.Commits[0].SHA = "rebased"
+		b.Changeset.Files[0].Commits = []string{"rebased"}
+		b.Changeset.Citations[0].Commits = []string{"rebased"}
+		assert.Equal(t, key(t, g, c, a, "/tmp/sr-tree-1", ""), key(t, g, c, b, "/tmp/sr-tree-2", ""))
+	}
 }

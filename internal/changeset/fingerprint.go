@@ -10,24 +10,23 @@ import (
 // JudgeFingerprint says what a judge was asked, as one short string: the cache key's
 // last part (the rest — rule, rule hash, step, subject — is the checkcache key's own).
 //
-// A judge is pure: it judges the slice it is rendered, and its verdict is a function of
-// the prompt it is given. So the fingerprint is the sha256 of that prompt, FULLY
-// RENDERED (the template with the subject's slice and prepare's additionalContext
-// folded in), plus the two things that are not in it:
+// It is the sha256 of four parts, none of which depends on the session or the history:
 //
-//   - prepareFP: the "fingerprint" string a prepare step may return, for whatever
-//     the judge's verdict depends on that is not in the prompt (a file the judge
-//     opens with its own tools). A judge that reads more than it is shown without
-//     declaring it is a stale-verdict bug in the rule, not in the key.
+//   - template: the bytes of the judge template. The rendered prompt is NOT keyed: it may
+//     carry prepare's session-derived text, which `verify` in CI cannot reproduce.
+//   - files: FilesPart, the content of the subject's matched files, ALWAYS, whether or not
+//     the template renders them: the verdict is about those bytes.
+//   - prepareFP: the "fingerprint" string a prepare step may return, ADDED to the rest, for
+//     whatever the verdict depends on beyond the template and the files (a file the judge
+//     opens with its own tools). It must be session-independent.
 //   - citations: for a `require: citation` rule only, CitationPart: the commit messages and
-//     the citations' quotes, which a prompt may not render.
+//     the citations' quotes.
 //
-// Nothing volatile may enter: the caller normalises the snapshot's temp path out of the
-// prompt before it gets here, and no run id, timestamp or session id is part of it.
-// Parts are length-prefixed, so two parts cannot be re-cut into another pair.
-func JudgeFingerprint(renderedPrompt, prepareFP, citations string) string {
+// No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
+// are length-prefixed, so two parts cannot be re-cut into another pair.
+func JudgeFingerprint(template, files, prepareFP, citations string) string {
 	var buf []byte
-	for _, part := range []string{renderedPrompt, prepareFP, citations} {
+	for _, part := range []string{template, files, prepareFP, citations} {
 		buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
 		buf = append(buf, part...)
 	}
@@ -68,4 +67,31 @@ func blankSHAs(shas []string) []string {
 		return nil
 	}
 	return make([]string, len(shas))
+}
+
+// FilesPart is the content of the subject's matched files, in the subject's order: the
+// bytes the verdict is about, keyed whether or not the template renders them. Content only
+// (a deleted file is marked as such): no SHA, no base, no path.
+func FilesPart(p Payload) string {
+	byPath := make(map[string]File, len(p.Changeset.Files))
+	for _, f := range p.Changeset.Files {
+		byPath[f.Path] = f
+	}
+	paths := p.Subject.Files
+	if len(paths) == 0 {
+		for _, f := range p.Changeset.Files {
+			paths = append(paths, f.Path)
+		}
+	}
+	var buf []byte
+	for _, path := range paths {
+		f := byPath[path]
+		content := f.NewContent
+		if f.Status == "D" {
+			content = "\x00deleted"
+		}
+		buf = binary.BigEndian.AppendUint64(buf, uint64(len(content)))
+		buf = append(buf, content...)
+	}
+	return string(buf)
 }

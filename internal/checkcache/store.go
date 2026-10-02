@@ -19,7 +19,7 @@ import (
 
 // SchemaDir is the schema version (a date) and the single directory the store
 // reads and writes. A ref carrying a newer v<date>/ directory is refused.
-const SchemaDir = "v2026-10-02"
+const SchemaDir = "v2026-10-03"
 
 // ErrFutureSchema means the ref holds a schema directory newer than this binary.
 var ErrFutureSchema = errors.New("checkcache: ref uses a newer schema; upgrade sloprail")

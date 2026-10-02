@@ -27,17 +27,32 @@ func cp(t *testing.T, p Payload) string {
 	return s
 }
 
-func TestJudgeFingerprint_IsDeterministicAndPromptSensitive(t *testing.T) {
-	assert.Equal(t, JudgeFingerprint("p", "", ""), JudgeFingerprint("p", "", ""))
-	assert.NotEqual(t, JudgeFingerprint("p", "", ""), JudgeFingerprint("q", "", ""))
+func TestJudgeFingerprint_IsDeterministicAndTemplateAndFilesSensitive(t *testing.T) {
+	assert.Equal(t, JudgeFingerprint("t", "f", "", ""), JudgeFingerprint("t", "f", "", ""))
+	assert.NotEqual(t, JudgeFingerprint("t", "f", "", ""), JudgeFingerprint("u", "f", "", ""))
+	assert.NotEqual(t, JudgeFingerprint("t", "f", "", ""), JudgeFingerprint("t", "g", "", ""))
 }
 
-// What prepare declares moves the key, and parts cannot be re-cut.
+// What prepare declares is added to the key, and parts cannot be re-cut.
 func TestJudgeFingerprint_PrepareFingerprintMovesTheKey(t *testing.T) {
-	assert.NotEqual(t, JudgeFingerprint("p", "", ""), JudgeFingerprint("p", "v1", ""))
-	assert.NotEqual(t, JudgeFingerprint("p", "v1", ""), JudgeFingerprint("p", "v2", ""))
-	assert.NotEqual(t, JudgeFingerprint("ab", "c", ""), JudgeFingerprint("a", "bc", ""))
-	assert.NotEqual(t, JudgeFingerprint("p", "a", ""), JudgeFingerprint("p", "", "a"))
+	assert.NotEqual(t, JudgeFingerprint("t", "f", "", ""), JudgeFingerprint("t", "f", "v1", ""))
+	assert.NotEqual(t, JudgeFingerprint("t", "f", "v1", ""), JudgeFingerprint("t", "f", "v2", ""))
+	assert.NotEqual(t, JudgeFingerprint("ab", "c", "", ""), JudgeFingerprint("a", "bc", "", ""))
+	assert.NotEqual(t, JudgeFingerprint("t", "f", "a", ""), JudgeFingerprint("t", "f", "", "a"))
+}
+
+// The matched files' content is keyed; a SHA, a base or a transcript never is.
+func TestFilesPart_ContentOnly(t *testing.T) {
+	a, b := samplePayload(), samplePayload()
+	b.Changeset.Base, b.Changeset.Head, b.TranscriptPath = "x", "y", "/other.jsonl"
+	b.Changeset.Commits[0].SHA, b.Changeset.Files[0].Commits = "rewritten", []string{"rewritten"}
+	b.Changeset.Files[0].Diff = "@@ different base"
+	assert.Equal(t, FilesPart(a), FilesPart(b))
+	b.Changeset.Files[0].NewContent = "3"
+	assert.NotEqual(t, FilesPart(a), FilesPart(b))
+	b = samplePayload()
+	b.Changeset.Files[0].Status = "D"
+	assert.NotEqual(t, FilesPart(a), FilesPart(b))
 }
 
 // Rewording a commit or a citation is an input for a rule that reads citations; a SHA never.

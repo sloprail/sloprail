@@ -349,9 +349,10 @@ Verdicts are stored on the orphan branch `sloprail/checks` (zstd segments, never
 checked out), which `run` pushes to `origin` and `verify` fetches, so another clone,
 another session and CI all read the same results. A judge's verdict is a fact about **(rule, rule hash, check, subject, fingerprint)** and
 nothing else: which session, agent, branch or range produced it is provenance. The
-fingerprint covers everything the judge is given — the changed files' content and diffs,
-markers, the citations' quotes, the model, what `prepare` supplied, the rule's whole
-`.sloprail` root — and never a commit, its SHA, its message or how many there were.
+fingerprint is the sha256 of the judge template, the matched files' content (always), the
+citations' quotes (for `require: citation` rules) and `prepare`'s optional `fingerprint`
+string — not `prepare`'s output, not the rendered prompt, and never a commit, its SHA or its
+message. See [judge-checks.md](judge-checks.md).
 
 - **A finished pass with the same key is reused**, with no judge call: after a rebase,
   a squash, a revert, or by another session. A stored fail is kept so `verify` can say why

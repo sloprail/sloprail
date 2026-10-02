@@ -108,24 +108,36 @@ script check is a load error.
 
 A judge is **pure**: no side effects, it judges the slice it is handed. Its verdict is
 cached under the rule, the rule's hash, the check, the subject and a **fingerprint**: the
-sha256 of the judge's fully **rendered** prompt (the template with the subject's slice and
-`prepare`'s `additionalContext` folded in), plus `prepare`'s optional `fingerprint` string.
-Nothing else: no run id, timestamp, session id or snapshot path (`SR_TREE` is normalised
-out of the prompt). A passing verdict with the same key is not asked again; a stored fail
-with the same key is replayed by `sr-checks run`; `verify` never calls a judge. (A
-`require: citation` rule's key also covers the commit messages and the citations' quotes,
-since the citations ride in the trailers.)
+sha256 of
 
-The contract that follows: **anything else the verdict depends on** — a file the judge
-opens with its own tools, say — must reach the key. Either put it in the prompt through
-`prepare`'s `additionalContext`, or declare it:
+- the **judge template's bytes**,
+- the **content of the subject's matched files**, always, whether or not the template renders
+  them (change a file and the question is new),
+- `prepare`'s optional **`fingerprint`** string, added to the rest, never replacing it,
+- for a `require: citation` rule only, the commit messages and the citations' quotes (the
+  citations ride in the trailers).
+
+**`prepare`'s output (`additionalContext`) and the rendered prompt are not in the key**: they
+may carry text derived from the session, which `verify` in CI cannot reproduce. No commit SHA,
+branch name, path of the snapshot, run id, timestamp, session id or transcript is in it either,
+so two branches with the same content share their verdicts. A passing verdict with the same key
+is not asked again; a stored fail with the same key is replayed by `sr-checks run`; `verify`
+never calls a judge and computes the identical key.
+
+The contract that follows: **anything else the verdict depends on** — something `prepare`
+computes, or a file the judge opens with its own tools — must be declared in `fingerprint`:
 
 ```bash
-jq -n --arg v "$(git -C "$SR_TREE" rev-parse HEAD:spec/api.md)" '{fingerprint: $v}'
+jq -n --arg v "$(git -C "$SR_TREE" rev-parse HEAD:spec/api.md)" '{additionalContext: {…}, fingerprint: $v}'
 ```
 
+The fingerprint must be **session-independent**: the same value with or without a transcript.
 A judge that reads more than it is shown and declares none of it is served a stale verdict
 when that thing changes. Script checks are never cached.
+
+A judge whose `prepare` needs the session (it fails without a transcript) cannot be judged by
+`sr-checks run` outside a session: it refuses with "needs a session to judge" instead of
+judging blind.
 
 ## The verdict
 

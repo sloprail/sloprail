@@ -2,7 +2,6 @@ package checkrun
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -741,7 +740,7 @@ func describeCommit(cs changeset.Changeset, sha string) string {
 }
 
 // runCheck runs one check of a rule and records it. A script is run every time. A judge is
-// keyed on its rendered prompt (see judgeKey) — everything the model is about to be given — and the store asked before the
+// keyed (see judgeKey) and the store asked before the
 // model: a stored verdict — a fail too — is reused, whoever recorded it. `verify` never asks
 // the model: a key without a stored verdict is red.
 func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, req dispatchcore.Request,
@@ -795,6 +794,11 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		return fail(err)
 	}
 	if v.Refused {
+		if !ev.verify && req.TranscriptPath == "" && c.Prepare != "" {
+			// No session transcript here, and prepare refused: judging blind would key and
+			// store a verdict about a question the judge was never fully asked.
+			return fail(fmt.Errorf("this judge needs a session to judge: its prepare step refused and no session transcript is available (%s); run `sr-checks run` inside the session", v.Reason))
+		}
 		return settle(v, map[string]any{"model": c.Model})
 	}
 	if prep.Skip {
@@ -806,7 +810,7 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		ev.note(out)
 		return dispatchcore.Verdict{}, nil
 	}
-	fp, refusal, err := judgeKey(ev.runner, g, req, payload, c, prep)
+	fp, refusal, err := judgeKey(g, req, payload, c, prep)
 	if err != nil {
 		return fail(err)
 	}
@@ -865,40 +869,22 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 	return settle(v, meta)
 }
 
-// judgeKey is the fingerprint a judge's verdict is kept under: the sha256 of the prompt the
-// judge is about to be given, fully rendered, plus prepare's own "fingerprint" string and,
-// for a rule that requires a citation, the commit messages and citation quotes (the
-// prompt need not render them). The snapshot's temp path (SR_TREE) is a fresh directory
-// every run and is named the same way, `<tree>`, for every run and every verify, so the
-// run that stored a verdict and the verify that looks it up compute one key. A refusal
-// is the reason the prompt could not be rendered.
-func judgeKey(runner dispatchcore.Runner, g declaration.FileGuard, req dispatchcore.Request,
+// judgeKey is the fingerprint a judge's verdict is kept under: the sha256 of the judge
+// TEMPLATE's bytes, the content of the subject's matched files (always, whether or not the
+// template renders them), prepare's own "fingerprint" string (when it returns one) and, for
+// a rule that requires a citation, the commit messages and citation quotes. The rendered
+// prompt and prepare's additionalContext are NOT in it: they may carry text derived from the
+// session, which `verify` (in CI) cannot reproduce. No commit SHA, no branch end and no path
+// of the snapshot (SR_TREE, normalised to `<tree>` in the fingerprint) enters it, so two
+// branches with identical content share their verdicts, and the run that stored a verdict
+// and the verify that looks it up compute one key. Nothing is rendered here: a prompt that
+// cannot be rendered is refused when the judge is asked. A refusal is an unreadable template.
+func judgeKey(g declaration.FileGuard, req dispatchcore.Request,
 	payload changeset.Payload, c declaration.Check, prep dispatchcore.Prepared) (fp, refusal string, err error) {
 
-	// Where a quote was found (its transcript path, line, whole message and the tool call that
-	// printed it) is only known where the transcript is: `run` resolves it, `verify` trusts
-	// the trailer and has none. A prompt that renders them would key differently in the two,
-	// so the prompt is keyed with those fields held to placeholders; the quote and its pool
-	// stay, and so do the judge's own words (it is asked with the real ones).
-	keyed := payload
-	keyed.Changeset.Citations = slices.Clone(payload.Changeset.Citations)
-	for i, cit := range keyed.Changeset.Citations {
-		cit.Citation.Path, cit.Citation.Line, cit.Citation.Message, cit.Citation.Call = "<path>", 0, "<message>", ""
-		if slices.Contains(cit.Citation.SourceTypes, transcript.SourceToolResult) {
-			cit.Citation.Call = "<call>"
-		}
-		keyed.Changeset.Citations[i] = cit
-	}
-	req.Changeset = &keyed
-	// prepare ran over the real payload, so a citation it inlined (`asks`, `cited_results`) carries
-	// the same transcript-found fields: hold them to the same placeholders.
-	if prep.KeyContext != nil {
-		prep.Context = prep.KeyContext
-	}
-	prep.Context = heldContext(prep.Context)
-	prompt, refusal, err := runner.RenderJudge(req, c, prep)
-	if err != nil || refusal != "" {
-		return "", refusal, err
+	tpl, rerr := dispatchcore.JudgeTemplate(req, c)
+	if rerr != nil {
+		return "", fmt.Sprintf("the judge's prompt template %q could not be read (%v); refusing rather than asking the model against a missing prompt", c.Judge, rerr), nil
 	}
 	norm := func(s string) string {
 		if req.ProjectRoot != "" {
@@ -915,7 +901,7 @@ func judgeKey(runner dispatchcore.Runner, g declaration.FileGuard, req dispatchc
 			break
 		}
 	}
-	return changeset.JudgeFingerprint(norm(prompt), norm(prep.Fingerprint), citations), "", nil
+	return changeset.JudgeFingerprint(string(tpl), changeset.FilesPart(payload), norm(prep.Fingerprint), citations), "", nil
 }
 
 // engineError is the refusal for something that went wrong in the engine while a
@@ -992,60 +978,4 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (FileGuardResul
 		ev.runRest(rr)
 	}
 	return rr.result, rr.refused
-}
-
-// heldContext is prepare's context with every citation in it (an object with a quote and its
-// source types) holding where it was found to placeholders, and the commits it was found in to
-// their count, as judgeKey holds the changeset's own citations.
-func heldContext(ctx declaration.PreparedContext) declaration.PreparedContext {
-	var walk func(v any) any
-	walk = func(v any) any {
-		switch x := v.(type) {
-		case map[string]any:
-			_, quoted := x["quote"]
-			_, typed := x["sourceTypes"]
-			out := make(map[string]any, len(x))
-			for k, e := range x {
-				if quoted && typed {
-					switch k {
-					case "path":
-						e = "<path>"
-					case "message":
-						e = "<message>"
-					case "line":
-						e = 0
-					case "call":
-						if e != nil && e != "" {
-							e = "<call>"
-						}
-					case "commits":
-						if shas, ok := e.([]any); ok {
-							e = make([]any, len(shas))
-						}
-					}
-				}
-				out[k] = walk(e)
-			}
-			return out
-		case []any:
-			out := make([]any, len(x))
-			for i, e := range x {
-				out[i] = walk(e)
-			}
-			return out
-		}
-		return v
-	}
-	b, err := json.Marshal(ctx)
-	if err != nil {
-		return ctx
-	}
-	var v any
-	if json.Unmarshal(b, &v) != nil {
-		return ctx
-	}
-	if m, ok := walk(v).(map[string]any); ok {
-		return declaration.PreparedContext(m)
-	}
-	return ctx
 }
