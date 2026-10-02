@@ -88,10 +88,7 @@ func (e *Env) StopJudged(projDir, sessionID string, active bool) Result {
 // stdout (the refusals) apart from the combined output.
 func (e *Env) checkCmd(projDir, sessionID, verb, base, head string) (stdout string, res Result) {
 	e.t.Helper()
-	cmd := exec.Command(filepath.Join(e.binDir, "sr"), "checks", verb, "--base", base, "--head", head)
-	cmd.Dir = projDir
-	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
-	cmd.Env = append(cmd.Env, e.hookEnv(sessionID)...)
+	cmd := e.checkExec(projDir, sessionID, verb, base, head)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -103,6 +100,22 @@ func (e *Env) checkCmd(projDir, sessionID, verb, base, head string) (stdout stri
 	}
 	e.t.Logf("sr check %s --base %s --head %s (exit %d):\n%s%s", verb, base, head, code, out.String(), errb.String())
 	return out.String(), Result{Output: out.String() + errb.String(), Code: code}
+}
+
+// checkExec is the `sr checks <verb> --base --head` command, built and not started.
+func (e *Env) checkExec(projDir, sessionID, verb, base, head string) *exec.Cmd {
+	cmd := exec.Command(filepath.Join(e.binDir, "sr"), "checks", verb, "--base", base, "--head", head)
+	cmd.Dir = projDir
+	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(cmd.Env, e.hookEnv(sessionID)...)
+	return cmd
+}
+
+// CheckRunCmd is `sr checks run --base --head` as the session, built and not started, for a
+// test that must interrupt a run part-way (it owns the process: start it, kill it, wait for it).
+func (e *Env) CheckRunCmd(projDir, sessionID, base, head string) *exec.Cmd {
+	e.t.Helper()
+	return e.checkExec(projDir, sessionID, "run", base, head)
 }
 
 // CheckRunRaw is `sr check run --base --head` as the session: exit code and output.
