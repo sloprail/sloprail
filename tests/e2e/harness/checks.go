@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/checkstore"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
 // Seeding the session's check results.
@@ -26,7 +27,13 @@ func (e *Env) checksDBPath(projDir, sessionID string) string {
 // with fixed test values; the batch defaults to one shared batch.
 func (e *Env) RecordCheckRun(projDir, sessionID string, run checkstore.CheckRun, checks ...checkstore.CheckRecord) string {
 	e.t.Helper()
-	store, err := checkstore.Open(e.checksDBPath(projDir, sessionID))
+	// Where the engine reads the session's results: the repository's database, as this
+	// session's family.
+	family := e.SessionIdentity(projDir, sessionID)
+	if family == "" {
+		e.t.Fatalf("harness: no identity for session %s", sessionID)
+	}
+	store, err := checkstore.OpenFamily(sessionpath.RepoChecksDBUnder(dataHome(e.home), projDir), family)
 	if err != nil {
 		e.t.Fatalf("harness: open check results: %v", err)
 	}

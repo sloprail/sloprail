@@ -529,6 +529,14 @@ func (s *store) importLegacy(src Legacy) error {
 	if hasAgent {
 		agentExpr = "CASE WHEN agent_id = '' THEN ? ELSE agent_id END"
 	}
+	// Nothing is migrated while a Stop is evaluating the source: it takes the lock shared for
+	// its whole run (the kernel drops it if the process dies), we take it exclusive without
+	// waiting, and a refusal postpones the import to the next hook.
+	release, ok := tryExclusive(src.Path + StopLockSuffix)
+	if !ok {
+		return errPostponed
+	}
+	defer release()
 	// One writer at a time across processes: concurrent hooks wait here (busy_timeout), the
 	// first imports, the rest find the rows already in.
 	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
@@ -555,6 +563,10 @@ func (s *store) importLegacy(src Legacy) error {
 			?, ?, base_ref, head_ref, exit_code, error, metadata, created_at FROM src.check_runs WHERE true
 			ON CONFLICT(id) DO UPDATE SET exit_code = excluded.exit_code, error = excluded.error, metadata = excluded.metadata
 			WHERE json_extract(check_runs.metadata, '$.state') = 'running'`, []any{src.Agent, src.Family, src.Folder}},
+		// A check re-recorded by the old engine got NEW item ids: the items of every check the
+		// old file has a newer verdict for are replaced, never left beside the stale ones.
+		{`DELETE FROM main.check_items WHERE check_id IN (
+			SELECT m.id FROM main.checks m JOIN src.checks s ON s.id = m.id WHERE s.checked_at > m.checked_at)`, nil},
 		// A check is updated when the old file has the newer verdict (ResolveStale here stamps
 		// its own change later, which then stands).
 		{`INSERT INTO main.checks (id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at)
@@ -574,17 +586,22 @@ func (s *store) importLegacy(src Legacy) error {
 	return err
 }
 
-// materializeFamily makes the family's rows into temp tables named like the real ones, on a
-// connection that has no views of those names.
-func materializeFamily(conn *sql.Conn, family string) error {
+// materializeFamily copies one family's rows from the shared file into tables of the
+// connection's own (in-memory) database, then detaches the file.
+func materializeFamily(conn *sql.Conn, path, family string) error {
+	ctx := context.Background()
 	lit := "'" + strings.ReplaceAll(family, "'", "''") + "'"
 	cols := func(c string) string { return strings.ReplaceAll(c, ", rowid AS rowid", "") }
+	if _, err := conn.ExecContext(ctx, `ATTACH DATABASE ? AS fam`, "file:"+url.PathEscape(path)+"?mode=ro"); err != nil {
+		return fmt.Errorf("checkstore: query: %w", err)
+	}
+	defer conn.ExecContext(ctx, `DETACH DATABASE fam`)
 	for _, stmt := range []string{
-		`CREATE TEMP TABLE check_runs AS SELECT ` + cols(runCols) + ` FROM main.check_runs WHERE family = ` + lit + ` ORDER BY rowid`,
-		`CREATE TEMP TABLE checks AS SELECT ` + cols(checkCols) + ` FROM main.checks WHERE run_id IN (SELECT id FROM temp.check_runs) ORDER BY rowid`,
-		`CREATE TEMP TABLE check_items AS SELECT ` + cols(itemCols) + ` FROM main.check_items WHERE check_id IN (SELECT id FROM temp.checks) ORDER BY rowid`,
+		`CREATE TABLE check_runs AS SELECT ` + cols(runCols) + ` FROM fam.check_runs WHERE family = ` + lit + ` ORDER BY rowid`,
+		`CREATE TABLE checks AS SELECT ` + cols(checkCols) + ` FROM fam.checks WHERE run_id IN (SELECT id FROM main.check_runs) ORDER BY rowid`,
+		`CREATE TABLE check_items AS SELECT ` + cols(itemCols) + ` FROM fam.check_items WHERE check_id IN (SELECT id FROM main.checks) ORDER BY rowid`,
 	} {
-		if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("checkstore: query: %w", err)
 		}
 	}
@@ -635,9 +652,56 @@ func Migrate(path string) error {
 	return st.Close()
 }
 
+// StopLockSuffix names the lock file beside a checks.db that every Stop holds (shared) while
+// it evaluates that database.
+const StopLockSuffix = ".stop-lock"
+
 // OpenLegacy opens an old per-session database as it is, read-write, for the cycle in which it
-// could not be migrated yet.
-func OpenLegacy(path string) (Store, error) { return Open(path) }
+// could not be migrated yet. It holds the Stop lock until Close, so nothing migrates the file
+// from under the evaluation.
+func OpenLegacy(path string) (Store, error) {
+	release := lockShared(path + StopLockSuffix)
+	st, err := Open(path)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &lockedStore{Store: st, release: release}, nil
+}
+
+type lockedStore struct {
+	Store
+	release func()
+}
+
+func (l *lockedStore) Close() error {
+	err := l.Store.Close()
+	l.release()
+	return err
+}
+
+// LegacyBusy says an older database is being written right now and must be read as it is:
+// a Stop holds its lock, or (an older engine takes no lock) a run recorded RUNNING within
+// RunningWindow sits in it.
+func LegacyBusy(path string) bool {
+	if release, ok := tryExclusive(path + StopLockSuffix); !ok {
+		return true
+	} else {
+		release()
+	}
+	ro, err := OpenReadOnly(path)
+	if err != nil {
+		return false
+	}
+	defer ro.Close()
+	cutoff := time.Now().Add(-RunningWindow).UTC().Format("2006-01-02T15:04:05.000000000Z")
+	rows, err := ro.Query("select count(*) as n from check_runs where json_extract(metadata, '$.state') = 'running' and run_at > '" + cutoff + "'")
+	if err != nil || len(rows) != 1 {
+		return false
+	}
+	n, _ := rows[0]["n"].(int64)
+	return n > 0
+}
 
 // retryBusy repeats an opening step that lost a race for the file's first write. Several
 // hooks starting at once open a database that is being created or migrated: the first takes

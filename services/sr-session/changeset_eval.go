@@ -906,7 +906,7 @@ func openChecksStore(cmd *cobra.Command, p HookPayload, scope hookScope) checkst
 		family, cwd = rs.ID, rs.Cwd
 	}
 	var extra []checkstore.Legacy
-	if !p.IsSubagent() && rsErr == nil {
+	if rsErr == nil {
 		extra = subagentLegacy(p, rs)
 	}
 	store, err := repochecks.Open(cwd, family, cmd.ErrOrStderr(), extra...)

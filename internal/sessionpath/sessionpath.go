@@ -363,12 +363,17 @@ func RepoChecksDB(cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return RepoChecksDBUnder(root, cwd), nil
+}
+
+// RepoChecksDBUnder is RepoChecksDB for an explicit data home (a test's sandbox).
+func RepoChecksDBUnder(root, cwd string) string {
 	key := WorkspaceAnchor(cwd)
 	if dir, err := gitrepo.CommonDir(cwd); err == nil && dir != "" {
 		key = dir
 	}
 	sum := sha256.Sum256([]byte(key))
-	return filepath.Join(root, AppName, "repos", hex.EncodeToString(sum[:])[:16], "checks.db"), nil
+	return filepath.Join(root, AppName, "repos", hex.EncodeToString(sum[:])[:16], "checks.db")
 }
 
 // FamilyID is the session family a record belongs to: the stable id of the ROOT session. A

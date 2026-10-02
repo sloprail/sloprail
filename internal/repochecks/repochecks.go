@@ -14,6 +14,7 @@
 package repochecks
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -58,7 +59,16 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 	if err != nil {
 		return nil, err
 	}
-	srcs := append(extra, legacySources(cwd, family)...)
+	// A source the caller knows the family of (a sub-agent's own database) wins over the same
+	// path found by the directory scan, which can only guess the family from the directory name.
+	seen := map[string]bool{}
+	var srcs []checkstore.Legacy
+	for _, l := range append(extra, legacySources(cwd, family)...) {
+		if !seen[l.Path] {
+			seen[l.Path] = true
+			srcs = append(srcs, l)
+		}
+	}
 	postponed, err := checkstore.ImportLegacyReport(store, srcs)
 	if err != nil && warn != nil {
 		fmt.Fprintln(warn, "sloprail: some earlier check results were not imported:", err)
@@ -77,36 +87,43 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 	return store, nil
 }
 
-// OpenReadOnly opens the family's check results for reading. checkstore.ErrNoStore when
-// nothing was ever recorded for the repository (and nothing is waiting to be imported).
+// OpenReadOnly opens the family's check results for reading, and WRITES NOTHING: no migration,
+// no import, no schema step (a reader must never fail a Stop's RecordRun by holding a lock, or
+// change what a session concluded). Where the family's results are still in its old per-session
+// file — the repository's database does not exist yet, holds nothing of this family, or an
+// older engine's Stop is writing the old file right now — that file is read as it is.
+// checkstore.ErrNoStore when nothing was recorded.
 func OpenReadOnly(cwd, family string) (checkstore.Store, error) {
 	path, err := sessionpath.RepoChecksDB(cwd)
 	if err != nil {
 		return nil, err
 	}
-	hadOwn := false
-	if srcs := legacySources(cwd, family); len(srcs) > 0 {
-		for _, l := range srcs {
-			hadOwn = hadOwn || l.Family == family
-		}
-		// Reading is never allowed to change what a session concluded, but bringing the old
-		// layout across is only a copy: do it before reading, so a reader sees the same rows the
-		// writer will.
-		if w, err := checkstore.OpenFamily(path, family); err == nil {
-			_ = checkstore.ImportLegacy(w, srcs)
-			w.Close()
-		}
+	own, ownErr := sessionpath.ChecksDB(cwd, family)
+	haveOwn := false
+	if ownErr == nil {
+		_, statErr := os.Stat(own)
+		haveOwn = statErr == nil
+	}
+	if haveOwn && checkstore.LegacyBusy(own) {
+		return checkstore.OpenReadOnly(own)
 	}
 	store, err := checkstore.OpenFamilyReadOnly(path, family)
-	if err != nil || hadOwn {
-		return store, err
+	if errors.Is(err, checkstore.ErrNoStore) && haveOwn {
+		return checkstore.OpenReadOnly(own)
+	}
+	if err != nil {
+		return nil, err
 	}
 	// The database is the repository's, so it exists once any session recorded anything: for
-	// THIS family, no runs is still "nothing recorded yet".
+	// THIS family, no runs is "nothing recorded yet" — or, where the old file holds them, not
+	// migrated yet.
 	rows, qerr := store.Query("select count(*) as n from check_runs")
 	if qerr == nil && len(rows) == 1 {
 		if n, ok := rows[0]["n"].(int64); ok && n == 0 {
 			store.Close()
+			if haveOwn {
+				return checkstore.OpenReadOnly(own)
+			}
 			return nil, checkstore.ErrNoStore
 		}
 	}

@@ -37,7 +37,15 @@ func openFamilyChecks() (checkstore.Store, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return store, store.Path(), nil
+	// `_store` keeps naming what it always named: the session's checks.db path under the
+	// per-session layout, whatever file the rows are now read from.
+	label := store.Path()
+	if id, err := sessionpath.StableIdentity(record, cwd); err == nil {
+		if old, err := sessionpath.ChecksDB(cwd, id.ID); err == nil {
+			label = old
+		}
+	}
+	return store, label, nil
 }
 
 // queryFamily runs one SELECT over the family's results and returns all the rows, each with

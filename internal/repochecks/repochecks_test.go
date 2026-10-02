@@ -250,6 +250,58 @@ func TestMigration_AnOldLayoutWriteAfterTheImportIsPickedUpNextHook(t *testing.T
 	assert.EqualValues(t, 2, rows[0]["n"], "and nothing was duplicated")
 }
 
+func TestOpenReadOnly_WritesNothingAndReadsTheOldFileWhereItIsNotMigrated(t *testing.T) {
+	dir := repo(t)
+	oldLayout(t, dir, "s1", func(s checkstore.Store) { failedRun(t, s, "hBad") })
+	repoPath, err := sessionpath.RepoChecksDB(dir)
+	require.NoError(t, err)
+
+	ro, err := OpenReadOnly(dir, "s1")
+	require.NoError(t, err)
+	defer ro.Close()
+	refs, err := ro.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 1, "the refusal in the old file is visible to a reader")
+	assert.NoFileExists(t, repoPath, "a reader creates and migrates nothing")
+}
+
+func TestOpenReadOnly_AnOldEnginesRunningStopKeepsTheReaderOnTheOldFile(t *testing.T) {
+	dir := repo(t)
+	path := oldLayout(t, dir, "s1", func(s checkstore.Store) {
+		failedRun(t, s, "hBad")
+		_, err := s.RecordRun(checkstore.CheckRun{BatchID: "b", CheckID: "p/file-guard/x", HeadRef: "hLive"})
+		require.NoError(t, err) // RUNNING: a Stop of the older binary is evaluating
+	})
+	st, err := Open(dir, "s1", nil)
+	require.NoError(t, err)
+	st.Close()
+
+	ro, err := OpenReadOnly(dir, "s1")
+	require.NoError(t, err)
+	defer ro.Close()
+	assert.Equal(t, path, ro.Path())
+	refs, err := ro.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 1)
+}
+
+func TestOpen_AReaderFirstNeverMisfilesASubagentsDatabase(t *testing.T) {
+	dir := repo(t)
+	oldLayout(t, dir, "root1", func(s checkstore.Store) { failedRun(t, s, "hRoot") })
+	sub := oldLayout(t, dir, "sub1", func(s checkstore.Store) { failedRun(t, s, "hSub") })
+
+	// A reader of the root family goes first, then the writer, who knows the sub-agent's file.
+	if ro, err := OpenReadOnly(dir, "root1"); err == nil {
+		ro.Close()
+	}
+	st, err := Open(dir, "root1", nil, checkstore.Legacy{Path: sub, Family: "root1", Agent: "agent-x", Folder: dir})
+	require.NoError(t, err)
+	defer st.Close()
+	refs, err := st.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 2, "the sub-agent's refusal is the root family's")
+}
+
 func TestMigration_ConcurrentHooksMigrateOnceWithoutDuplicates(t *testing.T) {
 	dir := repo(t)
 	oldLayout(t, dir, "s1", func(s checkstore.Store) {

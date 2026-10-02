@@ -54,7 +54,7 @@ func TestFamilyStores_ShareOneFileButReadOnlyTheirOwnRuns(t *testing.T) {
 	assert.Error(t, err, "a reader cannot write")
 }
 
-func TestFamilyStores_ReuseAPassOnExactInputOnly(t *testing.T) {
+func TestFamilyStores_NeverReuseAResultAcrossFamilies(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "checks.db")
 	a, err := OpenFamily(path, "sess-a")
 	require.NoError(t, err)
@@ -64,10 +64,9 @@ func TestFamilyStores_ReuseAPassOnExactInputOnly(t *testing.T) {
 	defer b.Close()
 	passRun(t, a, "h1", "fp-same")
 
-	got, ok, err := b.CachedCheck("changeset", "check[0]:judge:x", "fp-same")
+	_, ok, err := b.CachedCheck("changeset", "check[0]:judge:x", "fp-same")
 	require.NoError(t, err)
-	assert.True(t, ok, "the same input, passed by another session, stands")
-	assert.Equal(t, StatusPass, got.Status)
+	assert.False(t, ok, "another session's pass never stands for this one: the fingerprint does not carry the transcript or the rule")
 	_, ok, err = b.CachedCheck("changeset", "check[0]:judge:x", "fp-other")
 	require.NoError(t, err)
 	assert.False(t, ok, "different input is never reused")

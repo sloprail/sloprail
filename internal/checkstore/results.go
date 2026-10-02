@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -281,16 +280,12 @@ func (s *store) CachedCheck(subject, kind, fingerprint string) (CachedCheck, boo
 		SELECT status, metadata FROM checks
 		WHERE subject = ? AND kind = ? AND fingerprint = ? AND status IN ('pass', 'fail')
 		ORDER BY checked_at DESC, rowid DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
-	if errors.Is(err, sql.ErrNoRows) && s.family != "" {
-		// Another session of this repository judged exactly this input (the fingerprint is the
-		// rule's whole folder, the model and the exact input) and passed it: a pass is a fact
-		// about that content, so it stands here too. Only a PASS crosses: a refusal stays the
-		// family that was refused.
-		err = db.QueryRow(`
-			SELECT status, metadata FROM main.checks
-			WHERE subject = ? AND kind = ? AND fingerprint = ? AND status = 'pass'
-			ORDER BY checked_at DESC, rowid DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
-	}
+	// NO reuse across session families, deliberately. A check's fingerprint blanks the range's
+	// SHAs and the transcript path (it assumes both are constant for one session) and `kind` does
+	// not carry the rule: another session's pass could stand for a check that depends on THIS
+	// session's transcript or citations. A future opt-in needs the key rule FQN + rule hash +
+	// exact base..head + transcript identity; until then a result is reused only within the
+	// family that recorded it (the views above are already scoped to it).
 	if errors.Is(err, sql.ErrNoRows) {
 		return CachedCheck{}, false, nil
 	}
@@ -504,11 +499,13 @@ func (s *store) Query(query string) ([]map[string]any, error) {
 		return nil, err
 	}
 	if s.family != "" {
-		// A reader's SQL sees the family's rows as tables of their own — the same columns, in
-		// the same order, with a rowid of their own — on a connection of its own, so the views
-		// the package's own queries use (which carry an extra rowid column) are never in
-		// its way and `select *` returns exactly what an unshared database returns.
-		tmp, err := sql.Open("sqlite", "file:"+url.PathEscape(s.path)+"?mode=ro&_pragma=busy_timeout(5000)")
+		// A reader's SQL runs on a private in-memory database that holds nothing but this
+		// family's rows, as tables named like the real ones (same columns and order, a rowid of
+		// their own). The shared file is attached only to copy those rows and is detached
+		// before the statement runs, so no spelling of a query (main.check_runs, the other
+		// families' rows, legacy_imports) reaches anything else, and `select *` returns exactly
+		// what an unshared database returns.
+		tmp, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			return nil, fmt.Errorf("checkstore: query: %w", err)
 		}
@@ -522,7 +519,7 @@ func (s *store) Query(query string) ([]map[string]any, error) {
 	}
 	defer conn.Close()
 	if s.family != "" {
-		if err := materializeFamily(conn, s.family); err != nil {
+		if err := materializeFamily(conn, s.path, s.family); err != nil {
 			return nil, err
 		}
 	}
