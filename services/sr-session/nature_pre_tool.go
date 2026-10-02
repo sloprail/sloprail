@@ -51,9 +51,10 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	grounds := requiresCitation(loaded)
-	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds {
+	folders := folderGates(p, reg)
+	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds && len(folders) == 0 {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
-		// gate, no context to enter. (File-guards act only at Stop.)
+		// gate, no context to enter, no other folder's gate. (File-guards act only at Stop.)
 		return natureVerdict{}
 	}
 
@@ -70,6 +71,9 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	}
 
 	bound := naturePreToolBoundKinds(loaded)
+	for _, f := range folders {
+		bound = append(bound, naturePreToolBoundKinds(f.loaded)...)
+	}
 	if grounds {
 		// A rule requires citations, so every change this call makes must be
 		// seen here — even for a rule that only judges at Stop, whose Post
@@ -131,17 +135,10 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	}
 	// A command that runs in another repository of the session (`git -C ../other commit`,
 	// `cd ../other && …`) is also judged by THAT repository's own gates: its rules apply there.
-	for _, dir := range foldersTargeted(p) {
-		quiet := &cobra.Command{}
-		quiet.SetOut(io.Discard)
-		quiet.SetErr(io.Discard)
-		folder := newNatureDeclarations(quiet, dir, reg)
-		if len(folder.Gates) == 0 {
-			continue
-		}
-		fctx := loadContextMap(quiet, nil, folder.Contexts)
-		if reason := gateRefusal(runGatesForEvents(cmd, reg, folder.Gates, events, scope, store, fctx, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
-			return natureVerdict{Blocked: "in " + dir + " (a repository this session works in; its own rules apply there): " + reason}
+	for _, f := range folders {
+		fctx := loadContextMap(quietCmd(), nil, f.loaded.Contexts)
+		if reason := gateRefusal(runGatesForEvents(cmd, reg, f.loaded.Gates, events, scope, store, fctx, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
+			return natureVerdict{Blocked: "in " + f.dir + " (a repository this session works in; its own rules apply there): " + reason}
 		}
 	}
 	// Permitted: the cited changes this call makes are pending until the next
@@ -433,4 +430,32 @@ func naturePreToolBoundKinds(loaded declaration.Loaded) []string {
 		}
 	}
 	return bound
+}
+
+// folderRules is a folder of the session and the rules in force there.
+type folderRules struct {
+	dir    string
+	loaded declaration.Loaded
+}
+
+// folderGates is each registered folder a Bash call's git commands run in (foldersTargeted)
+// that declares a gate, with its rules: the gates that judge the call there besides the
+// agent's own tree's.
+func folderGates(p HookPayload, reg *module.Registry) []folderRules {
+	var out []folderRules
+	for _, dir := range foldersTargeted(p) {
+		if loaded := newNatureDeclarations(quietCmd(), dir, reg); len(loaded.Gates) > 0 {
+			out = append(out, folderRules{dir: dir, loaded: loaded})
+		}
+	}
+	return out
+}
+
+// quietCmd is a command whose output goes nowhere: loading another folder's rules reports
+// that folder's faults where its own sessions read them, not into this call's hook output.
+func quietCmd() *cobra.Command {
+	c := &cobra.Command{}
+	c.SetOut(io.Discard)
+	c.SetErr(io.Discard)
+	return c
 }
