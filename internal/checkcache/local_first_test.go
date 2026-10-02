@@ -336,3 +336,13 @@ func TestMigrateLegacyImportsEveryStoreOfTheRepository(t *testing.T) {
 	s.MigrateLegacy()
 	assert.Equal(t, tip, s.tip(), "idempotent")
 }
+
+// "A remote without the branch yet" is recognised from git's stderr, so the runner must not
+// let the user's locale translate it.
+func TestPullOnAFreshRemoteUnderANonEnglishLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LANGUAGE", "de")
+	s := newRepo(t, bareRemote(t))
+	require.NoError(t, s.Pull())
+}

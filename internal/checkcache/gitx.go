@@ -15,7 +15,8 @@ type gitRunner struct{ dir string }
 func (g gitRunner) run(stdin []byte, env []string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = g.dir
-	cmd.Env = append(cmd.Environ(), env...)
+	// stderr is matched by callers (a remote without the branch yet), so git must speak English.
+	cmd.Env = append(append(cmd.Environ(), "LC_ALL=C", "LANG=C", "LANGUAGE=C"), env...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
