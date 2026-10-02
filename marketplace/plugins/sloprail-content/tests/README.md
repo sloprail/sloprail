@@ -37,7 +37,9 @@ Each test:
 3. drives the **a10n-claude-mock** through the harness (`e.Run(proj, sess,
    prompt, Turns(...))`);
 4. asserts the outcome: `res.Refused()` for a gate's pre-write refusal,
-   `e.BlockingErrorsFrom(proj, sess, "Stop")` for an after-check Stop block,
+   `e.BlockingErrorsFrom(proj, sess, "Stop")` for a gate's Stop block or a
+   file-guard's refusal (the harness runs `sr check run --base <RunBase> --head
+   HEAD` after each Run and files its refusals there; `e.CheckRun` re-judges now),
    `e.Exists(...)` for whether a write landed, and `res.Saw(...)` for the
    reason reaching the agent.
 
