@@ -213,12 +213,15 @@ It matches any `git commit` (`--amend` included) and its `require: citation` car
 ./staged.sh when` that asks the engine `sr-checks staged --needs citation [--amend]`: which
 staged files (the index against HEAD, or against HEAD's parent for an amend; git's empty tree
 when there is no commit) a file-guard selects and whose citation requirement's `when` applies.
-No such file, no requirement. Otherwise the commit must be chained behind a cite, and the
-refusal names the files and gives the command that also carries the trailer the file-guard reads
-afterwards: `sr-session trajectory cite '<exact quote>' && git commit -m '<msg>' -m
-'Sloprail-Cites-User: <exact quote>'`. An amend that reuses HEAD's message (`--no-edit`) when
-HEAD already carries a `Sloprail-Cites-*` trailer needs a cite only for files it newly stages.
-`git add`/`git rm`, `-a` and pathspecs on the same line are replayed on a throwaway index; any
+No such file, no requirement. Otherwise the commit must carry a citation: the trailer in its own
+message (`git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'`; `-F <file>`,
+`--trailer` and, for `--amend` without a new message, HEAD's message count too), each quote
+resolved against the session by `sr-checks staged --trailers`, the resolver `sr-file --cite` uses
+(`-User` in the user's words, `-Tool` in a tool's output), or a cite chained in front
+(`sr-session trajectory cite '<exact quote>' && git commit ...`). A quote that does not resolve
+grounds nothing and is named in the refusal, with the quotes `sr-file --cite` already recorded for
+the files (`sr-checks staged --recorded`). The gate never replays the agent's `git -c`,
+`--config-env` or `--exec-path` options. `git add`/`git rm`, `-a` and pathspecs on the same line are replayed on a throwaway index; any
 other index-moving command on the line is refused, as is a commit whose folder or file-guards
 cannot be read (fail closed). Files the same line creates before the commit are not seen: CI's
 verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.

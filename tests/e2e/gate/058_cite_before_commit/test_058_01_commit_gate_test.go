@@ -97,3 +97,65 @@ func TestT058_06_AddAndCommitInOneLineIsJudged(t *testing.T) {
 		t.Fatal("the refused commit was made")
 	}
 }
+
+// T058_07: the trailer in the commit's own message is the citation: `-m ... -m 'Sloprail-Cites-User:
+// <quote>'` with no chained cite passes, and the file-guard is satisfied at Stop.
+func TestT058_07_TrailerInTheMessageCitesTheCommit(t *testing.T) {
+	e, proj := project(t)
+	res := e.Run(proj, "s-058-07", prompt, Turns("done",
+		stage("a", "docs/a.md", "a"),
+		Bash("c", "git commit -q -m 'add a' -m 'Sloprail-Cites-User: "+quote+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a commit whose message carries a resolving trailer was refused:\n%s", res.Output)
+	}
+	has(t, subjects(e, proj), "add a")
+	if got := strings.Join(e.StopContinuations(proj, "s-058-07"), "\n"); strings.Contains(got, "citation") {
+		t.Fatalf("the file-guard still wanted a citation at Stop:\n%s", got)
+	}
+}
+
+// T058_08: a trailer whose quote resolves nowhere grounds nothing: refused, naming the quote.
+func TestT058_08_UnresolvedTrailerIsRefused(t *testing.T) {
+	e, proj := project(t)
+	res := e.Run(proj, "s-058-08", prompt, Turns("done",
+		stage("a", "docs/a.md", "a"),
+		Bash("c", "git commit -q -m 'add a' -m 'Sloprail-Cites-User: nobody ever said this'"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a commit whose trailer does not resolve was not refused:\n%s", res.Output)
+	}
+	has(t, res.Output, "nobody ever said this")
+	if strings.Contains(subjects(e, proj), "add a") {
+		t.Fatal("the refused commit was made")
+	}
+}
+
+// T058_09: `-F msgfile` carrying the trailer passes.
+func TestT058_09_TrailerInAMessageFilePasses(t *testing.T) {
+	e, proj := project(t)
+	res := e.Run(proj, "s-058-09", prompt, Turns("done",
+		stage("a", "docs/a.md", "a"),
+		Bash("m", "printf 'add a\\n\\nSloprail-Cites-User: "+quote+"\\n' > ../msg.txt"),
+		Bash("c", "git commit -q -F ../msg.txt"),
+	))
+	if res.Refused() {
+		t.Fatalf("a commit whose -F message file carries a resolving trailer was refused:\n%s", res.Output)
+	}
+	has(t, subjects(e, proj), "add a")
+}
+
+// T058_10: the refusal hands back the quotes the session already recorded with sr-file --cite.
+func TestT058_10_RefusalNamesTheRecordedQuote(t *testing.T) {
+	e, proj := project(t)
+	res := e.Run(proj, "s-058-10", prompt, Turns("done",
+		Bash("w", "sr-file write docs/a.md --content a --cite:user '"+quote+"'"),
+		Bash("s", "git add docs/a.md"),
+		Bash("c", "git commit -q -m 'add a'"),
+	))
+	if !res.Refused() {
+		t.Fatalf("an uncited commit was not refused:\n%s", res.Output)
+	}
+	has(t, res.Output, "recorded")
+	has(t, res.Output, quote)
+}

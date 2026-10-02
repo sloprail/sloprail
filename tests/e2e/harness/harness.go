@@ -65,15 +65,14 @@ type Env struct {
 	// tmpDir is the mock's CLAUDE_CODE_TMPDIR: where it writes a background
 	// task's output file (<tmpdir>/claude-<uid>/<cwd>/<session>/tasks/), as real
 	// Claude Code does. Per test, so no run writes into the shared /tmp.
-	tmpDir           string
-	repoRoot         string
-	mock             string
-	withoutShipped   []string // GitInit disables these shipped rules (WithoutShipped)
-	onlyShipped      string   // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
-	enabledShipped   []string // GitInit enables these opt-in shipped rules (WithEnabledShipped)
-	citeBeforeCommit bool     // WithCiteBeforeCommit: the shipped cite-before-commit gate stays on
-	noShippedGuards  bool     // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
-	shimDir          string   // a `claude` that is really the mock, ahead of the real one on PATH
+	tmpDir          string
+	repoRoot        string
+	mock            string
+	withoutShipped  []string // GitInit disables these shipped rules (WithoutShipped)
+	onlyShipped     string   // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
+	enabledShipped  []string // GitInit enables these opt-in shipped rules (WithEnabledShipped)
+	noShippedGuards bool     // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
+	shimDir         string   // a `claude` that is really the mock, ahead of the real one on PATH
 
 	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
 	// mock runs — how many times the mock re-runs the agent when a Stop hook
@@ -287,10 +286,6 @@ func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards
 // initialises, for a package that tests a sub-agent's own Stop. Without it the default (off:
 // sub-agent ranges are verified at the root's Stop) is what runs.
 func WithSubagentStopCheck() Option { return func(e *Env) { e.subagentStop = true } }
-
-// WithCiteBeforeCommit keeps the shipped sloprail/gate/cite-before-commit on: every other package
-// has it switched off, since its scenarios commit guarded files without a chained cite.
-func WithCiteBeforeCommit() Option { return func(e *Env) { e.citeBeforeCommit = true } }
 
 // WithoutShipped switches off the named shipped rules (qualified names, a file-guard or a
 // gate) in the initial commit, for a package whose setup commits `.sloprail/` files inside
@@ -1113,11 +1108,6 @@ func (e *Env) GitInitUnborn(dir string) {
 	// list items to it with printf.
 	if len(e.enabledShipped) > 0 {
 		e.enableShipped(dir, e.enabledShipped)
-	}
-	if !e.citeBeforeCommit {
-		// A scenario commits a guarded file with its trailer, as the file-guard reads it at Stop; the
-		// commit-time gate asks for a cite chained in front, which only its own package is about.
-		e.DisablePluginGuardrail(dir, "sloprail/gate/cite-before-commit")
 	}
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)

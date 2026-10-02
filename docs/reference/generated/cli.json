@@ -538,7 +538,7 @@
         "path": "sr-checks staged",
         "use": "staged --needs citation [--amend] | staged --recorded <path>...",
         "short": "The staged files a commit must cite, by the file-guards' `require: citation`",
-        "long": "Print, one path per line, the staged files that a file-guard selects and that carry a\n`require: citation` the commit being made must meet.\n\nThe candidate change is the index against HEAD (against git's empty tree when HEAD does not exist\nyet). With --amend it is the index against HEAD's parent: the amended commit replaces HEAD, so\neverything HEAD changed is the commit's again. File-guards are loaded, matched and their\n`when` evaluated exactly as `sr-checks run` does over a range, and a requirement whose\n`when` waives a file leaves it out. Nothing is judged, written, staged or committed.\n\nThis is the prevention half of the commit-time check: `run` and `verify` refuse the commit afterwards,\nthis says before it which files will need a citation. Exits 1 with the reason on stderr when the\nchange could not be read: no answer is never \"nothing is needed\".\n\nWith --recorded and paths instead, print the citations this session already recorded for them\n(`sr-file --cite`), one JSON object per line: {\"path\", \"trailer\", \"quote\"}.",
+        "long": "Print, one path per line, the staged files that a file-guard selects and that carry a\n`require: citation` the commit being made must meet.\n\nThe candidate change is the index against HEAD (against git's empty tree when HEAD does not exist\nyet). With --amend it is the index against HEAD's parent: the amended commit replaces HEAD, so\neverything HEAD changed is the commit's again. File-guards are loaded, matched and their\n`when` evaluated exactly as `sr-checks run` does over a range, and a requirement whose\n`when` waives a file leaves it out. Nothing is judged, written, staged or committed.\n\nThis is the prevention half of the commit-time check: `run` and `verify` refuse the commit afterwards,\nthis says before it which files will need a citation. Exits 1 with the reason on stderr when the\nchange could not be read: no answer is never \"nothing is needed\".\n\nWith --trailers, read a commit message on stdin and resolve each Sloprail-Cites-User /\nSloprail-Cites-Tool line in it against the session transcript, exactly as `sr-file --cite` does (the user\npool for -User, tool_result for -Tool), one JSON object per line: {\"trailer\", \"quote\", \"ok\", \"error\"}.\n\nWith --recorded and paths instead, print the citations this session already recorded for them\n(`sr-file --cite`), one JSON object per line: {\"path\", \"trailer\", \"quote\"}.",
         "flags": [
           {
             "name": "amend",
@@ -553,6 +553,11 @@
             "name": "recorded",
             "default": "false",
             "usage": "Print the quotes already recorded for the given paths, as JSON lines"
+          },
+          {
+            "name": "trailers",
+            "default": "false",
+            "usage": "Resolve the Sloprail-Cites-* lines of a commit message read from stdin, as JSON lines"
           }
         ]
       },

@@ -6,15 +6,19 @@
 # `staged.sh` asks the engine which files the commit would change that a file-guard wants cited
 # (`sr-checks staged --needs citation`: the file-guards loaded and matched, and each requirement's
 # `when` evaluated, exactly as `sr-checks run` does, over the staged change). When it lists any,
-# the `require: citation` below must be met by a cite chained in front of the command:
+# the commit must carry a citation, either way:
 #
-#   sr-session trajectory cite '<exact quote>' && git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'
+#   git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'      the trailer in the message
+#   sr-session trajectory cite '<exact quote>' && git commit ...        a cite chained in front
 #
-# The refusal names the files. The chained cite is what this gate can see; the trailer is what the
-# file-guard reads afterwards, so the refusal gives the command that does both. A commit touching
-# no such file is untouched. `git commit --amend` is judged against HEAD's parent (the amended commit
-# replaces HEAD); an amend that only reuses a HEAD message already carrying a Sloprail-Cites-*
-# trailer, and stages nothing new that needs one, passes.
+# The trailer is read from the command's -m/--message, -F/--file (read from the commit's folder) and
+# --trailer, or for `--amend` without a new message from HEAD's. Each quote is resolved against the
+# session transcript by `sr-checks staged --trailers`, the resolver `sr-file --cite` and `sr-session
+# trajectory cite` use (Sloprail-Cites-User in the user's words, Sloprail-Cites-Tool in a tool's
+# output); a resolving one grounds every file the commit changes. A quote that resolves nowhere (or
+# in two places) grounds nothing and is named in the refusal, with the quotes `sr-file --cite` already
+# recorded for the files. A commit touching no such file is untouched. `git commit --amend` is judged
+# against HEAD's parent (the amended commit replaces HEAD).
 #
 # It fails closed: a commit whose folder, index or file-guards cannot be read is refused. It does not
 # see files the same command line creates before the commit (the gate runs before the line); `git add`,

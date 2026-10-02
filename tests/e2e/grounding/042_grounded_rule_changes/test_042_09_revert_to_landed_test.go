@@ -35,7 +35,7 @@ func TestT042_09_RevertOfUncitedEditsNeedsNoCitation(t *testing.T) {
 
 // T042_10: undoing a CITED change (the user approved it) still needs the user's words.
 func TestT042_10_RevertOfACitedChangeStillNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	landedHistory(t, e, proj, harness.CitesUser("loosen the demo rule"))
 	refuseThenPass(t, e, proj, "s-042-10", "put the demo rule back",
@@ -45,7 +45,7 @@ func TestT042_10_RevertOfACitedChangeStillNeedsGrounding(t *testing.T) {
 
 // T042_11: content the default branch never had is no revert, however uncited its history.
 func TestT042_11_ArbitraryContentStillNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	landedHistory(t, e, proj)
 	refuseThenPass(t, e, proj, "s-042-11", "tweak the demo rule",

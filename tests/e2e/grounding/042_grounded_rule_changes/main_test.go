@@ -103,3 +103,11 @@ func refuseThenPass(t *testing.T, e *harness.Env, proj, sess, ask string, change
 		t.Fatalf("the change was still refused once its commit carried the grounding:\n%s", out)
 	}
 }
+
+// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a
+// scenario whose subject is what Stop or `sr-checks run` does with a commit that carries no (or
+// no resolving) citation: with the gate on, the agent could not make that commit at all. The gate
+// itself is exercised in tests/e2e/gate/058_cite_before_commit.
+func NewUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithOnlyShippedFileGuard(ruleName), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
+}

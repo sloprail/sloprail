@@ -32,6 +32,23 @@ command -v sr-checks >/dev/null 2>&1 || fail "sr-checks is not on PATH; install 
 n="$(printf '%s' "$payload" | jq -r '.event.invocations | length')" || n=""
 case "$n" in '' | *[!0-9]*) fail "the command's invocations could not be read" ;; esac
 
+# drop_unsafe_gopts: removes the global options that make git run agent-chosen code (-c,
+# --config-env, --exec-path) from GOPTS, which every git call below passes on.
+drop_unsafe_gopts() {
+  local kept=() i=0 n=${#GOPTS[@]} a
+  while [ "$i" -lt "$n" ]; do
+    a="${GOPTS[$i]}"
+    case "$a" in
+      -c | --config-env) i=$((i + 1)) ;;
+      -c* | --config-env=* | --exec-path | --exec-path=*) ;;
+      *) kept+=("$a") ;;
+    esac
+    i=$((i + 1))
+  done
+  GOPTS=(${kept[@]+"${kept[@]}"})
+}
+split_git() { git_split "$1"; drop_unsafe_gopts; }
+
 # Commands that move the index (or HEAD) and cannot be replayed on a throwaway index. The gate runs
 # before the line, so a commit chained after one would be judged against the wrong change.
 movers=" mv restore reset checkout switch cherry-pick pull am revert apply merge rebase stash clean update-index read-tree "
@@ -58,15 +75,16 @@ dir_of() {
 }
 
 files=()
+unresolved=""
 amending=""
 idx=0
 for inv in "${invs[@]}"; do
   idx=$((idx + 1))
   [ "$(printf '%s' "$inv" | jq -r '.bin // ""')" = git ] || continue
-  git_split "$inv"
+  split_git "$inv"
   [ "$SUB" = commit ] || continue
 
-  amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=()
+  amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
   args=(${REST[@]+"${REST[@]}"})
   j=0
   while [ "$j" -lt "${#args[@]}" ]; do
@@ -84,11 +102,29 @@ for inv in "${invs[@]}"; do
       --dry-run) dry=1 ;;
       -h | --help) help=1 ;;
       --edit) newmsg=1 ;;
-      --message | --file | --reuse-message | --reedit-message | --trailer)
+      --message | --trailer)
+        newmsg=1
+        msgs+=("${args[$j]-}")
+        j=$((j + 1))
+        ;;
+      --file)
+        newmsg=1
+        msgfiles+=("${args[$j]-}")
+        j=$((j + 1))
+        ;;
+      --reuse-message | --reedit-message)
         newmsg=1
         j=$((j + 1))
         ;;
-      --message=* | --file=* | --reuse-message=* | --reedit-message=* | --trailer=* | --fixup=* | --squash=*) newmsg=1 ;;
+      --message=* | --trailer=*)
+        newmsg=1
+        msgs+=("${a#*=}")
+        ;;
+      --file=*)
+        newmsg=1
+        msgfiles+=("${a#*=}")
+        ;;
+      --reuse-message=* | --reedit-message=* | --fixup=* | --squash=*) newmsg=1 ;;
       --author | --date | --cleanup | --template) j=$((j + 1)) ;;
       --*) ;;
       -?*)
@@ -101,7 +137,17 @@ for inv in "${invs[@]}"; do
             a) all=1 ;;
             i) include=1 ;;
             e) newmsg=1 ;;
-            m | F | C | c)
+            m)
+              newmsg=1
+              if [ -n "$cl" ]; then msgs+=("$cl"); else msgs+=("${args[$j]-}"); j=$((j + 1)); fi
+              cl=""
+              ;;
+            F)
+              newmsg=1
+              if [ -n "$cl" ]; then msgfiles+=("$cl"); else msgfiles+=("${args[$j]-}"); j=$((j + 1)); fi
+              cl=""
+              ;;
+            C | c)
               newmsg=1
               [ -n "$cl" ] || j=$((j + 1))
               cl=""
@@ -145,7 +191,7 @@ for inv in "${invs[@]}"; do
     k=$((k + 1))
     [ "$k" -lt "$idx" ] || break
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
-    git_split "$prev"
+    split_git "$prev"
     pdir="$(dir_of "$prev")" || continue
     ptop="$(cd "$pdir" 2>/dev/null && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || continue
     [ "$ptop" = "$top" ] || continue
@@ -159,7 +205,7 @@ for inv in "${invs[@]}"; do
       fail "this line runs 'git $SUB' and 'git commit' together, and the commit is checked before the line runs; run 'git $SUB' first, then the commit as its own command"
     fi
   done
-  git_split "$inv"
+  split_git "$inv"
 
   if [ -n "$all" ]; then
     (cd "$dir" && GIT_INDEX_FILE="$tmp/index" git "${GOPTS[@]+"${GOPTS[@]}"}" add -u </dev/null) >/dev/null 2>&1 || fail "'git commit -a' could not be replayed on a scratch index"
@@ -174,12 +220,32 @@ for inv in "${invs[@]}"; do
     fail "sr-checks staged said: $(head -c 800 "$tmp/err")"
   fi
 
-  # An amend that reuses HEAD's message keeps its Sloprail-Cites-* trailers: HEAD's own files are
-  # grounded by them (Stop and CI resolve the quote), so only files newly staged need a citation.
-  if [ -n "$amend" ] && [ -z "$newmsg" ] && [ -n "$out" ]; then
-    headmsg="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" log -1 --format=%B HEAD 2>/dev/null)" || fail "HEAD's message could not be read"
-    if printf '%s' "$headmsg" | grep -Eiq '^Sloprail-Cites-(User|Tool):[[:space:]]*[^[:space:]]'; then
-      out="$(cd "$dir" && GIT_INDEX_FILE="$tmp/index" sr-checks staged --needs citation 2>"$tmp/err")" || fail "sr-checks staged said: $(head -c 800 "$tmp/err")"
+  # The citations the commit's own message carries: -m / -F / --trailer values (a -F file is read from
+  # the commit's folder), or, for an amend that reuses HEAD's message, HEAD's. Each quote is resolved
+  # against the session transcript by `sr-checks staged --trailers` (the resolver `sr-file --cite` and
+  # `sr-session trajectory cite` use). A commit's resolving citation grounds every file it changes;
+  # a quote that does not resolve grounds nothing and is named in the refusal.
+  if [ -n "$out" ]; then
+    msgtext=""
+    if [ -n "$amend" ] && [ -z "$newmsg" ]; then
+      msgtext="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" log -1 --format=%B HEAD 2>/dev/null)" || fail "HEAD's message could not be read"
+    else
+      for m in ${msgs[@]+"${msgs[@]}"}; do msgtext="$msgtext$m"$'\n'; done
+      for mf in ${msgfiles[@]+"${msgfiles[@]}"}; do
+        [ "$mf" != - ] || continue
+        case "$mf" in /*) ;; *) mf="$dir/$mf" ;; esac
+        msgtext="$msgtext$(cat "$mf" 2>/dev/null)"$'\n'
+      done
+    fi
+    if printf '%s' "$msgtext" | grep -Eiq '^Sloprail-Cites-(User|Tool):'; then
+      res="$(printf '%s' "$msgtext" | (cd "$dir" && sr-checks staged --trailers 2>"$tmp/err"))" ||
+        fail "sr-checks staged --trailers said: $(head -c 800 "$tmp/err")"
+      good="$(printf '%s\n' "$res" | jq -rs '[.[] | select(.ok)] | length' 2>/dev/null)" || fail "the resolved citations could not be read"
+      if [ "${good:-0}" -gt 0 ]; then
+        out=""
+      fi
+      bad="$(printf '%s\n' "$res" | jq -rs '[.[] | select(.ok | not)] | map("  \(.trailer): \(.quote): \(.error)") | join("\n")' 2>/dev/null)" || fail "the resolved citations could not be read"
+      [ -z "$bad" ] || unresolved="$unresolved$bad"$'\n'
     fi
   fi
   while IFS= read -r f; do
@@ -192,13 +258,27 @@ if [ "${#files[@]}" -eq 0 ]; then
   [ "$mode" = when ] && exit 1
   exit 0
 fi
-[ "$mode" = when ] || exit 0
+if [ "$mode" != when ]; then
+  # A chained cite met the requirement, but a trailer on the commit that does not resolve is refused here:
+  # it would carry the commit past this gate and fail at Stop and in CI.
+  if [ -n "$unresolved" ]; then
+    jq -n --arg r "The citation trailers on this commit did not resolve against the session, so they ground nothing:
+$unresolved" '{reason: $r}'
+    exit 1
+  fi
+  exit 0
+fi
 
 list="$(printf '%s\n' "${files[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')"
 if [ -n "$amending" ]; then
   how="sr-session trajectory cite '<exact quote>' && git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
 else
   how="$cmds"
+fi
+if [ -n "$unresolved" ]; then
+  how="$how
+The citation trailers on this commit did not resolve against the session, so they ground nothing:
+$unresolved"
 fi
 # Quotes the session already recorded for these files (sr-file --cite): the agent has found them; they
 # only need to ride on the commit. Best effort: a failure here leaves the hint without them.

@@ -32,7 +32,7 @@ printf '%s' "$p" | jq -e '[.changeset.files[].path] | index("memories/flag.md")'
 exit 1
 `
 	const ask = "adopt a decision log"
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"when-flagged.sh": whenFlagged})
@@ -86,7 +86,7 @@ require:
 `
 	const ask = "adopt a decision log"
 	const sess = "s-041-54"
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", guard, nil)

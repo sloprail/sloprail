@@ -23,7 +23,7 @@ func readDocs(t *testing.T, id string) []harness.Turn {
 
 // T042_10: the Edit tool on a rule's script.
 func TestT042_10_EditToolNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	edit := harness.ToolUse("e1", "Edit", map[string]string{
 		"file_path": proj + "/" + demoDir + "/check.sh", "old_string": "exit 0", "new_string": "# nothing to see\nexit 0"})
@@ -33,7 +33,7 @@ func TestT042_10_EditToolNeedsGrounding(t *testing.T) {
 
 // T042_11: `sed -i`, which no gate can compute the result of.
 func TestT042_11_SedInPlaceNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	refuseThenPass(t, e, proj, "s-042-11", "loosen the demo rule so my notes land",
 		Turns("done",
@@ -45,7 +45,7 @@ func TestT042_11_SedInPlaceNeedsGrounding(t *testing.T) {
 
 // T042_12: `git rm` of a rule's folder.
 func TestT042_12_GitRmNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	refuseThenPass(t, e, proj, "s-042-12", "drop the demo rule, we no longer want it",
 		Turns("done", Bash("g1", "git rm -rq "+demoDir)), harness.CitesUser("drop the demo rule"), advice...)
@@ -54,7 +54,7 @@ func TestT042_12_GitRmNeedsGrounding(t *testing.T) {
 // T042_13: moving a rule's folder out of `.sloprail/` is a rename, not a deletion, and the
 // rule it was is gone all the same.
 func TestT042_13_MovingARuleOutNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	refuseThenPass(t, e, proj, "s-042-13", "park the demo rule outside the project rules",
 		Turns("done", Bash("m1", "mkdir -p archive && mv "+demoDir+" archive/demo")),
@@ -72,10 +72,7 @@ func TestT042_14_DeletingConfigNeedsGrounding(t *testing.T) {
 	}
 	res = e.Run(proj, "s-042-14", "remove the config file entirely", Turns("done",
 		Bash("d2", "sr-file delete .sloprail/config.yaml --cite:user 'remove the config file entirely'"),
-		// The config that switched the commit-time cite gate off is gone, so the commit carries its
-		// cite in front, as the gate asks.
-		Bash("d3", "git add -A && sr-session trajectory cite 'remove the config file entirely' && git commit -q -m 'remove the config' -m 'Sloprail-Cites-User: remove the config file entirely'"),
-	))
+	).ThenCommit("remove the config", harness.CitesUser("remove the config file entirely")))
 	if res.Refused() || e.Exists(proj, ".sloprail/config.yaml") {
 		t.Fatalf("the cited delete did not land:\n%s", res.Output)
 	}
@@ -101,7 +98,7 @@ func TestT042_15_TheRuleCannotDisableItself(t *testing.T) {
 					t.Skip("yq is not installed")
 				}
 			}
-			e := New(t)
+			e := NewUncited(t)
 			proj := project(t, e)
 			sess := "s-042-15-" + name
 			e.Run(proj, sess, "get past the demo rule", Turns("done", Bash("w1", cmd)))
