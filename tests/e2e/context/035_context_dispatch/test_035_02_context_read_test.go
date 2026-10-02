@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -181,14 +182,11 @@ func TestT035_05_FileGuardMatchReadsContext(t *testing.T) {
 	}
 }
 
-// T035_06: the SAME file-guard does NOT fire when the context is inactive — its
-// match reads context["refactor"].active as false, so it does not select the file.
-//
-// The control for T035_05: the identical src/ debug-print write, but with no
-// refactor-start command, leaves the context inactive, so the guard's match
-// excludes the file and the turn is not blocked. Proves the guard's applicability
-// is gated on the context.
-func TestT035_06_FileGuardDoesNotFireOutsideContext(t *testing.T) {
+// T035_06: a file-guard whose match reads a context no longer loads (T035_05), and a
+// Stop does not pass over a rule that failed to load: it refuses, naming the rule, the
+// same as `sr-checks verify`. (This used to be T035_05's control, "the guard does not
+// fire while the context is inactive"; file-guards can no longer read contexts.)
+func TestT035_06_AStopRefusesWhileAFileGuardFailsToLoad(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -200,13 +198,12 @@ func TestT035_06_FileGuardDoesNotFireOutsideContext(t *testing.T) {
 	e.CommitAll(proj, "the guards")
 
 	sess := "s-035-06"
-	// No refactor-start — the context is inactive, so the guard's match excludes
-	// the file even though it holds a debug print.
 	e.Run(proj, sess, "leave a debug print outside any refactor", Turns("done",
 		Write("w1", "src/x.go", "DEBUG_PRINT here\npackage x"),
 	).ThenCommit("leave a debug print"))
 
-	if len(e.BlockingErrorsFrom(proj, sess, "Stop")) != 0 {
-		t.Errorf("a context-gated guard fired though its context was inactive — its match should exclude the file")
+	errs := e.BlockingErrorsFrom(proj, sess, "Stop")
+	if len(errs) == 0 || !strings.Contains(strings.Join(errs, "\n"), "no-debug-in-refactor") {
+		t.Errorf("a Stop passed while a file-guard failed to load; it must refuse naming the rule: %q", errs)
 	}
 }
