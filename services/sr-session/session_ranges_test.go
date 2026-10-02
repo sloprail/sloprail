@@ -173,3 +173,30 @@ func TestVerifyRange_AnUnresolvableRecordOrIdIsRefused(t *testing.T) {
 	assert.Contains(t, got, "cannot be resolved")
 	assert.Contains(t, got, "refusing")
 }
+
+// A detached range is skipped only when a tracked branch's range (base..live tip) really holds
+// its commit; one older than the branch's base, or past the stored tip's staleness, is verified.
+func TestCoveredByBranch_OnlyWhenTheBranchRangeContainsTheCommit(t *testing.T) {
+	proj := initRepo(t)
+	commit := func(name string) string {
+		require.NoError(t, os.WriteFile(filepath.Join(proj, name), []byte(name), 0o644))
+		runGit(t, proj, "add", name)
+		runGit(t, proj, "commit", "-m", name)
+		return runGit(t, proj, "rev-parse", "HEAD")
+	}
+	first := commit("0.md")
+	c1 := commit("a.md")
+	c2 := commit("b.md")
+
+	detached := func(sha string) sessionstate.TrackedRange {
+		return sessionstate.TrackedRange{Folder: proj, Head: sha, HeadSHA: sha, Base: first}
+	}
+	branch := func(base, stored string) []sessionstate.TrackedRange {
+		return []sessionstate.TrackedRange{{Folder: proj, Head: "main", HeadSHA: stored, Base: base}}
+	}
+	assert.True(t, coveredByBranch(detached(c2), branch(first, c2)), "inside base..tip")
+	assert.False(t, coveredByBranch(detached(c1), branch(c1, c2)), "at the branch's base: before its range")
+	assert.False(t, coveredByBranch(detached(first), branch(c1, c2)), "older than the branch's base")
+	// The stored tip is stale: the live branch has moved on and now holds c2.
+	assert.True(t, coveredByBranch(detached(c2), branch(first, c1)), "the live tip, not the stored one, decides")
+}

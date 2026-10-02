@@ -658,19 +658,28 @@ func recordedCitations(p HookPayload, store sessionstate.Store) map[string][]tra
 }
 
 // coveredByBranch reports whether a range tracked at a bare commit (a detached HEAD) is held by
-// another tracked range of the same folder that is on a branch: its tip contains the commit,
-// so verifying the branch judges those commits as well.
+// another tracked range of the same folder that is on a branch: the commit is in that range
+// (reachable from the branch's live tip, not from its base), so verifying the branch judges it
+// as well. A commit older than the branch's base, or one the branch cannot be shown to hold, is
+// not covered: it is verified on its own.
 func coveredByBranch(r sessionstate.TrackedRange, all []sessionstate.TrackedRange) bool {
 	if len(r.Head) < 40 || strings.HasPrefix(r.Head, "refs/") {
 		return false
 	}
 	for _, o := range all {
-		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || len(o.Head) >= 40 || o.HeadSHA == "" {
+		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || len(o.Head) >= 40 || o.HeadSHA == "" || o.Base == "" {
 			continue
 		}
-		if ok, err := gitrepo.IsAncestor(r.Folder, r.Head, o.HeadSHA); err == nil && ok {
-			return true
+		tip, _ := headRevision(o) // the live tip; the commit it last pointed at when the branch is gone
+		if in, err := gitrepo.IsAncestor(r.Folder, r.Head, tip); err != nil || !in {
+			continue
 		}
+		if o.Base != gitrepo.EmptyTree {
+			if before, err := gitrepo.IsAncestor(r.Folder, r.Head, o.Base); err != nil || before {
+				continue
+			}
+		}
+		return true
 	}
 	return false
 }
