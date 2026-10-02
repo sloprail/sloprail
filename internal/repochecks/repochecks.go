@@ -59,8 +59,20 @@ func Open(cwd, family string, warn io.Writer, extra ...checkstore.Legacy) (check
 		return nil, err
 	}
 	srcs := append(extra, legacySources(cwd, family)...)
-	if err := checkstore.ImportLegacy(store, srcs); err != nil && warn != nil {
+	postponed, err := checkstore.ImportLegacyReport(store, srcs)
+	if err != nil && warn != nil {
 		fmt.Fprintln(warn, "sloprail: some earlier check results were not imported:", err)
+	}
+	// The family's own old database is being written by a Stop of an older engine this very
+	// moment: this cycle keeps using it as it is (nothing it recorded is hidden), and the next
+	// hook migrates it.
+	for _, p := range postponed {
+		for _, l := range srcs {
+			if l.Path == p && l.Family == family && l.Agent == "" {
+				store.Close()
+				return checkstore.OpenLegacy(p)
+			}
+		}
 	}
 	return store, nil
 }

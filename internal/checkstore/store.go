@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	// The database is this package's resource, so the driver is its import.
 	_ "modernc.org/sqlite"
@@ -139,11 +140,11 @@ func open(path string) (*store, error) {
 	}
 	// Serialises this process's own writers; the cross-process half is busy_timeout's.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := retryBusy(func() error { _, err := db.Exec(schema); return err }); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("checkstore: apply schema: %w", err)
 	}
-	if err := ensureAgentColumn(db); err != nil {
+	if err := retryBusy(func() error { return ensureAgentColumn(db) }); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -169,7 +170,11 @@ func OpenFamily(path, family string) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureSharedColumns(st.db); err != nil {
+	if err := retryBusy(func() error { return ensureVersion(st.db) }); err != nil {
+		st.db.Close()
+		return nil, err
+	}
+	if err := retryBusy(func() error { return ensureSharedColumns(st.db) }); err != nil {
 		st.db.Close()
 		return nil, err
 	}
@@ -434,11 +439,27 @@ type Legacy struct {
 // present, so it is safe to repeat and safe when two sessions do it at the same moment. A
 // database that cannot be read is skipped and reported in the returned error; the rest are done.
 func ImportLegacy(dst Store, sources []Legacy) error {
+	_, err := ImportLegacyReport(dst, sources)
+	return err
+}
+
+// RunningWindow is how long a run recorded RUNNING in an old database is taken to belong to a
+// Stop that is still evaluating it. Past it, the run is a crashed one and no longer holds an
+// import back.
+const RunningWindow = 15 * time.Minute
+
+// ImportLegacyReport is ImportLegacy that also returns the sources it POSTPONED: a source with
+// a run recorded RUNNING within RunningWindow is being written by a Stop of an older binary right
+// now, and is not migrated while that goes on — the caller keeps using it as it is for the cycle
+// (OpenLegacy) and the next hook imports it. Nothing is postponed forever: a late write, by an
+// older binary that was still running when this one replaced it, changes the file's signature
+// and is picked up (new rows, and a run that has since finished) at the next hook.
+func ImportLegacyReport(dst Store, sources []Legacy) ([]string, error) {
 	s, ok := dst.(*store)
 	if !ok || s.family == "" {
-		return fmt.Errorf("checkstore: ImportLegacy needs a store opened by OpenFamily")
+		return nil, fmt.Errorf("checkstore: ImportLegacy needs a store opened by OpenFamily")
 	}
-	var errs []string
+	var errs, postponed []string
 	for _, src := range sources {
 		info, err := os.Stat(src.Path)
 		if err != nil {
@@ -455,6 +476,10 @@ func ImportLegacy(dst Store, sources []Legacy) error {
 			continue
 		}
 		if err := s.importLegacy(src); err != nil {
+			if errors.Is(err, errPostponed) {
+				postponed = append(postponed, src.Path)
+				continue
+			}
 			errs = append(errs, err.Error())
 			continue
 		}
@@ -464,10 +489,12 @@ func ImportLegacy(dst Store, sources []Legacy) error {
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("checkstore: %s", strings.Join(errs, "; "))
+		return postponed, fmt.Errorf("checkstore: %s", strings.Join(errs, "; "))
 	}
-	return nil
+	return postponed, nil
 }
+
+var errPostponed = errors.New("checkstore: an older engine is still writing this database")
 
 func (s *store) importLegacy(src Legacy) error {
 	ctx := context.Background()
@@ -502,29 +529,49 @@ func (s *store) importLegacy(src Legacy) error {
 	if hasAgent {
 		agentExpr = "CASE WHEN agent_id = '' THEN ? ELSE agent_id END"
 	}
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
+	// One writer at a time across processes: concurrent hooks wait here (busy_timeout), the
+	// first imports, the rest find the rows already in.
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
 		return err
+	}
+	tx := rollbackCommit{conn: conn, ctx: ctx}
+	var live int
+	cutoff := time.Now().Add(-RunningWindow).UTC().Format("2006-01-02T15:04:05.000000000Z")
+	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM src.check_runs
+		WHERE json_extract(metadata, '$.state') = 'running' AND run_at > ?`, cutoff).Scan(&live); err == nil && live > 0 {
+		tx.rollback()
+		return errPostponed
 	}
 	for _, q := range []struct {
 		sql  string
 		args []any
 	}{
-		{`INSERT OR IGNORE INTO main.check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
+		// A run already in is updated only while it is still RUNNING here: an older binary
+		// finishing it after the first import is the late write to pick up; a finished run is
+		// final.
+		{`INSERT INTO main.check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id, agent_id,
 			family, folder, base_ref, head_ref, exit_code, error, metadata, created_at)
 			SELECT id, run_batch_id, run_at, check_id, repo_id, branch, session_id, ` + agentExpr + `,
-			?, ?, base_ref, head_ref, exit_code, error, metadata, created_at FROM src.check_runs`, []any{src.Agent, src.Family, src.Folder}},
-		{`INSERT OR IGNORE INTO main.checks (id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at)
-			SELECT id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at FROM src.checks`, nil},
+			?, ?, base_ref, head_ref, exit_code, error, metadata, created_at FROM src.check_runs WHERE true
+			ON CONFLICT(id) DO UPDATE SET exit_code = excluded.exit_code, error = excluded.error, metadata = excluded.metadata
+			WHERE json_extract(check_runs.metadata, '$.state') = 'running'`, []any{src.Agent, src.Family, src.Folder}},
+		// A check is updated when the old file has the newer verdict (ResolveStale here stamps
+		// its own change later, which then stands).
+		{`INSERT INTO main.checks (id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at)
+			SELECT id, run_id, subject, kind, status, fingerprint, last_step, output, metadata, checked_at FROM src.checks WHERE true
+			ON CONFLICT(id) DO UPDATE SET status = excluded.status, fingerprint = excluded.fingerprint,
+			    output = excluded.output, metadata = excluded.metadata, checked_at = excluded.checked_at
+			WHERE excluded.checked_at > checks.checked_at`, nil},
 		{`INSERT OR IGNORE INTO main.check_items (id, check_id, key, passed, metadata, checked_at)
 			SELECT id, check_id, key, passed, metadata, checked_at FROM src.check_items`, nil},
 	} {
-		if _, err := tx.ExecContext(ctx, q.sql, q.args...); err != nil {
-			_ = tx.Rollback()
+		if _, err := conn.ExecContext(ctx, q.sql, q.args...); err != nil {
+			tx.rollback()
 			return fmt.Errorf("import %s: %w", src.Path, err)
 		}
 	}
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	return err
 }
 
 // materializeFamily makes the family's rows into temp tables named like the real ones, on a
@@ -542,4 +589,71 @@ func materializeFamily(conn *sql.Conn, family string) error {
 		}
 	}
 	return nil
+}
+
+type rollbackCommit struct {
+	conn *sql.Conn
+	ctx  context.Context
+}
+
+func (r rollbackCommit) rollback() { _, _ = r.conn.ExecContext(r.ctx, `ROLLBACK`) }
+
+// SchemaVersion is the version of the check-results database's layout: 1 is the per-session
+// database (three tables, agent_id), 2 adds what the repository's shared database needs
+// (family, folder, legacy_imports). It is stored in the file's user_version by OpenFamily; a
+// database a NEWER binary wrote is refused rather than run against. Raising it needs a
+// migration step in ensureSharedColumns and a fixture test of the previous layout.
+const SchemaVersion = 2
+
+// ErrSchemaTooNew reports a database written by a newer binary.
+var ErrSchemaTooNew = errors.New("checkstore: database was written by a newer sloprail")
+
+func ensureVersion(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	if v > SchemaVersion {
+		return fmt.Errorf("%w: database is version %d, this binary knows %d", ErrSchemaTooNew, v, SchemaVersion)
+	}
+	if v < SchemaVersion {
+		if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, SchemaVersion)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Migrate brings the check-results database at path to this binary's layout: the same steps
+// the engine runs when it opens one (OpenFamily), for a caller that has a path and wants to
+// know it migrates (a test, a rollout check run against a COPY of a store).
+func Migrate(path string) error {
+	st, err := OpenFamily(path, "migrate")
+	if err != nil {
+		return err
+	}
+	return st.Close()
+}
+
+// OpenLegacy opens an old per-session database as it is, read-write, for the cycle in which it
+// could not be migrated yet.
+func OpenLegacy(path string) (Store, error) { return Open(path) }
+
+// retryBusy repeats an opening step that lost a race for the file's first write. Several
+// hooks starting at once open a database that is being created or migrated: the first takes
+// the write lock, and a contender can be refused before its own busy_timeout is in force.
+// What it waits for is a step of milliseconds, so a short bounded wait is the honest answer.
+func retryBusy(fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 100; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "SQLITE_BUSY") && !strings.Contains(msg, "database is locked") {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return err
 }

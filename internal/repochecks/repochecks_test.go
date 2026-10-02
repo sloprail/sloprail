@@ -139,3 +139,147 @@ func TestOpen_SeveralSessionsWriteTheOneDatabaseAtOnce(t *testing.T) {
 		ro.Close()
 	}
 }
+
+// oldLayout writes a session's check results the way main wrote them before the repository
+// database: one file per session beside its state.db.
+func oldLayout(t *testing.T, dir, session string, fn func(s checkstore.Store)) string {
+	t.Helper()
+	path, err := sessionpath.ChecksDB(dir, session)
+	require.NoError(t, err)
+	s, err := checkstore.Open(path)
+	require.NoError(t, err)
+	fn(s)
+	require.NoError(t, s.Close())
+	return path
+}
+
+func failedRun(t *testing.T, s checkstore.Store, head string) string {
+	t.Helper()
+	id, err := s.RecordRun(checkstore.CheckRun{BatchID: "b", CheckID: "p/file-guard/x", BaseRef: "b0", HeadRef: head,
+		Metadata: map[string]any{"ruleHash": "r"}})
+	require.NoError(t, err)
+	_, err = s.RecordCheck(id, checkstore.CheckRecord{Subject: "changeset", Kind: "k", Status: checkstore.StatusFail})
+	require.NoError(t, err)
+	require.NoError(t, s.FinishRun(id))
+	return id
+}
+
+func TestMigration_AnOldSessionKeepsItsRefusalsAndPasses(t *testing.T) {
+	dir := repo(t)
+	oldLayout(t, dir, "s1", func(s checkstore.Store) {
+		failedRun(t, s, "hBad")
+		_, err := s.RecordRun(checkstore.CheckRun{BatchID: "b", CheckID: "p/file-guard/x", BaseRef: "b0", HeadRef: "hGood", Complete: true})
+		require.NoError(t, err)
+	})
+	st, err := Open(dir, "s1", os.Stderr)
+	require.NoError(t, err)
+	defer st.Close()
+	refs, err := st.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	require.Len(t, refs.Failed, 1, "the refusal is still owed")
+	assert.Equal(t, "hBad", refs.Failed[0].Head)
+	require.Len(t, refs.Passed, 1)
+	status, err := st.CheckStatus(false, "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, status)
+}
+
+func TestMigration_ARunningRunPostponesItAndTheCycleUsesTheOldFile(t *testing.T) {
+	dir := repo(t)
+	var runID string
+	path := oldLayout(t, dir, "s1", func(s checkstore.Store) {
+		failedRun(t, s, "hBad")
+		id, err := s.RecordRun(checkstore.CheckRun{BatchID: "b", CheckID: "p/file-guard/x", BaseRef: "b0", HeadRef: "hLive"})
+		require.NoError(t, err)
+		runID = id // recorded RUNNING, never finished: a Stop is evaluating
+	})
+	st, err := Open(dir, "s1", os.Stderr)
+	require.NoError(t, err)
+	assert.Equal(t, path, st.Path(), "this cycle keeps the old layout, nothing it recorded is hidden")
+	refs, err := st.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 1)
+	st.Close()
+	repoPath, err := sessionpath.RepoChecksDB(dir)
+	require.NoError(t, err)
+	if ro, err := checkstore.OpenFamilyReadOnly(repoPath, "s1"); err == nil {
+		rows, _ := ro.Query("select count(*) as n from check_runs")
+		assert.EqualValues(t, 0, rows[0]["n"], "nothing was migrated while the Stop ran")
+		ro.Close()
+	}
+
+	// The old Stop finishes (a late write by the older binary): the next hook migrates.
+	old, err := checkstore.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, old.FinishRun(runID))
+	require.NoError(t, old.Close())
+	st, err = Open(dir, "s1", os.Stderr)
+	require.NoError(t, err)
+	defer st.Close()
+	assert.Equal(t, repoPath, st.Path())
+	rows, err := st.Query("select count(*) as n from check_runs")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, rows[0]["n"])
+}
+
+func TestMigration_AnOldLayoutWriteAfterTheImportIsPickedUpNextHook(t *testing.T) {
+	dir := repo(t)
+	var runID string
+	path := oldLayout(t, dir, "s1", func(s checkstore.Store) { failedRun(t, s, "h1") })
+	st, err := Open(dir, "s1", nil)
+	require.NoError(t, err)
+	st.Close()
+
+	// An older binary, still running when the new one was installed, writes after the import:
+	// a new run, and a run finishing that was already running at import time is not possible
+	// here (running runs postpone), so a new refusal is the late write.
+	old, err := checkstore.Open(path)
+	require.NoError(t, err)
+	runID = failedRun(t, old, "h2")
+	require.NoError(t, old.Close())
+	require.NotEmpty(t, runID)
+
+	st, err = Open(dir, "s1", nil)
+	require.NoError(t, err)
+	defer st.Close()
+	refs, err := st.RunRefs("p/file-guard/x")
+	require.NoError(t, err)
+	assert.Len(t, refs.Failed, 2, "the late write was not lost")
+	rows, err := st.Query("select count(*) as n from check_runs")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, rows[0]["n"], "and nothing was duplicated")
+}
+
+func TestMigration_ConcurrentHooksMigrateOnceWithoutDuplicates(t *testing.T) {
+	dir := repo(t)
+	oldLayout(t, dir, "s1", func(s checkstore.Store) {
+		for i := 0; i < 20; i++ {
+			failedRun(t, s, fmt.Sprintf("h%d", i))
+		}
+	})
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st, err := Open(dir, "s1", nil)
+			if err != nil {
+				errs <- err
+				return
+			}
+			st.Close()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	st, err := Open(dir, "s1", nil)
+	require.NoError(t, err)
+	defer st.Close()
+	rows, err := st.Query("select count(*) as n from check_runs")
+	require.NoError(t, err)
+	assert.EqualValues(t, 20, rows[0]["n"])
+}
