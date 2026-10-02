@@ -134,9 +134,6 @@ func TestSessionFolders_AnUnreadableRegistryIsAnError(t *testing.T) {
 	p := corruptRegistry(t, initRepo(t))
 	_, err := sessionFolders(p)
 	require.Error(t, err)
-	_, err = foldersTargeted(HookPayload{Cwd: p.Cwd, SessionID: p.SessionID, TranscriptPath: p.TranscriptPath,
-		ToolName: "Bash", ToolInput: []byte(`{"command":"git -C /tmp commit -m x"}`)})
-	assert.Error(t, err, "a Bash call's folders cannot be told from an unreadable registry")
 }
 
 // The Stop does not exit early on "no rules here" while the folder registry is unreadable: it

@@ -279,36 +279,3 @@ func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
 	}
 	return out, nil
 }
-
-// foldersTargeted is the registered folders of this agent (besides its own tree) that a Bash
-// call's git commands run in: the repositories whose own rules apply to the call.
-// A registry that cannot be read is an error, never "no folders": the call is then refused.
-func foldersTargeted(p HookPayload) ([]string, error) {
-	dirs := commandFolders(p)
-	if len(dirs) == 0 {
-		return nil, nil
-	}
-	registered, err := sessionFolders(p)
-	if err != nil {
-		return nil, err
-	}
-	if len(registered) == 0 {
-		return nil, nil
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, dir := range dirs {
-		tree, err := gitrepo.Root(dir)
-		if err != nil || tree == "" {
-			continue
-		}
-		tree = filepath.Clean(tree)
-		for _, f := range registered {
-			if sameDir(f.Path, tree) && !seen[f.Path] {
-				seen[f.Path] = true
-				out = append(out, f.Path)
-			}
-		}
-	}
-	return out, nil
-}
