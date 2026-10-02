@@ -399,14 +399,27 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 	}
 }
 
-// T026_06: a file the agent COMMITS mid-cycle is judged on the committed bytes.
+// T026_06: a file the agent COMMITS mid-cycle is judged on the committed bytes, and the
+// verdict recorded for it stays settled.
 //
-// What counts is that work already committed still reaches a rule (016 and 023_11
-// show the same): the range holds the commit, not only outstanding work. (That a
-// settled verdict is not re-asked on a later cycle is a property of the range a
-// caller states, covered by 022_multi_cycle; the Stop no longer remembers passes.)
-func TestT026_06_CommittedWorkIsJudged(t *testing.T) {
+// difference_spans_both is covered — 016 and 023_11 both show committed work
+// still reaching a rule. What is NOT covered is what happens to the VERDICT
+// across that boundary: the range holds the commit on the next cycle too, so the
+// committed file is in front of the rule again, and re-asking a model about the
+// same range is the cost a verdict cache exists to avoid. The recorder (a script)
+// runs every time by design; a judge is asked only when the results hold no
+// verdict for exactly what it would be given.
+//
+// The shape: cycle one writes and commits; cycle two touches something else, which
+// makes the range a different question and asks the judge again; and a further
+// `sr check run` over that same range asks nothing.
+func TestT026_06_CommittedWorkIsJudgedOnceAndStaysSettled(t *testing.T) {
 	e, proj, ledger := project(t)
+	e.FileGuard(proj, "verdict", "match: \"**/*.md\"\nchecks:\n  - judge: ./rubric.md.j2\n",
+		map[string]string{"rubric.md.j2": "Does this change hold up?\n{{ change }}\n"})
+	e.CommitAll(proj, "the judged rule")
+	const promptFile = ".git/judge-prompt"
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": true, "reasoning": "fine"}`)
 
 	first := runOne(t, e, proj, ledger, "s-026-06", Turns("done",
 		Write("w1", "committed.md", "written then committed\n"),
@@ -417,7 +430,31 @@ func TestT026_06_CommittedWorkIsJudged(t *testing.T) {
 		t.Fatalf("the file is still outstanding (%q), so this does not test the committed case", status)
 	}
 	if n := countPath(first, "committed.md"); n == 0 {
-		t.Fatalf("work the agent committed mid-cycle was not judged: %v", first)
+		t.Fatalf("work the agent committed mid-cycle was not judged: %v — a difference that "+
+			"only looked at outstanding work found nothing and called the cycle empty", first)
+	}
+	asked := e.JudgeCalls(proj, promptFile, "")
+	if asked == 0 {
+		t.Fatalf("the judge was never asked about the committed file")
+	}
+	if p := e.JudgePrompt(proj, promptFile); !strings.Contains(p, "written then committed") {
+		t.Fatalf("the judge was not shown the committed bytes:\n%s", p)
+	}
+
+	// Cycle two touches something else; the range holds both files and is judged as a whole.
+	second := runOne(t, e, proj, ledger, "s-026-06", Turns("done", Write("w2", "elsewhere.md", "cycle two\n")))
+	if !changesetkit.Saw(second, "elsewhere.md") {
+		t.Fatalf("cycle two reported nothing at all: %v — the silence below proves nothing", second)
+	}
+	settled := e.JudgeCalls(proj, promptFile, "")
+	if settled == asked {
+		t.Fatalf("cycle two never asked the judge about its own work (%d calls throughout)", settled)
+	}
+
+	// The same range again: the verdict is in the results, and nothing is asked.
+	e.CheckRunRaw(proj, "s-026-06", "origin/main", "HEAD")
+	if again := e.JudgeCalls(proj, promptFile, ""); again != settled {
+		t.Fatalf("a settled verdict was re-asked: %d judge calls after the second cycle, %d after re-running the same range", settled, again)
 	}
 }
 
