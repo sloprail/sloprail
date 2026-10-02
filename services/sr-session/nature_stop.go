@@ -61,8 +61,12 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	}
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
-	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 && len(sessionFoldersOf(p)) == 0 {
-		return "" // no rule here, and no other folder whose rules commit-required covers
+	// An unreadable folder registry is not "no folders": it falls through to the steps that refuse.
+	registered, foldersErr := sessionFolders(p)
+	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 && len(registered) == 0 && foldersErr == nil && !hasTrackedRanges(p) {
+		// No rule here, no other folder whose rules commit-required covers, and no range of the
+		// session (a sub-agent's worktree, another repository) the root's Stop would verify.
+		return ""
 	}
 
 	// The state maps, loaded once and shared across all four steps.
@@ -115,7 +119,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
 	commitOwed := false
-	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap), reg); reason != "" {
+	if reason := commitRequired(cmd, p, loaded.FileGuards, store, reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
 		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
 	}
@@ -161,7 +165,7 @@ func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.
 	var refusals []string
 
 	commitOwed := false
-	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap), reg); reason != "" {
+	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
 		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
 	}

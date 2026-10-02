@@ -35,6 +35,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,7 +122,9 @@ checks:
 // with three `on` triggers is the vehicle — and a command kind (PreCommandInvoke)
 // is one only a gate can name.
 func TestT017_02_OneGuardrailOnSeveralKindsIsToldWhichIsWhich(t *testing.T) {
-	e := New(t)
+	// The harness's own pre-Stop `sr-checks run` is itself a command a gate on commands is
+	// handed; this test counts only the events the scenario causes.
+	e := New(t, harness.NoAutoCheck())
 	proj := e.Project()
 	e.Gate(proj, "everything", `on:
   - event: PreFileCreate

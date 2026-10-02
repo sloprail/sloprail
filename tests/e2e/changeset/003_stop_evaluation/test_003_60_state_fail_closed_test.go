@@ -32,9 +32,11 @@ func damageState(t *testing.T, e *Env, proj, sess string) string {
 // ran, with a line on stderr and a pass.
 func TestT003_60_AStateThatCannotBeOpenedStillJudgesFileGuards(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
-	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words")
-	e.CommitAll(proj, "add b")
 
+	// The judging turn (`sr-checks run`, inside the session: a run without one stores no
+	// refusal) judges and stores the verdict. The Stop only reads verdicts, and cannot name the
+	// session, so it refuses both for that and for the violation the stored verdict carries.
+	e.Run(proj, "s-003-60a", "add b", Turns("done", harness.CommitFile("c1", "docs/b.md", "FORBIDDEN words", "add b")))
 	payload, _ := json.Marshal(map[string]any{"cwd": proj, "stop_hook_active": false, "hook_event_name": "Stop"})
 	res := e.CLIDirectStdinEnv(proj, string(payload), e.SessionEnv(""), "sr-session", "stop")
 	if !harness.Blocked(res) || !strings.Contains(res.Output, refusalText) {

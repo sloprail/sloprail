@@ -52,3 +52,58 @@ func TestRaiseBaseToRuleFloor_FromTheEmptyTreeAndLastChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, beforeEdit, r.Base, "the rule's LAST change sets the floor")
 }
+
+func TestRaiseBaseToRuleFloor_ARuleStandingAtTheBaseStaysStrict(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	base := commitIn(t, dir, "seed.txt", "s")
+	commitIn(t, dir, "bad.txt", "work under the rule")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v2")
+	head := commitIn(t, dir, "y.txt", "y")
+
+	r, err := RaiseBaseToRuleFloor(dir, Range{Base: base, Head: head}, ruleDir)
+	require.NoError(t, err)
+	assert.Equal(t, base, r.Base, "a rule that stood at the base is not raised by a later edit")
+}
+
+func TestRaiseBaseToRuleFloor_ARuleAbsentFromHeadsHistoryRaisesByDate(t *testing.T) {
+	dir := initRepo(t)
+	base := commit(t, dir, "seed.txt", "s")
+	git(t, dir, "switch", "-q", "-c", "old")
+	commitAt(t, dir, "early.txt", "early", "2020-01-01T00:00:00Z")
+	early := git(t, dir, "rev-parse", "HEAD")
+	commitAt(t, dir, "late.txt", "late", "2030-01-01T00:00:00Z")
+	oldTip := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "switch", "-q", "-")
+	commitAt(t, dir, ruleDir+"/file-guard.yaml", "match: '*'", "2025-01-01T00:00:00Z")
+
+	r, err := RaiseBaseToRuleFloor(dir, Range{Base: base, Head: oldTip}, ruleDir)
+	require.NoError(t, err)
+	assert.Equal(t, early, r.Base, "work made on the older branch before the rule's commit is not its debt")
+}
+
+// commitAt is commitIn with the commit dated at the given time.
+func commitAt(t *testing.T, dir, rel, body, date string) string {
+	t.Helper()
+	t.Setenv("GIT_COMMITTER_DATE", date)
+	t.Setenv("GIT_AUTHOR_DATE", date)
+	return commitIn(t, dir, rel, body)
+}
+
+// The floor only ever RAISES the base: a rule added on a side branch cut before the base and
+// merged into the range has a floor (its add commit's parent) older than the merge-base; the
+// range is not widened back to the work that already landed.
+func TestRaiseBaseToRuleFloor_NeverLowersTheBase(t *testing.T) {
+	dir := initRepo(t)
+	commitIn(t, dir, "seed.txt", "s")
+	git(t, dir, "checkout", "-q", "-b", "side")
+	commitIn(t, dir, ruleDir+"/file-guard.yaml", "v1")
+	git(t, dir, "checkout", "-q", "-")
+	base := commitIn(t, dir, "landed.txt", "already landed work")
+	git(t, dir, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+	head := git(t, dir, "rev-parse", "HEAD")
+
+	r, err := RaiseBaseToRuleFloor(dir, Range{Base: base, Head: head}, ruleDir)
+	require.NoError(t, err)
+	assert.Equal(t, base, r.Base, "a floor before the merge-base is not used")
+}

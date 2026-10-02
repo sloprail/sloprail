@@ -99,7 +99,9 @@ require:
 	if first := stopRefusal(e, proj, sess); !strings.Contains(first, "--amend") {
 		t.Fatalf("premise: an unpushed HEAD should be offered the amend:\n%s", first)
 	}
-	e.Git(proj, "update-ref", "refs/remotes/origin/main", "HEAD")
+	// Pushed to a branch that is not the default one: pushed to the default branch it would leave
+	// an empty range (the base is the merge base with the default branch; CI on push covers that).
+	e.Git(proj, "update-ref", "refs/remotes/origin/feature", "HEAD")
 	e.Run(proj, sess, "go on", Turns("done", Bash("b1", "true")))
 	all := e.AllBlockingErrorsFrom(proj, sess, "Stop")
 	refusal := all[len(all)-1]

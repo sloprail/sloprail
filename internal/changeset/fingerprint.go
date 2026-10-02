@@ -1,99 +1,92 @@
 package changeset
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"sort"
 
-	"github.com/sloprail/sloprail/internal/fingerprint"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
-// Fingerprint says what a check's input IS, as one short string.
+// GuardFingerprint says what a guard's verdict over one subject is about, as one short string:
+// the cache key's last part (the rest — rule, rule hash, the guard's fixed step id, subject id —
+// is the checkcache key's own, and the rule hash covers every script and template of the rule).
 //
-// It is the check's cache key, so it also covers what the verdict depends on
-// besides the input: the rule's hash (an edited rubric, script or template
-// invalidates every earlier verdict) and the model (a different judge is a
-// different verdict). a10n's key left both out and kept serving stale passes.
+// It is the sha256 of three parts, none of which depends on the session or the history:
 //
-// The input part covers what the check is given: the files (paths, statuses, both
-// contents, both marker sets, diffs), the others, the citations' quotes (not where in a
-// transcript they were found), the subject and the context. It never covers a commit
-// SHA: a rebase or an amend changes every SHA and none of the content. Base, Head and
-// every commit's SHA are blanked before hashing.
+//   - files: FilesPart, the path and content of the subject's files, ALWAYS, whether or not any check
+//     reads them: the verdict is about those bytes.
+//   - subjectFP: the "fingerprint" the rule's `subjects:` script gave this subject, for whatever
+//     the verdict depends on beyond the files (a file a check opens with its own tools). It
+//     must be session-independent. Empty without `subjects:`.
+//   - citations: for a `require: citation` rule only, CitationPart: the quotes of the
+//     citations that ground the subject.
 //
-// Commit subjects, bodies and trailers are covered only by FingerprintWithCommits, for a
-// rule that reads them (`require: citation` reads its citations from the trailers): for any
-// other rule a reword is not an input, and folding it in would invalidate cached passes
-// for nothing.
-//
-// It deliberately covers nothing more. a10n folded extra context into its
-// fingerprint and got cascades of re-judging from changes that could not have
-// altered the verdict. The transcript path is left out for the same reason: it
-// names where the record is, not what the check reads.
-//
-// TODO: key per subject (the subject's own content) once `subjects:` splits a changeset;
-// today the one subject is the whole changeset.
-//
-// extra is whatever else the check is handed that is not in the payload: what a
-// `prepare` step inlined, the rendered prompt. Each part is length-prefixed, so
-// two parts cannot be re-cut into another pair with the same concatenation.
-func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, error) {
-	return fingerprintOf(p, false, ruleHash, model, extra)
+// No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
+// are length-prefixed, so two parts cannot be re-cut into another pair.
+func GuardFingerprint(files, subjectFP, citations string) string {
+	var buf []byte
+	for _, part := range []string{files, subjectFP, citations} {
+		buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
+		buf = append(buf, part...)
+	}
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:])
 }
 
-// FingerprintWithCommits is Fingerprint for a rule whose verdict depends on the commits'
-// subjects, bodies and trailers: they are hashed too (the SHAs still are not).
-func FingerprintWithCommits(p Payload, ruleHash, model string, extra ...string) (string, error) {
-	return fingerprintOf(p, true, ruleHash, model, extra)
+// CitationPart is what a `require: citation` rule's verdict additionally depends on: the
+// quotes (with their pools) of the citations that ground the payload's subject, sorted. Nothing
+// else of the range: not a commit's subject or body, not a trailer that grounds another
+// subject, never a commit SHA, and never where in a transcript a quote was found.
+func CitationPart(p Payload) (string, error) {
+	type quote struct {
+		Pool  []transcript.SourceType
+		Quote string
+	}
+	var quotes []quote
+	for _, c := range p.Changeset.ForSubject(p.Subject) {
+		quotes = append(quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
+	}
+	sort.Slice(quotes, func(i, j int) bool {
+		a, b := quotes[i], quotes[j]
+		if a.Quote != b.Quote {
+			return a.Quote < b.Quote
+		}
+		return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
+	})
+	body, err := json.Marshal(quotes)
+	return string(body), err
 }
 
-func fingerprintOf(p Payload, commits bool, ruleHash, model string, extra []string) (string, error) {
-	view := p
-	view.TranscriptPath = ""
-	view.Changeset.Base, view.Changeset.Head = "", ""
-	// With commits, subjects, bodies and trailers stay (citations are read from the trailers,
-	// so a reworded commit is a new input); only the SHAs, which say nothing about content, go.
-	view.Changeset.Commits = nil
-	if commits {
-		view.Changeset.Commits = make([]Commit, len(p.Changeset.Commits))
-		for i, c := range p.Changeset.Commits {
-			c.SHA = ""
-			view.Changeset.Commits[i] = c
+// FilesPart is the path and content of the subject's matched files, in the subject's order:
+// the bytes the verdict is about, and where they are (the same bytes at a new path have never
+// been judged there: a rule's prompt and its match are about the path too), keyed whether or
+// not the template renders them. A deleted file is marked as such; no SHA, no base.
+func FilesPart(p Payload) string {
+	byPath := make(map[string]File, len(p.Changeset.Files))
+	for _, f := range p.Changeset.Files {
+		byPath[f.Path] = f
+	}
+	paths := p.Subject.Files
+	if len(paths) == 0 {
+		for _, f := range p.Changeset.Files {
+			paths = append(paths, f.Path)
 		}
 	}
-	view.Changeset.Files = make([]File, len(p.Changeset.Files))
-	for i, f := range p.Changeset.Files {
-		f.Commits, f.Substantive = blankSHAs(f.Commits), nil
-		view.Changeset.Files[i] = f
+	var buf []byte
+	for _, path := range paths {
+		f := byPath[path]
+		content := f.NewContent
+		if f.Status == "D" {
+			content = "\x00deleted"
+		}
+		buf = binary.BigEndian.AppendUint64(buf, uint64(len(path)))
+		buf = append(buf, path...)
+		buf = binary.BigEndian.AppendUint64(buf, uint64(len(content)))
+		buf = append(buf, content...)
 	}
-	// A citation is its QUOTE and the pool it resolved in: where in which transcript it was found
-	// (path, line, the whole cited message, the tool call that printed it) is only known where the transcript is, and a result
-	// found by the author must be found by anyone who sees the same quote in the commit.
-	view.Changeset.Citations = make([]Citation, len(p.Changeset.Citations))
-	for i, c := range p.Changeset.Citations {
-		c.Commits = blankSHAs(c.Commits)
-		c.Citation.Path, c.Citation.Line, c.Citation.Message, c.Citation.Call = "", 0, "", ""
-		view.Changeset.Citations[i] = c
-	}
-	body, err := json.Marshal(view)
-	if err != nil {
-		return "", err
-	}
-	buf := frame(frame(frame(nil, []byte(ruleHash)), []byte(model)), body)
-	for _, e := range extra {
-		buf = frame(buf, []byte(e))
-	}
-	return fingerprint.Of(buf), nil
-}
-
-func frame(buf, part []byte) []byte {
-	buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
-	return append(buf, part...)
-}
-
-// blankSHAs keeps how many commits there were and drops which.
-func blankSHAs(shas []string) []string {
-	if shas == nil {
-		return nil
-	}
-	return make([]string, len(shas))
+	return string(buf)
 }

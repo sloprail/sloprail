@@ -25,7 +25,7 @@ func TestT003_13_ACommitThatTouchesTheRulesFolderAndViolatesItIsRefused(t *testi
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)})
 	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
 	e.CommitAll(proj, "the rule, and work that breaks it, together")
-	r := e.StopNow(proj, "s-003-13", false)
+	r := e.StopJudged(proj, "s-003-13", false)
 	if !harness.Blocked(r) || !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 		t.Fatalf("a commit that adds a rule and violates it was not refused:\n%s", r.Output)
 	}
@@ -33,7 +33,7 @@ func TestT003_13_ACommitThatTouchesTheRulesFolderAndViolatesItIsRefused(t *testi
 	// Fix it, and let the rule pass: a clean range, and the watermark at its head.
 	e.WriteFile(proj, "docs/bad.md", "clean words\n")
 	e.CommitAll(proj, "fix the violation")
-	if r := e.StopNow(proj, "s-003-13", false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, "s-003-13", false); harness.Blocked(r) {
 		t.Fatalf("the fixed range was refused:\n%s", r.Output)
 	}
 
@@ -41,7 +41,7 @@ func TestT003_13_ACommitThatTouchesTheRulesFolderAndViolatesItIsRefused(t *testi
 	e.WriteFile(proj, ".sloprail/file-guard/docs/check.sh", recorder(led)+"# a harmless edit\n")
 	e.WriteFile(proj, "docs/worse.md", "FORBIDDEN again\n")
 	e.CommitAll(proj, "edit the rule, and break it, together")
-	r = e.StopNow(proj, "s-003-13", false)
+	r = e.StopJudged(proj, "s-003-13", false)
 	if !harness.Blocked(r) || !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 		t.Fatalf("a commit that edits a rule's folder and violates it was not refused:\n%s", r.Output)
 	}

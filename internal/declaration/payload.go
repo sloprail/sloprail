@@ -122,8 +122,8 @@ func (e FlatEvent) Event() event.Event { return event.Event(e) }
 // what a judge receives when no prepare is set (dot-dir-file-store/main.tsp
 // CheckPayload). `event` carries the file's own state; `transcriptPath` names the
 // session record a check can query for context the event itself does not carry
-// (which human message grounds this write); `context` is every declared context
-// by name, at parity with the file-guard's match scope.
+// (which human message grounds this write). It carries no `context`: a file-guard
+// judges committed bytes and cannot see session state.
 type CheckPayload struct {
 	// Event is the file event — a FileEvent variant (always a Post*: a file-guard
 	// judges the settled file at Stop and never sees a Pre*). A FlatEvent, so its `kind` and fields are
@@ -135,9 +135,6 @@ type CheckPayload struct {
 	// TranscriptPath names the session record a check reads for what the event
 	// does not carry.
 	TranscriptPath string `json:"transcriptPath"`
-
-	// Context is every declared context, by name, carrying `{active, payload}`.
-	Context map[string]natures.ContextState `json:"context"`
 }
 
 // GateCheckPayload is what a gate's script, prepare and judge receive on stdin

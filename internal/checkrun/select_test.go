@@ -16,7 +16,7 @@ func compileMatch(t *testing.T, src string) func(changeset.Scope) (bool, error) 
 	t.Helper()
 	m, err := guardrail.CompileFileMatch(src)
 	require.NoError(t, err)
-	return Selector(m, map[string]any{})
+	return Selector(m)
 }
 
 func TestChangesetMarkers_AreFilemodsScanInTheChangesetsType(t *testing.T) {
@@ -64,18 +64,9 @@ func TestChangesetSelector_NoMarkersIsFalseNotAnError(t *testing.T) {
 }
 
 func TestChangesetSelector_AMatchThatCannotDecideIsAnErrorNotAMiss(t *testing.T) {
-	sel := compileMatch(t, `context["goal"].active`)
+	sel := compileMatch(t, `trailers["Absent"][0] == "x"`)
 	_, err := sel(changeset.Scope{Path: "x.go", Status: "M"})
 	assert.Error(t, err, "a match that could not decide has not decided the file is none of the rule's business")
-}
-
-func TestChangesetSelector_ContextIsTheCallersToGive(t *testing.T) {
-	m, err := guardrail.CompileFileMatch(`context["goal"].active == true`)
-	require.NoError(t, err)
-	sel := Selector(m, map[string]any{"goal": map[string]any{"active": true}})
-	ok, err := sel(changeset.Scope{Path: "x.go", Status: "M"})
-	require.NoError(t, err)
-	assert.True(t, ok)
 }
 
 func TestChangesetSelector_ARenameIsAskedOnTheOldPathToo(t *testing.T) {

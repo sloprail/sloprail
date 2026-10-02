@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/declaration"
-	"github.com/sloprail/sloprail/internal/natures"
 )
 
 func citeGuard(t *testing.T, repo, match, when string) declaration.FileGuard {
@@ -28,7 +27,7 @@ func citeGuard(t *testing.T, repo, match, when string) declaration.FileGuard {
 
 func staged(t *testing.T, repo string, amend bool, gs ...declaration.FileGuard) ([]string, error) {
 	t.Helper()
-	return StagedNeedingCitation(StagedParams{Guards: gs, Root: repo, Amend: amend, ContextMap: map[string]natures.ContextState{}})
+	return StagedNeedingCitation(StagedParams{Guards: gs, Root: repo, Amend: amend})
 }
 
 func stage(t *testing.T, repo, name, body string) {

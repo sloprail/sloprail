@@ -21,7 +21,6 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
-	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -68,6 +67,16 @@ type evalFixture struct {
 	ledger  string
 	guard   declaration.FileGuard
 	results checkstore.Store
+	// transcript is the session's transcript the runs read ("" = a run with no session).
+	transcript string
+}
+
+// withSession makes the fixture's runs happen inside a session (an empty transcript).
+func (f *evalFixture) withSession(t *testing.T) *evalFixture {
+	t.Helper()
+	f.transcript = filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(f.transcript, nil, 0o644))
+	return f
 }
 
 // newEvalFixture is a repository with a seed commit, then a committed rule "docs"
@@ -98,7 +107,7 @@ func (f *evalFixture) params(t *testing.T, results checkstore.Store) Params {
 	require.NoError(t, err)
 	return Params{
 		Guards: []declaration.FileGuard{f.guard}, Root: f.repo, Range: rng, Cwd: f.repo, SessionID: "s-eval",
-		ContextMap: map[string]natures.ContextState{}, Store: results,
+		Store: results, Transcript: f.transcript,
 	}
 }
 
@@ -108,7 +117,7 @@ func (f *evalFixture) newEvaluation(t *testing.T, results checkstore.Store) *cha
 	p := f.params(t, results)
 	ev := &changesetEvaluation{
 		errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p,
-		contextMap: p.ContextMap, context: map[string]any{}, store: results, rng: p.Range, batch: "b1",
+		store: results, rng: p.Range, batch: "b1",
 	}
 	ev.identity = ev.runIdentity()
 	return ev
@@ -280,7 +289,7 @@ func TestRunRequirement_CitationPerFile(t *testing.T) {
 	ev := f.newEvaluation(t, f.results)
 	req := dispatchcore.Request{Nature: dispatchcore.NatureFileGuard, Dir: f.guard.Dir, Changeset: &changeset.Payload{}, Require: []declaration.Prerequisite{prereq}}
 	require := func(cs changeset.Changeset) (dispatchcore.Verdict, error) {
-		return ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), "", nil), "", nil)
+		return ev.runRequirement(f.guard, req, prereq, "require:citation", changeset.NewPayload(cs, changeset.Whole(cs), ""), "", nil)
 	}
 
 	t.Run("every file grounded", func(t *testing.T) {
@@ -521,4 +530,389 @@ func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
 	require.True(t, refused)
 	assert.Contains(t, r.Reason, "could not be evaluated")
 	assert.Contains(t, r.Reason, "docs/a.md")
+}
+
+// Every check kind is cached by the guard's content: the same input is a hit (pass or fail,
+// a fail replayed), and `verify` only ever reads what `run` stored.
+func TestEvaluate_AScriptIsCachedByContentAndAFailIsReplayed(t *testing.T) {
+	f := newEvalFixture(t, nil).withSession(t)
+	f.commitDoc(t, "docs/a.md", "clean")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 1, f.runs(t), "a miss runs the script")
+	_, refused = f.evaluate(t, f.results)
+	require.False(t, refused)
+	assert.Equal(t, 1, f.runs(t), "a hit does not run it again")
+
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	require.Equal(t, 2, f.runs(t), "changed content is a miss")
+	r, refused = f.evaluate(t, f.results)
+	require.True(t, refused, "the stored fail is replayed")
+	assert.Contains(t, r.Reason, "forbidden words")
+	assert.Equal(t, 2, f.runs(t), "a replayed fail does not run the script")
+}
+
+func TestEvaluate_VerifyNeverExecutesAnythingAndOnlyReadsStoredVerdicts(t *testing.T) {
+	f := newEvalFixture(t, nil).withSession(t)
+	f.commitDoc(t, "docs/a.md", "clean")
+	verify := func() ([]FileGuardResult, []CheckOutcome) {
+		p := f.params(t, f.results)
+		p.Verify = true
+		return Evaluate(p)
+	}
+
+	got, outcomes := verify()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+	assert.Contains(t, got[0].Reason, "sr-checks run --base")
+	assert.Equal(t, "missing", outcomes[0].Status)
+	assert.Equal(t, 0, f.runs(t), "verify did not run the script")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 1, f.runs(t))
+	got, _ = verify()
+	assert.Empty(t, got, "the stored pass is read")
+	assert.Equal(t, 1, f.runs(t), "verify did not run the script")
+
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	got, _ = verify()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet", "new content has no stored verdict")
+	_, _ = f.evaluate(t, f.results)
+	got, _ = verify()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "forbidden words", "the stored fail's reasons")
+	assert.Equal(t, 2, f.runs(t), "verify did not run the script")
+}
+
+// An engine error is no verdict: the next run starts the guard again.
+func TestEvaluate_AnEngineErrorStoresNoVerdict(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	_, refused := f.evaluate(t, failingStore{Store: f.results, check: errors.New("db locked")})
+	require.True(t, refused)
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+}
+
+// `subjects:` splits the selected files into units, each cached on its own; its fingerprint is
+// part of the key, so a change in what a subject depends on re-runs only that subject.
+func TestEvaluate_SubjectsScriptKeysEachSubjectOnItsOwn(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) { g.Subjects = "./subjects.sh" })
+	dep := filepath.Join(t.TempDir(), "dep")
+	require.NoError(t, os.WriteFile(dep, []byte("1"), 0o644))
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		"printf '[{\"id\":\"a\",\"files\":[\"docs/a.md\"],\"fingerprint\":\"%s\"},{\"id\":\"b\",\"files\":[\"docs/b.md\"]}]' \"$(cat '" + dep + "')\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "subjects.sh"), []byte(script), 0o755))
+	f.commitDoc(t, "docs/a.md", "clean")
+	f.commitDoc(t, "docs/b.md", "clean")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 2, f.runs(t), "one run per subject")
+	_, refused = f.evaluate(t, f.results)
+	require.False(t, refused)
+	assert.Equal(t, 2, f.runs(t), "both subjects are hits")
+
+	require.NoError(t, os.WriteFile(dep, []byte("2"), 0o644))
+	_, refused = f.evaluate(t, f.results)
+	require.False(t, refused)
+	assert.Equal(t, 3, f.runs(t), "only the subject whose fingerprint moved is run again")
+
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	assert.Empty(t, got, "verify computes the same keys, without a session")
+	assert.Equal(t, 3, f.runs(t))
+}
+
+// The `subjects:` script is handed the same input in `run` and in `verify` (citations from the
+// trailers only), so a script that fingerprints its stdin cannot key the two differently.
+func TestEvaluate_SubjectsScriptSeesTheSameInputInRunAndVerify(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) { g.Subjects = "./subjects.sh" })
+	script := "#!/bin/sh\nh=$(cksum | cut -d' ' -f1)\n" +
+		"printf '[{\"id\":\"a\",\"files\":[\"docs/a.md\"],\"fingerprint\":\"%s\"}]' \"$h\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "subjects.sh"), []byte(script), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 1, f.runs(t))
+	assert.Empty(t, f.verifyReasons(t), "verify's subjects script saw the same stdin, so it finds run's verdict")
+	assert.Equal(t, 1, f.runs(t))
+}
+
+// A check whose prepare refuses (no transcript to read, fail-closed) has a verdict, a FAIL: it
+// is stored, so verify reads it instead of "not judged yet", and run replays it.
+func TestEvaluate_APrepareRefusalIsAStoredFailNotAnEngineError(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		require.NoError(t, os.WriteFile(filepath.Join(g.Dir, "prepare.sh"),
+			[]byte("#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"no standard to judge\"}'\nexit 1\n"), 0o755))
+		g.Checks = []declaration.Check{{Script: "./check.sh", Prepare: "./prepare.sh"}}
+	}).withSession(t)
+	f.commitDoc(t, "docs/a.md", "clean")
+
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "no standard to judge")
+
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "no standard to judge")
+	assert.NotContains(t, got[0].Reason, "not judged yet")
+}
+
+// citedFixture is a rule that requires a user citation, over a doc committed with a citation
+// trailer: the key is the one a real session computes.
+func citedFixture(t *testing.T) *evalFixture {
+	t.Helper()
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+	return f
+}
+
+func (f *evalFixture) verifyReasons(t *testing.T) []FileGuardResult {
+	t.Helper()
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	return got
+}
+
+// A `run` with no session cannot ground the trailers: it refuses saying so, and the refusal is
+// no verdict about the key (a real session computes the same key), so nothing is stored.
+func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
+	f := citedFixture(t)
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "needs a session to judge")
+	assert.Equal(t, 0, f.runs(t), "no check ran")
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet", "no FAIL was stored under the key")
+	assert.NotContains(t, got[0].Reason, "needs a session")
+	assert.Empty(t, guardRows(t, f.results, f.guard), "nothing is stored under the guard x subject key")
+}
+
+// A quote that does not resolve in a present session is a real refusal: stored as a FAIL.
+func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
+	f := citedFixture(t)
+	record := filepath.Join(t.TempDir(), "s-eval.jsonl")
+	require.NoError(t, os.WriteFile(record, []byte(""), 0o644))
+	p := f.params(t, f.results)
+	p.Transcript = record
+	ev := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p, store: f.results, rng: p.Range, batch: "b1"}
+	ev.identity = ev.runIdentity()
+	first, refused := ev.evaluate(f.guard)
+	require.True(t, refused)
+
+	rows := guardRows(t, f.results, f.guard)
+	require.Len(t, rows, 1, "run stored one verdict under the guard x subject key")
+	assert.Equal(t, checkstore.StatusFail, rows[0].Status)
+	assert.NotEmpty(t, rows[0].Fingerprint)
+	stored := rows[0]
+
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1, "verify reports the stored refusal (non-zero exit)")
+	assert.NotContains(t, got[0].Reason, "not judged yet")
+	assert.Equal(t, first.Reason, got[0].Reason, "verify reports the refusal's own reason")
+	assert.NotEmpty(t, got[0].Reason)
+
+	// A second run with the same input replays the stored FAIL: nothing new is recorded and
+	// no check script runs.
+	counting := &recordCountingStore{Store: f.results}
+	p2 := f.params(t, counting)
+	p2.Transcript = record
+	ev2 := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p2, store: counting, rng: p2.Range, batch: "b2"}
+	ev2.identity = ev2.runIdentity()
+	again, refused := ev2.evaluate(f.guard)
+	require.True(t, refused)
+	assert.Equal(t, first.Reason, again.Reason, "the stored refusal is replayed")
+	require.NotEmpty(t, counting.records)
+	for _, rec := range counting.records {
+		assert.Equal(t, true, rec.Metadata["replayed"], "%s is replayed from the store, not judged again", rec.Kind)
+	}
+	assert.Equal(t, 0, f.runs(t), "no check script ran")
+	rows = guardRows(t, f.results, f.guard)
+	require.Len(t, rows, 1)
+	assert.Equal(t, stored.Fingerprint, rows[0].Fingerprint, "same key")
+}
+
+// recordCountingStore collects the checks recorded through it.
+type recordCountingStore struct {
+	checkstore.Store
+	records []checkstore.CheckRecord
+}
+
+func (s *recordCountingStore) RecordCheck(runID string, c checkstore.CheckRecord) (string, error) {
+	s.records = append(s.records, c)
+	return s.Store.RecordCheck(runID, c)
+}
+
+// guardRows are the stored guard-level verdicts (kind "guard") of the rule's latest run.
+func guardRows(t *testing.T, st checkstore.Store, g declaration.FileGuard) []checkstore.CheckStatusRow {
+	t.Helper()
+	all, err := st.CheckStatus(false, g.Qualified())
+	require.NoError(t, err)
+	var out []checkstore.CheckStatusRow
+	for _, r := range all {
+		if r.Kind == guardKind {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// A guard's stored steps are its own subject's: another subject of the same rule contributes none.
+func TestStepsOf_AreFilteredByRuleAndSubject(t *testing.T) {
+	ev := &changesetEvaluation{}
+	g := declaration.FileGuard{Name: "r"}
+	ev.note(CheckOutcome{Rule: g.Qualified(), Subject: "a", Kind: "check[0]:script:x", Status: "pass"})
+	ev.note(CheckOutcome{Rule: g.Qualified(), Subject: "b", Kind: "check[0]:script:x", Status: "fail", Reason: "b's"})
+	ev.note(CheckOutcome{Rule: g.Qualified(), Subject: "docs/a.md", Kind: "require:citation", Status: "pass"})
+	ev.note(CheckOutcome{Rule: "other", Subject: "a", Kind: "k", Status: "pass"})
+	rr := &ruleRun{g: g, subject: changeset.Subject{ID: "a", Files: []string{"docs/a.md"}}}
+	rows := ev.stepsOf(rr)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "a", rows[0].Subject)
+	assert.Equal(t, "docs/a.md", rows[1].Subject)
+}
+
+// A stored citation refusal that offered to amend HEAD is replayed without the offer once HEAD
+// has been pushed: the advice depends on the repository now, the verdict on the key's input.
+func TestCurrentAdvice_AStoredAmendOfferIsDroppedOncePushed(t *testing.T) {
+	f := citedFixture(t)
+	ev := f.newEvaluation(t, f.results)
+	head := ev.rng.Head
+	cs := changeset.Changeset{Base: ev.rng.Base, Head: head, Files: []changeset.File{{Path: "docs/a.md", Commits: []string{head}}}}
+	stored := citeHowToFix(cs, []string{"docs/a.md"}, changeset.TrailerCitesUser, true, nil)
+	require.Contains(t, stored, "--amend")
+
+	assert.Equal(t, stored, ev.currentAdvice(stored), "unpushed and clean: the offer stands")
+	runGit(t, f.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	got := ev.currentAdvice(stored)
+	assert.NotContains(t, got, "--amend")
+	assert.Contains(t, got, "To undo the whole range", "the rest of the advice stays")
+	assert.Contains(t, got, "FOLLOW-UP commit")
+}
+
+func (f *evalFixture) evaluateWith(t *testing.T, record, batch string) (FileGuardResult, bool) {
+	t.Helper()
+	p := f.params(t, f.results)
+	p.Transcript = record
+	ev := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p, store: f.results, rng: p.Range, batch: batch}
+	ev.identity = ev.runIdentity()
+	return ev.evaluate(f.guard)
+}
+
+// A content check's FAIL is replayed even though a quote was unresolved when it ran: once the
+// quote resolves, the judge is not asked again (only a citation requirement's FAIL is re-judged).
+func TestEvaluate_AContentFailWithAnUnresolvedQuoteIsStillReplayed(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("FORBIDDEN"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	empty := filepath.Join(t.TempDir(), "empty.jsonl")
+	require.NoError(t, os.WriteFile(empty, nil, 0o644))
+	_, refused := f.evaluateWith(t, empty, "b1")
+	require.True(t, refused)
+	require.Equal(t, 1, f.runs(t))
+
+	resolved := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(resolved, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	r, refused := f.evaluateWith(t, resolved, "b2")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	assert.Equal(t, 1, f.runs(t), "the stored content fail is replayed, the judge is not asked again")
+}
+
+// A citation requirement's FAIL caused by an unresolved quote is re-judged once it resolves.
+func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *testing.T) {
+	f := citedFixture(t)
+	empty := filepath.Join(t.TempDir(), "empty.jsonl")
+	require.NoError(t, os.WriteFile(empty, nil, 0o644))
+	_, refused := f.evaluateWith(t, empty, "b1")
+	require.True(t, refused)
+
+	resolved := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(resolved, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	r2, refused := f.evaluateWith(t, resolved, "b2")
+	assert.False(t, refused, r2.Reason+"\n"+"the quote resolves now: the citation is judged again and holds")
+}
+
+// A judge that returned no parseable verdict is an engine-side failure, not a verdict on the
+// content; a script's refusal (whatever it says) and a real judge refusal are verdicts.
+func TestReturnedNoVerdict_OnlyAJudgeThatAnsweredNothing(t *testing.T) {
+	none := dispatchcore.Verdict{Refused: true, NoVerdict: true, Reason: "any wording at all"}
+	assert.True(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, none))
+	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Refused: true, Reason: "the judge did not produce a JSON verdict object (a real refusal that quotes it)"}), "typed, not by the reason text")
+	assert.False(t, returnedNoVerdict(declaration.Check{Script: "./c.sh"}, none), "a script's refusal is its verdict")
+	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Reason: none.Reason}), "not a refusal")
+}
+
+// Verify over a range whose latest run left the judge without a verdict says so, in the judge's
+// words; it is "not judged yet", never a stored FAIL.
+func TestEvaluate_VerifyNamesAJudgeThatReturnedNoVerdict(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	ev := f.newEvaluation(t, f.results)
+	runID, err := ev.record(checkstore.CheckRun{CheckID: f.guard.Qualified(), BaseRef: ev.rng.Base, HeadRef: ev.rng.Head})
+	require.NoError(t, err)
+	require.NoError(t, ev.recordCheck(runID, checkstore.CheckRecord{Subject: "changeset", Kind: "check[0]:judge:j.md.j2",
+		Status: checkstore.StatusError, Metadata: map[string]any{"reasoning": "the judge did not produce a JSON verdict object (after 2 attempts)", noVerdictMeta: true}}))
+
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet (the judge returned no verdict: the judge did not produce a JSON verdict object (after 2 attempts))")
+}
+
+// A run with no session (no transcript) stores no FAIL: a verdict may depend on the transcript,
+// so the author's later real run judges fresh. A pass is stored.
+func TestEvaluate_ASessionlessRunStoresNoFail(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	assert.Empty(t, guardRows(t, f.results, f.guard), "the refusal is not stored")
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+
+	f.withSession(t)
+	r, refused = f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	require.Equal(t, 2, f.runs(t), "the real run judged fresh")
+	rows := guardRows(t, f.results, f.guard)
+	require.Len(t, rows, 1)
+	assert.Equal(t, checkstore.StatusFail, rows[0].Status)
+
+	g := newEvalFixture(t, nil)
+	g.commitDoc(t, "docs/a.md", "clean")
+	_, refused = g.evaluate(t, g.results)
+	require.False(t, refused)
+	require.Len(t, guardRows(t, g.results, g.guard), 1, "a pass is stored")
 }

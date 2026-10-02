@@ -255,6 +255,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	if !hasReason(e, proj, sess, "R1") {
 		t.Fatalf("the duplicated-fact file did not block in the first cycle")
 	}
+	n1 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	// Cycle 2: work OUTSIDE the match. A block here can only be the re-fired bad
 	// file, judged afresh with reason R2.
@@ -262,8 +263,11 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	e.Run(proj, sess, "do unrelated non-matching work", Turns("done",
 		Write("w2", "memories/notes/unrelated.md", "a plain note the guard does not match"),
 	).ThenCommit("write the files"))
-	if !hasReason(e, proj, sess, "R2") {
-		t.Fatalf("an unfixed not-fine file was NOT re-judged on a cycle that never touched it — the re-fire did not happen")
+	// The verdict for the unchanged file is replayed (R1's words), so count refusals,
+	// not reasons: the outstanding file must refuse AGAIN on a cycle that never touched it.
+	n2 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+	if n2 <= n1 {
+		t.Fatalf("an unfixed not-fine file did NOT refuse again on a cycle that never touched it (%d refusals, was %d) — the re-fire did not happen", n2, n1)
 	}
 
 	// Cycle 3: FIX the file. Judge passes; the outstanding refusal clears.
@@ -272,6 +276,8 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 		Write("w3", "memories/updates/2026-08-18.md", cleanUpdate),
 	).ThenCommit("write the files"))
 
+	n3 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+
 	// Cycle 4: work OUTSIDE the match again, judge armed to refuse with a NEW
 	// reason. If the fix cleared the outstanding file, nothing re-fires and R4 never
 	// appears.
@@ -279,7 +285,7 @@ func TestT043_05_NotFineFileReFiresUntilFixed(t *testing.T) {
 	e.Run(proj, sess, "more unrelated non-matching work", Turns("done",
 		Write("w4", "memories/notes/another.md", "another plain unmatched note"),
 	).ThenCommit("write the files"))
-	if hasReason(e, proj, sess, "R4") {
+	if hasReason(e, proj, sess, "R4") || len(e.AllBlockingErrorsFrom(proj, sess, "Stop")) > n3 {
 		t.Errorf("a FIXED file kept re-firing: cycle 4 touched nothing the guard matches, yet a fresh block appeared")
 	}
 }

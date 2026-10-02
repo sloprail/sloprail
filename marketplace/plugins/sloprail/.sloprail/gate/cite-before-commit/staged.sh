@@ -200,6 +200,15 @@ if [ -n "$amending" ]; then
 else
   how="$cmds"
 fi
+# Quotes the session already recorded for these files (sr-file --cite): the agent has found them; they
+# only need to ride on the commit. Best effort: a failure here leaves the hint without them.
+rec=""
+if [ "${#invs[@]}" -gt 0 ] && rdir="$(dir_of "${invs[0]}")"; then
+  rec="$(cd "$rdir" && sr-checks staged --recorded "${files[@]}" 2>/dev/null | jq -r '"  recorded for \(.path): -m \"\(.trailer): \(.quote)\"" ' 2>/dev/null)" || rec=""
+fi
+[ -z "$rec" ] || how="$how
+Quotes this session already recorded for these files (carry one as a trailer, still chained behind a cite):
+$rec"
 jq -n --arg h "This commit changes files a file-guard requires a citation for: $list. Quote what grounds the change (the user's words, or a tool's output with --source-types tool_result) in front of the commit, and carry the same quote as a trailer on it: the file-guard checks the trailer at Stop and in CI.
   $how
 (Use Sloprail-Cites-Tool for a tool's output.)" '{hint: $h}'

@@ -49,37 +49,47 @@ import (
 // askAndMaybeRefuse asks the engine what the session has done, records the
 // answer, and refuses when the tree holds a file the rule objects to.
 //
-// A Stop gate, so it runs at a cycle's end — where the refusal-and-read-mark
-// interaction is measured — and its refusal RE-FIRES next cycle for as long as the
-// offending file is there. A file-guard is no longer the vehicle: it is judged by
-// `sr check run` over a commit range, outside any session, so it neither reads the
-// session's record nor holds its Stop. One rule for every cycle, so the refusing
-// cycle and the clean ones write to ONE ledger in order: the point is a session
-// that carries on with the same rule, and a rule that changed mid-session would be
-// a second variable.
-const askAndMaybeRefuse = `on:
-  - event: Stop
+// A NEW-FORMAT file-guard, after-check , so it runs at a cycle's end — where
+// the refusal-and-read-mark interaction is measured — and its refusal RE-FIRES
+// next cycle, the retained-refusal behavior this suite depends on. One rule for
+// every cycle, so the refusing cycle and the clean ones write to ONE ledger in
+// order: the point is a session that carries on with the same rule, and a rule
+// that changed mid-session would be a second variable. `match: "**/*.md"` selects every
+// markdown file in the committed changeset, whatever its status (A, M or D). The
+// check refuses on a "bad" path, so the recovering cycle clears the violation by
+// committing a change after which the range holds no such file (see ask.sh). The `answers` ledger has no `.md` suffix, so the
+// guard is never handed its own bookkeeping.
+const askAndMaybeRefuse = `match: "**/*.md"
 checks:
   - script: ./ask.sh
 `
 
-// askScript records the span it was handed, then refuses while the tree holds a
-// file whose name starts with "bad".
+// askScript records the span it was handed, then refuses if the event names a
+// path containing "bad".
 //
 // The record is named explicitly from the environment rather than taken from the
-// check's stdin: piping the check's payload in makes the command answer "no
-// transcript path on the hook payload" every time — an answer in which every
-// marker below reads as absent, indistinguishable from correct narrowing.
-// SR_TRANSCRIPT and SR_WORKSPACE are set on every check process by the dispatch
-// for exactly this. The ledger is a file outside the project.
+// check's stdin: a file-guard check is handed the flat CheckPayload, and piping
+// that in makes the command answer "no transcript path on the hook payload" every
+// time — an answer in which every marker below reads as absent, indistinguishable
+// from correct narrowing. SR_TRANSCRIPT and SR_WORKSPACE are set on every check
+// process by the new dispatch for exactly this. The ledger is
+// a file outside the project.
 //
 // The answer is bracketed so one cycle's span can be told from the next's even
 // when a cycle is driven round more than once by a block.
 //
+// The refusal keys on the event's own `"path"` field, NOT on "bad" appearing
+// anywhere in the payload. That distinction was load-bearing under the old broad
+// binding, because the `answers` ledger quoted the offending file's name and the
+// guard could re-observe it. Under `match: "**/*.md"` the guard never sees its own
+// `answers` at all, but keeping the `"path":"bad` match is free and keeps the
+// intent legible — it is the event's own subject, whose quotes are literal, and it
+// sidesteps any escaped `\"file_path\":\"bad-file.md\"` riding inside newContent.
+//
 // New-format refusal contract: exit non-zero refuses and a `{"reason":…}` on
-// stdout is the reason the agent is told.
+// stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
 const askTemplate = `#!/bin/sh
-cat >/dev/null
+payload="$(cat)"
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
   echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "LEDGER"
   exit 0
@@ -90,9 +100,9 @@ fi
     sr-session query 2>&1 | tr -d '\n'
   printf '>>>\n'
 } >> "LEDGER"
-for f in "$SR_WORKSPACE"/bad*; do
-  if [ -e "$f" ]; then echo '{"reason":"this file is not acceptable"}'; exit 1; fi
-done
+case "$payload" in
+  *'"path":"bad'*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
+esac
 exit 0
 `
 
@@ -120,7 +130,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	// committed with the agent's work, and a rule whose folder changed forgets its
 	// earlier passes.
 	ledger := filepath.Join(t.TempDir(), "answers")
-	e.Gate(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": strings.ReplaceAll(askTemplate, "LEDGER", ledger)})
+	e.FileGuard(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": strings.ReplaceAll(askTemplate, "LEDGER", ledger)})
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }
@@ -148,7 +158,9 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	// Each cycle is identified by the file its tool call names, because that is
 	// what the query hands back. The prompts differ too, but they are user
 	// records and never appear in the span.
-	const first = "one.md"
+	// The turn is named by what it wrote, not by its path: a file-guard's refusal lists the
+	// files of the whole range, so "one.md" rides in the later cycles' refusal text.
+	const first = "cycle one"
 	const second = "bad-file.md"
 	const third = "three.md"
 
@@ -175,7 +187,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		Write("w2", "bad-file.md", "violates\n"),
 	).ThenCommit("the agent's work"))
 	// The premise: the cycle really did not finish. Read from the blocking
-	// attachments rather than the stream — a Stop gate's refusal blocks the Stop
+	// attachments rather than the stream — a Post hook's refusal blocks the Stop
 	// and its words travel as a hook_blocking_error record, never as a line on
 	// the result stream.
 	if blocking := e.BlockingErrors(proj, sess); len(blocking) == 0 ||
@@ -192,7 +204,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 
 	// THE MARK ITSELF, and this assertion is the one that discriminates.
 	//
-	// The span the next cycle is handed cannot settle this on its own: a Stop
+	// The span the next cycle is handed cannot settle this on its own: a Post
 	// refusal blocks the Stop, so the mock drives the agent round again within
 	// the same cycle, and the refused turn is re-offered by that retry whatever
 	// the mark did. Measured — with the `!dispatchPostEvents` guard removed so a

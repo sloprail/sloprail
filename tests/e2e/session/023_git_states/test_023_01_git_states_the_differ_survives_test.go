@@ -93,15 +93,8 @@ func ledgerFiles(t *testing.T, ledger string) []changesetkit.Observed {
 // runOne drives a single cycle and returns everything the rule was handed.
 func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.Scenario) []changesetkit.Observed {
 	t.Helper()
-	// The harness's pre-Stop check and the Stop's verify of the tracked range each
-	// dispatch the script too (script checks are not cached), so the ledger already holds
-	// their sightings. What this cycle's range hands the rule is the entry its own
-	// `sr check run --base --head` adds: read only from after the Run.
-	base := e.Git(proj, "rev-parse", "HEAD")
 	e.Run(proj, sess, "cycle", s)
-	seen := len(harness.ReadLedgerLines(t, ledger))
-	e.CheckRunRange(proj, sess, base, "HEAD")
-	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger)[seen:])
+	return ledgerFiles(t, ledger)
 }
 
 func hasStatus(got []changesetkit.Observed, path, status string) bool {

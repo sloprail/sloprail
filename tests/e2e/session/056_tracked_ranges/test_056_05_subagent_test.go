@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,22 +10,24 @@ import (
 )
 
 // subagentProject is the judged-docs project; enableSubagentStopCheck says whether the project
-// opted in to a sub-agent's own Stop verifying the tracked ranges (the harness opts in by
-// default, so the default is restored here by rewriting the config).
+// opts in to a sub-agent's own Stop verifying the tracked ranges (the harness does not opt in
+// by default). The config the harness wrote (its `disabled:` list of the shipped guards) stays:
+// only the rule under test applies.
 func subagentProject(t *testing.T, enableSubagentStopCheck bool) (*Env, string) {
 	t.Helper()
 	e, proj := project(t)
-	cfg := ""
 	if enableSubagentStopCheck {
-		cfg = "enable_subagent_stop_check: true\n"
+		path := filepath.Join(proj, ".sloprail", "config.yaml")
+		body, _ := os.ReadFile(path)
+		e.WriteFile(proj, ".sloprail/config.yaml", "enable_subagent_stop_check: true\n"+string(body))
+		e.CommitAll(proj, "the config")
 	}
-	e.WriteFile(proj, ".sloprail/config.yaml", cfg)
-	e.CommitAll(proj, "the config")
 	return e, proj
 }
 
 func runSubagentCommit(t *testing.T, e *Env, proj, sess string) harness.Result {
-	sub := harness.SubagentScript(t, harness.Turns("sub done",
+	// The sub-agent stops without judging its range: that is what both tests are about.
+	sub := harness.SubagentScriptUnjudged(t, harness.Turns("sub done",
 		Bash("sb1", "mkdir -p docs && echo 'the release is Friday' > docs/a.md"),
 	).ThenCommit("the sub-agent's doc"))
 	return e.Run(proj, sess, "delegate the doc", Turns("root done", harness.Dispatch("d1", "write the doc", sub, "worktree")))

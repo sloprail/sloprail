@@ -132,36 +132,60 @@ func TestIsAncestor(t *testing.T) {
 }
 
 func TestDefaultBase(t *testing.T) {
-	t.Run("a repository with no default branch: git's empty tree", func(t *testing.T) {
+	t.Run("no remote default branch: not ok, never an empty range", func(t *testing.T) {
 		dir := initRepo(t)
 		commitIn(t, dir, "a.txt", "a")
-		git(t, dir, "branch", "-m", "work")
-		assert.Equal(t, EmptyTree, DefaultBase(dir, "HEAD"))
-	})
-	t.Run("the merge base with the local main", func(t *testing.T) {
-		dir := initRepo(t)
-		fork := commitIn(t, dir, "a.txt", "a")
 		git(t, dir, "checkout", "-q", "-b", "work")
 		commitIn(t, dir, "b.txt", "b")
-		assert.Equal(t, fork, DefaultBase(dir, "HEAD"))
+		_, ok := DefaultBase(dir, "HEAD")
+		assert.False(t, ok, "a local main is not the remote default")
 	})
-	t.Run("origin's main wins over a local one", func(t *testing.T) {
+	t.Run("on main itself with no remote: not ok", func(t *testing.T) {
+		dir := initRepo(t)
+		commitIn(t, dir, "a.txt", "a")
+		_, ok := DefaultBase(dir, "HEAD")
+		assert.False(t, ok)
+	})
+	t.Run("the merge base with origin's main", func(t *testing.T) {
 		dir := initRepo(t)
 		fork := commitIn(t, dir, "a.txt", "a")
 		git(t, dir, "update-ref", "refs/remotes/origin/main", fork)
 		commitIn(t, dir, "b.txt", "b") // local main moved on
 		git(t, dir, "checkout", "-q", "-b", "work")
 		commitIn(t, dir, "c.txt", "c")
-		assert.Equal(t, fork, DefaultBase(dir, "HEAD"))
+		got, ok := DefaultBase(dir, "HEAD")
+		assert.True(t, ok)
+		assert.Equal(t, fork, got)
 	})
-	t.Run("a head sharing no history with it: the empty tree", func(t *testing.T) {
+	t.Run("a head sharing no history with the remote default: the empty tree", func(t *testing.T) {
 		dir := initRepo(t)
-		commitIn(t, dir, "a.txt", "a")
+		root := commitIn(t, dir, "a.txt", "a")
+		git(t, dir, "update-ref", "refs/remotes/origin/main", root)
 		git(t, dir, "checkout", "-q", "--orphan", "other")
 		commitIn(t, dir, "b.txt", "b")
-		assert.Equal(t, EmptyTree, DefaultBase(dir, "HEAD"))
+		got, ok := DefaultBase(dir, "HEAD")
+		assert.True(t, ok)
+		assert.Equal(t, EmptyTree, got)
 	})
-	t.Run("not a repository: the empty tree, never an error", func(t *testing.T) {
-		assert.Equal(t, EmptyTree, DefaultBase(t.TempDir(), "HEAD"))
+	t.Run("not a repository: not ok, never an error", func(t *testing.T) {
+		_, ok := DefaultBase(t.TempDir(), "HEAD")
+		assert.False(t, ok)
 	})
+}
+
+func TestResolveRange_TheEmptyTreeIsTheBaseOfARangeBeforeTheFirstCommit(t *testing.T) {
+	dir := initRepo(t)
+	head := commitIn(t, dir, "a.txt", "a")
+
+	r, err := ResolveRange(dir, EmptyTree, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, Range{Base: EmptyTree, Head: head}, r)
+}
+
+func TestIsDefaultBranch_OriginsHeadElseMainOrMaster(t *testing.T) {
+	dir := initRepo(t)
+	assert.True(t, IsDefaultBranch(dir, "main"))
+	assert.True(t, IsDefaultBranch(dir, "master"))
+	assert.False(t, IsDefaultBranch(dir, "feat"))
+	assert.False(t, IsDefaultBranch(dir, ""))
 }

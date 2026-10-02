@@ -11,17 +11,10 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// probeGate runs the store probe at every Stop. A file-guard is no longer the
-// vehicle: it is judged by `sr check run` over a commit range, outside any
-// session, so it has no session store to probe.
-const probeGate = `on:
-  - event: Stop
-checks:
-  - script: ./probe.sh
-`
-
 // probeScript is the harness's store probe (harness.ControlScript) logging to a
-// ledger OUTSIDE the repository, so the log is never committed with the agent's work.
+// ledger OUTSIDE the repository: in the rule's own folder the log would be committed
+// with the agent's work, and a rule whose folder changed forgets its earlier passes,
+// so the next cycle's range would collapse to nothing and the probe would not run.
 func probeScript(ledger string) string {
 	return "#!/bin/sh\ncat >/dev/null\n" +
 		"echo \"before=[$(sr-session state get seen 2>&1)]\" >> '" + ledger + "'\n" +
@@ -32,7 +25,7 @@ func probeScript(ledger string) string {
 func installProbe(t *testing.T, e *harness.Env, dir string) string {
 	t.Helper()
 	ledger := filepath.Join(t.TempDir(), "log")
-	e.Gate(dir, "control", probeGate, map[string]string{"probe.sh": probeScript(ledger)})
+	e.FileGuard(dir, "control", harness.ControlGuard, map[string]string{"probe.sh": probeScript(ledger)})
 	return ledger
 }
 
@@ -241,7 +234,9 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	e, proj, _ := project(t)
 	sub := proj + "/sub"
 	e.WriteFile(proj, "sub/.keep", "")
-	subLedger := installProbe(t, e, sub)
+	// The rule lives at the root: a file-guard is judged by `sr-checks run` from the
+	// project's folder, whichever directory the turn was resumed from.
+	subLedger := installProbe(t, e, proj)
 	e.CommitAll(proj, "sub")
 
 	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")).ThenCommit("first"))

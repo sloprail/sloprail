@@ -39,3 +39,28 @@ func TestT042_20_AProjectGateCannotShadowTheGate(t *testing.T) {
 		t.Errorf("the cited write did not land:\n%s", got)
 	}
 }
+
+// T042_32 (unlanded disable): a protected rule's disable that is committed but not yet on
+// the default branch is not honoured: the range starts at the merge base with origin's
+// default branch, where the rule is still on, so the rule judges the range (the disable
+// included) and an uncited loosening of a rule is refused rather than the rule going quiet.
+// (The old session-start meta this was keyed on is gone; the range base is the merge base.)
+func TestT042_32_AnUnlandedProtectedDisableIsNotHonoured(t *testing.T) {
+	e := harness.New(t, harness.WithOnlyShippedFileGuard(ruleName), harness.KeepOrigin())
+	proj := e.Project()
+	e.WriteFile(proj, ".sloprail/file-guard/demo/file-guard.yaml", demoYAML)
+	e.WriteFile(proj, ".sloprail/file-guard/demo/check.sh", demoScript)
+	e.GitInit(proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the cited words cover the change"}`)
+	// The disable is committed after what origin holds, so it has not landed.
+	e.DisablePluginGuardrail(proj, ruleName)
+	e.CommitAll(proj, "disable the protection")
+	const sess = "s-042-15-unlanded"
+	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
+	e.WriteFile(proj, ".sloprail/file-guard/demo/check.sh", demoLoosened)
+	e.CommitAll(proj, "loosen the demo")
+	res := e.StopJudged(proj, sess, false)
+	if !harness.Blocked(res) || !strings.Contains(res.Output, "grounded-rule-changes") {
+		t.Fatalf("a protected disable that has not landed was honoured:\n%s", res.Output)
+	}
+}

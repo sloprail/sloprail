@@ -11,7 +11,6 @@ import (
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/guardrail"
-	"github.com/sloprail/sloprail/internal/natures"
 )
 
 // StagedParams is what StagedNeedingCitation reads: the file-guards and the repository whose
@@ -22,8 +21,7 @@ type StagedParams struct {
 	Guards []declaration.FileGuard
 	Root   string
 	// Amend: the candidate replaces HEAD, so it is judged against HEAD's parent.
-	Amend      bool
-	ContextMap map[string]natures.ContextState
+	Amend bool
 }
 
 // StagedNeedingCitation is the staged files a commit would have to cite: those selected by a
@@ -58,7 +56,6 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 	// it replays what a command line stages first). What follows checks out a snapshot, and git
 	// would write that checkout's index over the caller's file.
 	os.Unsetenv("GIT_INDEX_FILE")
-	ctx := ContextMatchValue(p.ContextMap)
 	var snapshot *gitrepo.Snapshot
 	defer func() {
 		if snapshot != nil {
@@ -75,7 +72,7 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 		cs, err := changeset.Build(p.Root, rng, changeset.Options{
 			Deletions: changeset.DeletionMode(g.Deletions),
 			Scan:      Markers,
-			Select:    Selector(match, ctx),
+			Select:    Selector(match),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("file-guard %q: %w", g.Name, err)
@@ -93,7 +90,7 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 						return nil, err
 					}
 				}
-				payload := changeset.NewPayload(cs, s, "", ctx)
+				payload := changeset.NewPayload(cs, s, "")
 				r := dispatchcore.Request{
 					Nature: dispatchcore.NatureFileGuard, Dir: g.Dir, GuardName: g.Name, Changeset: &payload,
 				}

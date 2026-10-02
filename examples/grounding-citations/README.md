@@ -52,8 +52,8 @@ The two halves are split by what each is for, and each is a separate folder:
 - **`file-guard/citations-resolve`** is the after-check and holds the judge. It acts
   at Stop, on the committed changeset (the markdown files the range touched, as one
   diff), with the same `require`; the citations are the ones the range's commits
-  carry (`changeset.citations`), and since the rule's range does not move until it
-  passes, the commits since it last passed all count. Uncommitted markdown refuses
+  carry (`changeset.citations`), and every commit of the explicit range counts.
+  Uncommitted markdown refuses
   the Stop with "commit these" first. It sees what the gate cannot: a markdown file
   changed by a script the engine did not see as a write.
 
@@ -70,7 +70,7 @@ redirect) before the judge is paid for, and the refusal names the `sr-file`
 form. That is the cheap, deterministic half: does the write carry a citation that
 resolved.
 
-The judge (`claims-match-cited-output.md.j2`, in the file-guard, at Stop) answers what existence cannot: does
+The judge (`claims-match-cited-output.md.j2`, in the file-guard, judged by `sr-checks run` and verified at Stop) answers what existence cannot: does
 the file say what the cited output says? It is handed the change (a unified
 diff, so it judges only the lines the write adds or alters), the whole file for
 context, and each citation — the quote, the whole tool output it came from, and

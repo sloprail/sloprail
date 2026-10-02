@@ -28,6 +28,7 @@ func subagentStopNow(t *testing.T, e *Env, proj, sess, wt, agent string) harness
 		"session_id": sess, "transcript_path": e.TranscriptPath(proj, sess), "cwd": wt,
 		"agent_id": agent, "agent_transcript_path": recs[0], "hook_event_name": "SubagentStop",
 	})
+	e.JudgeTracked(wt, sess, true) // the judging a real sub-agent asks for before it stops
 	return e.CLIDirectStdinEnv(wt, string(payload), e.SessionEnv(""), "sr-session", "subagent-stop")
 }
 
@@ -80,8 +81,9 @@ func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(
 	if r := subagentStopNow(t, e, proj, sess, wt, agent); harness.Blocked(r) {
 		t.Fatalf("after the backup and revert the sub-agent's Stop was still refused:\n%s", r.Output)
 	}
-	if got := stopRefusals(e, proj, sess); got != "" {
-		t.Fatalf("the parent was refused for the sub-agent's reverted work:\n%s", got)
+	// The parent's Stop verifies the sub-agent's branch now: reverted, it holds nothing uncited.
+	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+		t.Fatalf("the parent was refused for the sub-agent's reverted work:\n%s", r.Output)
 	}
 
 	// The parent re-applies the patch: uncited, refused; with the user's answer, passed.

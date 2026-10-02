@@ -35,7 +35,8 @@ type judgeFixture struct {
 }
 
 // newJudgeFixture stands up a project with the file-guard preserves-unasked-content
-// (one judge) installed and committed. skip makes the rule's prepare step abstain,
+// (one judge, whose prompt renders the changed files — a verdict is keyed by the prompt
+// it was given, so a file that changed is a new question) installed and committed. skip makes the rule's prepare step abstain,
 // as the shipped one does for a pure addition. withRepo false leaves a directory
 // that is not a repository.
 func newJudgeFixture(t *testing.T, withRepo bool, skip bool) *judgeFixture {
@@ -49,7 +50,7 @@ func newJudgeFixture(t *testing.T, withRepo bool, skip bool) *judgeFixture {
 	dir := filepath.Join(".sloprail", "file-guard", "preserves-unasked-content")
 	e.WriteFile(f.proj, filepath.Join(dir, "file-guard.yaml"),
 		"match: 'path endsWith \".md\"'\nchecks:\n  - judge: ./rubric.md.j2\n    prepare: ./prepare.sh\n")
-	e.WriteFile(f.proj, filepath.Join(dir, "rubric.md.j2"), "Is the change clean?\n")
+	e.WriteFile(f.proj, filepath.Join(dir, "rubric.md.j2"), "Is the change clean?\n{% for f in changeset.files %}<file path=\"{{ f.path }}\">\n{{ f.newContent }}\n</file>\n{% endfor %}")
 	prepare := `printf '{"additionalContext": {}}\n'`
 	if skip {
 		prepare = `printf '{"skip": true}\n'`

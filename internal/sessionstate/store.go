@@ -102,8 +102,8 @@ type Store interface {
 	// tracking only adds what is not there; the agent's replaces the base and tracks again.
 	TrackRange(r TrackedRange) error
 	// UntrackRange stops answering for a range, with the reason the agent gave. The range
-	// stays listed so the Stop can name it.
-	UntrackRange(sessionID, folder, head, reason, agentID string) error
+	// stays listed so the Stop can name it; a branch whose tip moves past tip is tracked again.
+	UntrackRange(sessionID, folder, head, reason, agentID, tip string) error
 	// SetRangeBase fills the base of a range an older engine recorded without one.
 	SetRangeBase(sessionID, folder, head, base string) error
 	// Ranges lists a session's ranges, tracked and untracked.

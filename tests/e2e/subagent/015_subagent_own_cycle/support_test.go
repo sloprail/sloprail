@@ -123,10 +123,13 @@ const pathsOfPayload = `printf '%s' "$payload" | jq -r '.changeset.files[].path'
 const recordScript = `#!/bin/sh
 payload=$(cat)
 for path in $(` + pathsOfPayload + `); do
-  echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/log"
+  echo "judged path=[$path] session=[$SR_SESSION_ID] agent=[$SR_AGENT_ID]" >> "$SR_GUARDRAIL_DIR/log"
 done
 exit 0
 `
+
+// agentOf reads the sub-agent a ledger line was judged as, "" for the root session itself.
+func agentOf(line string) string { return between(line, "agent=[", "]") }
 
 // pathOf reads the file a ledger line was about.
 func pathOf(line string) string { return between(line, "path=[", "]") }

@@ -1,7 +1,6 @@
 package checkcache
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"math/rand"
@@ -39,7 +38,7 @@ func hex32(r *rand.Rand) string {
 }
 
 // genRuns makes n synthetic runs shaped like real ones: one rule evaluated once, holding a
-// judge check (findable) and a script check (never cached).
+// judge check (findable) and a script check (cached like any other).
 func genRuns(seed int64, n int) []Run {
 	r := rand.New(rand.NewSource(seed))
 	out := make([]Run, n)
@@ -83,11 +82,15 @@ func git(t testing.TB, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func newRepo(t testing.TB, remote string) *Store {
+func newRepo(t testing.TB, remote string) *Store { return newRepoOpt(t, Options{Remote: remote}) }
+
+func newRepoOpt(t testing.TB, opt Options) *Store {
 	t.Helper()
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
-	s, err := Open(Options{Dir: dir, Remote: remote})
+	quietGc(t, dir)
+	opt.Dir = dir
+	s, err := Open(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +101,17 @@ func bareRemote(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "--bare")
+	quietGc(t, dir)
 	return dir
+}
+
+// quietGc stops git from detaching an auto-gc/maintenance process after a commit or push: it
+// races t.TempDir's RemoveAll ("directory not empty") on a slow runner.
+func quietGc(t testing.TB, dir string) {
+	t.Helper()
+	git(t, dir, "config", "gc.auto", "0")
+	git(t, dir, "config", "receive.autogc", "false")
+	git(t, dir, "config", "maintenance.auto", "false")
 }
 
 // keyOf is the key of a run's judge check.
@@ -152,7 +165,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestLookupAcrossManySegmentsAndFreshProcess(t *testing.T) {
-	s := newRepo(t, "")
+	s := newRepoOpt(t, Options{NoAutoGc: true})
 	var all []Run
 	for i := 0; i < 25; i++ {
 		b := genRuns(int64(100+i), 20)
@@ -196,7 +209,7 @@ func TestTwoWritersConcurrentlyToBareRemote(t *testing.T) {
 	const writers, per = 4, 8
 	stores := make([]*Store, writers)
 	for i := range stores {
-		stores[i] = newRepo(t, remote)
+		stores[i] = newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, writers)
@@ -276,6 +289,7 @@ func TestGcPreservesLatestResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	all[0] = dup
+	preGc := s.tip()
 	st, err := s.Gc()
 	if err != nil {
 		t.Fatal(err)
@@ -283,8 +297,11 @@ func TestGcPreservesLatestResults(t *testing.T) {
 	if st.Records != 1200 || st.Duplicates != 1 || st.SegsAfter != 2 || !st.Retrained {
 		t.Fatalf("stats %+v", st)
 	}
-	if n := git(t, s.opt.Dir, "rev-list", "--count", s.opt.Ref); n != "1" {
-		t.Fatalf("gc must squash to one commit, got %s", n)
+	if git(t, s.opt.Dir, "rev-parse", s.opt.Ref+"^") != preGc {
+		t.Fatal("gc must be one new commit on top of the previous tip (history kept)")
+	}
+	if git(t, s.opt.Dir, "rev-parse", s.opt.Ref) != git(t, remote, "rev-parse", defaultBranch) {
+		t.Fatal("the compaction must reach the remote as a fast-forward")
 	}
 	fresh := newRepo(t, remote)
 	_ = fresh.Sync()
@@ -418,36 +435,6 @@ func TestShow(t *testing.T) {
 	}
 }
 
-func TestDefaultDictIsStable(t *testing.T) {
-	if len(defaultDictBytes) < 1024 {
-		t.Fatal("embedded default dictionary missing; run go generate ./internal/checkcache")
-	}
-	sum := sha256.Sum256(defaultDictBytes)
-	if _, err := newZdict(defaultDictBytes); err != nil {
-		t.Fatal(err, hex.EncodeToString(sum[:4]))
-	}
-}
-
-// TestGenerateDefaultDict rewrites default.zdict from synthetic judge-shaped
-// records. Run it via `go generate` only.
-func TestGenerateDefaultDict(t *testing.T) {
-	if os.Getenv("SR_GEN_DICT") == "" {
-		t.Skip("set SR_GEN_DICT=1 (go generate)")
-	}
-	var samples [][]byte
-	for _, r := range genRuns(424242, 3000) {
-		raw, _ := marshalRun(r)
-		samples = append(samples, raw)
-	}
-	d, err := trainDict(samples)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("default.zdict", d, 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // Bound: looking up the 40 keys of one PR among 10k stored records.
 func TestLookupBound40In10k(t *testing.T) {
 	s := newRepo(t, "")
@@ -504,5 +491,105 @@ func BenchmarkLookup40In10k(b *testing.B) {
 		if _, err := w.Lookup(ks); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestNoDictionaryWriteRead(t *testing.T) {
+	s := newRepo(t, "")
+	rs := genRuns(77, 6)
+	if err := s.Put(rs); err != nil {
+		t.Fatal(err)
+	}
+	sn, _ := s.snapshotAt(s.tip())
+	if len(sn.Dicts) != 0 || sn.Segs[0].Dict != "" || sn.ManifestDict != "" || !sn.HasManifest {
+		t.Fatalf("a young store keeps no dictionary: %+v", sn)
+	}
+	cold, _ := Open(s.opt)
+	got, err := cold.Lookup([]Key{keyOf(rs[0]), keyOf(rs[5])})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("%v %d", err, len(got))
+	}
+}
+
+func TestGcBelowTrainMinKeepsNoDictionary(t *testing.T) {
+	s := newRepo(t, "")
+	_ = s.Put(genRuns(78, 20))
+	st, err := s.Gc()
+	if err != nil || st.Retrained {
+		t.Fatalf("%v %+v", err, st)
+	}
+	sn, _ := s.snapshotAt(s.tip())
+	if len(sn.Dicts) != 0 || sn.ManifestDict != "" || sn.Segs[0].Dict != "" {
+		t.Fatalf("no dictionary below TrainMin: %+v", sn)
+	}
+}
+
+func TestGcAtTrainMinTrainsAndOldSegmentsStillRead(t *testing.T) {
+	s := newRepo(t, "")
+	old := genRuns(79, 20)
+	_ = s.Put(old)
+	_ = s.Put(genRuns(80, TrainMin+50))
+	st, err := s.Gc()
+	if err != nil || !st.Retrained {
+		t.Fatalf("%v %+v", err, st)
+	}
+	sn, _ := s.snapshotAt(s.tip())
+	if len(sn.Dicts) != 1 || sn.ManifestDict == "" || sn.Segs[0].Dict != sn.ManifestDict {
+		t.Fatalf("gc at TrainMin trains one: %+v", sn)
+	}
+	cold, _ := Open(s.opt)
+	if got, err := cold.Lookup([]Key{keyOf(old[0])}); err != nil || len(got) != 1 {
+		t.Fatalf("%v %d", err, len(got))
+	}
+	// a later Put uses the trained dictionary; a dict-less segment from before still reads
+	_ = cold.Put(genRuns(81, 3))
+	sn, _ = cold.snapshotAt(cold.tip())
+	for _, sg := range sn.Segs {
+		if sg.Dict != sn.ManifestDict {
+			t.Fatalf("new segments use the manifest dictionary: %q", sg.Dict)
+		}
+	}
+}
+
+// Gc never rewrites the shared history: a run another machine pushes between Gc's read and
+// its push survives, and the remote only ever moves forward.
+func TestGcKeepsAConcurrentWritersRun(t *testing.T) {
+	remote := bareRemote(t)
+	a := newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
+	b := newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
+	mine := genRuns(1, 5)
+	for i := 0; i < 3; i++ {
+		if err := a.Put(genRuns(int64(10+i), 4)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Put(mine); err != nil {
+		t.Fatal(err)
+	}
+	before := git(t, remote, "rev-parse", defaultBranch)
+	theirs := genRuns(2, 3)
+	a.beforeGcPush = func() {
+		if err := b.Put(theirs); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := a.Gc(); err != nil {
+		t.Fatal(err)
+	}
+	if a.PendingPush() != nil {
+		t.Fatalf("gc push left pending: %v", a.PendingPush())
+	}
+	if err := exec.Command("git", "-C", remote, "merge-base", "--is-ancestor", before, defaultBranch).Run(); err != nil {
+		t.Fatal("the remote history was rewritten: the old tip is no longer an ancestor")
+	}
+	reader := newRepo(t, remote)
+	if err := reader.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if n := lookupAll(t, reader, theirs); n != 3 {
+		t.Fatalf("the concurrent writer's run was lost: %d of 3", n)
+	}
+	if n := lookupAll(t, reader, mine); n != 5 {
+		t.Fatalf("Gc's own results lost: %d of 5", n)
 	}
 }

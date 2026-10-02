@@ -46,3 +46,19 @@ func TestFindFileGuard_AmbiguityIsAnErrorNotAFirstWins(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, g.Origin.FromPlugin(), "the qualified name picks the plugin's")
 }
+
+func TestBrokenFileGuards_OnlyFileGuardsThatFailedToLoadAreNamed(t *testing.T) {
+	var none declaration.Loaded
+	assert.Empty(t, brokenFileGuards(none), "no file-guards and none invalid is clean")
+	assert.Empty(t, brokenFileGuards(fileGuards("ok")))
+
+	l := fileGuards("ok")
+	l.Invalid = []declaration.Invalid{
+		{Nature: declaration.NatureFileGuard, Name: "broken", Reason: "bad yaml"},
+		{Nature: declaration.NatureGate, Name: "other-nature", Reason: "x"},
+	}
+	got := brokenFileGuards(l)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "broken")
+	assert.Contains(t, got[0], "bad yaml")
+}

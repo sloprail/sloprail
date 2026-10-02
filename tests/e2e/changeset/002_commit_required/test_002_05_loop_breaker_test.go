@@ -45,7 +45,7 @@ func TestT002_05_LoopBreakerReleasesAfterTheCapForTheSameSet(t *testing.T) {
 
 	// Committing ends it: nothing is owed, and the count is gone.
 	e.CommitAll(proj, "commit what was owed")
-	if r := e.StopNow(proj, "s-002-05", false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, "s-002-05", false); harness.Blocked(r) {
 		t.Fatalf("a clean tree was refused:\n%s", r.Output)
 	}
 	e.WriteFile(proj, "docs/c.md", "c\n")

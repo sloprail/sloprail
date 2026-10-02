@@ -122,10 +122,10 @@ share its name — nor a differently-natured rule of the same name.
 
 File-guards are judged over an explicit range, never by the Stop hook:
 
-    sr-checks run    --base origin/main --head HEAD   # asks a model where no pass is stored; stores and pushes
-    sr-checks verify --base origin/main --head HEAD   # no model, no writes; exit 1 on anything failing or unjudged
+    sr-checks run    --base origin/main --head HEAD   # runs what has no stored verdict; stores and pushes
+    sr-checks verify --base origin/main --head HEAD   # only reads stored verdicts, runs nothing; exit 1 on anything failing or unjudged
 
-Verdicts are keyed by content (rule, rule hash, check, subject, fingerprint), not by
+Every check (script, judge, requirement) is cached; a verdict per guard and subject is keyed by content (rule hash, subject, fingerprint), not by
 commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, so a
 rebase, another clone or CI reads the same results. The Stop hook only verifies: it
 refuses uncommitted work on guarded paths, then verifies each range the session
@@ -134,7 +134,7 @@ automatically). CI runs `sr-checks verify` as a required check. Two gates ship o
 around it: `sloprail/gate/verify-before-push` refuses an agent's `git push` until
 `sr-checks verify` passes for the commits it would send, and `sloprail/gate/checks-ref-sr-only`
 refuses any agent git write to the `sloprail/checks` results branch (only `sr-checks` writes
-it; reading stays allowed). Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
+it; reading stays allowed; it guards against an agent's accidental write, not a determined forger, since a ref name the shell builds at run time is not in the command's argv). The push gate sees the command line the agent runs, not the commands inside a script it runs; CI verify is the backstop for those. Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
 `pre-push` hook and the CI job are in
 `skills/authoring-guardrails/file-guard.md`.
 

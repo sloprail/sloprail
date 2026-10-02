@@ -15,8 +15,8 @@
 --              rule (check[0]:script:./size.sh, check[1]:judge:./rubric.md.j2,
 --              require:citation); subject is the unit judged ("changeset" until
 --              `subjects:` exists). fingerprint is the cache key — a hash of the
---              rule's whole folder, the model and the exact input, never a SHA —
---              and NULL for a script, which always re-runs.
+--              rule's whole folder, the model and the exact input, never a SHA.
+--              Every kind of check is cached by it: scripts, judges and requirements.
 -- check_items  one row per finding inside a check (a file a judge named, a
 --              prerequisite of `require:`).
 --

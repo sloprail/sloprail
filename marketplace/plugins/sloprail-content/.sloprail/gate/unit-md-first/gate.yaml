@@ -10,7 +10,7 @@
 # it, not just the one that hit the failure.
 #
 # THE GATE refuses the write before it lands. The file-guard of the same name
-# (../../file-guard/unit-md-first) re-checks the settled file at Stop, which
+# (../../file-guard/unit-md-first) re-checks the settled file (`sr-checks run` judges it, Stop verifies), which
 # catches a shell write whose result the gate could not derive. Deletions are
 # not covered: removing a file from a unit folder invents nothing, and
 # TASK-style folder deletion is not this plugin's shape to begin with.

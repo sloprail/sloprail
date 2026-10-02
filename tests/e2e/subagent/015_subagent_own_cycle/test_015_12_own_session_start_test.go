@@ -50,13 +50,15 @@ func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T)
 	sub := refusedThenFixes(t,
 		Turns("sub done", harness.CommitFile("sd", "docs/d.md", "FORBIDDEN in D", "D: the sub-agent's own change"), judgeOwnRange("sj")),
 		Turns("sub fixed", harness.CommitFile("sf", "docs/d.md", "clean now", "D2: fix D"), judgeOwnRange("sk")))
-	res := e.Run(proj, "s-015-12", "delegate", Turns("root done",
+	e.Run(proj, "s-015-12", "go", Turns("root done",
 		Bash("b0", "true"), // the parent's first tool call: its session start is A
 		harness.CommitFile("cb", "docs/b.md", "FORBIDDEN in B", "B: lands on main after A"),
 		harness.CommitFile("cc", "docs/c.md", "FORBIDDEN in C", "C: lands on main after A"),
-		Bash("land", "git update-ref refs/remotes/origin/main HEAD"), // B and C have landed on the default branch (a real push of them is refused by the push gate)
-		Dispatch("d1", "make D", sub, "worktree"),
 	))
+	// B and C have landed on the default branch: really pushed to the harness origin (an agent's
+	// own push of them is refused by the push gate, so the harness does it between the turns).
+	e.PushBranch(proj, "main")
+	res := e.Run(proj, "s-015-12", "delegate", Turns("root done", Dispatch("d1", "make D", sub, "worktree")))
 
 	// Refuse first: the violation in D is judged, and only D.
 	// The refusal names the sub-agent's own worktree and the commit its range starts from.

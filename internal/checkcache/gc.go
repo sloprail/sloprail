@@ -17,38 +17,49 @@ type GcStats struct {
 	Retrained  bool
 }
 
-// readAll inflates every record of the snapshot, resolving duplicate keys.
-func (s *Store) readAll(sn *snapshot) (map[string]Found, int, error) {
+// readAll inflates every record of the snapshot, resolving duplicate keys. It also returns
+// every run the snapshot holds, each once (a run that holds a winning result in the copy that
+// wins), so a compaction keeps the run history, not only the winning results.
+func (s *Store) readAll(sn *snapshot) (map[string]Found, int, []Run, error) {
 	out := map[string]Found{}
 	total := 0
 	if len(sn.Segs) == 0 {
-		return out, 0, nil
+		return out, 0, nil, nil
 	}
 	b, err := s.g.startBatch()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer b.close()
+	byRun := map[string]Run{}
 	for _, sg := range sn.Segs {
 		blob, err := b.read(sg.ZstOid)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		if err := verifySegment(sg.Name, blob); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		d, err := s.dictByOid(sg.Dict, sn.Dicts[sg.Dict])
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		for i := range sg.Keys {
 			if int(sg.Pos[i]) == runOnly {
-				continue // a run with nothing findable is not a result; Gc lets it go
+				r, err := sg.decodeRun(blob, i, d)
+				if err != nil {
+					return nil, 0, nil, err
+				}
+				if _, ok := byRun[r.ID]; !ok {
+					byRun[r.ID] = r // a run with nothing findable is history too
+				}
+				continue
 			}
 			r, err := sg.decodeAt(blob, i, d)
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, nil, err
 			}
+			byRun[r.Run.ID] = r.Run
 			total++
 			id := r.Run.CheckKey(r.Check).ID()
 			if p, ok := out[id]; ok && !Newer(r, p) {
@@ -57,16 +68,64 @@ func (s *Store) readAll(sn *snapshot) (map[string]Found, int, error) {
 			out[id] = r
 		}
 	}
-	return out, total, nil
+	runs := make([]Run, 0, len(byRun))
+	for _, r := range byRun {
+		runs = append(runs, r)
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].RunAt != runs[j].RunAt {
+			return runs[i].RunAt < runs[j].RunAt
+		}
+		return runs[i].ID < runs[j].ID
+	})
+	return out, total, runs, nil
 }
 
-// Gc squashes the branch to a single root commit holding the latest result of
-// every key in segments of about SegmentTarget records, with a dictionary
-// trained on the records when there are enough of them. A concurrent writer
-// makes the lease fail; Gc then replays on the new tip.
+// Gc compacts the branch: one new commit on top of the tip (never a rewrite of the shared
+// history) whose tree holds the latest result of every key and every run (run-only history
+// included, so Runs is the same before and after)
+// in segments of about SegmentTarget runs, with a dictionary trained on the runs when there
+// are TrainMin or more of them, and none (plain zstd) below that. With a remote the commit is
+// pushed like any Put's, as a fast-forward; a push that loses a race is fetched, replayed on the
+// new tip and retried, and one that fails for another reason stays pending (PendingPush).
+//
+// Gc runs by itself after a Put once the branch holds GcSegments segments, or TrainMin runs
+// with no dictionary yet (see maybeGc); it is also callable on its own.
 func (s *Store) Gc() (GcStats, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.gc()
+}
+
+// GcSegments is how many segments a Put leaves behind before the store compacts them: every
+// Lookup scans every segment index.
+const GcSegments = 24
+
+// maybeGc is Gc's cheap trigger, after a Put: enough segments to be worth squashing, or enough
+// runs spread over several segments for a repository dictionary to be trained (a lone
+// segment is already what Gc would write). A Gc that fails is not the Put's failure.
+func (s *Store) maybeGc() {
+	if s.opt.NoAutoGc {
+		return
+	}
+	sn, err := s.snapshotAt(s.tip())
+	if err != nil || len(sn.Segs) < 2 {
+		return
+	}
+	runs := 0
+	for _, sg := range sn.Segs {
+		seen := map[uint32]bool{}
+		for _, off := range sg.Offs {
+			seen[off] = true
+		}
+		runs += len(seen)
+	}
+	if len(sn.Segs) >= GcSegments || (sn.ManifestDict == "" && runs >= TrainMin) {
+		_, _ = s.gc()
+	}
+}
+
+func (s *Store) gc() (GcStats, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
@@ -83,7 +142,7 @@ func (s *Store) Gc() (GcStats, error) {
 		if err != nil {
 			return GcStats{}, err
 		}
-		recs, total, err := s.readAll(sn)
+		recs, total, runs, err := s.readAll(sn)
 		if err != nil {
 			return GcStats{}, err
 		}
@@ -94,16 +153,7 @@ func (s *Store) Gc() (GcStats, error) {
 		sort.Strings(ids)
 		st := GcStats{Records: len(ids), Duplicates: total - len(ids), SegsBefore: len(sn.Segs)}
 
-		// The runs that hold a winning check, each once, in key order.
-		var runs []Run
-		seenRun := map[string]bool{}
-		for _, id := range ids {
-			if r := recs[id].Run; !seenRun[r.ID] {
-				seenRun[r.ID] = true
-				runs = append(runs, r)
-			}
-		}
-		d, err := s.defaultDict()
+		d, err := s.plainDict()
 		if err != nil {
 			return st, err
 		}
@@ -121,8 +171,9 @@ func (s *Store) Gc() (GcStats, error) {
 				}
 			}
 		}
-		files := map[string][]byte{
-			"dict/" + d.sha + ".zdict": d.bytes,
+		files := map[string][]byte{}
+		if d.sha != "" {
+			files["dict/"+d.sha+".zdict"] = d.bytes
 		}
 		m, _ := json.Marshal(manifest{Schema: SchemaDir, Dict: d.sha})
 		files["MANIFEST.json"] = m
@@ -136,14 +187,21 @@ func (s *Store) Gc() (GcStats, error) {
 			files["seg/"+name+".idx"] = idx
 			st.SegsAfter++
 		}
-		commit, err := s.commit("", true, files, fmt.Sprintf("checks: gc, %d results", len(ids)))
+		// A NEW commit on top of the tip whose tree is the compacted layout: the shared history is
+		// never rewritten, so the push below is an ordinary fast-forward (a concurrent writer's
+		// run is replayed on top of it by push, never overwritten).
+		commit, err := s.commitReplacing(tip, files, fmt.Sprintf("checks: gc, %d results", len(ids)))
 		if err != nil {
 			return st, err
 		}
-		if err := s.publish(commit, tip, true); err != nil {
-			lastErr = err
+		if _, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, commit, tip); err != nil {
+			lastErr = err // a local writer moved the ref meanwhile
 			continue
 		}
+		if s.beforeGcPush != nil {
+			s.beforeGcPush()
+		}
+		s.pushErr = s.push()
 		return st, nil
 	}
 	return GcStats{}, fmt.Errorf("checkcache: gc gave up after %d attempts: %w", maxAttempts, lastErr)
@@ -158,7 +216,7 @@ func (s *Store) Find(subject string) ([]Found, error) {
 	if err != nil {
 		return nil, err
 	}
-	recs, _, err := s.readAll(sn)
+	recs, _, _, err := s.readAll(sn)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +277,11 @@ func (s *Store) Runs() ([]Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.runsOf(sn)
+}
+
+// runsOf is Runs over one snapshot, for a caller that holds the lock.
+func (s *Store) runsOf(sn *snapshot) ([]Run, error) {
 	var out []Run
 	if len(sn.Segs) == 0 {
 		return out, nil

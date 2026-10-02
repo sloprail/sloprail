@@ -45,7 +45,14 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
 	}
 
-	lines := subLedger(t, proj, theWorktree(t, proj), "recorder", "log")
+	wt := theWorktree(t, proj)
+	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-12", e.RunBase("s-015-12"), "HEAD")
+	lines := subLedger(t, proj, wt, "recorder", "log")
+	for _, l := range lines {
+		if agentOf(l) == "" {
+			t.Fatalf("the file-guard judged without the sub-agent's identity: %s", l)
+		}
+	}
 	if len(lines) == 0 {
 		t.Fatalf("the sub-agent's cycle judged nothing, though it created a file in its own "+
 			"tree:\n%s", res.Output)
@@ -106,6 +113,8 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	idLed := e.NewLedger("identities")
+	e.Gate(proj, "who", memoGate, map[string]string{"record.sh": memoScript(idLed.Path())})
 	e.GitInit(proj)
 
 	// What the inner dispatch would run, if the harness executed it.
@@ -121,6 +130,7 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 	).ThenCommit("the middle's work"))
 
 	res := e.Run(proj, "s-015-12", "delegate to a delegator", Turns("root done",
+		Bash("r1", "echo root > from-the-root.md"),
 		Dispatch("d1", "outer job", middle, "worktree"),
 	))
 
@@ -145,9 +155,7 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 
 	// Everything below reads the MIDDLE sub-agent's worktree, which is where
 	// both the middle's work and the innermost's landed.
-	wt := theWorktree(t, proj)
-	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-12", e.RunBase("s-015-12"), "HEAD")
-	lines := subLedger(t, proj, wt, "recorder", "log")
+	lines := subLedger(t, proj, theWorktree(t, proj), "recorder", "log")
 
 	// The delegating sub-agent's OWN work was judged at its own cycle — the work
 	// that came after the dispatch it made.
@@ -164,6 +172,34 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 			"sub-agent's own Agent call IS executed and the deeper sub-agent's work lands in the "+
 			"dispatching sub-agent's tree. If that has changed, the claim that these invariants "+
 			"hold at depth 2 needs re-deriving rather than this assertion relaxing", lines)
+	}
+
+	// And it ran at a cycle of ITS OWN — a third identity, neither the middle
+	// sub-agent's nor the root's. This is the whole point: the deeper sub-agent is a
+	// session in its own right by the same mechanism. Seen where hooks run: the gate
+	// records the session each command was run as.
+	idLines := memoLines(t, idLed.Path())
+	ids := map[string]string{}
+	for _, name := range []string{"from-the-root.md", "from-the-middle.md", "from-the-innermost.md"} {
+		l, ok := lineAbout(idLines, name)
+		if !ok {
+			t.Fatalf("the gate never saw the command that made %s (%v), so no identity can be "+
+				"compared", name, idLines)
+		}
+		if sessionOf(l) == "" {
+			t.Fatalf("no identity recorded for the command that made %s: %s", name, l)
+		}
+		ids[name] = sessionOf(l)
+	}
+	if ids["from-the-innermost.md"] == ids["from-the-middle.md"] {
+		t.Fatalf("the innermost sub-agent ran under the DELEGATING sub-agent's identity (%s). A "+
+			"sub-agent's sub-agent is a session in its own right, and collapsing the two hands one "+
+			"of them the other's actions as though it had taken them.\n  %v", ids["from-the-innermost.md"], idLines)
+	}
+	// The root is a third identity again, so all three are distinct.
+	if ids["from-the-root.md"] == ids["from-the-middle.md"] || ids["from-the-root.md"] == ids["from-the-innermost.md"] {
+		t.Fatalf("the dispatching session ran under a sub-agent's identity — three sessions are in "+
+			"play here and each must keep its own. %v", idLines)
 	}
 }
 
