@@ -926,8 +926,16 @@ func guardKey(g declaration.FileGuard, payload changeset.Payload) (string, error
 	citations := ""
 	for _, r := range g.Require {
 		if r.Citation != nil {
+			// The key is over the trailers' quotes as `verify` reads them (trusted, each in its
+			// own pool), never over how a transcript resolved them: a quote `run` could not
+			// resolve (ambiguous, or said in no session) is still a quote of the range, and a
+			// key that left it out would never be the one `verify` computes.
+			trusted := payload
+			cs := trusted.Changeset
+			TrustTrailers(&cs)
+			trusted.Changeset = cs
 			var err error
-			if citations, err = changeset.CitationPart(payload); err != nil {
+			if citations, err = changeset.CitationPart(trusted); err != nil {
 				return "", err
 			}
 			break
