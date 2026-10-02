@@ -11,7 +11,7 @@ import (
 // the cache key's last part (the rest — rule, rule hash, the guard's fixed step id, subject id —
 // is the checkcache key's own, and the rule hash covers every script and template of the rule).
 //
-// It is the sha256 of three parts, none of which depends on the session or the history:
+// It is the sha256 of four parts, none of which depends on the session or the history:
 //
 //   - files: FilesPart, the content of the subject's files, ALWAYS, whether or not any check
 //     reads them: the verdict is about those bytes.
@@ -20,12 +20,15 @@ import (
 //     must be session-independent. Empty without `subjects:`.
 //   - citations: for a `require: citation` rule only, CitationPart: the commit messages and
 //     the citations' quotes.
+//   - contexts: the state (active, payload hash) of each context the rule's `match` or
+//     `require` reads, so a verdict reached while a context was in one state is not read for
+//     another.
 //
 // No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
 // are length-prefixed, so two parts cannot be re-cut into another pair.
-func GuardFingerprint(files, subjectFP, citations string) string {
+func GuardFingerprint(files, subjectFP, citations, contexts string) string {
 	var buf []byte
-	for _, part := range []string{files, subjectFP, citations} {
+	for _, part := range []string{files, subjectFP, citations, contexts} {
 		buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
 		buf = append(buf, part...)
 	}
