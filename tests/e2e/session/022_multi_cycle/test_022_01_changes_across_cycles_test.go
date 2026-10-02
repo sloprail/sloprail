@@ -57,7 +57,13 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	var out [][]changesetkit.Observed
 	seen := 0
 	for i, s := range scenarios {
-		changesetkit.JudgeRun(t, e, proj, sess, "cycle", s)
+		// The Stop at the end of Run VERIFIES the range it tracks, and a script check runs
+		// under verify too (it is deterministic), so it records its own sighting. That one
+		// is not what the cycle's `sr check run` handed the rule: count from after it.
+		base := e.Git(proj, "rev-parse", "HEAD")
+		e.Run(proj, sess, "cycle", s)
+		seen = len(harness.ReadLedgerLines(t, ledger))
+		e.CheckRunRange(proj, sess, base, "HEAD")
 		lines := harness.ReadLedgerLines(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
