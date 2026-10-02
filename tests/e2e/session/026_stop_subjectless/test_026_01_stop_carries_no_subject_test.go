@@ -230,7 +230,11 @@ func TestT026_02_StopFiresWhenNothingChanged(t *testing.T) {
 // once per matching tool call (a pre-tool dispatch per Write and per Bash), so it
 // records both events.
 func TestT026_03_EveryOtherKindNamesItsSubject(t *testing.T) {
-	e, proj := project(t)
+	// NoAutoCheck: the harness's own pre-Stop `sr-checks run` turn is a command too, and
+	// this test reads every PreCommandInvoke the gate was handed as the scenario's own.
+	e := New(t, NoAutoCheck())
+	proj := e.Project()
+	e.GitInit(proj)
 	e.Gate(proj, "subjects", `on:
   - event: PreFileCreate
   - event: PreCommandInvoke
