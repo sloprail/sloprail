@@ -37,7 +37,7 @@ func TestT034_01_LifecycleCommandsAreRefusedAndReadOnlyOnesAreNot(t *testing.T) 
 
 	for i, cmd := range []string{
 		"sr-session refs list --session nothing; sr-session trajectory describe --help",
-		"sr-checks status",
+		"sr-checks show --help",
 	} {
 		res := e.Run(proj, sess, "read it", Turns("done", Bash("r"+string(rune('a'+i)), cmd)))
 		if res.Saw("no-lifecycle-commands") {

@@ -49,7 +49,7 @@ func TestT034_02_EverySpellingThatRunsALifecycleCommandIsRefused(t *testing.T) {
 		`sr-session trajectory describe --help`,
 		`sr-session changeset --help`,
 		`sr-session refs list --session nothing; true`,
-		`sr-checks sql 'select 1'`,
+		`sr-checks show --help`,
 		`git commit -q --allow-empty -m "document sr-session start"`,
 	}
 	for i, cmd := range allowed {
