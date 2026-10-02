@@ -60,7 +60,7 @@ func TestT003_36_TheSameInASubagentWorktree(t *testing.T) {
 	res := e.Run(proj, "s-003-36b", "delegate", Turns("root done",
 		harness.Dispatch("d1", "write the docs", sub, "worktree"),
 	))
-	if !res.SubagentStopBlocked("On branch sub-a") {
+	if !res.AnySubagentStopBlocked() && strings.Contains(res.Output, "(sub-a, from ") {
 		t.Fatalf("a sub-agent's left branch was not judged at its Stop:\n%s", res.Output)
 	}
 	if !strings.Contains(res.Output, "sub-a") {

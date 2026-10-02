@@ -318,7 +318,11 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 		}
 		r.Base = autoBase(r.Folder, sha, "")
 	}
-	where := fmt.Sprintf("In %s (%s, from %s)", r.Folder, r.Head, shortRev(r.Base))
+	headName := r.Head
+	if len(headName) >= 40 && !strings.HasPrefix(headName, "refs/") {
+		headName = "detached at " + shortRev(headName) // commits on no branch: say so
+	}
+	where := fmt.Sprintf("In %s (%s, from %s)", r.Folder, headName, shortRev(r.Base))
 	rng, err := gitrepo.ResolveRange(r.Folder, r.Base, head)
 	if err != nil {
 		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
