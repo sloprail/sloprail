@@ -2,17 +2,27 @@
 // shape: a CheckRun (one rule evaluated once over one commit range: base_ref, head_ref,
 // exit_code, error, metadata) holds Checks (one per subject and kind: status pass | fail |
 // skip | error | interrupted, fingerprint, metadata) and each Check holds CheckItems (a
-// finding: a file a judge named, a prerequisite of `require:`).
+// finding: a file a judge named, a prerequisite of `require:`). See schema.sql for what each
+// row means here.
+//
+// A file-guard is commit-based, so only file-guards write here. Gates and contexts are about
+// events and leave no rows; the session's own memory (baseline, guardrail state) stays in
+// sessionstate.
 //
 // A run is recorded as the engine goes (RecordRun, RecordCheck, FinishRun) and kept in memory;
 // Close writes the lot to the cache backend (internal/checkcache) as ONE segment, so a
 // `sr check run` is one write and one push however many rules it judged. The backend is the
-// only thing that knows where results live.
+// only thing that knows where results live, and one cache serves the whole repository: a
+// check result is a statement about a rule, a subject and an input, whichever session, agent
+// or worktree recorded it. The identity on every run (repo, branch, session, agent) is
+// provenance, never part of a lookup. Import brings in the runs an older engine kept in a
+// sqlite checks.db.
 //
 // What makes a check reusable is its key: (rule, rule hash, subject, kind, fingerprint). That
-// is a10n's QueryChecks probe, and CachedCheck is a10n's CacheHit: the fingerprint matches and
-// the status is pass. Which session, agent, branch or range recorded a run is provenance
-// (RunIdentity), never part of a lookup.
+// is a10n's QueryChecks probe, and CachedCheck is a10n's CacheHit, extended to read a fail
+// as well as a pass. The queries over runs (PassedHeads, RunRefs, ResolveStale, CheckStatus,
+// Query) read the cache's run history as the check_runs, checks and check_items tables of
+// schema.sql, built in memory for the call: nothing is ever written to a database.
 package checkstore
 
 import (
@@ -25,21 +35,40 @@ import (
 // ErrClosed is returned by every method once the store has been closed.
 var ErrClosed = errors.New("checkstore: store is closed")
 
-// Store records runs and finds their checks again.
+// Store is the check results of a repository.
 type Store interface {
-	// RecordRun starts a run and returns its id. See CheckRun.
+	// RecordRun stores one rule's evaluation of one commit range and returns the
+	// run's id. See CheckRun.
 	RecordRun(r CheckRun) (string, error)
 	// FinishRun marks a run recorded RUNNING (CheckRun.Complete false) complete.
+	// Only a complete run can be a watermark.
 	FinishRun(runID string) error
-	// RecordCheck adds one check to a run — replacing the same (subject, kind) of that
-	// run — and returns the check's id.
+	// RecordCheck stores one check of a run — replacing the same (subject, kind)
+	// of that run — with its findings, and returns the check's id.
 	RecordCheck(runID string, c CheckRecord) (string, error)
-	// CachedCheck is a10n's CacheHit: a stored check of the rule at this definition for
-	// (subject, kind, fingerprint) whose status is pass. An empty fingerprint never hits.
+	// CachedCheck finds a stored pass or fail of the rule at this definition (ruleHash) for
+	// (subject, kind, fingerprint): the most recent one. A fail is returned like a pass — it
+	// is terminal and is replayed, never re-judged until the input changes. An empty
+	// fingerprint (a script) never hits. The rule and its hash are part of the backend's key.
 	CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error)
-	// LatestCheck is the same lookup without the pass condition: the latest stored pass or
-	// fail, for a reader that reports a fail (`sr check verify`).
-	LatestCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error)
+	// ResolveStale marks as skip every failing check of rule (at this rule hash, in COMPLETE runs)
+	// outside run liveRunID whose (subject, kind, fingerprint) is not one liveRunID
+	// holds: a failure whose input has left the range. Returns how many. The cache is
+	// append-only, so the marks are a run of their own that points at the checks it resolves.
+	ResolveStale(rule, ruleHash, liveRunID string) (int, error)
+	// PassedHeads lists, newest first, the head_ref of each of the rule's runs, at any
+	// rule hash, that passed: no engine error and no failing check. The
+	// caller picks the first still reachable — that is the rule's watermark.
+	PassedHeads(rule string) ([]string, error)
+	// RunRefs lists, for one rule, the runs that were refused and the runs that
+	// passed, each with the commit range it judged and when it ran. See RunRefs.
+	RunRefs(rule string) (RunRefs, error)
+	// CheckStatus lists each rule's latest run and its checks. failingOnly keeps
+	// only what is failing: a failed engine run, or a fail/error/interrupted check.
+	// A non-empty rule keeps only that rule.
+	CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error)
+	// Query runs a read-only SELECT over the check tables and returns its rows.
+	Query(sql string) ([]map[string]any, error)
 	// Close writes what was recorded to the backend (one segment) and releases the store. A
 	// store opened read-only writes nothing.
 	Close() error

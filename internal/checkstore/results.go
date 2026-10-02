@@ -36,7 +36,8 @@ type CheckRun struct {
 	BatchID string
 	// CheckID is the rule's qualified name (<plugin>/file-guard/<name>).
 	CheckID string
-	// RuleHash is the rule's definition hash (changeset.RuleHash).
+	// RuleHash is the rule's definition hash (changeset.RuleHash): how a run is tied to the
+	// rule definition it ran under. Left empty, Metadata["ruleHash"] is read instead.
 	RuleHash string
 	BaseRef  string
 	HeadRef  string
@@ -44,10 +45,17 @@ type CheckRun struct {
 	// computed. Such a run passes nothing: it is never read as an empty range.
 	ExitCode int
 	Error    string
+	// Metadata is {eventKind, baseOrigin, droppedWatermark, ...}; ruleHash may be here too
+	// (see RuleHash).
 	Metadata map[string]any
-	// Complete says the run is already finished when it is recorded (an engine failure, or a
-	// range where `match` selected nothing). Any other run is recorded RUNNING and finished
-	// with FinishRun once every check is stored: a run that died half-way never reads as a pass.
+	// Complete says the run is already finished when it is recorded: an engine
+	// failure, or a range where `match` selected nothing. Any other run is
+	// recorded RUNNING and finished with FinishRun once every check is stored.
+	//
+	// The distinction is what keeps a run that died half-way (a crash, a kill, a
+	// judge that never came back) from reading as a pass: a run with no checks
+	// yet is indistinguishable from one with nothing to check, and only a
+	// finished run is ever a watermark.
 	Complete bool
 }
 
@@ -71,11 +79,40 @@ type CheckItem struct {
 	Metadata map[string]any
 }
 
-// CachedCheck is a stored check found by key.
+// CachedCheck is a stored pass or fail found by fingerprint, with the run that recorded it.
 type CachedCheck struct {
 	Status   string
 	Metadata map[string]any
 	Run      CheckRun
+}
+
+// CheckStatusRow is one check of a rule's latest run — or, for a run that failed
+// as an engine, the run itself (Kind empty, Status "error").
+type CheckStatusRow struct {
+	Rule        string         `json:"rule"`
+	Subject     string         `json:"subject"`
+	Kind        string         `json:"kind"`
+	Status      string         `json:"status"`
+	BaseRef     string         `json:"base_ref"`
+	HeadRef     string         `json:"head_ref"`
+	RunAt       string         `json:"run_at"`
+	Fingerprint string         `json:"fingerprint,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Metadata    map[string]any `json:"metadata"`
+}
+
+// RunRef is one run's range and when it ran (RunAt is a fixed-width UTC stamp, so
+// stamps from different stores compare as strings).
+type RunRef struct {
+	Base, Head, RunAt string
+}
+
+// RunRefs is a rule's refused and passed runs, at any rule hash. Failed holds a run
+// that is an engine failure or holds a failing check (a failure that went stale is
+// not one); Passed holds a COMPLETE run with no failing check and no engine error. A
+// run with no recorded range is in neither.
+type RunRefs struct {
+	Failed, Passed []RunRef
 }
 
 func newID(prefix string) string {
@@ -92,14 +129,15 @@ func stamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000
 func (s *store) RecordRun(r CheckRun) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return "", ErrClosed
+	if err := s.writable(); err != nil {
+		return "", err
 	}
-	if s.readOnly {
-		return "", errors.New("checkstore: this store is read-only")
+	ruleHash := r.RuleHash
+	if h, ok := r.Metadata["ruleHash"].(string); ruleHash == "" && ok {
+		ruleHash = h
 	}
 	run := &checkcache.Run{
-		ID: newID("run"), RunAt: stamp(), BatchID: r.BatchID, Rule: r.CheckID, RuleHash: r.RuleHash,
+		ID: newID("run"), RunAt: stamp(), BatchID: r.BatchID, Rule: r.CheckID, RuleHash: ruleHash,
 		BaseRef: r.BaseRef, HeadRef: r.HeadRef, ExitCode: r.ExitCode, Error: r.Error, Complete: r.Complete,
 		Metadata: r.Metadata, RepoID: r.RepoID, Branch: r.Branch, SessionID: r.SessionID, AgentID: r.AgentID,
 	}
@@ -108,9 +146,13 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 	return run.ID, nil
 }
 
+// FinishRun marks a run complete: every check it was going to run is stored.
 func (s *store) FinishRun(runID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return err
+	}
 	run, ok := s.byID[runID]
 	if !ok {
 		return fmt.Errorf("checkstore: finish run: no run %q", runID)
@@ -133,6 +175,9 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return "", err
+	}
 	run, ok := s.byID[runID]
 	if !ok {
 		return "", fmt.Errorf("checkstore: record check %q: no run %q", c.Kind, runID)
@@ -151,9 +196,15 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 	return run.ID + "/" + c.Subject + "/" + c.Kind, nil
 }
 
-func (s *store) latest(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error) {
+// CachedCheck is a10n's CacheHit on (rule, rule hash, subject, kind, fingerprint), extended to
+// read a fail as well as a pass: a fail is terminal, and replaying it is what keeps a judge
+// from being asked again about input that has not changed.
+func (s *store) CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error) {
 	if fingerprint == "" {
 		return CachedCheck{}, false, nil
+	}
+	if err := s.live(); err != nil {
+		return CachedCheck{}, false, err
 	}
 	key := checkcache.Key{Rule: rule, RuleHash: ruleHash, Kind: kind, Subject: subject, Fingerprint: fingerprint}
 	// What this process recorded first: it is newer than anything the backend holds.
@@ -182,20 +233,33 @@ func (s *store) latest(rule, ruleHash, subject, kind, fingerprint string) (Cache
 		}
 		best = &f
 	}
+	if best.Check.Status != StatusPass && best.Check.Status != StatusFail {
+		return CachedCheck{}, false, nil // a fail resolved as stale: its input is not in any range now
+	}
 	return CachedCheck{Status: best.Check.Status, Metadata: best.Check.Metadata, Run: CheckRun{
 		CheckID: best.Run.Rule, RuleHash: best.Run.RuleHash, BaseRef: best.Run.BaseRef, HeadRef: best.Run.HeadRef,
 		RunIdentity: RunIdentity{RepoID: best.Run.RepoID, Branch: best.Run.Branch, SessionID: best.Run.SessionID, AgentID: best.Run.AgentID},
 	}}, true, nil
 }
 
-func (s *store) LatestCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error) {
-	return s.latest(rule, ruleHash, subject, kind, fingerprint)
+// writable is the guard of every method that records: a closed store is ErrClosed, a
+// read-only one refuses. The caller holds s.mu.
+func (s *store) writable() error {
+	if s.closed {
+		return ErrClosed
+	}
+	if s.readOnly {
+		return errors.New("checkstore: this store is read-only")
+	}
+	return nil
 }
 
-func (s *store) CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error) {
-	c, ok, err := s.latest(rule, ruleHash, subject, kind, fingerprint)
-	if err != nil || !ok || c.Status != StatusPass {
-		return CachedCheck{}, false, err
+// live is the guard of every method that reads: ErrClosed once the store is closed.
+func (s *store) live() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
 	}
-	return c, true, nil
+	return nil
 }
