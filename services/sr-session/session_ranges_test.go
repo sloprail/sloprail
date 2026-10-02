@@ -152,3 +152,24 @@ func TestDispatchStop_AnUnreadableFolderRegistryDoesNotEndTheStopEarly(t *testin
 	got := dispatchNatureStop(cmd, p, reg, hookScope{}, store)
 	assert.NotEmpty(t, got, "an unreadable registry was read as 'no other folder has rules'")
 }
+
+// A range whose session record or id cannot be resolved is refused, not verified with an empty
+// identity (its script checks would read "no registry" as a pass).
+func TestVerifyRange_AnUnresolvableRecordOrIdIsRefused(t *testing.T) {
+	proj := initRepo(t)
+	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	base := runGit(t, proj, "rev-parse", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "x.md"), []byte("x"), 0o644))
+	runGit(t, proj, "add", "x.md")
+	runGit(t, proj, "commit", "-m", "work")
+	tip := runGit(t, proj, "rev-parse", "HEAD")
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+
+	r := sessionstate.TrackedRange{Folder: proj, Head: "main", HeadSHA: tip, Base: base}
+	quiet := &cobra.Command{}
+	got := verifyRange(&cobra.Command{}, HookPayload{Cwd: proj}, reg, nil, quiet, r)
+	assert.Contains(t, got, "cannot be resolved")
+	assert.Contains(t, got, "refusing")
+}

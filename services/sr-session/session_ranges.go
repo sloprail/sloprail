@@ -318,7 +318,7 @@ func identityRefusal(cmd *cobra.Command, p HookPayload, reg *module.Registry, st
 			quiet := &cobra.Command{}
 			quiet.SetOut(io.Discard)
 			quiet.SetErr(io.Discard)
-			if reason := verifyRange(cmd, p, reg, store, quiet, sessionstate.TrackedRange{Folder: folder, Head: head, HeadSHA: sha, Base: base}); reason != "" {
+			if reason := verifyRangeAs(cmd, p, reg, store, quiet, sessionstate.TrackedRange{Folder: folder, Head: head, HeadSHA: sha, Base: base}, false); reason != "" {
 				out = append(out, reason)
 			}
 		}
@@ -328,6 +328,12 @@ func identityRefusal(cmd *cobra.Command, p HookPayload, reg *module.Registry, st
 
 // verifyRange verifies one tracked range, returning the refusal or "".
 func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, quiet *cobra.Command, r sessionstate.TrackedRange) string {
+	return verifyRangeAs(cmd, p, reg, store, quiet, r, true)
+}
+
+// verifyRangeAs is verifyRange; needIdentity false (the Stop's fallback for a session that could
+// not be named, which has already refused for it) runs the checks without a record and session id.
+func verifyRangeAs(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, quiet *cobra.Command, r sessionstate.TrackedRange, needIdentity bool) string {
 	head, goneNote := headRevision(r)
 	if r.Base == "" {
 		// A row an older engine recorded: start from where the work on it began.
@@ -366,10 +372,16 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	contextMap := checkrun.LoadContextMap(io.Discard, store, loaded.Contexts)
 	// A script check still runs in verify (only judges are looked up), and one that reads the
 	// session's registry needs the session's record and id, as it has them under `sr-checks run`.
-	record, _ := p.record()
-	var sessionID string
-	if id, err := stableID(p); err == nil {
-		sessionID = id
+	var record, sessionID string
+	if needIdentity {
+		var rerr, ierr error
+		record, rerr = p.record()
+		sessionID, ierr = stableID(p)
+		if rerr != nil || record == "" || ierr != nil {
+			// As `sr-checks run` refuses: a script that reads the session's registry must not
+			// run with an empty identity and read "no registry" as a pass.
+			return fmt.Sprintf("%s: the session's record or id cannot be resolved (record: %q, %v; id: %v), so its script checks cannot run as they would under `sr-checks run`; refusing because checks run without the session's identity must not be read as passing. Make sure the hook payload carries the session's transcript_path, then stop again.", where, record, rerr, ierr)
+		}
 	}
 	refusals, _ := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
