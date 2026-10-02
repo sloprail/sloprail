@@ -478,9 +478,9 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 	if rev, note := headRevision(moved); note == "" && rev != "" {
 		if err := reg.TrackRange(sessionstate.TrackedRange{
 			SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.Head, HeadSHA: r.HeadSHA,
-			Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
+			Base: r.Base, AddedBy: r.AddedBy, AgentID: home.AgentID,
 		}); err == nil {
-			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID, "")
+			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID, removedTip(r))
 		}
 		return
 	}
@@ -490,10 +490,19 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 	_ = gitrepo.PinRef(home.Path, "refs/sloprail/pins/"+r.HeadSHA, r.HeadSHA)
 	if err := reg.TrackRange(sessionstate.TrackedRange{
 		SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.HeadSHA, HeadSHA: r.HeadSHA,
-		Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
+		Base: r.Base, AddedBy: r.AddedBy, AgentID: home.AgentID,
 	}); err == nil {
-		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone; the range moved to %s, pinned at %s", r.Head, home.Path, shortRev(r.HeadSHA)), r.AgentID, "")
+		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone; the range moved to %s, pinned at %s", r.Head, home.Path, shortRev(r.HeadSHA)), r.AgentID, removedTip(r))
 	}
+}
+
+// removedTip is the tip an untrack of a range in a removed folder is recorded against: that
+// folder never comes back, so the range's last tip (or a marker no tip equals) does.
+func removedTip(r sessionstate.TrackedRange) string {
+	if r.HeadSHA != "" {
+		return r.HeadSHA
+	}
+	return "removed"
 }
 
 // homeFolder is the session's root folder, when it is the same repository as folder.
@@ -668,8 +677,13 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	// The range's base vouches for the project's own switch-offs of protected rules, as it does
 	// under `sr-checks run`: verify must load the same rules the run judged.
 	loaded := newNatureDeclarations(quiet, r.Folder, reg, rng.Base)
-	if len(loaded.FileGuards) == 0 {
+	// A rule that failed to load judged nothing: refuse, as `sr-checks verify` does.
+	broken := checkrun.BrokenFileGuards(loaded)
+	if len(loaded.FileGuards) == 0 && len(broken) == 0 {
 		return ""
+	}
+	if len(loaded.FileGuards) == 0 {
+		return where + ": " + joinRefusals(broken) + goneNote
 	}
 	cache, err := checkrun.OpenLocalCache(r.Folder)
 	if err != nil {
@@ -682,10 +696,10 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
 		Store: results, Verify: true, Recorded: recordedCitations(p, store),
 	})
-	if len(refusals) == 0 {
+	if len(refusals) == 0 && len(broken) == 0 {
 		return ""
 	}
-	var parts []string
+	parts := append([]string(nil), broken...)
 	for _, f := range refusals {
 		parts = append(parts, f.Reason+" (file-guard "+f.Attribution+")")
 	}
@@ -948,10 +962,11 @@ lists what was untracked with the reason you give, so say it plainly.`,
 				}
 				head = h
 			}
-			tip := ""
-			if out, err := gitrepo.ResolveRange(dir, "HEAD", headRef(dir, head)); err == nil {
-				tip = out.Head
+			out, err := gitrepo.ResolveRange(dir, "HEAD", headRef(dir, head))
+			if err != nil {
+				return fmt.Errorf("sloprail: the tip of %s in %s could not be read (%v), so the untrack could not be recorded against it", head, dir, err)
 			}
+			tip := out.Head
 			if err := s.reg.UntrackRange(s.rs.ID, dir, head, reason, s.ownerOf(dir), tip); err != nil {
 				return err
 			}

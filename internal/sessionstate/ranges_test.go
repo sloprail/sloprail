@@ -33,9 +33,9 @@ func TestRanges_TheAgentMovesABaseAndDropsARangeWithAReason(t *testing.T) {
 	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "feat", Base: "aaa"}))
 	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "feat", Base: "bbb", AddedBy: RangeAgent}))
 	require.Error(t, s.UntrackRange("s", "/r", "feat", "", "", ""), "a reason is required")
-	require.NoError(t, s.UntrackRange("s", "/r", "feat", "the branch was abandoned", "", ""))
+	require.NoError(t, s.UntrackRange("s", "/r", "feat", "the branch was abandoned", "", "t0"))
 	// Brought back by the engine? No: what the agent dropped stays dropped.
-	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "feat", Base: "ccc", AddedBy: RangeAuto}))
+	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "feat", HeadSHA: "t0", Base: "ccc", AddedBy: RangeAuto}))
 
 	rs, err := s.Ranges("s")
 	require.NoError(t, err)
@@ -53,8 +53,8 @@ func TestRanges_TheAgentMovesABaseAndDropsARangeWithAReason(t *testing.T) {
 
 func TestRanges_AnUntrackOfAnUnknownRangeIsRecordedSoAutoDoesNotBringItBack(t *testing.T) {
 	s := openTemp(t)
-	require.NoError(t, s.UntrackRange("s", "/r", "main", "not mine", "", ""))
-	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "main", Base: "aaa", AddedBy: RangeAuto}))
+	require.NoError(t, s.UntrackRange("s", "/r", "main", "not mine", "", "t0"))
+	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "main", HeadSHA: "t0", Base: "aaa", AddedBy: RangeAuto}))
 	rs, _ := s.Ranges("s")
 	require.Len(t, rs, 1)
 	assert.False(t, rs[0].Tracked())
@@ -133,4 +133,12 @@ func TestRanges_AStoreFromBeforeTrackedRangesIsMigratedAndItsRowsStayTracked(t *
 			assert.Equal(t, "m0", r.Base)
 		}
 	}
+}
+
+func TestRanges_AnUntrackWithNoTipIsRefusedSoItIsNeverPermanent(t *testing.T) {
+	s := openTemp(t)
+	require.Error(t, s.UntrackRange("s", "/r", "feat", "dead", "", ""), "an empty tip would make the untrack permanent")
+	rs, err := s.Ranges("s")
+	require.NoError(t, err)
+	assert.Empty(t, rs)
 }

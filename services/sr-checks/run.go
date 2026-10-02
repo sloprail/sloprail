@@ -261,15 +261,7 @@ func execute(cmd *cobra.Command, m mode) error {
 
 // brokenFileGuards names every file-guard that failed to load, with why: a rule that cannot be
 // read judges nothing, so a run that passes over it must fail instead of reading as clean.
-func brokenFileGuards(l declaration.Loaded) []string {
-	var out []string
-	for _, iv := range l.Invalid {
-		if iv.Nature == declaration.NatureFileGuard {
-			out = append(out, "file-guard "+iv.Attribution()+" could not be loaded: "+iv.Reason)
-		}
-	}
-	return out
-}
+func brokenFileGuards(l declaration.Loaded) []string { return checkrun.BrokenFileGuards(l) }
 
 // joinRefusals renders the collected refusals as one block, naming each rule: a refusal an
 // agent cannot attribute to a rule is one it cannot act on.

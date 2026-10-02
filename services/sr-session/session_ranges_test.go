@@ -620,3 +620,71 @@ func TestAutoBase_IsTheMergeBaseWithTheRemoteDefaultAndExplicitBasesStand(t *tes
 	assert.NoError(t, checkTrackBase(proj, first, own))
 	assert.Error(t, checkTrackBase(proj, own, own))
 }
+
+// A moved range keeps the base the agent chose: moving a worktree's range must not re-derive it.
+func TestUntrackGone_AMovedRangeKeepsAnExplicitBase(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "a.md"), []byte("a"), 0o644))
+	runGit(t, proj, "add", "a.md")
+	runGit(t, proj, "commit", "-m", "init")
+	repoID, err := gitrepo.RootCommit(proj)
+	require.NoError(t, err)
+	wt := filepath.Join(t.TempDir(), "wt")
+	runGit(t, proj, "worktree", "add", "-b", "kept", wt)
+	tip := runGit(t, proj, "rev-parse", "HEAD")
+
+	reg := openStore(t)
+	for _, f := range []sessionstate.Folder{
+		{SessionID: "s1", Path: proj, Role: sessionstate.FolderRoot, GitRoot: proj, RepoID: repoID},
+		{SessionID: "s1", Path: wt, Role: sessionstate.FolderSubagentWorktree, GitRoot: wt, RepoID: repoID, AgentID: "sub"},
+	} {
+		_, err := reg.RegisterFolder(f)
+		require.NoError(t, err)
+	}
+	require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: "s1", Folder: wt, Head: "kept", HeadSHA: tip, Base: tip, AddedBy: sessionstate.RangeAgent, AgentID: "sub"}))
+	runGit(t, proj, "worktree", "remove", "--force", wt)
+
+	ranges, err := reg.Ranges("s1")
+	require.NoError(t, err)
+	untrackGone(reg, "s1", ranges)
+
+	ranges, err = reg.Ranges("s1")
+	require.NoError(t, err)
+	var moved *sessionstate.TrackedRange
+	for i, r := range ranges {
+		if r.Tracked() && r.Head == "kept" {
+			moved = &ranges[i]
+		}
+	}
+	require.NotNil(t, moved)
+	assert.Equal(t, filepath.Clean(proj), moved.Folder)
+	assert.Equal(t, sessionstate.RangeAgent, moved.AddedBy, "an explicit base must not be re-tracked as automatic")
+	assert.Equal(t, tip, moved.Base)
+}
+
+// A file-guard that fails to load judged nothing: the Stop refuses naming it, as `sr-checks verify`
+// does, instead of passing because no sound guard was left.
+func TestVerifyRange_ABrokenFileGuardRefusesNamingIt(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "a.md"), []byte("a"), 0o644))
+	runGit(t, proj, "add", "a.md")
+	runGit(t, proj, "commit", "-m", "init")
+	base := runGit(t, proj, "rev-parse", "HEAD")
+	writeFileGuardYAML(t, proj, "broken", "match: [unterminated\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "x.md"), []byte("x"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "commit", "-m", "work")
+	head := runGit(t, proj, "rev-parse", "--abbrev-ref", "HEAD")
+	modReg, err := modules.Registry()
+	require.NoError(t, err)
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+
+	got := verifyRange(cmd, HookPayload{Cwd: proj}, modReg, openStore(t), cmd, sessionstate.TrackedRange{
+		SessionID: "s1", Folder: proj, Head: head, Base: base, AddedBy: sessionstate.RangeAgent,
+	})
+	assert.Contains(t, got, "could not be loaded")
+	assert.Contains(t, got, "broken")
+}

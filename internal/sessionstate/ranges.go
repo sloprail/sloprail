@@ -81,10 +81,14 @@ func (s *store) TrackRange(r TrackedRange) error {
 // UntrackRange stops answering for a range, saying why. An untracked range stays listed,
 // reason and all, so the Stop can name it; a range that was never tracked is recorded as
 // untracked so an automatic tracking does not bring it back while its branch stays at tip (the
-// tip it was untracked at; "" never brings it back). A branch whose tip moves is tracked again.
+// tip it was untracked at, never empty). A branch whose tip moves is tracked again.
 func (s *store) UntrackRange(sessionID, folder, head, reason, agentID, tip string) error {
 	if reason == "" {
 		return errors.New("sessionstate: untracking a range needs a reason")
+	}
+	if tip == "" {
+		// "" would make the untrack permanent: an unknown tip never does.
+		return errors.New("sessionstate: untracking a range needs the tip it is untracked at")
 	}
 	db, err := s.conn()
 	if err != nil {

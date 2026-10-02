@@ -1364,3 +1364,15 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (FileGuardResul
 	}
 	return last, any
 }
+
+// BrokenFileGuards names every file-guard that failed to load, with why: a rule that cannot be
+// read judges nothing, so a run (or a Stop) that passes over it must fail instead of reading as clean.
+func BrokenFileGuards(l declaration.Loaded) []string {
+	var out []string
+	for _, iv := range l.Invalid {
+		if iv.Nature == declaration.NatureFileGuard {
+			out = append(out, "file-guard "+iv.Attribution()+" could not be loaded: "+iv.Reason)
+		}
+	}
+	return out
+}
