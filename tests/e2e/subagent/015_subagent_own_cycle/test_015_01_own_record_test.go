@@ -193,3 +193,131 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 		}
 	}
 }
+
+// T015_03: what a sub-agent's guardrail remembers is not readable by the parent's, and
+// what the parent's remembers is not readable by the sub-agent's.
+//
+// subagent_state_is_its_own, asserted end to end. Each invocation reports what it could
+// READ in its own scope before writing its own note. Pooled state shows up as a sub-agent
+// reading back the root's note, or the root's later hook reading back the sub-agent's —
+// either direction is the defect, and both are checked.
+//
+// The root writes on BOTH sides of the dispatch, which is what makes the positive control
+// part of the test rather than a separate one: the root's second hook must read back the
+// root's FIRST note. Without that, "the root did not read the sub-agent's note" is equally
+// true of a store that never worked at all, and the whole test would be vacuous.
+func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	led := e.NewLedger("memo")
+	e.Gate(proj, "memo", memoGate, map[string]string{"record.sh": memoScript(led.Path())})
+	e.GitInit(proj)
+
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
+		Bash("sb1", "echo sub > the-subs-file.md"),
+	).ThenCommit("the sub-agent's work"))
+
+	res := e.Run(proj, "s-015-03", "remember across a delegation", Turns("root done",
+		Bash("rb1", "echo root > root-before.md"),
+		Dispatch("d1", "delegate", sub, "worktree"),
+		Bash("rb2", "echo root > root-after.md"),
+	))
+	if !res.Saw("root done") {
+		t.Fatalf("the session did not complete:\n%s", res.Output)
+	}
+	if hitRetryCap(res.Output) {
+		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
+	}
+
+	lines := memoLines(t, led.Path())
+	// THE POSITIVE CONTROL. The root's second call read back the note its first stored.
+	after, ok := lineAbout(lines, "root-after.md")
+	if !ok {
+		t.Fatalf("the root's write after the delegation was never judged (%v), so the control "+
+			"this test rests on did not run", lines)
+	}
+	if got := beforeOf(after); !strings.Contains(got, "root-before.md") {
+		t.Fatalf("the root's second call read back %q, not the note its first stored (which names "+
+			"root-before.md). The session store is not working, so every assertion below about "+
+			"state NOT crossing between sessions would pass against an engine that stores nothing "+
+			"at all. Ledger: %v", got, lines)
+	}
+
+	// The sub-agent's own call ran and stored into a scope of its own.
+	subLine, ok := lineAbout(lines, "the-subs-file.md")
+	if !ok {
+		t.Fatalf("the sub-agent's own call was never judged (%v), so there is no sub-agent state "+
+			"to be isolated and this test proves nothing:\n%s", lines, res.Output)
+	}
+	if sessionOf(subLine) == sessionOf(after) {
+		t.Fatalf("the sub-agent's call ran as the parent's session (%s)", sessionOf(after))
+	}
+
+	// Direction one: the sub-agent did not read the PARENT's note. The root had already
+	// stored its first note by the time the sub-agent ran, so a pooled scope hands it that.
+	if got := beforeOf(subLine); got != "" {
+		t.Fatalf("the sub-agent's guardrail read back %q — a note the PARENT's hook wrote. Pooled "+
+			"with the parent's, a sub-agent's state means a rule that remembers something "+
+			"remembers it about work it was never watching. Ledger: %v", got, lines)
+	}
+
+	// Direction two: the root's later call did not read the SUB-AGENT's note.
+	for _, l := range lines {
+		if sessionOf(l) == sessionOf(after) && strings.Contains(beforeOf(l), "the-subs-file.md") {
+			t.Fatalf("a guardrail in the PARENT's session read back the SUB-AGENT's note (%s). Ledger: %v", l, lines)
+		}
+	}
+}
+
+// T015_04: two sub-agents in one session do not read each other's state.
+//
+// The spec's own example of what pooling costs is "a session spawning ten sub-agents would
+// have all ten reading each other's notes as their own". Two is the smallest case that
+// exhibits it, and unlike the parent/child direction it cannot be explained away by a tree
+// boundary: both sub-agents are the same KIND of thing, dispatched the same way, by the
+// same session. Each writes a note keyed to its own work. Neither may see the other's.
+func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	led := e.NewLedger("memo")
+	e.Gate(proj, "memo", memoGate, map[string]string{"record.sh": memoScript(led.Path())})
+	e.GitInit(proj)
+
+	first := harness.SubagentScript(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")).ThenCommit("the first sub-agent's work"))
+	second := harness.SubagentScript(t, harness.Turns("two done", Bash("a2", "echo two > second-subs-file.md")).ThenCommit("the second sub-agent's work"))
+
+	res := e.Run(proj, "s-015-04", "delegate twice", Turns("root done",
+		Dispatch("d1", "first job", first, "worktree"),
+		Dispatch("d2", "second job", second, "worktree"),
+	))
+	if !res.Saw("root done") {
+		t.Fatalf("a session dispatching two sub-agents did not complete:\n%s", res.Output)
+	}
+	if hitRetryCap(res.Output) {
+		t.Fatalf("a sub-agent hit the retry cap:\n%s", res.Output)
+	}
+	if trees := worktrees(t, proj); len(trees) != 2 {
+		t.Fatalf("want a worktree per sub-agent, found %d (%v) — two sub-agents were never in play", len(trees), trees)
+	}
+
+	lines := memoLines(t, led.Path())
+	firstLine, okFirst := lineAbout(lines, "first-subs-file.md")
+	secondLine, okSecond := lineAbout(lines, "second-subs-file.md")
+	if !okFirst || !okSecond {
+		t.Fatalf("both sub-agents' own calls must have been judged for this to be about two "+
+			"sub-agents' state; got %v", lines)
+	}
+	// Distinct identities, or there is only one session here and nothing to keep apart.
+	if sessionOf(firstLine) == sessionOf(secondLine) {
+		t.Fatalf("both sub-agents' calls ran under one identity (%s) — the two were collapsed into "+
+			"a single session, under which their state cannot be separate however the store is keyed",
+			sessionOf(firstLine))
+	}
+	// Neither read the other's note. Both scopes were fresh.
+	for path, line := range map[string]string{"first-subs-file.md": firstLine, "second-subs-file.md": secondLine} {
+		if got := beforeOf(line); got != "" {
+			t.Fatalf("the sub-agent that ran %s read back %q — a note the OTHER sub-agent (or the "+
+				"parent) wrote. Line: %s", path, got, line)
+		}
+	}
+}

@@ -169,3 +169,63 @@ func containsPath(lines []string, path string) bool {
 // failure is silent in the assertions a test would otherwise make: the run still
 // produces output, and the tree still holds the work.
 func hitRetryCap(output string) bool { return strings.Contains(output, "still blocked after") }
+
+// The state-isolation tests rest on a GATE that reads back what it can see in its own
+// scope before storing a note of its own. (A file-guard's checks carry no session
+// identity any more — `sr check run` takes a range, not a session — so the property
+// that a sub-agent's guardrail state is its own is observed through a gate, which a
+// hook still runs as the agent whose tool call it judges.)
+//
+// This is the only shape that can tell pooled state from separate state. A rule that
+// merely WROTE would leave two stores looking alike from outside; what distinguishes
+// them is whether one scope can READ what another wrote. So each run reports
+// `before=[...]` — the value standing in ITS scope when it ran — and then writes a
+// note of its own: the .md file the command names.
+const memoGate = `on:
+  - event: PreCommandInvoke
+checks:
+  - script: ./record.sh
+`
+
+// memoScript records, for every command naming a markdown file, who it ran as and what
+// that session's own scope held, then stores the file as the scope's note. The ledger is
+// outside the rule's folder (a rule's hash covers its folder).
+func memoScript(ledger string) string {
+	return `#!/bin/sh
+payload=$(cat)
+path=$(printf '%s' "$payload" | grep -o '[A-Za-z0-9_-]*\.md' | head -1)
+[ -n "$path" ] || exit 0
+before=$(sr-session state get seen 2>&1)
+echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$before]" >> '` + ledger + `'
+sr-session state set seen "$path" >/dev/null 2>&1
+exit 0
+`
+}
+
+// sessionOf reads the session identity a ledger line recorded, or "" when the line
+// carries none.
+func sessionOf(line string) string { return between(line, "session=[", "]") }
+
+// beforeOf reads what a hook could see in its own scope when it ran, or "" when the
+// line carries no such field. An empty CAPTURE is a real answer and is not the same as a
+// missing field: it says the scope held nothing.
+func beforeOf(line string) string { return between(line, "before=[", "]") }
+
+// memoLines is the ledger's lines.
+func memoLines(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
