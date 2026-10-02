@@ -27,7 +27,7 @@
 #
 # match: every SKILL.md in the repo, path-anchored on the file's own name. A
 # file-guard matches a FILE'S STATE (flat `path`, `status`, `markers`, `oldMarkers`,
-# `trailers`; no `context`: a file-guard sees no session), so the expression reads `path`.
+# `trailers`; no `context`: contexts are session state, read by gates), so the expression reads `path`.
 match: path endsWith "SKILL.md"
 
 # A file-guard judges committed changesets: every SKILL.md the range touched goes to
