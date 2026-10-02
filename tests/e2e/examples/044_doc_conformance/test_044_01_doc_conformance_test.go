@@ -178,7 +178,7 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 //   - Cycle 2 writes an UNMARKED file (nothing the guard matches); a block here can
 //     only be the re-judged outstanding marked file (R2) — proving the re-fire.
 //   - Cycle 3 FIXES the marked file (rewrites it to conforming); the judge passes.
-//   - Cycle 4 edits that unmarked file with the judge armed to refuse (R4); R4
+//   - Cycle 4 writes another unmarked file with the judge armed to refuse (R4); R4
 //     must NOT appear, proving the fixed file cleared and stopped re-firing.
 func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	e := New(t)
@@ -194,6 +194,7 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	if !hasReason(e, proj, sess, "R1") {
 		t.Fatalf("the non-conforming marked file did not block in the first cycle")
 	}
+	n1 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	// Cycle 2: an UNMARKED file — the guard matches nothing here, so any block is
 	// the re-fired outstanding marked file.
@@ -201,8 +202,11 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 	e.Run(proj, sess, "write an unmarked helper", Turns("done",
 		Write("w2", "internal/mock/helper.go", "package mock\n\nfunc Helper() {}\n"),
 	).ThenCommit("write the files"))
-	if !hasReason(e, proj, sess, "R2") {
-		t.Fatalf("the outstanding marked file was NOT re-judged on a cycle that never touched it — the re-fire did not happen")
+	// The stored verdict for the unchanged file is replayed (R1's words), so count
+	// refusals, not reasons.
+	n2 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+	if n2 <= n1 {
+		t.Fatalf("the outstanding marked file did NOT refuse again on a cycle that never touched it (%d refusals, was %d) — the re-fire did not happen", n2, n1)
 	}
 
 	// Cycle 3: FIX the marked file. Judge passes; it clears.
@@ -211,15 +215,14 @@ func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
 		Write("w3", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"type\":\"assistant\"}` }")),
 	).ThenCommit("write the files"))
 
-	// Cycle 4: the unmarked helper is edited (a verdict is keyed by what the judge is
-	// given, and the range's other files are part of it by name — a NEW unmarked file
-	// would be a new input; an edit of one already in the range is not), judge armed
-	// to refuse. Nothing should re-fire.
+	n3 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+
+	// Cycle 4: another unmarked file, judge armed to refuse. Nothing should re-fire.
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R4 must not appear if the fix cleared the file"}`)
-	e.Run(proj, sess, "edit the unmarked helper", Turns("done",
-		Write("w4", "internal/mock/helper.go", "package mock\n\nfunc Helper() int { return 2 }\n"),
+	e.Run(proj, sess, "write another unmarked helper", Turns("done",
+		Write("w4", "internal/mock/helper2.go", "package mock\n\nfunc Helper2() {}\n"),
 	).ThenCommit("write the files"))
-	if hasReason(e, proj, sess, "R4") {
+	if hasReason(e, proj, sess, "R4") || len(e.AllBlockingErrorsFrom(proj, sess, "Stop")) > n3 {
 		t.Errorf("a FIXED marked file kept re-firing: cycle 4 touched nothing the guard matches, yet a fresh block appeared")
 	}
 }
