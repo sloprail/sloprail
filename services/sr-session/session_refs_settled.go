@@ -12,6 +12,7 @@ import (
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/repochecks"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
 // newSessionRefsSettledCmd answers, for the merge gate and anyone else who asks, whether every
@@ -51,7 +52,7 @@ line. A repository with no file-guard has nothing to pass: exit 0.`,
 			}
 			guards := newNatureDeclarations(cmd, filepath.Clean(tree), mods).FileGuards
 			var results checkstore.Store
-			if store, err := repochecks.OpenReadOnly(ws, t.session); err == nil {
+			if store, err := repochecks.OpenReadOnly(ws, t.session, repochecks.SubagentSources(rootRecordOf(ws, t.session), t.session)...); err == nil {
 				results = newFamilyResults(store)
 				defer results.Close()
 			} else if !errors.Is(err, checkstore.ErrNoStore) {
@@ -105,4 +106,14 @@ func judgedByRule(root, tip, rule string, results checkstore.Store) bool {
 	}
 	ok, _ := gitrepo.AnyDescendant(root, gitrepo.LoadGraph(root), tip, heads)
 	return ok
+}
+
+// rootRecordOf is the record of the root session `session` as it lies in the project directory of
+// ws ("" when it is not there): where the sub-agents dispatched under it are found.
+func rootRecordOf(ws, session string) string {
+	rec := filepath.Join(sessionpath.ProjectDirOf("", ws), session+".jsonl")
+	if _, err := os.Stat(rec); err != nil {
+		return ""
+	}
+	return rec
 }
