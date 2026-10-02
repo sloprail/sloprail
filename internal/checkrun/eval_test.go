@@ -851,3 +851,29 @@ func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *
 	r2, refused := f.evaluateWith(t, resolved, "b2")
 	assert.False(t, refused, r2.Reason+"\n"+"the quote resolves now: the citation is judged again and holds")
 }
+
+// A judge that returned no parseable verdict is an engine-side failure, not a verdict on the
+// content; a script's refusal (whatever it says) and a real judge refusal are verdicts.
+func TestReturnedNoVerdict_OnlyAJudgeThatAnsweredNothing(t *testing.T) {
+	none := dispatchcore.Verdict{Refused: true, Reason: "the judge did not produce a JSON verdict object (after 2 attempts)"}
+	assert.True(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, none))
+	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Refused: true, Reason: "the ADR is not cited"}))
+	assert.False(t, returnedNoVerdict(declaration.Check{Script: "./c.sh"}, none), "a script's refusal is its verdict")
+	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Reason: none.Reason}), "not a refusal")
+}
+
+// Verify over a range whose latest run left the judge without a verdict says so, in the judge's
+// words; it is "not judged yet", never a stored FAIL.
+func TestEvaluate_VerifyNamesAJudgeThatReturnedNoVerdict(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	f.commitDoc(t, "docs/a.md", "clean")
+	ev := f.newEvaluation(t, f.results)
+	runID, err := ev.record(checkstore.CheckRun{CheckID: f.guard.Qualified(), BaseRef: ev.rng.Base, HeadRef: ev.rng.Head})
+	require.NoError(t, err)
+	require.NoError(t, ev.recordCheck(runID, checkstore.CheckRecord{Subject: "changeset", Kind: "check[0]:judge:j.md.j2",
+		Status: checkstore.StatusError, Metadata: map[string]any{"reasoning": "the judge did not produce a JSON verdict object (after 2 attempts)"}}))
+
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet (the judge returned no verdict: the judge did not produce a JSON verdict object (after 2 attempts))")
+}

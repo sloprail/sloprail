@@ -88,9 +88,9 @@ func TestT001_03_StatusLatestRunFailingAndRule(t *testing.T) {
 	}
 }
 
-// T001_04: a judge that produced no verdict is a failed verdict carrying its message (a
-// refusal is a complete fail; only an engine-internal error is left unjudged). It is never
-// shown as an empty range or a pass.
+// T001_04: a judge that produced no verdict is an engine failure, not a FAIL verdict on the
+// content: it is never stored as a verdict (so it is never replayed), and verify says "not
+// judged yet" with the judge's own message. It is never shown as an empty range or a pass.
 func TestT001_04_AnEngineFailureIsAnError(t *testing.T) {
 	e, proj := session(t)
 	base := judged(t, e, proj, "not a verdict")
@@ -99,16 +99,22 @@ func TestT001_04_AnEngineFailureIsAnError(t *testing.T) {
 	if r.Code == 0 {
 		t.Fatalf("a judge that answered nothing passed:\n%s", r.Output)
 	}
-	contains(t, r.Output, "the judge did not produce")
+	contains(t, r.Output, "the judge did not produce a JSON verdict object (after 2 attempts)")
 	rows := statusRows(t, e, proj, "--base", base, "--head", "HEAD")
-	if len(rows) != 1 || rows[0].Status != "fail" || rows[0].Reason != "the judge did not produce a JSON verdict object (after 2 attempts)" {
-		t.Fatalf("rows = %+v, want a failed verdict (never an empty range, never a pass) carrying its exact message", rows)
-	}
-	if failing := statusRows(t, e, proj, "--base", base, "--head", "HEAD", "--failing"); len(failing) != 1 || failing[0].Status != "fail" {
-		t.Fatalf("--failing = %+v, want the failed verdict", failing)
+	if len(rows) != 1 || rows[0].Status != "missing" ||
+		!strings.Contains(rows[0].Reason, "not judged yet (the judge returned no verdict: the judge did not produce a JSON verdict object (after 2 attempts))") {
+		t.Fatalf("rows = %+v, want not judged yet carrying the judge's exact message (never an empty range, never a pass, never a stored fail)", rows)
 	}
 	if res := checks(e, proj, "show", "--base", "no-such-rev", "--head", "HEAD"); res.Code == 0 {
 		t.Fatalf("show over an unresolvable range succeeded:\n%s", res.Output)
+	}
+
+	// Not a verdict: the next run asks the judge again, and a real answer is judged.
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictFail)
+	if again := checks(e, proj, "run", "--base", base, "--head", "HEAD"); again.Code == 0 {
+		t.Fatalf("the failing verdict passed:\n%s", again.Output)
+	} else {
+		contains(t, again.Output, "the ADR is not cited")
 	}
 }
 

@@ -3,6 +3,7 @@ package checkrun
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1008,8 +1009,41 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 	if err != nil {
 		return fail(err)
 	}
+	if returnedNoVerdict(c, v) {
+		// The judge never produced a verdict (it answered nothing parseable): an engine-side
+		// failure, not a FAIL verdict on the content. It is recorded as an error, never as a
+		// verdict under the key, so `verify` says "not judged yet" and the next `run` asks again.
+		return fail(errors.New(v.Reason))
+	}
 	return settle(v, meta)
 }
+
+// incompleteReason is why the latest run left the rule's check over this subject without a
+// verdict, when it was the judge returning none ("" otherwise). The run is left incomplete, so
+// its row reads error or interrupted, never a verdict.
+func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
+	rows, err := ev.store.CheckStatus(false, rr.g.Qualified())
+	if err != nil {
+		return ""
+	}
+	var at, why string
+	for _, r := range rows {
+		reason, _ := r.Metadata["reasoning"].(string)
+		if r.Subject == rr.subject.ID && r.Status != checkstore.StatusPass && r.Status != checkstore.StatusFail && strings.HasPrefix(reason, judgeNoVerdict) && r.RunAt >= at {
+			at, why = r.RunAt, "the judge returned no verdict: "+reason
+		}
+	}
+	return why
+}
+
+// returnedNoVerdict says a judge check was refused for want of a parseable answer, not for a
+// verdict on the content (a script's refusal, whatever it says, is always its verdict).
+func returnedNoVerdict(c declaration.Check, v dispatchcore.Verdict) bool {
+	return c.Script == "" && v.Refused && strings.HasPrefix(v.Reason, judgeNoVerdict)
+}
+
+// judgeNoVerdict starts the reason a judge that returned no parseable verdict is refused with.
+const judgeNoVerdict = "the judge did not produce a JSON verdict object"
 
 // stepKey names a step of a guard: its subject and its kind.
 func stepKey(subject, kind string) string { return subject + "\x00" + kind }
@@ -1123,7 +1157,11 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
 	if ev.verify && !have {
-		return missing(fmt.Sprintf("not judged yet — run `sr-checks run --base %s --head %s` in %s", ev.rng.Base, ev.rng.Head, ev.root))
+		why := ""
+		if inc := ev.incompleteReason(rr); inc != "" {
+			why = " (" + inc + ")"
+		}
+		return missing(fmt.Sprintf("not judged yet%s — run `sr-checks run --base %s --head %s` in %s", why, ev.rng.Base, ev.rng.Head, ev.root))
 	}
 	if !have {
 		return dispatchcore.Verdict{}, nil, false
