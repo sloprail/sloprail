@@ -36,7 +36,7 @@ changes are real, which version they landed in)."
 GUARDRAIL="A gate (citations-resolve, before the write) and a file-guard of the same
 name (the Stop after-check) match any *.md file written. The gate requires every write to carry a citation of tool output: a write
 with none (the Write tool, a shell redirect) is refused before it lands, and
-the refusal names the sr-file form. A cited write is then judged by `sr-checks run` (verified at Stop), by the file-guard, which
+the refusal names the sr-file form. A cited write is then judged by \`sr-checks run\` (verified at Stop), by the file-guard, which
 reads each quote with the full tool output it came from and asks whether the
 file's claims say what that output says. A first write refused for having no
 citation, followed by the agent reading the skill or the refusal and writing

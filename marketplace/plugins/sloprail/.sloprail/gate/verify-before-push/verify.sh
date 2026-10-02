@@ -52,24 +52,18 @@ root_commit() {
 
 # default_base SHA — where work on SHA started, from `sr-checks default-base` (the one
 # implementation, gitrepo.DefaultBase). A repository with no remote default branch (a first push to
-# a new remote, no origin/HEAD) has none to ask: the session's recorded base for the range being
-# pushed stands in when there is one (an ancestor of SHA), else the whole history is judged from the
-# root commit. Never an empty range, and never a push that cannot be pushed.
+# a new remote, no origin/HEAD) has none to ask: the whole history is judged from the root commit.
+# The base is never taken from the session's refs registry (`sr-session refs track --base` is
+# agent-callable, so it could narrow what the push gate verifies). Never an empty range, and
+# never a push that cannot be pushed.
 default_base() {
-  local sha="$1" b rec
+  local sha="$1" b
   if b="$(sr-checks default-base --head "$sha" 2>/dev/null)"; then
     if [ "$b" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]; then
       root_commit "$sha"
       return
     fi
     printf '%s' "$b"
-    return
-  fi
-  rec="$(sr-session refs list --json 2>/dev/null | jq -r --arg sha "$sha" --arg dir "$PWD" \
-    '[.[] | select(.HeadSHA == $sha and .Base != "" and (.UntrackedReason // "") == "") | .Base][0] // empty' 2>/dev/null)"
-  if [ -n "$rec" ] && [ "$rec" != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ] &&
-    git "${GOPTS[@]+"${GOPTS[@]}"}" merge-base --is-ancestor "$rec" "$sha" 2>/dev/null; then
-    printf '%s' "$rec"
     return
   fi
   root_commit "$sha"

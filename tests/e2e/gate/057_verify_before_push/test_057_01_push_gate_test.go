@@ -9,11 +9,12 @@ import (
 )
 
 // pushSetup is a project with a bare `origin`, and a probe of whether `work` reached it.
-func pushSetup(t *testing.T, config string) (*Env, string, func() bool) {
+func pushSetup(t *testing.T, disable ...string) (*Env, string, func() bool) {
 	e, proj, _ := project(t, docsRule)
 	bare := e.Origin(proj)
-	if config != "" {
-		e.WriteFile(proj, ".sloprail/config.yaml", config)
+	if len(disable) > 0 {
+		// Merged into the harness's own disabled list, never overwriting it.
+		e.DisablePluginGuardrail(proj, disable...)
 		e.CommitAll(proj, "configure the push gate")
 	}
 	return e, proj, func() bool {
@@ -25,7 +26,7 @@ func pushSetup(t *testing.T, config string) (*Env, string, func() bool) {
 // in .sloprail/config.yaml. Off, a push goes through (the Stop still judges the commits). On, commits a
 // file-guard refuses (or nobody judged) do not leave the machine; once judged clean, the same push goes through.
 func TestT057_01_ThePushGateCanBeDisabled(t *testing.T) {
-	e, proj, pushed := pushSetup(t, "disabled:\n  - sloprail/gate/verify-before-push\n")
+	e, proj, pushed := pushSetup(t, "sloprail/gate/verify-before-push")
 	e.Run(proj, "s-057-01a", "commit and push", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
 		Bash("p1", "git push -q origin HEAD:refs/heads/work"),
@@ -39,7 +40,7 @@ func TestT057_01_ThePushGateCanBeDisabled(t *testing.T) {
 }
 
 func TestT057_01_APushOfRefusedCommitsIsBlockedThenAllowedOnceFixedByDefault(t *testing.T) {
-	e, proj, pushed := pushSetup(t, "")
+	e, proj, pushed := pushSetup(t)
 	e.Run(proj, "s-057-01b", "commit and push", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
 		Bash("p1", "git push -q origin HEAD:refs/heads/work"),
@@ -65,7 +66,7 @@ func TestT057_01_APushOfRefusedCommitsIsBlockedThenAllowedOnceFixedByDefault(t *
 // origin/HEAD) is not a dead end: the gate judges from the root commit, blocks what a file-guard
 // refuses, and lets the same push through once the commits are judged clean.
 func TestT057_01_ThePushGateWorksWithNoRemoteDefaultBranch(t *testing.T) {
-	e, proj, pushed := pushSetup(t, "")
+	e, proj, pushed := pushSetup(t)
 	e.Git(proj, "remote", "set-head", "origin", "-d")
 	e.Git(proj, "update-ref", "-d", "refs/remotes/origin/main")
 	e.Git(proj, "update-ref", "-d", "refs/remotes/origin/master")
@@ -85,5 +86,23 @@ func TestT057_01_ThePushGateWorksWithNoRemoteDefaultBranch(t *testing.T) {
 	))
 	if !pushed() {
 		t.Fatal("with no remote default branch the verified commits could not be pushed: the gate is a dead end")
+	}
+}
+
+// With no remote default branch the push gate judges from the root commit: a base the agent
+// recorded in the session's refs registry (`sr-session refs track --base`) does not narrow it.
+func TestT057_01_ARegistryBaseDoesNotNarrowThePushGate(t *testing.T) {
+	e, proj, pushed := pushSetup(t)
+	e.Git(proj, "remote", "set-head", "origin", "-d")
+	e.Git(proj, "update-ref", "-d", "refs/remotes/origin/main")
+	e.Git(proj, "update-ref", "-d", "refs/remotes/origin/master")
+
+	e.Run(proj, "s-057-01d", "commit, narrow, push", Turns("done",
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
+		Bash("t1", "sr-session refs track --base HEAD"),
+		Bash("p1", "git push -q origin HEAD:refs/heads/work"),
+	))
+	if pushed() {
+		t.Fatal("an agent-recorded registry base narrowed the push gate: refused commits were pushed")
 	}
 }

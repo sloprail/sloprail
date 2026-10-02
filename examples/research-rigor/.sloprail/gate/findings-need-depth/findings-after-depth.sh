@@ -110,7 +110,7 @@ if [ "$open" != "true" ]; then
       # or a link to it, only "Proposed approach" elsewhere): the convention is
       # research before proposing, declared or not. A write whose result the
       # engine cannot know ahead (resultKnown false) is let through here and
-      # judged by depth-check (`sr-checks run`, verified at Stop), which the proposal activates (see the
+      # judged by depth-check (a Stop gate), which the proposal activates (see the
       # research-run context) — holding every such write would hold unrelated
       # Markdown edits too.
       adds="$(printf '%s' "$input" | jq -r -L "$here" --argjson notes "$notes_scope" 'include "proposal";
