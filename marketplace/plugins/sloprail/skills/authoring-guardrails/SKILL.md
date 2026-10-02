@@ -211,9 +211,7 @@ If a rule fails any of these, say so rather than writing a weaker version.
 
 ## Prove it fires
 
-Loading is not firing. A rule that fails to load is reported at Stop, every turn, naming what is wrong.
-
-Loading clean is not the same as firing. What still never fires:
+A rule that loads clean can still never fire:
 
 - a match that is valid but true of nothing real
 - a mistyped key **inside** a list element, or a flag read off an open map
