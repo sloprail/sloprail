@@ -323,7 +323,9 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	if err != nil {
 		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
 	}
-	loaded := newNatureDeclarations(quiet, r.Folder, reg)
+	// The range's base vouches for the project's own switch-offs of protected rules, as it does
+	// under `sr-checks run`: verify must load the same rules the run judged.
+	loaded := newNatureDeclarations(quiet, r.Folder, reg, rng.Base)
 	if len(loaded.FileGuards) == 0 {
 		return ""
 	}
