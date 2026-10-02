@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -432,8 +433,11 @@ func TestDispatchStop_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T
 
 func TestAutoBase_NoRemoteDefaultBranchNeverMakesAnEmptyRange(t *testing.T) {
 	proj := initRepo(t) // no origin: a local main is not the remote default
-	sha := runGit(t, proj, "rev-parse", "HEAD")
-	started := runGit(t, proj, "rev-parse", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "f.txt"), []byte("f"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c")
+	sha := strings.TrimSpace(runGit(t, proj, "rev-parse", "HEAD"))
+	started := sha
 
 	assert.Equal(t, started, autoBase(proj, sha, started), "the session's recorded base stands in")
 	assert.Equal(t, gitrepo.EmptyTree, autoBase(proj, sha, ""), "nothing recorded: the widest range, never base==head")
