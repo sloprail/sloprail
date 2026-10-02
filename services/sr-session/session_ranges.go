@@ -132,8 +132,8 @@ func fileGuardsOnDefaultBranch(folder string) bool {
 // store; a branch whose tip differs from the one recorded before has MOVED, however it moved
 // (commit, merge, rebase, am, cherry-pick, reset to new commits). No reflog is read anywhere.
 const (
-	observedTipPrefix    = "observed-tip:"          // observed-tip:<branch>:<folder> -> tip
-	observedFolderPrefix = "observed-folder:"       // observed-folder:<folder> -> "1" once its baseline is taken
+	observedTipPrefix    = "observed-tip:"    // observed-tip:<branch>:<folder> -> tip
+	observedFolderPrefix = "observed-folder:" // observed-folder:<folder> -> "1" once its baseline is taken
 	detachedObserved     = "(detached)"
 )
 
@@ -211,6 +211,9 @@ func ahead(folder, sha, startedAt string) bool {
 // An error (git or the store) is returned, and the Stop refuses on it:
 // a branch that could not be observed is never "not tracked".
 func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+	if err := pruneUnmovedAuto(reg, rs.ID); err != nil {
+		return err
+	}
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
 		return err
@@ -564,6 +567,9 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
 		}
 		if !r.Tracked() {
+			if r.UntrackedReason == prunedReason {
+				continue // housekeeping, not a decision anyone should be told about
+			}
 			notes = append(notes, fmt.Sprintf("untracked: %s %s (reason: %s)", r.Folder, r.Head, r.UntrackedReason))
 			continue
 		}
@@ -1173,4 +1179,47 @@ func isCommitHead(folder, head string) bool {
 		}
 	}
 	return exec.Command("git", "-C", folder, "rev-parse", "--verify", "--quiet", "refs/heads/"+head).Run() != nil
+}
+
+// prunedReason is why a row the removed first-sight rule made is dropped.
+const prunedReason = "pruned: tracked at first sight, never moved"
+
+// pruneUnmovedAuto untracks, once (a pruned row is not touched again), every row the engine
+// tracked by itself that never moved: its recorded tip is the one it was registered at AND its
+// branch still stands there. The removed first-sight rule tracked every branch of a folder it
+// met late; those rows owe nothing. Explicit rows, moved rows, commit heads and rows whose
+// branch cannot be read are kept. A branch that moves later is tracked again by the next hook.
+func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
+	ranges, err := reg.Ranges(sessionID)
+	if err != nil {
+		return err
+	}
+	live := map[string]map[string]string{} // folder -> branch -> tip
+	liveTips := func(folder string) map[string]string {
+		if m, ok := live[folder]; ok {
+			return m
+		}
+		m := map[string]string{}
+		if out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").Output(); err == nil {
+			for _, ln := range strings.Split(string(out), "\n") {
+				if f := strings.Fields(ln); len(f) == 2 {
+					m[f[0]] = f[1]
+				}
+			}
+		}
+		live[folder] = m
+		return m
+	}
+	for _, r := range ranges {
+		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || r.FirstTip == "" || r.HeadSHA != r.FirstTip {
+			continue
+		}
+		if tip, ok := liveTips(r.Folder)[r.Head]; !ok || tip != r.HeadSHA {
+			continue
+		}
+		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, prunedReason, r.AgentID, r.HeadSHA); err != nil {
+			return err
+		}
+	}
+	return nil
 }

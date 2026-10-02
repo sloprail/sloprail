@@ -73,8 +73,10 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 		t.Fatalf("premise: the blob is not a loose object: %v", err)
 	}
 
+	// The Stop reads no blob (its key is over the blob ids), so it does not meet the lost object:
+	// nothing was judged for this range, and that refuses. The run below is what reads the bytes.
 	r := e.StopJudged(proj, "s-003-04", false)
-	if !harness.Blocked(r) || !strings.Contains(r.Output, "could not be evaluated") {
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "not judged yet") {
 		t.Fatalf("an unreadable range did not fail closed:\n%s", r.Output)
 	}
 	if n := len(ledger(t, led)); n != 0 {

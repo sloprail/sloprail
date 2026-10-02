@@ -34,6 +34,9 @@ type TrackedRange struct {
 	// AbandonedTip is the tip the range was untracked at; "" while tracked. An untracked range
 	// whose branch tip moves past it is tracked again by the next automatic tracking.
 	AbandonedTip string
+	// FirstTip is the commit Head pointed at when the row was made; it differs from HeadSHA once
+	// the branch has moved during the session.
+	FirstTip string
 	// AgentID names the sub-agent the range belongs to; empty for the root.
 	AgentID string
 }
@@ -125,7 +128,7 @@ func (s *store) Ranges(sessionID string) ([]TrackedRange, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`
-		SELECT session_id, folder, ref, base, tip, added_by, untracked_reason, agent_id, abandoned_tip
+		SELECT session_id, folder, ref, base, tip, added_by, untracked_reason, agent_id, abandoned_tip, first_tip
 		FROM session_refs WHERE session_id = ? ORDER BY folder, ref`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("sessionstate: list ranges: %w", err)
@@ -134,7 +137,7 @@ func (s *store) Ranges(sessionID string) ([]TrackedRange, error) {
 	var out []TrackedRange
 	for rows.Next() {
 		var r TrackedRange
-		if err := rows.Scan(&r.SessionID, &r.Folder, &r.Head, &r.Base, &r.HeadSHA, &r.AddedBy, &r.UntrackedReason, &r.AgentID, &r.AbandonedTip); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Folder, &r.Head, &r.Base, &r.HeadSHA, &r.AddedBy, &r.UntrackedReason, &r.AgentID, &r.AbandonedTip, &r.FirstTip); err != nil {
 			return nil, fmt.Errorf("sessionstate: list ranges: %w", err)
 		}
 		out = append(out, r)

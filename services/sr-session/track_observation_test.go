@@ -274,3 +274,38 @@ func TestTrackMissing_ADetachedCheckoutOfARemoteCommitIsAnEmptyRange(t *testing.
 	head := runGit(t, proj, "rev-parse", "HEAD")
 	assert.Equal(t, head, autoBase(proj, head, ""), "someone else's commit is in a range")
 }
+
+// Rows the removed first-sight rule left (auto, never moved) are pruned once; a row that moved,
+// or one the agent stated, is kept; a second hook prunes nothing more.
+func TestPruneUnmovedAuto(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, nil)
+	for _, b := range []string{"stale", "moved", "stated"} {
+		runGit(t, proj, "switch", "-q", "-c", b)
+		commitFile(t, proj, b+".md", b)
+	}
+	runGit(t, proj, "switch", "-q", "main")
+	sha := func(b string) string { return runGit(t, proj, "rev-parse", b) }
+	for _, b := range []string{"stale", "moved"} {
+		require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: rs.ID, Folder: proj, Head: b, HeadSHA: sha(b), Base: sha("main"), AddedBy: sessionstate.RangeAuto}))
+	}
+	require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: rs.ID, Folder: proj, Head: "stated", HeadSHA: sha("stated"), Base: sha("main"), AddedBy: sessionstate.RangeAgent}))
+	runGit(t, proj, "switch", "-q", "moved")
+	commitFile(t, proj, "more.md", "more") // the branch moves past its first tip
+	runGit(t, proj, "switch", "-q", "main")
+	require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: rs.ID, Folder: proj, Head: "moved", HeadSHA: sha("moved"), AddedBy: sessionstate.RangeAuto}))
+
+	require.NoError(t, pruneUnmovedAuto(reg, rs.ID))
+	require.NoError(t, pruneUnmovedAuto(reg, rs.ID)) // idempotent
+	rows, err := reg.Ranges(rs.ID)
+	require.NoError(t, err)
+	tracked := map[string]bool{}
+	reason := map[string]string{}
+	for _, r := range rows {
+		tracked[r.Head] = r.Tracked()
+		reason[r.Head] = r.UntrackedReason
+	}
+	assert.False(t, tracked["stale"], "an auto row that never moved stayed tracked")
+	assert.Equal(t, prunedReason, reason["stale"])
+	assert.True(t, tracked["moved"], "a row that moved was pruned")
+	assert.True(t, tracked["stated"], "an explicit row was pruned")
+}
