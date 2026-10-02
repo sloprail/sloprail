@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -22,7 +23,7 @@ func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
 	}
 	last := strings.TrimSpace(out)
 	if last == "" {
-		return r, nil
+		return raiseByRuleDate(dir, r, folder)
 	}
 	if !isObjectName(last) {
 		return r, fmt.Errorf("gitrepo: floor for %q resolved to %q, not an object name", folder, last)
@@ -65,4 +66,37 @@ func parentOrEmptyTree(dir, commit string) (string, error) {
 		return "", fmt.Errorf("gitrepo: parent of %s resolved to %q, not an object name", commit, sha)
 	}
 	return sha, nil
+}
+
+// raiseByRuleDate is the floor of a rule that head's own history does not carry (an older branch,
+// cut before the rule arrived): the rule is in force from the commit that last changed it in the
+// checkout (HEAD) on, so the commits head made BEFORE that commit's date are not its debt. The
+// base becomes the newest commit of the range older than that date; a range with none is returned
+// as it was.
+func raiseByRuleDate(dir string, r Range, folder string) (Range, error) {
+	out, err := run(dir, "log", "-1", "--format=%ct", "HEAD", "--", folder)
+	if err != nil {
+		return r, nil // no checkout to ask: the rule has no floor
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return r, nil
+	}
+	if r.Base != EmptyTree {
+		if _, err := run(dir, "cat-file", "-e", r.Base+":"+folder); err == nil {
+			return r, nil
+		}
+	}
+	args := []string{"rev-list", "-1", fmt.Sprintf("--before=%d", ts-1), r.Head}
+	if r.Base != EmptyTree {
+		args = append(args, "^"+r.Base)
+	}
+	out, err = run(dir, args...)
+	if err != nil {
+		return r, err
+	}
+	if sha := strings.TrimSpace(out); sha != "" {
+		r.Base = sha
+	}
+	return r, nil
 }

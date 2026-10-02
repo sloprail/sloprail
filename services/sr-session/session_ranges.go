@@ -125,8 +125,13 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 			_ = reg.TrackRange(sessionstate.TrackedRange{
 				SessionID: rs.ID, Folder: folder, Head: head, HeadSHA: sha, AddedBy: sessionstate.RangeAuto, AgentID: f.AgentID,
 			})
-		case !hasFolder[folder] || sha != f.BaseRef:
+		case !hasFolder[folder]:
 			ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
+		case sha != f.BaseRef:
+			// A branch that carries commits is tracked even where its own checkout has no
+			// file-guard: an older branch, cut before a project rule arrived, is judged by the
+			// session's rules (verify loads them), from where that rule came into force.
+			trackCurrent(reg, rs.ID, f.Path, f.AgentID, f.BaseRef, false)
 		}
 	}
 }
@@ -135,7 +140,12 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
 // there (what the agent changed or dropped stays so). startedAt is the folder's registered
 // BaseRef.
 func ensureTracked(reg sessionstate.Store, sessionID, folder, agent, startedAt string) {
-	if !folderHasFileGuards(folder, startedAt) {
+	trackCurrent(reg, sessionID, folder, agent, startedAt, true)
+}
+
+// trackCurrent is ensureTracked; needGuards: only when the folder's own checkout loads a file-guard.
+func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt string, needGuards bool) {
+	if needGuards && !folderHasFileGuards(folder, startedAt) {
 		return // nothing to answer for here: no range is tracked, and Stop says nothing of it
 	}
 	head, sha, ok := trackedHead(folder)
