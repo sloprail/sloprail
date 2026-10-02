@@ -2,6 +2,7 @@ package checkrun
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -889,6 +890,9 @@ func judgeKey(runner dispatchcore.Runner, g declaration.FileGuard, req dispatchc
 		keyed.Changeset.Citations[i] = cit
 	}
 	req.Changeset = &keyed
+	// prepare ran over the real payload, so a citation it inlined (`asks`, `cited_results`) carries
+	// the same transcript-found fields: hold them to the same placeholders.
+	prep.Context = heldContext(prep.Context)
 	prompt, refusal, err := runner.RenderJudge(req, c, prep)
 	if err != nil || refusal != "" {
 		return "", refusal, err
@@ -985,4 +989,60 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (FileGuardResul
 		ev.runRest(rr)
 	}
 	return rr.result, rr.refused
+}
+
+// heldContext is prepare's context with every citation in it (an object with a quote and its
+// source types) holding where it was found to placeholders, and the commits it was found in to
+// their count, as judgeKey holds the changeset's own citations.
+func heldContext(ctx declaration.PreparedContext) declaration.PreparedContext {
+	var walk func(v any) any
+	walk = func(v any) any {
+		switch x := v.(type) {
+		case map[string]any:
+			_, quoted := x["quote"]
+			_, typed := x["sourceTypes"]
+			out := make(map[string]any, len(x))
+			for k, e := range x {
+				if quoted && typed {
+					switch k {
+					case "path":
+						e = "<path>"
+					case "message":
+						e = "<message>"
+					case "line":
+						e = 0
+					case "call":
+						if e != nil && e != "" {
+							e = "<call>"
+						}
+					case "commits":
+						if shas, ok := e.([]any); ok {
+							e = make([]any, len(shas))
+						}
+					}
+				}
+				out[k] = walk(e)
+			}
+			return out
+		case []any:
+			out := make([]any, len(x))
+			for i, e := range x {
+				out[i] = walk(e)
+			}
+			return out
+		}
+		return v
+	}
+	b, err := json.Marshal(ctx)
+	if err != nil {
+		return ctx
+	}
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		return ctx
+	}
+	if m, ok := walk(v).(map[string]any); ok {
+		return declaration.PreparedContext(m)
+	}
+	return ctx
 }
