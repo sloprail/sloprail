@@ -193,7 +193,10 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		return nil // no session identity, so no ranges
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil // a session that never recorded anything has no ranges
+		}
+		return []string{fmt.Sprintf("the session's tracked ranges could not be read (%v); refusing because a registry that could not be read must not be read as 'nothing to judge'", err)}
 	}
 	root, err := sessionstate.Open(rs.Path)
 	if err != nil {
@@ -207,7 +210,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	}
 	untrackGone(root, rs.ID, ranges)
 	if ranges, err = root.Ranges(rs.ID); err != nil {
-		return nil
+		return []string{fmt.Sprintf("the session's tracked ranges could not be read (%v); refusing because a registry that could not be read must not be read as 'nothing to judge'", err)}
 	}
 
 	quiet := &cobra.Command{}
