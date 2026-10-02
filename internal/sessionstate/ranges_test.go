@@ -1,6 +1,7 @@
 package sessionstate
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -78,4 +79,58 @@ func TestRanges_AnUntrackedRangeIsTrackedAgainWhenItsTipMoves(t *testing.T) {
 	assert.Equal(t, "aaa", rs[0].Base)
 	assert.Equal(t, "t2", rs[0].HeadSHA)
 	assert.Empty(t, rs[0].AbandonedTip)
+}
+
+// A store written before session_refs became the tracked-ranges table (user_version 5: no
+// base, added_by or untracked_reason) is migrated by the engine on open: its rows stay, as
+// tracked ranges with no base yet (the reader computes it), and a ref an older engine had
+// abandoned reads as untracked.
+func TestRanges_AStoreFromBeforeTrackedRangesIsMigratedAndItsRowsStayTracked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	old, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	files, err := migrationFiles()
+	require.NoError(t, err)
+	require.Greater(t, len(files), 5)
+	for _, f := range files[:5] {
+		body, err := migrationFS.ReadFile("migrations/" + f)
+		require.NoError(t, err)
+		_, err = old.Exec(string(body))
+		require.NoError(t, err, f)
+	}
+	_, err = old.Exec(`PRAGMA user_version = 5`)
+	require.NoError(t, err)
+	_, err = old.Exec(`INSERT INTO session_refs (session_id, folder, ref, first_tip, tip, agent_id, abandoned_tip) VALUES
+		('s', '/r', 'refs/heads/live', 'a1', 'a2', '', ''),
+		('s', '/r', 'refs/heads/dropped', 'b1', 'b2', 'sub', 'b2')`)
+	require.NoError(t, err)
+	require.NoError(t, old.Close())
+
+	s, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+	rs, err := s.Ranges("s")
+	require.NoError(t, err)
+	require.Len(t, rs, 2)
+	byHead := map[string]TrackedRange{}
+	for _, r := range rs {
+		byHead[r.Head] = r
+	}
+	live, dropped := byHead["refs/heads/live"], byHead["refs/heads/dropped"]
+	assert.True(t, live.Tracked(), "a live row stays a tracked range")
+	assert.False(t, dropped.Tracked(), "a ref an older engine had abandoned reads as untracked")
+	assert.Equal(t, "abandoned by an older engine", dropped.UntrackedReason)
+	assert.Equal(t, "sub", dropped.AgentID)
+	assert.Equal(t, "a2", live.HeadSHA)
+	assert.Equal(t, RangeAuto, live.AddedBy)
+	assert.Equal(t, "", live.Base, "the base of an older row is computed when it is first read")
+
+	require.NoError(t, s.SetRangeBase("s", "/r", "refs/heads/live", "m0"))
+	rs, err = s.Ranges("s")
+	require.NoError(t, err)
+	for _, r := range rs {
+		if r.Head == "refs/heads/live" {
+			assert.Equal(t, "m0", r.Base)
+		}
+	}
 }

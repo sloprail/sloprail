@@ -93,3 +93,25 @@ func TestT003_48_ABranchRebasedOntoANewerMainIsJudgedOnItsOwnCommits(t *testing.
 		t.Fatalf("the changeset should hold the branch's own file only, got %q", got)
 	}
 }
+
+// (3) a session commit that later lands on the default branch by a fast-forward push is
+// still the session's: judged (and refused) until it passed. There is no landed filtering.
+func TestT003_48_ASessionCommitThatLandedUpstreamIsStillJudged(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	remoteWithUpstream(t, e, proj)
+	main := e.Git(proj, "branch", "--show-current")
+
+	e.Run(proj, "s-003-48c", "push", Turns("done",
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
+		Bash("p1", "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin"),
+	))
+	if got := stopRefusals(e, proj, "s-003-48c"); !strings.Contains(got, refusalText) {
+		t.Fatalf("a session commit that landed upstream was not judged:\n%s", got)
+	}
+	blocks := stopBlocks(e, proj, "s-003-48c")
+
+	e.Run(proj, "s-003-48c", "fix", Turns("fixed", harness.CommitFile("c2", "docs/a.md", "clean words", "fix a")))
+	if n := stopBlocks(e, proj, "s-003-48c"); n != blocks {
+		t.Fatalf("the fixed commit was still refused:\n%s", newBlocks(e, proj, "s-003-48c", blocks))
+	}
+}
