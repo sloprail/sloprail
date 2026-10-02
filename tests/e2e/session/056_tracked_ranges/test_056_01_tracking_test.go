@@ -17,6 +17,7 @@ func TestT056_01_TheCurrentBranchIsTrackedFromTheMergeBase(t *testing.T) {
 	e.Run(proj, sess, "work", Turns("done", Bash("b1", "true")))
 	// The harness publishes what the project committed before its first session to origin/main
 	// when that session starts (a real project has it pushed), so the merge base is read now.
+	// T056_09 keeps origin where it was, for the unpushed-commits case.
 	initial := e.Git(proj, "rev-parse", "origin/main")
 
 	rs := ranges(t, e, proj, sess)
@@ -26,6 +27,38 @@ func TestT056_01_TheCurrentBranchIsTrackedFromTheMergeBase(t *testing.T) {
 	r := rs[0]
 	if r.Head != "main" || r.Base != initial || r.AddedBy != sessionstate.RangeAuto || !r.Tracked() {
 		t.Fatalf("the branch is not tracked from the merge base with origin/main (%s): %+v", initial, r)
+	}
+}
+
+// T056_09: what the branch holds that origin does not (commits made, never pushed, before the
+// session began: a resumed session) is in the session's range: the base is origin's position, not
+// the HEAD the session started at, and the Stop asks for those commits to be judged.
+func TestT056_09_UnpushedCommitsFromBeforeTheSessionAreInItsRange(t *testing.T) {
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck(), harness.KeepOrigin())
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
+	e.CommitAll(proj, "the rule")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": true, "reasoning": "fine"}`)
+	const sess = "s-056-09"
+	origin := e.Git(proj, "rev-parse", "origin/main")
+	e.WriteFile(proj, "docs/old.md", "written before the session")
+	e.CommitAll(proj, "old: unpushed, before the session")
+	start := e.Git(proj, "rev-parse", "HEAD")
+	if start == origin {
+		t.Fatal("premise: the pre-session commit is not ahead of origin/main")
+	}
+
+	e.Run(proj, sess, "continue", Turns("done", Bash("b1", "true")))
+	if got := e.Git(proj, "rev-parse", "origin/main"); got != origin {
+		t.Fatalf("the harness moved origin/main (%s) although KeepOrigin was set", got)
+	}
+	rs := ranges(t, e, proj, sess)
+	if len(rs) != 1 || rs[0].Base != origin {
+		t.Fatalf("the range does not start at origin/main (%s), so the unpushed commit is outside it: %+v", origin, rs)
+	}
+	if joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(joined, "not judged yet") {
+		t.Fatalf("the Stop did not ask for the unpushed pre-session commit to be judged:\n%s", joined)
 	}
 }
 

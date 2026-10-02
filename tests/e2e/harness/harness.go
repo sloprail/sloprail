@@ -118,6 +118,7 @@ type Env struct {
 	preStopRuns  int               // numbers the appended pre-Stop turns, which fire once each
 	checkHistory map[string][]string
 	noAutoCheck  bool
+	keepOrigin   bool
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent

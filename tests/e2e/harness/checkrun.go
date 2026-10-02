@@ -25,6 +25,12 @@ import (
 // emptyTree is git's empty tree: the base of a session that began before the first commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+// KeepOrigin leaves origin/main where GitInit put it: the harness does not move it up to the
+// pre-session HEAD at a project's first session. For a test whose subject is where a range
+// starts (the folder's own start, commits unpushed before the session): origin's position must
+// not be what excludes or includes them.
+func KeepOrigin() Option { return func(e *Env) { e.keepOrigin = true } }
+
 // NoAutoCheck stops the harness from running `sr check run` after each Run.
 func NoAutoCheck() Option { return func(e *Env) { e.noAutoCheck = true } }
 
@@ -52,7 +58,7 @@ func (e *Env) noteRunBase(projDir, sessionID string) {
 // project already has pushed, so the range `--base origin/main` is only the session's work.
 // Once per project; only when origin/main is an ancestor of that point.
 func (e *Env) publishPreSession(projDir, base string) {
-	if e.origins[projDir] == "" || base == emptyTree || e.published[projDir] {
+	if e.keepOrigin || e.origins[projDir] == "" || base == emptyTree || e.published[projDir] {
 		return
 	}
 	e.published[projDir] = true
