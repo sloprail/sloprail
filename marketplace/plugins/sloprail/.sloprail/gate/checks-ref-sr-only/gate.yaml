@@ -9,7 +9,7 @@
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and any(.argv, # contains "sloprail/checks" or # == "--stdin" or # contains "*"))
+      any(event.invocations, .bin == "git" and any(.argv, # contains "sloprail/checks" or # == "--stdin" or # contains "*" or # contains "remote." or # contains "--mirror"))
   - event: PreFileWrite
     match: 'event.path contains "refs/sloprail/checks" or event.path contains "refs/heads/sloprail/checks" or event.path contains ".git/packed-refs"'
   - event: PreFileDelete

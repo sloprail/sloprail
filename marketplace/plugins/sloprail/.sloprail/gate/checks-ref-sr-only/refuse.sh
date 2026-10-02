@@ -41,6 +41,22 @@ unset gitargs_loaded
 
 n="$(printf '%s' "$payload" | jq -r '.event.invocations | length')" || n=""
 case "$n" in '' | *[!0-9]*) refuse "the command's invocations could not be read, so this could not be checked" ;; esac
+# refspec_hits SPEC fetch|push — succeeds when SPEC (`[+]src:dst`, globs allowed) has a destination
+# that can be the results ref (refs/sloprail/checks); a push can also reach the remote's branch
+# (refs/heads/sloprail/checks). A short destination is completed the way git completes it.
+refspec_hits() {
+  local a="${1#+}" dst c t targets="refs/sloprail/checks"
+  [ "${2:-fetch}" = push ] && targets="refs/sloprail/checks refs/heads/sloprail/checks"
+  case "$a" in *:*) dst="${a##*:}" ;; *) return 1 ;; esac
+  [ -n "$dst" ] || return 1
+  for c in "$dst" "refs/$dst" "refs/heads/$dst" "refs/tags/$dst"; do
+    for t in $targets; do
+      # shellcheck disable=SC2053
+      [[ "$t" == $c ]] && return 0
+    done
+  done
+  return 1
+}
 reads=" log show rev-parse rev-list cat-file ls-tree show-ref for-each-ref diff diff-tree merge-base name-rev describe ls-remote reflog grep blame "
 i=0
 while [ "$i" -lt "$n" ]; do
@@ -49,8 +65,10 @@ while [ "$i" -lt "$n" ]; do
   [ "$(printf '%s' "$inv" | jq -r '.bin // ""')" = "git" ] || continue
   git_split "$inv"
   # forms that write a ref without naming it: the ref is in the piped input (update-ref --stdin;
-  # sr-checks writes the ref through its own process, never through an agent's git command), or in a
-  # glob refspec (fetch/push 'refs/*:refs/*', 'refs/sloprail/*:refs/sloprail/*')
+  # sr-checks writes the ref through its own process, never through an agent's git command), or it is
+  # the destination of a refspec ('refs/*:refs/*', '+*:*', an option `-c remote.x.fetch=...`, a
+  # `remote add --mirror`). Only a refspec whose DESTINATION can reach the ref counts: a fetch of
+  # 'refs/tags/*:refs/tags/*' or a push of 'feat-*:feat-*' is ordinary.
   named="" glob=""
   printf '%s' "$inv" | jq -e 'any(.argv[]; contains("sloprail/checks"))' >/dev/null 2>&1 && named=1
   case "$SUB" in
@@ -58,9 +76,37 @@ while [ "$i" -lt "$n" ]; do
       for a in ${REST[@]+"${REST[@]}"}; do [ "$a" = "--stdin" ] && named=1; done
       ;;
     fetch | push | pull)
-      for a in ${REST[@]+"${REST[@]}"}; do case "$a" in *:refs/remotes/*) ;; *\**:* | *:*\**) named=1 glob=1 ;; esac; done
+      mode=fetch
+      [ "$SUB" = push ] && mode=push
+      for a in ${REST[@]+"${REST[@]}"}; do refspec_hits "$a" "$mode" && named=1 glob=1; done
+      ;;
+    remote)
+      for a in ${REST[@]+"${REST[@]}"}; do case "$a" in --mirror | --mirror=*) named=1 glob=1 ;; esac; done
+      ;;
+    config)
+      # a persistent refspec / mirror setting on a remote
+      keyed=""
+      for a in ${REST[@]+"${REST[@]}"}; do case "$a" in remote.*.mirror) named=1 glob=1 ;; remote.*.fetch) keyed=fetch ;; remote.*.push) keyed=push ;; esac; done
+      if [ -n "$keyed" ]; then
+        for a in ${REST[@]+"${REST[@]}"}; do refspec_hits "$a" "$keyed" && named=1 glob=1; done
+      fi
       ;;
   esac
+  # `git -c remote.x.fetch=<refspec> fetch`, `-c remote.x.push=<refspec>`, `-c remote.x.mirror=true`
+  gi=0
+  while [ "$gi" -lt "${#GOPTS[@]}" ]; do
+    if [ "${GOPTS[$gi]}" = "-c" ] || [ "${GOPTS[$gi]}" = "--config-env" ]; then
+      gi=$((gi + 1))
+      kv="${GOPTS[$gi]:-}"
+      case "$kv" in
+        remote.*.mirror=*) case "${kv#*=}" in false | no | off | 0) ;; *) named=1 glob=1 ;; esac ;;
+        remote.*.fetch=*) refspec_hits "${kv#*=}" fetch && named=1 glob=1 ;;
+        remote.*.push=*) refspec_hits "${kv#*=}" push && named=1 glob=1 ;;
+        remote.*.fetch | remote.*.push) named=1 glob=1 ;; # --config-env: the value is not visible
+      esac
+    fi
+    gi=$((gi + 1))
+  done
   [ -n "$named" ] || continue
   [[ "$reads" == *" $SUB "* ]] && continue
   case "$SUB" in

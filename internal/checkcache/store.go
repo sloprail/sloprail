@@ -280,11 +280,34 @@ func rawEntries(listing string, oidField int) map[string]string {
 	return out
 }
 
-// push publishes the local ref to the remote branch (a fast-forward: reconcile has put the
+// PushErrorFile is the file under the git common dir holding why the last push of local
+// results failed (absent once a push succeeds). The pre-push gate, a separate process, reads it.
+const PushErrorFile = "sloprail-checks-push-error"
+
+// push is doPush that also records its failure for the pre-push gate (see PushErrorFile).
+func (s *Store) push() error {
+	err := s.doPush()
+	if s.opt.Remote == "" {
+		return err
+	}
+	dir, derr := s.g.str("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if derr != nil {
+		return err
+	}
+	f := filepath.Join(dir, PushErrorFile)
+	if err == nil {
+		_ = os.Remove(f)
+	} else {
+		_ = os.WriteFile(f, []byte(strings.Join(strings.Fields(err.Error()), " ")+"\n"), 0o644)
+	}
+	return err
+}
+
+// doPush publishes the local ref to the remote branch (a fast-forward: reconcile has put the
 // remote tip underneath it). A rejection because someone else pushed first is retried on top
 // of their tip; any other failure (offline, auth, a hook) leaves the results local and is
 // returned for the next attempt. It never moves the local ref.
-func (s *Store) push() error {
+func (s *Store) doPush() error {
 	if s.opt.Remote == "" {
 		return nil
 	}
