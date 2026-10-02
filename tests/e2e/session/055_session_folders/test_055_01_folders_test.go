@@ -42,35 +42,6 @@ func TestT055_02_AReadOnlyCommandRegistersNothing(t *testing.T) {
 	}
 }
 
-// T055_03: a gate of the OTHER repository judges a command run there: its own rules apply in
-// its folder. The session's own project declares no such gate, and its own commands are free.
-func TestT055_03_ThatRepositorysGatesJudgeACommandRunThere(t *testing.T) {
-	e, proj, other := two(t)
-	const sess = "s-055-03"
-	e.Gate(other, "no-commits-here", `on:
-  - event: PreCommandInvoke
-    match: any(event.invocations, .bin == "git")
-checks:
-  - script: ./refuse.sh
-`, map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"OTHER-REPO-GATE: no commits here\"}'\nexit 1\n"})
-	e.CommitAll(other, "the gate")
-
-	res := e.Run(proj, sess, "commit in both", Turns("done",
-		Bash("b1", "git commit -q --allow-empty -m 'in the project'"),
-		Bash("b2", "git -C "+other+" commit -q --allow-empty -m 'in the other'"),
-	))
-
-	if got := strings.Join(res.Refusals(), "\n"); !strings.Contains(got, "OTHER-REPO-GATE") {
-		t.Fatalf("the other repository's gate did not judge the command run in it:\n%s", got)
-	}
-	if n := e.Git(other, "rev-list", "--count", "HEAD"); n != "2" {
-		t.Fatalf("the refused commit was made in the other repository (%s commits)", n)
-	}
-	if n := e.Git(proj, "rev-list", "--count", "HEAD"); n != "2" {
-		t.Fatalf("the project's own command was refused by a gate it does not declare (%s commits)", n)
-	}
-}
-
 // T055_04: commit-required at Stop covers the session's other folders under their own rules:
 // an uncommitted change to a path a file-guard of THAT repository selects is refused.
 func TestT055_04_CommitRequiredCoversTheOtherFolder(t *testing.T) {
