@@ -38,3 +38,16 @@ func OpenLocalCache(root string) (*checkcache.Store, error) {
 	}
 	return store, nil
 }
+
+// WarnPending says on w, in one line, that results are stored locally but not pushed (nil
+// PendingPush: nothing is said). A result the remote never receives reads as "not judged"
+// to CI's verify, so the writer must hear of it.
+func WarnPending(w io.Writer, store *checkcache.Store) {
+	if err := store.PendingPush(); err != nil {
+		fmt.Fprintf(w, "sloprail: results stored locally, not pushed: %v; CI verify will say not judged until they are\n", oneLine(err))
+	}
+}
+
+func oneLine(err error) string {
+	return strings.Join(strings.Fields(err.Error()), " ")
+}

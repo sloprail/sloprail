@@ -192,6 +192,10 @@ func execute(cmd *cobra.Command, m mode) error {
 	if err := results.Close(); err != nil {
 		return fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)
 	}
+	// Local-first: the verdicts are safe locally, but a push that failed must not be silent.
+	// OpenCache above already pushed what an earlier run left pending (verify included), so a
+	// `git push` of the branch right after carries its verdicts.
+	checkrun.WarnPending(cmd.ErrOrStderr(), cache)
 
 	w := cmd.OutOrStdout()
 	if m != modeRun {
