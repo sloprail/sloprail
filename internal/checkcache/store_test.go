@@ -38,7 +38,7 @@ func hex32(r *rand.Rand) string {
 }
 
 // genRuns makes n synthetic runs shaped like real ones: one rule evaluated once, holding a
-// judge check (findable) and a script check (never cached).
+// judge check (findable) and a script check (cached like any other).
 func genRuns(seed int64, n int) []Run {
 	r := rand.New(rand.NewSource(seed))
 	out := make([]Run, n)

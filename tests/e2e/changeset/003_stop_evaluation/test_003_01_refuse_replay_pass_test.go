@@ -8,10 +8,9 @@ import (
 
 // T003_01: the rule is evaluated over the committed range and refuses; the
 // refusal reaches the agent. A fix commit is judged over the WHOLE range — the
-// squashed net change, both commits — and passes; the watermark then sits at that
-// head, so a Stop with nothing new runs no check, and a later commit is judged
-// alone.
-func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
+// squashed net change, both commits — and passes; the pass is stored, so a Stop with
+// nothing new runs no check, and a later commit is judged with the range it belongs to.
+func TestT003_01_RefuseThenFixThenPassIsStored(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	// The rule existed at session start: the base is the session start (the rule's commit).
 	floor := e.Git(proj, "rev-parse", "HEAD")
@@ -53,11 +52,18 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 	}
 	after := len(e.BlockingErrorsFrom(proj, "s-003-01", "Stop"))
 
-	// A Stop with nothing new only VERIFIES the stored results and passes. A script check is
-	// re-run by every verify (only a judge's verdict is cached, T003_06), so there is no
-	// "ran no check" to assert here: what holds is that the passed range stays passed.
+	// A Stop with nothing new runs no check: the pre-Stop run replays the stored pass (a script
+	// verdict is cached like any other) and the Stop itself only verifies, executing nothing.
+	before := len(ledger(t, led))
+	e.Run(proj, "s-003-01", "anything else?", Turns("no", Bash("b1", "true")))
+	if n := len(ledger(t, led)); n != before {
+		t.Fatalf("a Stop with no new commits ran the check %d more time(s)", n-before)
+	}
 	if r := e.StopNow(proj, "s-003-01", false); harness.Blocked(r) {
 		t.Fatalf("a Stop over a passed range was refused:\n%s", r.Output)
+	}
+	if n := len(ledger(t, led)); n != before {
+		t.Fatalf("a bare Stop executed the check %d time(s); verify only reads stored verdicts", n-before)
 	}
 
 	// A later commit is judged with the range it belongs to: no watermark splits it off,
