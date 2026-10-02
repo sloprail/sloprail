@@ -795,15 +795,35 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 		"if no real change is needed, amend your own unpushed commit with the trailer (below) or revert. Then:\n"+
 		"  git add %s && git commit -m '<what changed>' -m %s", strings.Join(quoted, " "), shellQuote(line))
 	if allHead && amendSafe {
-		fmt.Fprintf(&b, "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:\n"+
+		fmt.Fprintf(&b, amendOfferStart+"\n"+
 			"  git commit --amend --no-edit --trailer %s", shellQuote(line))
 	}
 	// Undoing the whole range is one command, and it needs no citation: the tree is
 	// then as it was at the base, so there is nothing to ground.
-	fmt.Fprintf(&b, "\nTo undo the whole range instead (the files are then as they were, so nothing is left to ground):\n"+
+	fmt.Fprintf(&b, undoOfferStart+" instead (the files are then as they were, so nothing is left to ground):\n"+
 		"  git revert --no-commit %s..HEAD && git commit --no-edit\n"+
 		"Never `git reset --hard`, which destroys work.", cs.Base)
 	return b.String()
+}
+
+const (
+	amendOfferStart = "\nOr, since HEAD is the commit that changed them, is not pushed, and the tree is clean, amend it:"
+	undoOfferStart  = "\nTo undo the whole range"
+)
+
+// currentAdvice is a stored refusal's text with the one piece of advice that depends on the
+// repository NOW rather than on the key's input: the offer to amend HEAD is dropped from a
+// replay when HEAD has been pushed (or the tree is dirty) since the refusal was stored.
+func (ev *changesetEvaluation) currentAdvice(reason string) string {
+	start := strings.Index(reason, amendOfferStart)
+	if start < 0 || ev.amendSafe() {
+		return reason
+	}
+	end := strings.Index(reason[start+1:], undoOfferStart)
+	if end < 0 {
+		return reason
+	}
+	return reason[:start] + reason[start+1+end:]
 }
 
 // amendSafe is whether rewriting HEAD is safe: it is on no remote branch and the
@@ -1033,13 +1053,14 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	}
 	steps := storedSteps(cached.Metadata)
 	reasoning, _ := cached.Metadata["reasoning"].(string)
+	reasoning = ev.currentAdvice(reasoning)
 	verdict := dispatchcore.Verdict{Refused: cached.Status == checkstore.StatusFail, Reason: reasoning}
 	for _, st := range steps {
 		src := "cached"
 		if ev.verify && st.Status == checkstore.StatusFail {
 			src = "stored"
 		}
-		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: st.Reason}
+		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: ev.currentAdvice(st.Reason)}
 		ev.note(o)
 		if !ev.verify {
 			rec := checkstore.CheckRecord{Subject: st.Subject, Kind: st.Kind, Status: stepStatus(st.Status), Metadata: map[string]any{"replayed": true}}

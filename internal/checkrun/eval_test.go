@@ -712,3 +712,21 @@ func TestStepsOf_AreFilteredByRuleAndSubject(t *testing.T) {
 	assert.Equal(t, "a", rows[0].Subject)
 	assert.Equal(t, "docs/a.md", rows[1].Subject)
 }
+
+// A stored citation refusal that offered to amend HEAD is replayed without the offer once HEAD
+// has been pushed: the advice depends on the repository now, the verdict on the key's input.
+func TestCurrentAdvice_AStoredAmendOfferIsDroppedOncePushed(t *testing.T) {
+	f := citedFixture(t)
+	ev := f.newEvaluation(t, f.results)
+	head := ev.rng.Head
+	cs := changeset.Changeset{Base: ev.rng.Base, Head: head, Files: []changeset.File{{Path: "docs/a.md", Commits: []string{head}}}}
+	stored := citeHowToFix(cs, []string{"docs/a.md"}, changeset.TrailerCitesUser, true, nil)
+	require.Contains(t, stored, "--amend")
+
+	assert.Equal(t, stored, ev.currentAdvice(stored), "unpushed and clean: the offer stands")
+	runGit(t, f.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	got := ev.currentAdvice(stored)
+	assert.NotContains(t, got, "--amend")
+	assert.Contains(t, got, "To undo the whole range", "the rest of the advice stays")
+	assert.Contains(t, got, "FOLLOW-UP commit")
+}
