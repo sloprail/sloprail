@@ -38,8 +38,7 @@ Pick by the shape of the question. Is it about **what a file holds when the
 turn is done** → file-guard. Is it about **whether an event may happen** (a write,
 a delete, a command) **or whether a turn is done** → gate. A rule that must both
 refuse a bad write *and* keep judging what settled is two rules with one name: a
-`PreFileWrite` gate plus a plain file-guard (the old `preventive: true` on a
-file-guard was removed; a declaration still carrying it is refused at load). Is it a **mode that other rules depend on** → context.
+`PreFileWrite` gate plus a plain file-guard. Is it a **mode that other rules depend on** → context.
 
 One more thing lives alongside the three, and it is **not** a nature: the
 **structure gate** — an allowlist of paths that may be written, everything else
@@ -217,10 +216,7 @@ If a rule fails any of these, say so rather than writing a weaker version.
 
 ## Prove it fires
 
-Loading is not firing. A rule that fails to load — an unknown event kind, a
-match naming a field the kind does not carry, a check that names neither a
-script nor a judge, a duplicate key, a check script that cannot be run — is
-reported at Stop, every turn.
+Loading is not firing. A rule that fails to load is reported at Stop, every turn, naming what is wrong.
 
 Loading clean is not the same as firing. What still never fires:
 
