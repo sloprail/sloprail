@@ -52,6 +52,9 @@ type Options struct {
 	Ref string
 	// Branch is the remote ref. Default refs/heads/sloprail/checks.
 	Branch string
+	// NoAutoGc stops a Put from compacting the branch when it grows (see maybeGc). For tests
+	// that count segments or commits.
+	NoAutoGc bool
 }
 
 // Store is the git-ref Cache. It implements Cache.
@@ -62,6 +65,8 @@ type Store struct {
 
 	dicts map[string]*zdict
 	snap  *snapshot // in-process copy keyed by dir tree
+
+	pushErr error // why the last push of local results failed; they are retried on the next sync or put
 }
 
 var _ Cache = (*Store)(nil)
@@ -78,7 +83,18 @@ func Open(opt Options) (*Store, error) {
 	if _, err := s.g.str("rev-parse", "--git-dir"); err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrateLegacy()
 	return s, nil
+}
+
+// PendingPush is why the last push of local results failed (nil when nothing is waiting).
+// The results are stored locally regardless and pushed on a later Sync or Put.
+func (s *Store) PendingPush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pushErr
 }
 
 // snapshot is the read index of one version of the schema directory.
@@ -104,23 +120,190 @@ func (s *Store) tip() string {
 	return out
 }
 
-// Sync fetches the remote branch into the local ref. A remote without the
-// branch yet is not an error. It is a no-op for a local-only store.
+// Sync brings the remote branch into the local ref and pushes local results the remote
+// does not hold yet (a failed push is retried here). A remote without the branch yet is not
+// an error. It is a no-op for a local-only store. Only a failed FETCH is an error: a push
+// that fails leaves the results local and is reported by PendingPush.
 func (s *Store) Sync() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sync()
+	if err := s.sync(); err != nil {
+		return err
+	}
+	s.pushErr = s.push()
+	return nil
+}
+
+// track is the ref that mirrors the remote branch as last fetched or pushed. The local ref
+// is never overwritten by a fetch: results stored while the remote was unreachable live
+// there until they are pushed, so the local ref always holds at least what the remote did.
+func (s *Store) track() string { return s.opt.Ref + "-remote" }
+
+func (s *Store) rev(ref string) string {
+	out, err := s.g.str("rev-parse", "--verify", "-q", ref+"^{commit}")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+func (s *Store) isAncestor(a, b string) bool {
+	_, err := s.g.run(nil, nil, "merge-base", "--is-ancestor", a, b)
+	return err == nil
+}
+
+// fetch updates the tracking ref from the remote. A remote without the branch is not an error.
+func (s *Store) fetch() error {
+	_, err := s.g.run(nil, nil, "fetch", "--quiet", "--no-tags", s.opt.Remote, "+"+s.opt.Branch+":"+s.track())
+	if err != nil && !strings.Contains(err.Error(), "couldn't find remote ref") {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) sync() error {
 	if s.opt.Remote == "" {
 		return nil
 	}
-	_, err := s.g.run(nil, nil, "fetch", "--quiet", "--no-tags", s.opt.Remote, "+"+s.opt.Branch+":"+s.opt.Ref)
-	if err != nil && !strings.Contains(err.Error(), "couldn't find remote ref") {
+	old := s.rev(s.track())
+	if err := s.fetch(); err != nil {
 		return err
 	}
-	return nil
+	return s.reconcile(old)
+}
+
+// reconcile makes the local ref hold everything the tracking ref does, and keeps what only
+// the local ref holds: local results the remote has not got. Fast-forward when the local ref
+// is behind; nothing when it is ahead; when both moved, a new commit on top of the remote
+// tip that adds the local-only segments (those added since oldTrack, the tracking ref before
+// this fetch; every local segment when that is unknown) — segments are content-addressed, so
+// a union is always sound, and a Gc by another machine is not undone by it.
+func (s *Store) reconcile(oldTrack string) error {
+	local, remote := s.tip(), s.rev(s.track())
+	if remote == "" || local == remote {
+		return nil
+	}
+	if local == "" {
+		_, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, remote)
+		return err
+	}
+	if s.isAncestor(remote, local) {
+		return nil
+	}
+	if s.isAncestor(local, remote) {
+		_, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, remote, local)
+		return err
+	}
+	// Both moved. Replay the local-only commits (those since oldTrack, the tracking ref before
+	// this fetch) one by one on top of the remote tip, so one Put stays one commit and the
+	// history stays linear. Without a known common point every local segment goes in one commit.
+	cur := remote
+	hasManifest := func() bool {
+		_, err := s.g.str("rev-parse", "--verify", "-q", cur+":"+SchemaDir+"/MANIFEST.json")
+		return err == nil
+	}
+	dicts := map[string]string{}
+	if out, err := s.g.run(nil, nil, "ls-tree", "-r", local); err == nil {
+		for k, v := range rawEntries(string(out), 2) {
+			if strings.HasPrefix(k, "dict/") {
+				dicts[k] = v
+			}
+		}
+	}
+	replay := func(entries map[string]string, msg string) error {
+		if hasManifest() {
+			delete(entries, "MANIFEST.json") // the remote's manifest (and its dictionary) stands
+		}
+		if len(entries) == 0 {
+			return nil
+		}
+		for k, v := range dicts { // the dictionaries local segments name travel with them
+			entries[k] = v
+		}
+		c, err := s.commitEntries(cur, false, entries, msg)
+		cur = c
+		return err
+	}
+	if oldTrack != "" && s.isAncestor(oldTrack, local) {
+		revs, err := s.g.str("rev-list", "--reverse", "--first-parent", oldTrack+".."+local)
+		if err != nil {
+			return err
+		}
+		for _, c := range strings.Fields(revs) {
+			out, err := s.g.run(nil, nil, "diff-tree", "-r", "--root", "--no-commit-id", "--no-renames", "--diff-filter=AM", c)
+			if err != nil {
+				return err
+			}
+			msg, _ := s.g.str("log", "-1", "--format=%s", c)
+			if err := replay(rawEntries(string(out), 3), msg); err != nil {
+				return err
+			}
+		}
+	} else {
+		out, err := s.g.run(nil, nil, "ls-tree", "-r", local)
+		if err != nil {
+			return err
+		}
+		if err := replay(rawEntries(string(out), 2), "checks: merge local results"); err != nil {
+			return err
+		}
+	}
+	if cur == remote {
+		return nil
+	}
+	_, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, cur, local)
+	return err
+}
+
+// rawEntries parses `ls-tree -r` (oid is field 2) or `diff-tree --raw` (new oid is field 3)
+// lines into path-under-SchemaDir -> blob id, keeping only the current schema directory.
+func rawEntries(listing string, oidField int) map[string]string {
+	prefix := SchemaDir + "/"
+	out := map[string]string{}
+	for _, ln := range strings.Split(listing, "\n") {
+		tab := strings.IndexByte(ln, '\t')
+		if tab < 0 || !strings.HasPrefix(ln[tab+1:], prefix) {
+			continue
+		}
+		if f := strings.Fields(ln[:tab]); len(f) > oidField {
+			out[strings.TrimPrefix(ln[tab+1:], prefix)] = f[oidField]
+		}
+	}
+	return out
+}
+
+// push publishes the local ref to the remote branch (a fast-forward: reconcile has put the
+// remote tip underneath it). A rejection because someone else pushed first is retried on top
+// of their tip; any other failure (offline, auth, a hook) leaves the results local and is
+// returned for the next attempt. It never moves the local ref.
+func (s *Store) push() error {
+	if s.opt.Remote == "" {
+		return nil
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		local, remote := s.tip(), s.rev(s.track())
+		if local == "" || local == remote {
+			return nil
+		}
+		_, err := s.g.run(nil, nil, "push", "--quiet", s.opt.Remote, local+":"+s.opt.Branch)
+		if err == nil {
+			_, err = s.g.run(nil, nil, "update-ref", s.track(), local)
+			return err
+		}
+		lastErr = err
+		if ferr := s.fetch(); ferr != nil {
+			return lastErr // unreachable: not a race
+		}
+		if s.rev(s.track()) == remote {
+			return lastErr // the remote did not move: refused for another reason
+		}
+		if err := s.reconcile(remote); err != nil {
+			return err
+		}
+		time.Sleep(time.Duration(10+rand.Intn(40*(attempt+1))) * time.Millisecond)
+	}
+	return fmt.Errorf("checkcache: push gave up after %d attempts: %w", maxAttempts, lastErr)
 }
 
 func (s *Store) cachePath() string {
@@ -406,18 +589,22 @@ func (s *Store) Lookup(keys []Key) (map[string]Found, error) {
 	return out, nil
 }
 
-// Put stores results as one new segment and publishes it. Concurrent writers
-// never conflict: the segment is content-addressed, so on a rejected push the
-// store re-bases the same files onto the new tip and pushes again.
+// Put stores results as one new segment. The local ref moves first, so a result is never
+// lost to a push that fails (offline, denied): it is pushed best-effort afterwards and retried
+// by the next Sync or Put (PendingPush says why it is waiting). Concurrent writers never
+// conflict: the segment is content-addressed, so on a lost race the store re-bases the same
+// files onto the new tip.
 func (s *Store) Put(runs []Run) error {
 	if len(runs) == 0 {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.sync(); err != nil {
-		return err
-	}
+	return s.put(runs)
+}
+
+func (s *Store) put(runs []Run) error {
+	_ = s.sync() // an unreachable remote is not a reason to lose results: they go in the local ref
 	tip := s.tip()
 	sn, err := s.snapshotAt(tip)
 	if err != nil {
@@ -442,15 +629,14 @@ func (s *Store) Put(runs []Run) error {
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(10+rand.Intn(40*attempt)) * time.Millisecond)
-			if err := s.sync(); err != nil {
-				return err
-			}
+			_ = s.sync()
 			tip = s.tip()
 			if sn, err = s.snapshotAt(tip); err != nil {
 				return err
 			}
 		}
 		if _, have := s.segmentPresent(sn, name); have {
+			s.pushErr = s.push()
 			return nil
 		}
 		f := map[string][]byte{}
@@ -465,10 +651,12 @@ func (s *Store) Put(runs []Run) error {
 		if err != nil {
 			return err
 		}
-		if err := s.publish(commit, tip, false); err != nil {
-			lastErr = err
+		if _, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, commit, tip); err != nil {
+			lastErr = err // another local writer moved the ref
 			continue
 		}
+		s.pushErr = s.push()
+		s.maybeGc()
 		return nil
 	}
 	return fmt.Errorf("checkcache: put gave up after %d attempts: %w", maxAttempts, lastErr)
@@ -483,27 +671,23 @@ func (s *Store) segmentPresent(sn *snapshot, name string) (*segIdx, bool) {
 	return nil, false
 }
 
-// publish moves the ref (and the remote branch) from tip to commit; with force
-// the remote is replaced under a lease on tip.
-func (s *Store) publish(commit, tip string, force bool) error {
-	if s.opt.Remote != "" {
-		args := []string{"push", "--quiet", s.opt.Remote, commit + ":" + s.opt.Branch}
-		if force {
-			args = []string{"push", "--quiet", "--force-with-lease=" + s.opt.Branch + ":" + tip, s.opt.Remote, commit + ":" + s.opt.Branch}
-		}
-		if _, err := s.g.run(nil, nil, args...); err != nil {
-			return err
-		}
-		_, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, commit)
-		return err
-	}
-	_, err := s.g.run(nil, nil, "update-ref", s.opt.Ref, commit, tip)
-	return err
-}
-
 // commit writes files on top of parent ("" = root commit, empty tree) with
 // plumbing only: hash-object, a private index, write-tree, commit-tree.
 func (s *Store) commit(parent string, fresh bool, files map[string][]byte, msg string) (string, error) {
+	entries := map[string]string{}
+	for path, content := range files {
+		oid, err := s.g.run(content, nil, "hash-object", "-w", "--stdin")
+		if err != nil {
+			return "", err
+		}
+		entries[path] = strings.TrimSpace(string(oid))
+	}
+	return s.commitEntries(parent, fresh, entries, msg)
+}
+
+// commitEntries is commit for blobs already in the object store: entries maps a path under
+// SchemaDir to its blob id.
+func (s *Store) commitEntries(parent string, fresh bool, entries map[string]string, msg string) (string, error) {
 	dir, err := os.MkdirTemp("", "sr-checks-index-")
 	if err != nil {
 		return "", err
@@ -523,12 +707,8 @@ func (s *Store) commit(parent string, fresh bool, files map[string][]byte, msg s
 		}
 	}
 	var info bytes.Buffer
-	for path, content := range files {
-		oid, err := s.g.run(content, nil, "hash-object", "-w", "--stdin")
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(&info, "100644 %s\t%s/%s\n", strings.TrimSpace(string(oid)), SchemaDir, path)
+	for path, oid := range entries {
+		fmt.Fprintf(&info, "100644 %s\t%s/%s\n", oid, SchemaDir, path)
 	}
 	if _, err := s.g.run(info.Bytes(), env, "update-index", "--add", "--index-info"); err != nil {
 		return "", err

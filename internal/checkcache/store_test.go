@@ -82,11 +82,14 @@ func git(t testing.TB, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func newRepo(t testing.TB, remote string) *Store {
+func newRepo(t testing.TB, remote string) *Store { return newRepoOpt(t, Options{Remote: remote}) }
+
+func newRepoOpt(t testing.TB, opt Options) *Store {
 	t.Helper()
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
-	s, err := Open(Options{Dir: dir, Remote: remote})
+	opt.Dir = dir
+	s, err := Open(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +154,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestLookupAcrossManySegmentsAndFreshProcess(t *testing.T) {
-	s := newRepo(t, "")
+	s := newRepoOpt(t, Options{NoAutoGc: true})
 	var all []Run
 	for i := 0; i < 25; i++ {
 		b := genRuns(int64(100+i), 20)
@@ -195,7 +198,7 @@ func TestTwoWritersConcurrentlyToBareRemote(t *testing.T) {
 	const writers, per = 4, 8
 	stores := make([]*Store, writers)
 	for i := range stores {
-		stores[i] = newRepo(t, remote)
+		stores[i] = newRepoOpt(t, Options{Remote: remote, NoAutoGc: true})
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, writers)
