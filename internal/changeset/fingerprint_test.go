@@ -39,11 +39,13 @@ func TestFingerprint_NeverDependsOnASHA(t *testing.T) {
 	assert.Equal(t, fp(t, a), fp(t, b))
 }
 
-// Rewording a commit is a new input: citations are read from its message and trailers.
-func TestFingerprint_CommitMessagesAreInput(t *testing.T) {
+// A squash changes the commits and their messages and none of the content.
+func TestFingerprint_HistoryIsNotInput(t *testing.T) {
 	a, b := samplePayload(), samplePayload()
 	b.Changeset.Commits = []Commit{{SHA: "s", Subject: "squashed"}, {SHA: "t", Subject: "and another"}}
-	assert.NotEqual(t, fp(t, a), fp(t, b))
+	b.Changeset.Files[0].Commits = []string{"s", "t"}
+	b.Changeset.Citations[0].Commits = []string{"s"}
+	assert.Equal(t, fp(t, a), fp(t, b))
 }
 
 // Where a quote was found is only known where the transcript is: the quote is the input.
@@ -81,10 +83,6 @@ func TestFingerprint_EverythingTheCheckReceivesMattersToIt(t *testing.T) {
 		"old marker":     func(p *Payload) { p.Changeset.Files[0].OldMarkers = []Marker{{Kind: "k"}} },
 		"extra file":     func(p *Payload) { p.Changeset.Files = append(p.Changeset.Files, File{Path: "c.go"}) },
 		"other":          func(p *Payload) { p.Changeset.Others[0].Status = "D" },
-		"commit subject": func(p *Payload) { p.Changeset.Commits[0].Subject = "different" },
-		"commit body":    func(p *Payload) { p.Changeset.Commits[0].Body = "different" },
-		"commit trailer": func(p *Payload) { p.Changeset.Commits[0].Trailers[TrailerCitesUser] = []string{"z"} },
-		"extra commit":   func(p *Payload) { p.Changeset.Commits = append(p.Changeset.Commits, Commit{Subject: "more"}) },
 		"citation quote": func(p *Payload) { p.Changeset.Citations[0].Citation.Quote = "another quote" },
 		"citation pool": func(p *Payload) {
 			p.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}

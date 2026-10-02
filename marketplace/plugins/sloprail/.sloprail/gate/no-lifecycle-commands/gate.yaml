@@ -4,12 +4,12 @@
 # agent that runs them itself invents a session (sub-agents were seen running `start` and
 # `stop` 23 times with made-up session ids) to record verdicts or get a judgement of its own:
 # a pass nobody earned, in a store the real session does not read. Judging is the engine's:
-# the Stop hook judges what was committed, and `sr-session judge` (called by shipped gates)
-# judges on demand under the real session.
+# `sr-checks run --base <rev> --head <rev>` judges a commit range, the Stop hook only verifies
+# the stored verdicts, and the verify-before-push gate refuses a push until they pass.
 #
 # Only commands the AGENT runs reach this gate (PreCommandInvoke is the agent's Bash tool);
 # the hook wrapper invokes the binary itself, outside it. Read-only commands stay allowed:
-# `sr-session trajectory`, `state get/list`, `changeset`, `sr check`.
+# `sr-session trajectory`, `state get/list`, `sr-checks changeset|show|verify`, `sr-checks run`.
 # `start` is refused too, even as `sr-session start < /dev/null`: load errors are reported to
 # the agent at every hook and at Stop, so an agent never needs to run it.
 #
