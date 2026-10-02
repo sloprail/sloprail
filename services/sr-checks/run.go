@@ -27,8 +27,7 @@ func newRunCmd() *cobra.Command {
 		Long: `Judge every file-guard over merge-base(--base, --head)..--head.
 
 Every check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed
-by the rule hash, the subject, the content of its files, the citation quotes and the state of the contexts
-the rule reads. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
+by the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
 input changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment
 of the sloprail/checks branch, and pushed to origin when the repository has one. Prints each
 refusal, and exits 1 when any rule refuses.`,
@@ -187,7 +186,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: cmd.ErrOrStderr(), Guards: t.loaded.FileGuards, Root: t.root, Range: t.rng,
 		Cwd: t.root, Transcript: t.sess.record, Workspace: t.sess.workspace, SessionID: t.sess.id, Subagent: t.sess.subagent,
-		Store: results, Verify: m != modeRun,
+		Store: results, Verify: m != modeRun, Recorded: recordedCitations(t.sess, t.root),
 	})
 	if err := results.Close(); err != nil {
 		return fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)
