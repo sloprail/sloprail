@@ -31,7 +31,7 @@ func TestT013_04_TheSessionIsIdentifiedWithoutATranscriptPath(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	led := judgeRail(t, e, proj)
+	modelJudgeRail(t, e, proj)
 
 	sess := "sess-013-04"
 
@@ -44,7 +44,7 @@ func TestT013_04_TheSessionIsIdentifiedWithoutATranscriptPath(t *testing.T) {
 		"the session must be identifiable from a payload carrying no transcript path")
 	require.False(t, res.Saw("no session"),
 		"the session must be identifiable from a payload carrying no transcript path")
-	first := led.Count()
+	first := e.JudgeCalls(proj, modelJudgePromptFile, "")
 	require.Greater(t, first, 0, "the benign file must be judged in the first cycle")
 
 	// Cycle 2: the SAME content again, so nothing new is committed. Not judged again
@@ -53,7 +53,7 @@ func TestT013_04_TheSessionIsIdentifiedWithoutATranscriptPath(t *testing.T) {
 	e.Run(proj, sess, "offer the same content again", Turns("done",
 		Write("t2", "memories/note.md", "same bytes"),
 	))
-	after := led.Count()
+	after := e.JudgeCalls(proj, modelJudgePromptFile, "")
 	assert.Equal(t, first, after,
 		"the same content offered again was judged again — the session was not identified from a payload with no transcript path, so the recorded pass could not be found")
 }

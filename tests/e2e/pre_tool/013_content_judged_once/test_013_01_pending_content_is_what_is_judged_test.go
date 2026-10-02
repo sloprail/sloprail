@@ -63,6 +63,25 @@ func judgeRail(t *testing.T, e *harness.Env, proj string) *harness.Ledger {
 	return led
 }
 
+// modelJudgeGuard is a file-guard with a JUDGE check. A script check is never cached (it is
+// cheap and deterministic, and the Stop's verify runs it again), so "not asked again"
+// is a property of a judge: its finished PASS is kept and replayed.
+const modelJudgeGuard = "match: \"**/*.md\"\nchecks:\n  - judge: ./rubric.md.j2\n"
+
+const modelJudgeRubric = "Is this memory fine?\n{{ change }}\n"
+
+const modelJudgePromptFile = ".git/judge-prompt"
+
+// modelJudgeRail installs the judge rule, commits it, publishes it (so the range starts at
+// the session) and stands in for the model with a shim that passes and counts its calls.
+func modelJudgeRail(t *testing.T, e *harness.Env, proj string) {
+	t.Helper()
+	e.FileGuard(proj, "no-secrets", modelJudgeGuard, map[string]string{"rubric.md.j2": modelJudgeRubric})
+	e.CommitAll(proj, "the project before the session")
+	e.PushBranch(proj, "main")
+	e.InstallJudgeClaudeCapturing(proj, modelJudgePromptFile, `{"pass": true, "reasoning": "fine"}`)
+}
+
 // T013_01: a benign file is judged once, and a later cycle offering the SAME
 // benign content is not judged again.
 //
@@ -74,7 +93,7 @@ func TestT013_01_BenignContentIsJudgedThenNotAskedAgain(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	led := judgeRail(t, e, proj)
+	modelJudgeRail(t, e, proj)
 
 	sess := "sess-013-01"
 
@@ -82,7 +101,7 @@ func TestT013_01_BenignContentIsJudgedThenNotAskedAgain(t *testing.T) {
 		Write("t1", "memories/note.md", "benign"),
 	).ThenCommit("add the memory"))
 	assert.False(t, res.Refused(), "nothing here is a secret")
-	first := led.Count()
+	first := e.JudgeCalls(proj, modelJudgePromptFile, "")
 	assert.Greater(t, first, 0, "the benign file must be judged at least once")
 
 	// A later cycle re-offering the SAME benign content changes nothing, so there is
@@ -90,7 +109,7 @@ func TestT013_01_BenignContentIsJudgedThenNotAskedAgain(t *testing.T) {
 	e.Run(proj, sess, "offer the same benign content again", Turns("done",
 		Write("t2", "memories/note.md", "benign"),
 	))
-	after := led.Count()
+	after := e.JudgeCalls(proj, modelJudgePromptFile, "")
 	assert.Equal(t, first, after,
 		"a fine file that already passed must not be judged again while nothing new is committed")
 }
