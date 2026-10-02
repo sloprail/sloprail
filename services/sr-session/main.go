@@ -52,8 +52,10 @@ about to happen.
   sr-session pre-tool       a tool is about to run — the refusable moment
   sr-session stop           a turn has ended
   sr-session subagent-stop  a subagent's turn has ended
+  sr-session worktree-remove  a worktree is being removed (never blocks it)
 
   sr-session id | query | state   what a hook asks about the session so far
+  sr-session refs list|track|untrack   the ranges of commits the session answers for
   sr-session trajectory ...        read a trajectory — describe it, cite into it
 
 There is no setup command. The guardrails directory is created by whatever
@@ -72,7 +74,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 	root.AddCommand(
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStopCmd(),
-		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(),
+		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(), newSessionRefsCmd(), newSessionWorktreeRemoveCmd(),
 		newSessionTrajectoryCmd(),
 	)
 	return root

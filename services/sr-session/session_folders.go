@@ -209,6 +209,8 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if err != nil {
 		return err
 	}
-	_ = wrote
+	if wrote {
+		ensureTracked(reg, rs.ID, path, f.AgentID, f.BaseRef)
+	}
 	return registerCommandFolders(reg, rs, p)
 }

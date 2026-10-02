@@ -32,8 +32,9 @@ import (
 //	1. commit required
 //	     — uncommitted work on a path some file-guard selects (its match may read
 //	       context[]) is refused first.
-//	   (File-guards are NOT evaluated at Stop: they judge an explicit commit range,
-//	   `sr check run --base --head`, which the Stop hook cannot know.)
+//	2. tracked ranges: file-guards are VERIFIED (never judged) over each range of commits this
+//	   agent's folders track (session_ranges.go): a range with no stored verdict is refused with
+//	   the `sr-checks run` that produces it.
 //	3. Stop GATES
 //	     — a gate bound to Stop reads context[]/gates[] and blocks the turn on a
 //	       refusal. It must see the contexts from step 0 already active.
@@ -113,8 +114,19 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 1. commit required: a file-guard judges commits, so uncommitted work on a
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
+	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap), reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
+		commitOwed = true
+	}
+
+	// 2. tracked ranges: each range of commits this agent's folders track is VERIFIED against
+	//    the stored check results — never judged: no model is asked, nothing is written. A range
+	//    whose judges have not been asked is refused with the `sr-checks run` that asks them.
+	//    Not while work is owed a commit (judging HEAD would judge an incomplete set), and only
+	//    for an agent that owns the tree.
+	if !commitOwed && ownsTree(p) {
+		refusals = append(refusals, verifyTrackedRanges(cmd, p, reg, store)...)
 	}
 
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is

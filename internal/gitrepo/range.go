@@ -127,3 +127,31 @@ func HeadPushed(dir string) (bool, error) {
 	}
 	return strings.TrimSpace(out) != "", nil
 }
+
+// DefaultBase is where work on head started, for a range nobody stated: the merge base of head
+// with the repository's default branch — origin's (refs/remotes/origin/HEAD, else origin/main,
+// origin/master), else a local main or master — and git's empty tree (everything is judged)
+// when there is none or head shares no history with it. Never an error: a base that cannot be
+// found is the widest range, not a skipped one.
+func DefaultBase(dir, head string) string {
+	candidates := []string{}
+	if out, err := run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			candidates = append(candidates, ref)
+		}
+	}
+	candidates = append(candidates, "origin/main", "origin/master", "main", "master")
+	for _, c := range candidates {
+		if _, err := commitOf(dir, c, "--base"); err != nil {
+			continue
+		}
+		out, err := run(dir, "merge-base", c, head)
+		if err != nil {
+			continue
+		}
+		if mb := strings.TrimSpace(out); isObjectName(mb) {
+			return mb
+		}
+	}
+	return EmptyTree
+}

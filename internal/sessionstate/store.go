@@ -98,6 +98,15 @@ type Store interface {
 	// SetFolderHead records the last HEAD seen in a registered folder.
 	SetFolderHead(sessionID, path, head string) error
 
+	// TrackRange records a range of commits the session answers for in a folder. An automatic
+	// tracking only adds what is not there; the agent's replaces the base and tracks again.
+	TrackRange(r TrackedRange) error
+	// UntrackRange stops answering for a range, with the reason the agent gave. The range
+	// stays listed so the Stop can name it.
+	UntrackRange(sessionID, folder, head, reason, agentID string) error
+	// Ranges lists a session's ranges, tracked and untracked.
+	Ranges(sessionID string) ([]TrackedRange, error)
+
 	// Close releases the database.
 	Close() error
 }

@@ -817,7 +817,7 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 				return dispatchcore.Verdict{Refused: true, Reason: reasoning}, nil
 			}
 			out.Status = "missing"
-			out.Reason = "no recorded verdict for " + rec.Kind + " on this input; run `sr check run` with this --base and --head"
+			out.Reason = fmt.Sprintf("not judged yet (%s) — run `sr-checks run --base %s --head %s` in %s", rec.Kind, ev.rng.Base, ev.rng.Head, ev.root)
 			ev.note(out)
 			return dispatchcore.Verdict{Refused: true, Reason: out.Reason}, nil
 		}

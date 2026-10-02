@@ -28,3 +28,13 @@ func OpenCache(w io.Writer, root string) (*checkcache.Store, error) {
 	}
 	return store, nil
 }
+
+// OpenLocalCache is the repository's check cache without its remote: the local copy of the
+// results branch only, which is what a Stop reads (nothing is fetched or pushed).
+func OpenLocalCache(root string) (*checkcache.Store, error) {
+	store, err := checkcache.Open(checkcache.Options{Dir: root})
+	if err != nil {
+		return nil, fmt.Errorf("sloprail: the check results could not be opened: %w", err)
+	}
+	return store, nil
+}

@@ -183,6 +183,7 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 		if _, err := reg.RegisterFolder(f); err != nil {
 			continue
 		}
+		ensureTracked(reg, rs.ID, tree, agent, f.BaseRef)
 	}
 	if b, err := json.Marshal(pending); err == nil {
 		_ = reg.SetMeta(pendingWorktreesKey, string(b))
@@ -229,6 +230,7 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 			if _, err := reg.RegisterFolder(f); err != nil {
 				return err
 			}
+			ensureTracked(reg, rs.ID, tree, p.AgentID, f.BaseRef)
 		}
 	}
 	return nil
