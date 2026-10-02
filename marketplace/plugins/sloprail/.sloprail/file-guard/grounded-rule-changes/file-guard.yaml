@@ -26,7 +26,7 @@
 # No PreFileWrite gate beside it, on purpose. A write cannot cite (the Write tool
 # carries no citation), so a gate requiring one would refuse every legitimate rule
 # edit and send the agent through `sr-file` for each, and one that only warns is
-# noise on every rule an agent writes. The refusal names what to do.
+# noise on every rule an agent writes. The refusal at Stop names what to do.
 match: .sloprail/**
 deletions: include
 require:

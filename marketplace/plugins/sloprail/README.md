@@ -130,11 +130,7 @@ commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, 
 rebase, another clone or CI reads the same results. The Stop hook only verifies: it
 refuses uncommitted work on guarded paths, then verifies each range the session
 tracks (`sr-session refs list|track|untrack`; a folder's current branch is tracked
-automatically). CI runs `sr-checks verify` as a required check. Two gates ship on by default
-around it: `sloprail/gate/verify-before-push` refuses an agent's `git push` until
-`sr-checks verify` passes for the commits it would send, and `sloprail/gate/checks-ref-sr-only`
-refuses any agent git write to the `sloprail/checks` results branch (only `sr-checks` writes
-it; reading stays allowed). Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
+automatically). CI runs `sr-checks verify` as a required check. The setup, a
 `pre-push` hook and the CI job are in
 `skills/authoring-guardrails/file-guard.md`.
 

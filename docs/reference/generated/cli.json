@@ -9,37 +9,37 @@
         "path": "sr agent",
         "use": "agent ...",
         "short": "Run an agent, whichever harness is running",
-        "long": "Run an agent, whichever harness is running.\n\nRuns sr-agent, passing everything after `agent` to it unchanged.\nRun `sr-agent --help` — or `sr agent --help` — for its own help."
+        "long": "Run an agent, whichever harness is running.\n\nRuns sr-agent, passing everything after `agent` to it unchanged.\nRun `sr agent --help` for its own help."
       },
       {
-        "path": "sr checks",
-        "use": "checks ...",
-        "short": "Judge the file-guards over an explicit commit range and show the results",
-        "long": "Judge the file-guards over an explicit commit range and show the results.\n\nRuns sr-checks, passing everything after `checks` to it unchanged.\nRun `sr-checks --help` — or `sr checks --help` — for its own help."
+        "path": "sr check",
+        "use": "check ...",
+        "short": "Judge the file-guards over an explicit commit range: run, verify",
+        "long": "Judge the file-guards over an explicit commit range: run, verify.\n\nRuns sr-session check, passing everything after `check` to it unchanged.\nRun `sr check --help` for its own help."
       },
       {
         "path": "sr eval",
         "use": "eval ...",
         "short": "Prove a guardrail's use case against a real agent",
-        "long": "Prove a guardrail's use case against a real agent.\n\nRuns sr-eval, passing everything after `eval` to it unchanged.\nRun `sr-eval --help` — or `sr eval --help` — for its own help."
+        "long": "Prove a guardrail's use case against a real agent.\n\nRuns sr-eval, passing everything after `eval` to it unchanged.\nRun `sr eval --help` for its own help."
       },
       {
         "path": "sr file",
         "use": "file ...",
         "short": "Check a file's contents, or change a file grounded in citations",
-        "long": "Check a file's contents, or change a file grounded in citations.\n\nRuns sr-file, passing everything after `file` to it unchanged.\nRun `sr-file --help` — or `sr file --help` — for its own help."
+        "long": "Check a file's contents, or change a file grounded in citations.\n\nRuns sr-file, passing everything after `file` to it unchanged.\nRun `sr file --help` for its own help."
       },
       {
         "path": "sr mark",
         "use": "mark ...",
         "short": "Write // sr:<kind> <fqn> enforcement markers into impl files",
-        "long": "Write // sr:<kind> <fqn> enforcement markers into impl files.\n\nRuns sr-mark, passing everything after `mark` to it unchanged.\nRun `sr-mark --help` — or `sr mark --help` — for its own help."
+        "long": "Write // sr:<kind> <fqn> enforcement markers into impl files.\n\nRuns sr-mark, passing everything after `mark` to it unchanged.\nRun `sr mark --help` for its own help."
       },
       {
         "path": "sr session",
         "use": "session ...",
         "short": "Session lifecycle — the hook points a harness calls",
-        "long": "Session lifecycle — the hook points a harness calls.\n\nRuns sr-session, passing everything after `session` to it unchanged.\nRun `sr-session --help` — or `sr session --help` — for its own help."
+        "long": "Session lifecycle — the hook points a harness calls.\n\nRuns sr-session, passing everything after `session` to it unchanged.\nRun `sr session --help` for its own help."
       }
     ]
   },
@@ -47,8 +47,73 @@
     "path": "sr-session",
     "use": "sr-session",
     "short": "Session lifecycle — the hook points a harness calls",
-    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-stop  a subagent's turn has ended\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n  sr-session changeset --rule X    what a file-guard would be judged on, without running it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
     "children": [
+      {
+        "path": "sr-session changeset",
+        "use": "changeset --rule <name> --base <rev> --head <rev>",
+        "short": "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
+        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range is merge-base(--base, --head)..--head, both\nrevisions stated by the caller (a branch, a tag or a sha).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified\nname as a refusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  base, head          the range, as SHAs\n  ruleHash            the hash of the rule's whole .sloprail root (its own folder,\n                      every other rule, schemas and shared scripts)\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits,\n                      files, others, citations — each with the commits that carried\n                      it and the files they changed), subject\n\nNothing is run and nothing is recorded. Where the session cannot be found from\nthe environment (no CLAUDE_CODE_SESSION_ID), quotes are not resolved.",
+        "flags": [
+          {
+            "name": "base",
+            "usage": "The base revision: a branch, tag or sha (required)"
+          },
+          {
+            "name": "head",
+            "usage": "The head revision: a branch, tag or sha (required)"
+          },
+          {
+            "name": "rule",
+            "usage": "The file-guard, by folder name or qualified name"
+          }
+        ]
+      },
+      {
+        "path": "sr-session check",
+        "use": "check",
+        "short": "Judge the file-guards over an explicit commit range: run, verify",
+        "long": "Judge the file-guards over an explicit range of commits.\n\n  sr check run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr check verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the\ncaller states the range. A judge's verdict is keyed by the rule, its definition, the check\nand a fingerprint of everything the judge was given — never by a commit, session or\nagent — so the same content after a rebase, a squash or a revert is a cache hit.",
+        "children": [
+          {
+            "path": "sr-session check run",
+            "use": "run --base <rev> --head <rev>",
+            "short": "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
+            "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nRequirements and scripts run every time. A judge is asked only when the cache holds no\nPASS for exactly what it is about to be given; its verdict (pass or fail) is then stored.\nPrints each refusal, and exits 1 when any rule refuses.",
+            "flags": [
+              {
+                "name": "base",
+                "usage": "The base revision: a branch, tag or sha (required)"
+              },
+              {
+                "name": "head",
+                "usage": "The head revision: a branch, tag or sha (required)"
+              }
+            ]
+          },
+          {
+            "path": "sr-session check verify",
+            "use": "verify --base <rev> --head <rev>",
+            "short": "Check every file-guard over merge-base(base, head)..head against the stored verdicts",
+            "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nRequirements and scripts are re-run; a judge is never asked and nothing is written: its\nkey is looked up, and a key with no stored pass is red (missing, or the stored fail's\nreasons). Prints each subject's latest result, then each refusal. Exits 0 when everything\npasses, 1 when anything fails or has no result.",
+            "flags": [
+              {
+                "name": "base",
+                "usage": "The base revision: a branch, tag or sha (required)"
+              },
+              {
+                "name": "head",
+                "usage": "The head revision: a branch, tag or sha (required)"
+              },
+              {
+                "name": "json",
+                "default": "false",
+                "usage": "Print the per-subject results as JSON"
+              }
+            ]
+          }
+        ]
+      },
       {
         "path": "sr-session id",
         "use": "id",
@@ -78,66 +143,6 @@
             "name": "whole-session",
             "default": "false",
             "usage": "Read the entire record, not just the part no cycle has judged yet"
-          }
-        ]
-      },
-      {
-        "path": "sr-session refs",
-        "use": "refs",
-        "short": "The ranges of commits this session answers for: list, track, untrack",
-        "long": "The ranges of commits this session answers for, per folder.\n\nWhen the session discovers a folder (its own repository, a sub-agent's worktree, a repository a\ncommand ran in) it tracks the folder's current branch, from where the work started (the merge\nbase with the default branch). At Stop each tracked range is verified: every file-guard must\nhave a stored verdict for the content, or the Stop is refused with the `sr-checks run` command that\nproduces it. Nothing here judges anything.\n\n  sr-session refs list                                   the tracked and untracked ranges\n  sr-session refs track   [--folder D] [--base REV] [--head REF]   track a range (replaces its base)\n  sr-session refs untrack  --reason TEXT [--folder D] [--head REF]  stop answering for a range\n\nUntracking is allowed freely — CI is the backstop — but the Stop lists it with your reason.",
-        "children": [
-          {
-            "path": "sr-session refs list",
-            "use": "list",
-            "short": "The tracked and untracked ranges of this session",
-            "flags": [
-              {
-                "name": "json",
-                "default": "false",
-                "usage": "Print the ranges as JSON"
-              }
-            ]
-          },
-          {
-            "path": "sr-session refs track",
-            "use": "track [--folder <dir>] [--base <rev>] [--head <ref>]",
-            "short": "Track a range of commits in a folder (replacing its base if it is already tracked)",
-            "long": "Track a range of commits the session answers for. Without flags: the current branch of the\nworking directory's repository, from the merge base with the default branch. --head is a branch\n(the range follows it) or a commit; --base a revision.",
-            "flags": [
-              {
-                "name": "base",
-                "usage": "The base revision (default: the merge base with the default branch)"
-              },
-              {
-                "name": "folder",
-                "usage": "A directory inside the repository (default: the working directory)"
-              },
-              {
-                "name": "head",
-                "usage": "The head: a branch or commit (default: the current branch)"
-              }
-            ]
-          },
-          {
-            "path": "sr-session refs untrack",
-            "use": "untrack --reason <text> [--folder <dir>] [--head <ref>]",
-            "short": "Stop answering for a range of commits, saying why",
-            "long": "Stop verifying a tracked range at Stop. Allowed freely — CI is the backstop — but the Stop\nlists what was untracked with the reason you give, so say it plainly.",
-            "flags": [
-              {
-                "name": "folder",
-                "usage": "A directory inside the repository (default: the working directory)"
-              },
-              {
-                "name": "head",
-                "usage": "The range's head (default: the current branch)"
-              },
-              {
-                "name": "reason",
-                "usage": "Why the range is dropped (required)"
-              }
-            ]
           }
         ]
       },
@@ -273,11 +278,6 @@
             ]
           }
         ]
-      },
-      {
-        "path": "sr-session worktree-remove",
-        "use": "worktree-remove",
-        "short": "A worktree is being removed: stop tracking the ranges in it"
       }
     ]
   },
@@ -447,104 +447,6 @@
         "name": "verify-attempts",
         "default": "2",
         "usage": "How many times the agent may be asked before --verify reports failure (1-20)"
-      }
-    ]
-  },
-  {
-    "path": "sr-checks",
-    "use": "sr-checks <command>",
-    "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. A judge's verdict is keyed by the rule, its definition, the check and a\nfingerprint of everything the judge was given — never by a commit, session or agent — so the\nsame content after a rebase, a squash or a revert is a cache hit, and so is the same content\nanother clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
-    "children": [
-      {
-        "path": "sr-checks changeset",
-        "use": "changeset --rule <name> --base <rev> --head <rev>",
-        "short": "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
-        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range is merge-base(--base, --head)..--head, both revisions\nstated by the caller (a branch, a tag or a sha).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified name as a\nrefusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  base, head          the range, as SHAs\n  ruleHash            the hash of the rule's whole .sloprail root (its own folder, every\n                      other rule, schemas and shared scripts)\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits, files,\n                      others, citations — each with the commits that carried it and the\n                      files they changed), subject\n\nNothing is run and nothing is recorded. Where the session cannot be found from the environment\n(no CLAUDE_CODE_SESSION_ID), quotes are not resolved.",
-        "flags": [
-          {
-            "name": "base",
-            "usage": "The base revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "head",
-            "usage": "The head revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "rule",
-            "usage": "The file-guard, by folder name or qualified name"
-          }
-        ]
-      },
-      {
-        "path": "sr-checks default-base",
-        "use": "default-base --head <rev>",
-        "short": "Print where work on head started: its merge base with the default branch",
-        "long": "Print the sha a range over --head starts at when nobody stated one: the merge base of --head with\nthe repository's default branch (origin's HEAD, else origin/main, origin/master, else a local main or\nmaster). Prints git's empty tree (4b825dc642cb6eb9a060e54bf8d69288fbee4904) when there is no default\nbranch or --head shares no history with it: everything is judged. Read-only.",
-        "flags": [
-          {
-            "name": "head",
-            "usage": "The head revision: a branch, tag or sha (required)"
-          }
-        ]
-      },
-      {
-        "path": "sr-checks run",
-        "use": "run --base <rev> --head <rev>",
-        "short": "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
-        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nRequirements and scripts run every time. A judge is asked only when the cache holds no PASS for\nexactly what it is about to be given; its verdict (pass or fail) is then stored, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
-        "flags": [
-          {
-            "name": "base",
-            "usage": "The base revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "head",
-            "usage": "The head revision: a branch, tag or sha (required)"
-          }
-        ]
-      },
-      {
-        "path": "sr-checks show",
-        "use": "show --base <rev> --head <rev>",
-        "short": "Each file-guard subject's latest stored result over the range, without a verdict",
-        "long": "Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it\n(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.",
-        "flags": [
-          {
-            "name": "base",
-            "usage": "The base revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "head",
-            "usage": "The head revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "json",
-            "default": "false",
-            "usage": "Print the per-subject results as JSON"
-          }
-        ]
-      },
-      {
-        "path": "sr-checks verify",
-        "use": "verify --base <rev> --head <rev>",
-        "short": "Check every file-guard over merge-base(base, head)..head against the stored verdicts",
-        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nNever asks a model and never writes: the same repository state and the same stored results\nread the same anywhere, with no session. Scripts are re-run. A judge's key is looked up, and a\nkey with no stored pass is red (missing, or the stored fail's reasons). A requirement that\nneeds the session that made the change (a skill that must have been loaded, a context that\nmust have been open) is not re-checked here: it was checked where the session ran. A citation\nrequirement counts a Sloprail-Cites-* trailer on the commit that last changed the file, which\nis checkable from the repository alone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.",
-        "flags": [
-          {
-            "name": "base",
-            "usage": "The base revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "head",
-            "usage": "The head revision: a branch, tag or sha (required)"
-          },
-          {
-            "name": "json",
-            "default": "false",
-            "usage": "Print the per-subject results as JSON"
-          }
-        ]
       }
     ]
   }

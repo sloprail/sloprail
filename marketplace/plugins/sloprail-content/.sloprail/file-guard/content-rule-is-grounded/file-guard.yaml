@@ -32,8 +32,9 @@
 #
 # THE COMMITTED CHANGESET. The gate of the same name (../../gate/
 # content-rule-is-grounded) refuses an ungrounded or invented rule before it
-# lands; this judges the rules in the commits of the range, the
-# backstop. The range is merge-base(base, head)..head, so it holds all its commits and their citations: the requirement is met by any
+# lands; this judges the rules in the commits since it last passed, the
+# backstop. A rule's base does not move until it passes, so the range
+# accumulates its commits and their citations: the requirement is met by any
 # resolved user citation in the range, and the judge decides whether the cited
 # words ground everything the range changed.
 #

@@ -92,11 +92,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 	}
 	if len(reg) > 0 && reg[0] != nil {
 		quiet := quietCmd()
-		others, err := sessionFolders(p)
-		if err != nil {
-			return failClosed(err) // a registry that could not be read is not "nothing else was committed"
-		}
-		for _, f := range others {
+		for _, f := range sessionFoldersOf(p) {
 			loaded := newNatureDeclarations(quiet, f.Path, reg[0])
 			if len(loaded.FileGuards) == 0 {
 				continue

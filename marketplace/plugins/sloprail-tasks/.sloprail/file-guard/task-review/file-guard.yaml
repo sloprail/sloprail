@@ -32,8 +32,8 @@
 # X happening is APPROVED even if X was a poor idea; it checks the gap between what
 # the task says was done and what the evidence shows.
 #
-# A plain file-guard: it judges the committed changeset (`sr-checks run`; Stop and CI only verify). The range is
-# `merge-base(base, head)..head`, so a task's in_review claim is
+# A plain file-guard: it judges the committed changeset, at Stop. The range is what
+# has been committed since the rule last passed, so a task's in_review claim is
 # reviewed as committed, never as half-edited in the working tree. Every in_review
 # task in the range is put to one judge call.
 #

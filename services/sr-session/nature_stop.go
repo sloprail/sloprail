@@ -160,15 +160,8 @@ func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.
 	gatesMap := map[string]natures.GateState{}
 	var refusals []string
 
-	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap), reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
-		commitOwed = true
-	}
-	// The tracked ranges are still verified: the verification opens the root session's registry
-	// itself, and one it cannot read is a refusal, never "nothing to judge".
-	if !commitOwed && ownsTree(p) {
-		refusals = append(refusals, verifyTrackedRanges(cmd, p, reg, nil)...)
 	}
 	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{cyclemod.Event()}, scope, nil, contextMap, gatesMap, resolveNotes{}) {
 		if r.Refused {

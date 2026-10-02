@@ -45,7 +45,7 @@ match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/"
 # is the PreFileWrite gate of the same name, beside this guard under gate/: it runs
 # the deterministic grep (check-rules.sh) on the pending bytes and refuses a write
 # whose result the engine cannot compute. This file-guard judges the COMMITTED
-# changeset (`sr-checks run`): the same grep over every hook the range touched, then the
+# changeset, at Stop: the same grep over every hook the range touched, then the
 # judge, which needs a model call and so belongs with the result, not with every
 # pre-write. Both loop over `changeset.files`.
 

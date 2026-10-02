@@ -13,7 +13,7 @@
 #
 # The PREVENTION half — refusing the write before it lands — is the PreFileWrite
 # gate of the same name, beside this guard under gate/. This file-guard is the
-# backstop (`sr-checks run`, verified at Stop and CI): it re-judges the committed file (catches a shell write the gate
+# Stop backstop: it re-judges the settled file (catches a shell write the gate
 # could not see). deletions is left at its default (skip): the reviewer deletes an
 # APPROVED task's whole folder (TASK.md included) as its own next step
 # (task-review's README, "the accepted task is deleted by the agent in a

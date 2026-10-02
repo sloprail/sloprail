@@ -193,21 +193,6 @@ the command and watch it fire before trusting one) — are set out in full in
 [events.md](events.md). The gate-specific point is only that you match against the
 flattened list.
 
-### Example: a shipped command gate
-
-The plugin's `sloprail/gate/verify-before-push` is a command gate with its policy in YAML
-and one script. It matches any `git ... push`, and a single `checks:` script asks git
-itself which refs the push would update (`git push --dry-run --porcelain`), then runs
-`sr-checks verify` over each one's range. A push whose commits all have stored passes is
-untouched; one with a failing or unjudged range is refused with the exact `sr-checks run`
-that judges it. It fails closed: a ref, folder or default branch that cannot be resolved,
-or a push in the same line as a command that moves refs first, is refused. No user
-citation lifts it: a gate that guards what leaves the machine must not be unlockable by a
-quote (an agent can wash an old, generic instruction into one).
-`sloprail/gate/checks-ref-sr-only` is built the same way to keep the `sloprail/checks`
-results branch writable by `sr-checks` alone. Both ship **on**: a project turns one off
-with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
-
 ### The resolution floor
 
 A program named by a variable, a payload decoded and piped to a shell, splitting

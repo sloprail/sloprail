@@ -87,7 +87,7 @@ never the working tree.
   each **tracked range** of the session (below) is verified like `sr-checks verify`,
   from the local results: a range with no stored pass is refused with the
   `sr-checks run` command that produces it.
-- **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below), and optionally a git `pre-push` hook.
+- **Before a push**, optionally, a git `pre-push` hook (below).
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
   backstop for anything a session did not track.
 
@@ -110,20 +110,7 @@ untracked, with the reason. A removed worktree's ranges are untracked for it. A
 folder's own `.sloprail` rules apply in it: gates judge the calls made there and
 commit required covers its uncommitted work.
 
-### Before a push: verify-before-push
-
-The shipped gate `sloprail/gate/verify-before-push` is on by default. It refuses an
-agent's `git push` until `sr-checks verify --base <merge-base(remote/default, sha)> --head <sha>`
-passes for every ref the push would update, and the refusal names the `sr-checks run` that
-judges the range. It fails closed when a ref, folder or base cannot be resolved. Switch it off
-by listing `sloprail/gate/verify-before-push` under `disabled:` in `.sloprail/config.yaml`.
-
-The verdicts live on the `sloprail/checks` branch, and a forged pass there would defeat
-`verify`, so the shipped gate `sloprail/gate/checks-ref-sr-only` (also on by default) refuses
-any agent git command that writes, moves, deletes or pushes that ref, or a file write into
-its storage under `.git`. Reading it and running `sr-checks` stay allowed.
-
-### Pre-push hook (for people, outside an agent)
+### Pre-push hook
 
 ```sh
 #!/bin/sh

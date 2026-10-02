@@ -38,8 +38,7 @@ Pick by the shape of the question. Is it about **what a file holds when the
 turn is done** → file-guard. Is it about **whether an event may happen** (a write,
 a delete, a command) **or whether a turn is done** → gate. A rule that must both
 refuse a bad write *and* keep judging what settled is two rules with one name: a
-`PreFileWrite` gate plus a plain file-guard (the old `preventive: true` on a
-file-guard was removed; a declaration still carrying it is refused at load). Is it a **mode that other rules depend on** → context.
+`PreFileWrite` gate plus a plain file-guard. Is it a **mode that other rules depend on** → context.
 
 One more thing lives alongside the three, and it is **not** a nature: the
 **structure gate** — an allowlist of paths that may be written, everything else
@@ -153,11 +152,6 @@ checks:
   `Bash` grant can widen that.
   → [judge-checks.md](judge-checks.md)
 
-The two check kinds are documented separately because their contracts differ — a
-script's `reason`/exit-code verdict and fail-closed-on-cannot-run, versus a
-judge's `reasoning` verdict, `prepare` + `.md.j2` + `model`/`allowed_tools`,
-and the fail-open-via-a-script escape hatch.
-
 ## The refusal contract
 
 A check **refuses by exiting non-zero**, and the engine finds the reason to show
@@ -217,12 +211,7 @@ If a rule fails any of these, say so rather than writing a weaker version.
 
 ## Prove it fires
 
-Loading is not firing. A rule that fails to load — an unknown event kind, a
-match naming a field the kind does not carry, a check that names neither a
-script nor a judge, a duplicate key, a check script that cannot be run — is
-reported at Stop, every turn.
-
-Loading clean is not the same as firing. What still never fires:
+A rule that loads clean can still never fire:
 
 - a match that is valid but true of nothing real
 - a mistyped key **inside** a list element, or a flag read off an open map
@@ -268,8 +257,7 @@ disabled:
   - sloprail/file-guard/authoring-slop
 ```
 
-The name is `<plugin>/<nature>/<name>`, exactly what the refusal cites. The
-nature is part of the key because a gate and a context may share a name:
+The name is `<plugin>/<nature>/<name>`, exactly what the refusal cites:
 `disabled: [sloprail/file-guard/authoring-slop]` switches off the plugin's
 file-guard and leaves a file-guard of your own called `authoring-slop` in force.
 
@@ -277,25 +265,3 @@ This also works on a shipped rule that will not **load**. A broken declaration
 refuses every action it was bound to — deliberately, since a rule that cannot be
 checked must not read as approval — and when it is a plugin's you cannot fix the
 file. Naming it here is the way out that does not mean uninstalling the plugin.
-
-## The cross-cutting references
-
-- [events.md](events.md) — every event kind and its flat fields, the per-kind
-  tables, and the payload envelopes a check and a judge template read.
-- [environment.md](environment.md) — the `SR_*` variables every guardrail script
-  receives (`SR_GUARDRAIL`, `SR_WORKSPACE`, `SR_TRANSCRIPT`, …) and the
-  `SLOPRAIL_LAUNCHED_BY` re-entry provenance.
-- [matchers.md](matchers.md) — the `match:` expression language, the three
-  scopes, the glob shorthand, and the fail-closed rule.
-- [script-checks.md](script-checks.md) — the deterministic check: the skeleton,
-  reading the flat event off stdin, the exit-code verdict, and fail-closed-on-
-  cannot-run.
-- [judge-checks.md](judge-checks.md) — the model check: `prepare` + the `.md.j2`
-  template + `additionalContext`, the `sr-agent` substrate, `model`/
-  `allowed_tools`, and the fail-open escape hatch.
-- [grounding.md](grounding.md) — changes that must trace to what the user
-  said: citing with `sr-file --cite:` or `cite && <cmd>`, `event.citations`,
-  `require: [{citation}]`, and judging a citation.
-- [state-management.md](state-management.md) — `sr-session state` across cycles,
-  the `--owner` cross-guardrail read a gate uses to read a context's registry,
-  and the turn-scoping trap.

@@ -797,7 +797,16 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 	}
 	// TODO(subjects): key per subject (a file's own content) once `subjects:` splits a
 	// changeset; today the one subject is the whole changeset.
-	fp, err := changeset.Fingerprint(payload, hash, c.Model, string(extra))
+	// A rule that requires a citation reads it from the commits' trailers, so for it a reworded
+	// commit is a new input; for any other rule it is not.
+	fingerprint := changeset.Fingerprint
+	for _, r := range g.Require {
+		if r.Citation != nil {
+			fingerprint = changeset.FingerprintWithCommits
+			break
+		}
+	}
+	fp, err := fingerprint(payload, hash, c.Model, string(extra))
 	if err != nil {
 		return fail(err)
 	}

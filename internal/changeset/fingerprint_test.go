@@ -39,13 +39,32 @@ func TestFingerprint_NeverDependsOnASHA(t *testing.T) {
 	assert.Equal(t, fp(t, a), fp(t, b))
 }
 
-// A squash changes the commits and their messages and none of the content.
-func TestFingerprint_HistoryIsNotInput(t *testing.T) {
+// Rewording a commit is a new input for a rule that reads commit messages (its citations
+// ride in the trailers), and none for a rule that does not.
+func TestFingerprint_CommitMessagesAreInputOnlyForARuleThatReadsThem(t *testing.T) {
+	fpc := func(p Payload) string {
+		s, err := FingerprintWithCommits(p, "rule-hash", "size-md")
+		require.NoError(t, err)
+		return s
+	}
+	for name, mutate := range map[string]func(*Payload){
+		"subject": func(p *Payload) { p.Changeset.Commits[0].Subject = "different" },
+		"body":    func(p *Payload) { p.Changeset.Commits[0].Body = "different" },
+		"trailer": func(p *Payload) { p.Changeset.Commits[0].Trailers[TrailerCitesUser] = []string{"z"} },
+		"extra commit": func(p *Payload) {
+			p.Changeset.Commits = append(p.Changeset.Commits, Commit{Subject: "more"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, b := samplePayload(), samplePayload()
+			mutate(&b)
+			assert.NotEqual(t, fpc(a), fpc(b), "a citation rule re-judges a reworded commit")
+			assert.Equal(t, fp(t, a), fp(t, b), "any other rule's cached pass survives it")
+		})
+	}
 	a, b := samplePayload(), samplePayload()
-	b.Changeset.Commits = []Commit{{SHA: "s", Subject: "squashed"}, {SHA: "t", Subject: "and another"}}
-	b.Changeset.Files[0].Commits = []string{"s", "t"}
-	b.Changeset.Citations[0].Commits = []string{"s"}
-	assert.Equal(t, fp(t, a), fp(t, b))
+	b.Changeset.Commits[0].SHA = "another"
+	assert.Equal(t, fpc(a), fpc(b), "a SHA is never input")
 }
 
 // Where a quote was found is only known where the transcript is: the quote is the input.

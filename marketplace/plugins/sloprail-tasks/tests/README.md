@@ -46,7 +46,7 @@ Each test:
    Turns(...))`) to enact the agent's writes and turn-ends;
 4. asserts the outcome: `res.Refused()` / `e.Exists(...)` for a PreFileWrite gate
    refusal, `e.BlockingErrorsFrom(proj, sess, "Stop")` for a gate's Stop block or a
-   file-guard's refusal (the harness runs `sr-checks run --base <RunBase> --head HEAD`
+   file-guard's refusal (the harness runs `sr check run --base <RunBase> --head HEAD`
    after each Run and files its refusals there; `e.CheckRun` re-judges now), and
    `res.Saw(...)` for the reason reaching the agent.
 

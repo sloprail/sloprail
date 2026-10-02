@@ -14,15 +14,16 @@ import (
 // invalidates every earlier verdict) and the model (a different judge is a
 // different verdict). a10n's key left both out and kept serving stale passes.
 //
-// The input part is the CONTENT of the change: the files (paths, statuses, both
+// The input part covers what the check is given: the files (paths, statuses, both
 // contents, both marker sets, diffs), the others, the citations' quotes (not where in a
-// transcript they were found), the subject
-// and the context. It is never HISTORY: no commit SHA, and none of how many commits
-// the change was made in or what they said. A rebase or an amend changes every SHA, a
-// squash changes the commits and their messages, a revert and a re-apply changes the
-// path the content took to get here, and none of that is a new input to a check that
-// judges the content. The same net change is the same input, wherever and however it
-// was made.
+// transcript they were found), the subject and the context. It never covers a commit
+// SHA: a rebase or an amend changes every SHA and none of the content. Base, Head and
+// every commit's SHA are blanked before hashing.
+//
+// Commit subjects, bodies and trailers are covered only by FingerprintWithCommits, for a
+// rule that reads them (`require: citation` reads its citations from the trailers): for any
+// other rule a reword is not an input, and folding it in would invalidate cached passes
+// for nothing.
 //
 // It deliberately covers nothing more. a10n folded extra context into its
 // fingerprint and got cascades of re-judging from changes that could not have
@@ -36,13 +37,32 @@ import (
 // `prepare` step inlined, the rendered prompt. Each part is length-prefixed, so
 // two parts cannot be re-cut into another pair with the same concatenation.
 func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, error) {
+	return fingerprintOf(p, false, ruleHash, model, extra)
+}
+
+// FingerprintWithCommits is Fingerprint for a rule whose verdict depends on the commits'
+// subjects, bodies and trailers: they are hashed too (the SHAs still are not).
+func FingerprintWithCommits(p Payload, ruleHash, model string, extra ...string) (string, error) {
+	return fingerprintOf(p, true, ruleHash, model, extra)
+}
+
+func fingerprintOf(p Payload, commits bool, ruleHash, model string, extra []string) (string, error) {
 	view := p
 	view.TranscriptPath = ""
 	view.Changeset.Base, view.Changeset.Head = "", ""
+	// With commits, subjects, bodies and trailers stay (citations are read from the trailers,
+	// so a reworded commit is a new input); only the SHAs, which say nothing about content, go.
 	view.Changeset.Commits = nil
+	if commits {
+		view.Changeset.Commits = make([]Commit, len(p.Changeset.Commits))
+		for i, c := range p.Changeset.Commits {
+			c.SHA = ""
+			view.Changeset.Commits[i] = c
+		}
+	}
 	view.Changeset.Files = make([]File, len(p.Changeset.Files))
 	for i, f := range p.Changeset.Files {
-		f.Commits, f.Substantive = nil, nil
+		f.Commits, f.Substantive = blankSHAs(f.Commits), nil
 		view.Changeset.Files[i] = f
 	}
 	// A citation is its QUOTE and the pool it resolved in: where in which transcript it was found
@@ -50,7 +70,7 @@ func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, er
 	// found by the author must be found by anyone who sees the same quote in the commit.
 	view.Changeset.Citations = make([]Citation, len(p.Changeset.Citations))
 	for i, c := range p.Changeset.Citations {
-		c.Commits = nil
+		c.Commits = blankSHAs(c.Commits)
 		c.Citation.Path, c.Citation.Line, c.Citation.Message = "", 0, ""
 		view.Changeset.Citations[i] = c
 	}
@@ -68,4 +88,12 @@ func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, er
 func frame(buf, part []byte) []byte {
 	buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
 	return append(buf, part...)
+}
+
+// blankSHAs keeps how many commits there were and drops which.
+func blankSHAs(shas []string) []string {
+	if shas == nil {
+		return nil
+	}
+	return make([]string, len(shas))
 }
