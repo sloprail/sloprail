@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -62,6 +63,15 @@ func subagentFolder(t *testing.T, e *Env, proj, sess string) (path, agent string
 func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-72h"
+	// This test is about the root keeping a removed worktree's work: the sub-agent's own Stop (on
+	// for the package) would refuse its violating commit forever, so it is off here.
+	cfg := filepath.Join(proj, ".sloprail", "config.yaml")
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WriteFile(proj, ".sloprail/config.yaml", strings.Replace(string(body), "enable_subagent_stop_check: true", "enable_subagent_stop_check: false", 1))
+	e.CommitAll(proj, "sub-agent stop check off")
 	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
@@ -121,9 +131,18 @@ func sessionRanges(t *testing.T, e *Env, proj, sess string) []sessionstate.Track
 	return out
 }
 
+// realPath is the path with symlinks resolved (the registry holds the git root's real path, a
+// temp dir may be spelled through /var).
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
+}
+
 func trackedIn(rs []sessionstate.TrackedRange, folder, head string) bool {
 	for _, r := range rs {
-		if r.Head == head && r.Tracked() && filepath.Clean(r.Folder) == filepath.Clean(folder) {
+		if r.Head == head && r.Tracked() && realPath(r.Folder) == realPath(folder) {
 			return true
 		}
 	}
