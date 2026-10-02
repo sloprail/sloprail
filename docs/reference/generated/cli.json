@@ -508,11 +508,16 @@
         "path": "sr-checks show",
         "use": "show --base <rev> --head <rev>",
         "short": "Each file-guard subject's latest stored result over the range, without a verdict",
-        "long": "Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it\n(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.",
+        "long": "Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it\n(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.\n\n--failing keeps only what is not passing: a fail, a result still missing, or an error.\n--rule limits the listing to one file-guard, by folder name or qualified name.",
         "flags": [
           {
             "name": "base",
             "usage": "The base revision: a branch, tag or sha (required)"
+          },
+          {
+            "name": "failing",
+            "default": "false",
+            "usage": "Only what is not passing"
           },
           {
             "name": "head",
@@ -522,6 +527,10 @@
             "name": "json",
             "default": "false",
             "usage": "Print the per-subject results as JSON"
+          },
+          {
+            "name": "rule",
+            "usage": "Only this file-guard (folder name or qualified name)"
           }
         ]
       },

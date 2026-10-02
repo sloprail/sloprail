@@ -66,12 +66,17 @@ func newShowCmd() *cobra.Command {
 		Use:   "show --base <rev> --head <rev>",
 		Short: "Each file-guard subject's latest stored result over the range, without a verdict",
 		Long: `Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it
-(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.`,
+(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.
+
+--failing keeps only what is not passing: a fail, a result still missing, or an error.
+--rule limits the listing to one file-guard, by folder name or qualified name.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return execute(cmd, modeShow) },
 	}
 	addRangeFlags(cmd)
 	cmd.Flags().Bool("json", false, "Print the per-subject results as JSON")
+	cmd.Flags().Bool("failing", false, "Only what is not passing")
+	cmd.Flags().String("rule", "", "Only this file-guard (folder name or qualified name)")
 	return cmd
 }
 
@@ -219,6 +224,9 @@ func execute(cmd *cobra.Command, m mode) error {
 	checkrun.WarnPending(cmd.ErrOrStderr(), cache)
 
 	w := cmd.OutOrStdout()
+	if m == modeShow {
+		outcomes = filterShown(cmd, outcomes)
+	}
 	if m != modeRun {
 		if asJSON {
 			enc := json.NewEncoder(w)
@@ -270,4 +278,25 @@ func joinRefusals(refusals []string) string {
 		return refusals[0]
 	}
 	return "the following rules refused this work:\n  - " + strings.Join(refusals, "\n  - ")
+}
+
+// filterShown applies show's --failing and --rule to the listing. The refusals are not a part
+// of show, so a filter only ever narrows what is printed.
+func filterShown(cmd *cobra.Command, in []checkrun.CheckOutcome) []checkrun.CheckOutcome {
+	failing, _ := cmd.Flags().GetBool("failing")
+	rule, _ := cmd.Flags().GetString("rule")
+	if !failing && rule == "" {
+		return in
+	}
+	out := []checkrun.CheckOutcome{}
+	for _, o := range in {
+		if rule != "" && o.Rule != rule && !strings.HasSuffix(o.Rule, "/"+rule) {
+			continue
+		}
+		if failing && (o.Status == "pass" || o.Status == "skipped") {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
 }
