@@ -26,9 +26,10 @@ func newRunCmd() *cobra.Command {
 		Short: "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
 		Long: `Judge every file-guard over merge-base(--base, --head)..--head.
 
-Requirements and scripts run every time. A judge is asked only when the cache holds no verdict for
-exactly what it is about to be given: a stored PASS is a hit and a stored FAIL with the same key is
-replayed (terminal until the input changes). A new verdict (pass or fail) is stored, as one segment
+Every check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed
+by the rule hash, the subject, the content of its files, the citation quotes and the state of the contexts
+the rule reads. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
+input changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment
 of the sloprail/checks branch, and pushed to origin when the repository has one. Prints each
 refusal, and exits 1 when any rule refuses.`,
 		Args: cobra.NoArgs,
@@ -44,13 +45,12 @@ func newVerifyCmd() *cobra.Command {
 		Short: "Check every file-guard over merge-base(base, head)..head against the stored verdicts",
 		Long: `Check every file-guard over merge-base(--base, --head)..--head, deterministically.
 
-Never asks a model and never writes: the same repository state and the same stored results
-read the same anywhere, with no session. Scripts are re-run. A judge's key is looked up, and a
-key with no stored pass is red (missing, or the stored fail's reasons). A requirement that
-needs the session that made the change (a skill that must have been loaded, a context that
-must have been open) is not re-checked here: it was checked where the session ran. A citation
-requirement counts a Sloprail-Cites-* trailer on the commit that last changed the file, which
-is checkable from the repository alone.
+Only reads: it never executes a script, a judge or a requirement and never writes. It computes each
+subject's key (running the rule's subjects script, without a session) and reads the stored verdict, so the
+same repository state and the same stored results read the same anywhere. A key with no stored verdict is
+red ("not judged yet", run sr-checks run); a stored fail shows its reasons. A citation requirement counts a
+Sloprail-Cites-* trailer on the commit that last changed the file, which is checkable from the repository
+alone.
 
 Prints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when
 anything fails or has no result.`,

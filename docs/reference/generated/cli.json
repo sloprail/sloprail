@@ -492,7 +492,7 @@
         "path": "sr-checks run",
         "use": "run --base <rev> --head <rev>",
         "short": "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
-        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nRequirements and scripts run every time. A judge is asked only when the cache holds no verdict for\nexactly what it is about to be given: a stored PASS is a hit and a stored FAIL with the same key is\nreplayed (terminal until the input changes). A new verdict (pass or fail) is stored, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
+        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nEvery check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed\nby the rule hash, the subject, the content of its files, the citation quotes and the state of the contexts\nthe rule reads. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the\ninput changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.",
         "flags": [
           {
             "name": "base",
@@ -529,7 +529,7 @@
         "path": "sr-checks verify",
         "use": "verify --base <rev> --head <rev>",
         "short": "Check every file-guard over merge-base(base, head)..head against the stored verdicts",
-        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nNever asks a model and never writes: the same repository state and the same stored results\nread the same anywhere, with no session. Scripts are re-run. A judge's key is looked up, and a\nkey with no stored pass is red (missing, or the stored fail's reasons). A requirement that\nneeds the session that made the change (a skill that must have been loaded, a context that\nmust have been open) is not re-checked here: it was checked where the session ran. A citation\nrequirement counts a Sloprail-Cites-* trailer on the commit that last changed the file, which\nis checkable from the repository alone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.",
+        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nOnly reads: it never executes a script, a judge or a requirement and never writes. It computes each\nsubject's key (running the rule's subjects script, without a session) and reads the stored verdict, so the\nsame repository state and the same stored results read the same anywhere. A key with no stored verdict is\nred (\"not judged yet\", run sr-checks run); a stored fail shows its reasons. A citation requirement counts a\nSloprail-Cites-* trailer on the commit that last changed the file, which is checkable from the repository\nalone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.",
         "flags": [
           {
             "name": "base",
