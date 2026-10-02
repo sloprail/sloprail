@@ -682,8 +682,8 @@ func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
 	assert.NotContains(t, got[0].Reason, "needs a session")
 }
 
-// A quote that does not resolve in the session is no verdict either.
-func TestEvaluate_AnUnresolvedCitationStoresNoVerdict(t *testing.T) {
+// A quote that does not resolve in a present session is a real refusal: stored as a FAIL.
+func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
 	f := citedFixture(t)
 	record := filepath.Join(t.TempDir(), "s-eval.jsonl")
 	require.NoError(t, os.WriteFile(record, []byte(""), 0o644))
@@ -695,7 +695,7 @@ func TestEvaluate_AnUnresolvedCitationStoresNoVerdict(t *testing.T) {
 	require.True(t, refused)
 	got := f.verifyReasons(t)
 	require.Len(t, got, 1)
-	assert.Contains(t, got[0].Reason, "not judged yet")
+	assert.NotContains(t, got[0].Reason, "not judged yet", "the refusal is stored")
 }
 
 // A guard's stored steps are its own subject's: another subject of the same rule contributes none.

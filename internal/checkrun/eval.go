@@ -45,9 +45,9 @@ import (
 //   - `verify` only reads: it never executes a script, a judge or a requirement. A key with no
 //     stored verdict is red ("not judged yet"); a stored fail shows its reasons. It computes the
 //     keys without a session (the `subjects:` script is given no transcript).
-//   - An engine error is no verdict: nothing is stored, and the next `run` starts again. A
-//     refusal that read the session (a skill or a context requirement, a prepare that
-//     refused) is not stored either: it is asked again once the agent has done what it asks.
+//   - An engine error is no verdict: nothing is stored, and the next `run` starts again. A real
+//     refusal, also from a check that reads the session, is a complete FAIL and is stored; only
+//     "no session available to judge" is not (verify shows it as "not judged yet").
 //   - Anything that goes wrong in the engine — git, the rule's own folder, the
 //     snapshot — fails CLOSED and refuses. A range that could not be read is never an
 //     empty one; a range where `match` selects nothing is a pass.
@@ -177,7 +177,7 @@ type ruleRun struct {
 
 	// key is the guard's verdict key over its subject ("" when it cannot be keyed).
 	key string
-	// volatile: a refusal this evaluation reached read the session, so it is not stored.
+	// volatile: the refusal is "no session available to judge", so it is not stored.
 	volatile bool
 	replayed bool // the verdict is a stored one, already recorded
 
@@ -649,11 +649,8 @@ func (ev *changesetEvaluation) runRequires(rr *ruleRun) (dispatchcore.Verdict, e
 			return dispatchcore.Verdict{}, err
 		}
 		if v.Refused {
-			// A skill or a context is read from the session's state, and a citation is
-			// grounded in it: a refusal on one is asked again once the agent has done what it
-			// asks, never replayed. Only a citation refusal about trailers that resolved (or
-			// that there are none) is a verdict about the key's input.
-			rr.volatile = rr.volatile || p.Citation == nil || len(rr.unresolved) > 0
+			// A real refusal is a complete FAIL verdict and is stored; only "no session
+			// available to judge" (above) is not.
 			return v, nil
 		}
 	}
