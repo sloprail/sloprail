@@ -35,6 +35,8 @@ func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) 
 	e.Git(proj, "push", "-q", "origin", "main")
 	e.Git(proj, "fetch", "-q", "origin")
 	mergeBase := e.Git(proj, "rev-parse", "origin/main")
+	e.WriteFile(proj, "docs/b.md", "two\n")
+	e.CommitAll(proj, "the session's first commit")
 
 	e.Run(proj, "s-001-12", "hello", Turns("done", Bash("b1", "true")))
 	e.Git(proj, "commit", "--amend", "--allow-empty", "-m", "the start commit, rewritten")
