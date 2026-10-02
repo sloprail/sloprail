@@ -324,6 +324,39 @@ checks:
 	assert.Contains(t, iv.Reason, "neither")
 }
 
+// A prepare also loads on a script check: it builds context for the script's payload
+// (additionalContext) and is never a refusal. It only builds context, so the check
+// itself still has to be a script or a judge.
+func TestLoad_Check_PrepareOnScriptLoads(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/prep/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    prepare: ./p.sh
+`,
+		"file-guard/prep/s.sh": "#!/bin/sh\n",
+		"file-guard/prep/p.sh": "#!/bin/sh\n",
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isScript())
+	assert.Equal(t, "./p.sh", c.Prepare)
+	assert.Empty(t, loaded.Invalid)
+}
+
+// A prepare with neither a script nor a judge is still the exactly-one-of refusal.
+func TestLoad_Check_PrepareAloneIsRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/lone/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - prepare: ./p.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "%v", iv.Reason)
+}
+
 // A prepare ALONGSIDE a judge is the sanctioned shape and loads.
 func TestLoad_Check_PrepareWithJudge(t *testing.T) {
 	loaded := loadOK(t, map[string]string{

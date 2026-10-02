@@ -27,7 +27,7 @@ import (
 
 // Evaluating file-guards over an explicit range: one changeset per rule.
 //
-// A file-guard judges COMMITS. `sr check run|verify` evaluates each rule once, over the
+// A file-guard judges COMMITS. `sr-checks run|verify` evaluates each rule once, over the
 // range merge-base(--base, --head)..--head, as the squashed net change: one payload,
 // one run of its require and checks.
 //
@@ -637,18 +637,40 @@ func (ev *changesetEvaluation) runRequires(rr *ruleRun) (dispatchcore.Verdict, e
 		}
 		seen[requireKind(p)]++
 
+		if p.Citation != nil && ev.needsSession(rr) {
+			// The quotes of the trailers can only be grounded in the session's transcript: a
+			// run without one cannot judge, and says so. Whatever it said is no verdict about
+			// this key (a real session computes the same key), so nothing is stored.
+			rr.volatile = true
+			return dispatchcore.Verdict{Refused: true, Reason: needsSessionReason}, nil
+		}
 		v, err := ev.runRequirement(g, rr.req, p, kind, rr.payload, rr.runID, rr.unresolved)
 		if err != nil {
 			return dispatchcore.Verdict{}, err
 		}
 		if v.Refused {
-			// A skill or a context is read from the session's state: a refusal on one is
-			// asked again once the agent has done what it asks, never replayed.
-			rr.volatile = rr.volatile || p.Citation == nil
+			// A skill or a context is read from the session's state, and a citation is
+			// grounded in it: a refusal on one is asked again once the agent has done what it
+			// asks, never replayed. Only a citation refusal about trailers that resolved (or
+			// that there are none) is a verdict about the key's input.
+			rr.volatile = rr.volatile || p.Citation == nil || len(rr.unresolved) > 0
 			return v, nil
 		}
 	}
 	return dispatchcore.Verdict{}, nil
+}
+
+const needsSessionReason = "needs a session to judge: this range carries citation trailers, which can only be grounded in the session's transcript, and this run has none (run `sr-checks run` from the agent's session)"
+
+// needsSession says a citation requirement cannot be judged here: the range quotes
+// citations in its trailers but this run has no session transcript to ground them in.
+func (ev *changesetEvaluation) needsSession(rr *ruleRun) bool {
+	if ev.verify || ev.params.Transcript != "" {
+		return false
+	}
+	cs := rr.payload.Changeset
+	TrustTrailers(&cs)
+	return len(cs.Citations) > 0
 }
 
 // runRequirement evaluates one `require` entry for every subject of the changeset
@@ -915,7 +937,7 @@ func withoutSession(req dispatchcore.Request) dispatchcore.Request {
 // hash (part of the cache key) already covers every script and template of the rule folder
 // and the subject id is the key's own; this adds what the verdict is about: the content of
 // the subject's files, its fingerprint from the `subjects:` script (when it gave one), and,
-// for a rule that requires a citation, the commit messages and citation quotes. No commit
+// for a rule that requires a citation, the quotes of the citations that ground the subject. No commit
 // SHA, branch, session or snapshot path is in it, so two branches with identical content share
 // their verdicts and the run that stored one and the verify that reads it compute one key.
 func guardKey(g declaration.FileGuard, payload changeset.Payload) (string, error) {
@@ -948,13 +970,16 @@ type stepRow struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-// stepsOf are the steps this evaluation ran (or carried) for a rule, in order.
-func (ev *changesetEvaluation) stepsOf(rule string) []stepRow {
+// stepsOf are the steps this evaluation ran (or carried) for a guard over its subject, in
+// order: the guard's own steps (keyed by the subject's id) and its requirements' (keyed by a
+// file of the subject). Another subject's steps of the same rule are not this verdict's.
+func (ev *changesetEvaluation) stepsOf(rr *ruleRun) []stepRow {
+	rule := rr.g.Qualified()
 	ev.mu.Lock()
 	defer ev.mu.Unlock()
 	var rows []stepRow
 	for _, o := range ev.outcomes {
-		if o.Rule == rule && o.Status != "missing" {
+		if o.Rule == rule && o.Status != "missing" && (o.Subject == rr.subject.ID || slices.Contains(rr.subject.Files, o.Subject)) {
 			rows = append(rows, stepRow{Subject: o.Subject, Kind: o.Kind, Status: o.Status, Reason: o.Reason})
 		}
 	}
@@ -992,7 +1017,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	}
 	if ev.store == nil {
 		if ev.verify {
-			return missing("no results are kept here; run `sr check run`")
+			return missing("no results are kept here; run `sr-checks run`")
 		}
 		return dispatchcore.Verdict{}, nil, false
 	}
@@ -1057,7 +1082,7 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 	if ev.store == nil || ev.verify || rr.runID == "" || rr.key == "" || rr.replayed {
 		return
 	}
-	meta := map[string]any{"steps": ev.stepsOf(rr.g.Qualified())}
+	meta := map[string]any{"steps": ev.stepsOf(rr)}
 	rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: guardKind, Fingerprint: rr.key, Metadata: meta}
 	switch {
 	case verdict.Refused:

@@ -5,6 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"sort"
+
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // GuardFingerprint says what a guard's verdict over one subject is about, as one short string:
@@ -18,8 +22,8 @@ import (
 //   - subjectFP: the "fingerprint" the rule's `subjects:` script gave this subject, for whatever
 //     the verdict depends on beyond the files (a file a check opens with its own tools). It
 //     must be session-independent. Empty without `subjects:`.
-//   - citations: for a `require: citation` rule only, CitationPart: the commit messages and
-//     the citations' quotes.
+//   - citations: for a `require: citation` rule only, CitationPart: the quotes of the
+//     citations that ground the subject.
 //
 // No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
 // are length-prefixed, so two parts cannot be re-cut into another pair.
@@ -34,38 +38,27 @@ func GuardFingerprint(files, subjectFP, citations string) string {
 }
 
 // CitationPart is what a `require: citation` rule's verdict additionally depends on: the
-// commits' subjects, bodies and trailers (citations are read from the trailers, so a
-// reword is a new input) and the citations' quotes and pools. Never a commit SHA (a
-// rebase or amend changes every SHA and none of the content), and never where in a
-// transcript a quote was found: the path, line, cited message and the tool call that
-// printed it (the volatile Call field) are blanked.
+// quotes (with their pools) of the citations that ground the payload's subject, sorted. Nothing
+// else of the range: not a commit's subject or body, not a trailer that grounds another
+// subject, never a commit SHA, and never where in a transcript a quote was found.
 func CitationPart(p Payload) (string, error) {
-	view := struct {
-		Commits   []Commit
-		Citations []Citation
-	}{
-		Commits:   make([]Commit, len(p.Changeset.Commits)),
-		Citations: make([]Citation, len(p.Changeset.Citations)),
+	type quote struct {
+		Pool  []transcript.SourceType
+		Quote string
 	}
-	for i, c := range p.Changeset.Commits {
-		c.SHA = ""
-		view.Commits[i] = c
+	var quotes []quote
+	for _, c := range p.Changeset.ForSubject(p.Subject) {
+		quotes = append(quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
 	}
-	for i, c := range p.Changeset.Citations {
-		c.Commits = blankSHAs(c.Commits)
-		c.Citation.Path, c.Citation.Line, c.Citation.Message, c.Citation.Call = "", 0, "", ""
-		view.Citations[i] = c
-	}
-	body, err := json.Marshal(view)
+	sort.Slice(quotes, func(i, j int) bool {
+		a, b := quotes[i], quotes[j]
+		if a.Quote != b.Quote {
+			return a.Quote < b.Quote
+		}
+		return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
+	})
+	body, err := json.Marshal(quotes)
 	return string(body), err
-}
-
-// blankSHAs keeps how many commits there were and drops which.
-func blankSHAs(shas []string) []string {
-	if shas == nil {
-		return nil
-	}
-	return make([]string, len(shas))
 }
 
 // FilesPart is the path and content of the subject's matched files, in the subject's order:

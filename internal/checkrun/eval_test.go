@@ -645,3 +645,70 @@ func TestEvaluate_APrepareRefusalIsAStoredFailNotAnEngineError(t *testing.T) {
 	assert.Contains(t, got[0].Reason, "no standard to judge")
 	assert.NotContains(t, got[0].Reason, "not judged yet")
 }
+
+// citedFixture is a rule that requires a user citation, over a doc committed with a citation
+// trailer: the key is the one a real session computes.
+func citedFixture(t *testing.T) *evalFixture {
+	t.Helper()
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+	return f
+}
+
+func (f *evalFixture) verifyReasons(t *testing.T) []FileGuardResult {
+	t.Helper()
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	return got
+}
+
+// A `run` with no session cannot ground the trailers: it refuses saying so, and the refusal is
+// no verdict about the key (a real session computes the same key), so nothing is stored.
+func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
+	f := citedFixture(t)
+	r, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "needs a session to judge")
+	assert.Equal(t, 0, f.runs(t), "no check ran")
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet", "no FAIL was stored under the key")
+	assert.NotContains(t, got[0].Reason, "needs a session")
+}
+
+// A quote that does not resolve in the session is no verdict either.
+func TestEvaluate_AnUnresolvedCitationStoresNoVerdict(t *testing.T) {
+	f := citedFixture(t)
+	record := filepath.Join(t.TempDir(), "s-eval.jsonl")
+	require.NoError(t, os.WriteFile(record, []byte(""), 0o644))
+	p := f.params(t, f.results)
+	p.Transcript = record
+	ev := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p, store: f.results, rng: p.Range, batch: "b1"}
+	ev.identity = ev.runIdentity()
+	_, refused := ev.evaluate(f.guard)
+	require.True(t, refused)
+	got := f.verifyReasons(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+}
+
+// A guard's stored steps are its own subject's: another subject of the same rule contributes none.
+func TestStepsOf_AreFilteredByRuleAndSubject(t *testing.T) {
+	ev := &changesetEvaluation{}
+	g := declaration.FileGuard{Name: "r"}
+	ev.note(CheckOutcome{Rule: g.Qualified(), Subject: "a", Kind: "check[0]:script:x", Status: "pass"})
+	ev.note(CheckOutcome{Rule: g.Qualified(), Subject: "b", Kind: "check[0]:script:x", Status: "fail", Reason: "b's"})
+	ev.note(CheckOutcome{Rule: g.Qualified(), Subject: "docs/a.md", Kind: "require:citation", Status: "pass"})
+	ev.note(CheckOutcome{Rule: "other", Subject: "a", Kind: "k", Status: "pass"})
+	rr := &ruleRun{g: g, subject: changeset.Subject{ID: "a", Files: []string{"docs/a.md"}}}
+	rows := ev.stepsOf(rr)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "a", rows[0].Subject)
+	assert.Equal(t, "docs/a.md", rows[1].Subject)
+}

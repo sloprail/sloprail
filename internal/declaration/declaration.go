@@ -546,9 +546,9 @@ type Check struct {
 
 	// Prepare is an optional deterministic executable that runs before the check
 	// (a Judge or a Script). What it returns under `additionalContext` is added to
-	// the judge's prompt variables, or to the script's payload; its optional
-	// `fingerprint` names what the verdict depends on beyond the check's own file and
-	// the matched files, and is part of the verdict's cache key.
+	// the judge's prompt variables, or to the script's payload. It only builds context:
+	// it names no fingerprint, and neither its output nor the rendered prompt is part of
+	// the verdict's cache key (a `subjects:` script supplies a fingerprint).
 	Prepare string `yaml:"prepare"`
 
 	// Model is which model a Judge asks, in the same modelset format sr-agent's

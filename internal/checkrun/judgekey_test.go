@@ -20,7 +20,7 @@ import (
 func keyPayload() changeset.Payload {
 	cs := changeset.Changeset{
 		Base: "b0", Head: "h0",
-		Commits: []changeset.Commit{{SHA: "c1", Subject: "split", Trailers: map[string][]string{"Cites-User": {"q"}}}},
+		Commits: []changeset.Commit{{SHA: "c1", Subject: "split", Trailers: map[string][]string{changeset.TrailerCitesUser: {"q"}}}},
 		Files:   []changeset.File{{Path: "a.go", Status: "M", Commits: []string{"c1"}, NewContent: "2", Diff: "@@ x"}},
 		Citations: []changeset.Citation{{Citation: transcript.Citation{Quote: "q", Path: "/t", Line: 3, Call: "Bash: one"},
 			Commits: []string{"c1"}, Files: []string{"a.go"}}},
@@ -90,12 +90,13 @@ func TestGuardKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 // Call field and SHAs never are.
 func TestGuardKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T) {
 	reword := func(p *changeset.Payload) {
-		p.Changeset.Commits[0].Trailers["Cites-User"] = []string{"another"}
+		p.Changeset.Commits[0].Trailers[changeset.TrailerCitesUser] = []string{"another"}
 		p.Changeset.Citations[0].Citation.Quote = "another"
 	}
 	volatile := func(p *changeset.Payload) {
 		p.Changeset.Citations[0].Citation.Call = "Bash: two"
 		p.Changeset.Commits[0].SHA = "rewritten"
+		p.Changeset.Files[0].Commits = []string{"rewritten"}
 	}
 	for _, citation := range []bool{true, false} {
 		g, c, _ := keyRule(t, citation)
@@ -104,6 +105,9 @@ func TestGuardKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T)
 		reword(&r)
 		volatile(&v)
 		assert.Equal(t, base, key(t, g, c, v, "/t1", ""), "Call and SHAs are never input")
+		msg := keyPayload()
+		msg.Changeset.Commits[0].Subject, msg.Changeset.Commits[0].Body = "reworded", "and a body"
+		assert.Equal(t, base, key(t, g, c, msg, "/t1", ""), "a commit's subject and body are never input")
 		if citation {
 			assert.NotEqual(t, base, key(t, g, c, r, "/t1", ""))
 		} else {

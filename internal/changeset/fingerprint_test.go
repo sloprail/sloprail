@@ -54,13 +54,10 @@ func TestFilesPart_ContentOnly(t *testing.T) {
 	assert.NotEqual(t, FilesPart(a), FilesPart(b))
 }
 
-// Rewording a commit or a citation is an input for a rule that reads citations; a SHA never.
-func TestCitationPart_CommitMessagesAndQuotesMatter(t *testing.T) {
+// Only the quotes (and their pools) that ground the subject are keyed. Rewording an unrelated
+// commit message, or adding a commit, is not an input.
+func TestCitationPart_QuotesMatter(t *testing.T) {
 	for name, mutate := range map[string]func(*Payload){
-		"subject":        func(p *Payload) { p.Changeset.Commits[0].Subject = "different" },
-		"body":           func(p *Payload) { p.Changeset.Commits[0].Body = "different" },
-		"trailer":        func(p *Payload) { p.Changeset.Commits[0].Trailers[TrailerCitesUser] = []string{"z"} },
-		"extra commit":   func(p *Payload) { p.Changeset.Commits = append(p.Changeset.Commits, Commit{Subject: "more"}) },
 		"citation quote": func(p *Payload) { p.Changeset.Citations[0].Citation.Quote = "another quote" },
 		"citation pool": func(p *Payload) {
 			p.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}
@@ -73,6 +70,29 @@ func TestCitationPart_CommitMessagesAndQuotesMatter(t *testing.T) {
 			assert.NotEqual(t, cp(t, a), cp(t, b))
 		})
 	}
+}
+
+func TestCitationPart_CommitMessagesAreNotInputs(t *testing.T) {
+	for name, mutate := range map[string]func(*Payload){
+		"subject":      func(p *Payload) { p.Changeset.Commits[0].Subject = "different" },
+		"body":         func(p *Payload) { p.Changeset.Commits[0].Body = "different" },
+		"trailer":      func(p *Payload) { p.Changeset.Commits[0].Trailers[TrailerCitesUser] = []string{"z"} },
+		"extra commit": func(p *Payload) { p.Changeset.Commits = append(p.Changeset.Commits, Commit{Subject: "more"}) },
+		"commit count": func(p *Payload) { p.Changeset.Citations[0].Commits = []string{"c1", "c0"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, b := samplePayload(), samplePayload()
+			mutate(&b)
+			assert.Equal(t, cp(t, a), cp(t, b))
+		})
+	}
+}
+
+// A citation that grounds another subject's file is not this subject's input.
+func TestCitationPart_OnlyTheSubjectsCitations(t *testing.T) {
+	a, b := samplePayload(), samplePayload()
+	b.Changeset.Citations = append(b.Changeset.Citations, Citation{Citation: transcript.Citation{Quote: "elsewhere"}, Commits: []string{"c9"}})
+	assert.Equal(t, cp(t, a), cp(t, b))
 }
 
 func TestCitationPart_NeverSHAsNorWhereAQuoteWasFound(t *testing.T) {
