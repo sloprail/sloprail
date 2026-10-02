@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -330,5 +331,68 @@ exit 0
 	if refusals := e.CheckRun(proj, sess); len(refusals) != 0 {
 		t.Fatalf("a file that has been fixed is still refused: %q — a passing verdict must "+
 			"end the refusal, or every file ever refused accumulates forever", refusals)
+	}
+}
+
+// T015_04: a refusal outlives the branch the agent leaves it on.
+//
+// The refused file is committed on main; the agent then checks out another branch,
+// where the file does not exist at all, and does unrelated work there. The range of
+// main is still one the session answers for (a tracked range is per branch), so the
+// Stop still verifies it: the rule is put the file again and the Stop refuses it,
+// naming main. A refusal tied to the branch the agent happens to be on would drop
+// the broken file out of view at exactly this moment.
+//
+// There is no re-creation of the file after the switch (unlike T015_02): the file is
+// absent from the tree and from feature's range, so the only way it can be reported
+// is through main's range.
+func TestT015_04_ARefusedFileOnAnotherBranchIsStillReported(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	writeFile(t, proj, ".gitignore", ".scenario.sh\n")
+	e.CommitAll(proj, "the guardrail, on every line of history")
+	root := e.Git(proj, "rev-parse", "HEAD")
+
+	e.Git(proj, "checkout", "-b", "feature", root)
+	e.Git(proj, "commit", "--allow-empty", "-m", "on feature")
+	e.Git(proj, "checkout", "main")
+
+	const sess = "s-015-04"
+	e.Run(proj, sess, "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+	).ThenCommit("the bad file"))
+	first := changesetkit.Files(t, led.Lines())
+	if countPath(first, "bad-file.md") == 0 {
+		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
+			"nothing was refused, so there is no surviving refusal to test", first)
+	}
+	stops := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+
+	e.Run(proj, sess, "switch branches", Turns("done",
+		Bash("b2", "git checkout feature"),
+		Write("w3", "unrelated.md", "fine\n"),
+	).ThenCommit("unrelated work"))
+
+	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
+		t.Fatalf("the agent did not actually switch branches (on %q), so nothing moved and this proves nothing", got)
+	}
+	if e.Wrote(proj, "bad-file.md") {
+		t.Fatalf("the offending file is still in the tree on feature, so it is in the branch's own " +
+			"range and its report proves nothing about the other branch's")
+	}
+	second := changesetkit.Files(t, led.Lines())[len(first):]
+	if !changesetkit.Saw(second, "unrelated.md") {
+		t.Fatalf("the cycle's own work is missing from %v — the claim below would be vacuous", second)
+	}
+	if countPath(second, "bad-file.md") == 0 {
+		t.Fatalf("an unfixed refusal was dropped once its branch was left: the rule was not put "+
+			"bad-file.md again (%v)", second)
+	}
+	later := e.AllBlockingErrorsFrom(proj, sess, "Stop")[stops:]
+	if got := strings.Join(later, "\n"); !strings.Contains(got, "this file is not acceptable") || !strings.Contains(got, "(main") {
+		t.Fatalf("the Stop after the switch did not refuse main's unfixed range:\n%s", got)
 	}
 }
