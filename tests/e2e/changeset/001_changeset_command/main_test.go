@@ -35,13 +35,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// Shown is what `sr-session changeset` prints.
+// Shown is what `sr-checks changeset` prints.
 type Shown struct {
 	Rule                string   `json:"rule"`
-	Origin              string   `json:"origin"`
 	Base                string   `json:"base"`
 	Head                string   `json:"head"`
-	DroppedWatermark    string   `json:"droppedWatermark"`
 	RuleHash            string   `json:"ruleHash"`
 	UnresolvedCitations []string `json:"unresolvedCitations"`
 	Payload             struct {
@@ -79,12 +77,16 @@ type Shown struct {
 	} `json:"payload"`
 }
 
-// show runs `sr-session changeset --rule <rule>` in proj and returns the parsed
-// output. The process's exit code and output are returned too; on a non-zero
+// show runs `sr-checks changeset --rule <rule> --base <base> --head HEAD` in proj and returns the parsed
+// output (an empty base leaves --base off). The process's exit code and output are returned too; on a non-zero
 // exit the parsed value is zero.
-func show(t *testing.T, e *harness.Env, proj string, env []string, rule string) (Shown, harness.Result) {
+func show(t *testing.T, e *harness.Env, proj string, env []string, rule, base string) (Shown, harness.Result) {
 	t.Helper()
-	res := e.CLIDirectEnv(proj, env, "sr-session", "changeset", "--rule", rule)
+	args := []string{"changeset", "--rule", rule, "--head", "HEAD"}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+	res := e.CLIDirectEnv(proj, env, "sr-checks", args...)
 	var s Shown
 	if res.Code == 0 {
 		if err := json.Unmarshal([]byte(res.Output), &s); err != nil {
