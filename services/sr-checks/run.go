@@ -176,7 +176,13 @@ func resolveTarget(cmd *cobra.Command) (target, error) {
 	if err != nil {
 		return target{}, err
 	}
-	return target{root: root, rng: r, loaded: checkrun.LoadDeclarations(cmd.ErrOrStderr(), root, reg, r.Base), sess: openSession(root)}, nil
+	// A store that cannot be read is a refusal here, not zero guards: a CI `verify` must not pass
+	// over rules it could not see. (The Stop path stays lenient: it must not brick the turn.)
+	loaded, err := checkrun.LoadDeclarationsStrict(cmd.ErrOrStderr(), root, reg, r.Base)
+	if err != nil {
+		return target{}, fmt.Errorf("sloprail: the declarations in this project could not be read: %w", err)
+	}
+	return target{root: root, rng: r, loaded: loaded, sess: openSession(root)}, nil
 }
 
 func execute(cmd *cobra.Command, m mode) error {
