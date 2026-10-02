@@ -66,12 +66,12 @@ func fingerprintOf(p Payload, commits bool, ruleHash, model string, extra []stri
 		view.Changeset.Files[i] = f
 	}
 	// A citation is its QUOTE and the pool it resolved in: where in which transcript it was found
-	// (path, line, the whole cited message) is only known where the transcript is, and a result
+	// (path, line, the whole cited message, the tool call that printed it) is only known where the transcript is, and a result
 	// found by the author must be found by anyone who sees the same quote in the commit.
 	view.Changeset.Citations = make([]Citation, len(p.Changeset.Citations))
 	for i, c := range p.Changeset.Citations {
 		c.Commits = blankSHAs(c.Commits)
-		c.Citation.Path, c.Citation.Line, c.Citation.Message = "", 0, ""
+		c.Citation.Path, c.Citation.Line, c.Citation.Message, c.Citation.Call = "", 0, "", ""
 		view.Changeset.Citations[i] = c
 	}
 	body, err := json.Marshal(view)

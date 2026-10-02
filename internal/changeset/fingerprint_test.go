@@ -71,6 +71,7 @@ func TestFingerprint_CommitMessagesAreInputOnlyForARuleThatReadsThem(t *testing.
 func TestFingerprint_WhereACitationWasFoundIsNotInput(t *testing.T) {
 	a, b := samplePayload(), samplePayload()
 	b.Changeset.Citations[0].Citation.Path, b.Changeset.Citations[0].Citation.Line, b.Changeset.Citations[0].Citation.Message = "/elsewhere", 99, "the cited message"
+	b.Changeset.Citations[0].Citation.Call = "Bash: cat CHANGELOG.md"
 	assert.Equal(t, fp(t, a), fp(t, b))
 }
 
