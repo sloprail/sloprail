@@ -803,3 +803,51 @@ func TestCurrentAdvice_AStoredAmendOfferIsDroppedOncePushed(t *testing.T) {
 	assert.Contains(t, got, "To undo the whole range", "the rest of the advice stays")
 	assert.Contains(t, got, "FOLLOW-UP commit")
 }
+
+func (f *evalFixture) evaluateWith(t *testing.T, record, batch string) (FileGuardResult, bool) {
+	t.Helper()
+	p := f.params(t, f.results)
+	p.Transcript = record
+	ev := &changesetEvaluation{errw: &bytes.Buffer{}, diags: map[string]*bytes.Buffer{}, root: f.repo, params: p, store: f.results, rng: p.Range, batch: batch}
+	ev.identity = ev.runIdentity()
+	return ev.evaluate(f.guard)
+}
+
+// A content check's FAIL is replayed even though a quote was unresolved when it ran: once the
+// quote resolves, the judge is not asked again (only a citation requirement's FAIL is re-judged).
+func TestEvaluate_AContentFailWithAnUnresolvedQuoteIsStillReplayed(t *testing.T) {
+	f := newEvalFixture(t, nil)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("FORBIDDEN"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	empty := filepath.Join(t.TempDir(), "empty.jsonl")
+	require.NoError(t, os.WriteFile(empty, nil, 0o644))
+	_, refused := f.evaluateWith(t, empty, "b1")
+	require.True(t, refused)
+	require.Equal(t, 1, f.runs(t))
+
+	resolved := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(resolved, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	r, refused := f.evaluateWith(t, resolved, "b2")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, "forbidden words")
+	assert.Equal(t, 1, f.runs(t), "the stored content fail is replayed, the judge is not asked again")
+}
+
+// A citation requirement's FAIL caused by an unresolved quote is re-judged once it resolves.
+func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *testing.T) {
+	f := citedFixture(t)
+	empty := filepath.Join(t.TempDir(), "empty.jsonl")
+	require.NoError(t, os.WriteFile(empty, nil, 0o644))
+	_, refused := f.evaluateWith(t, empty, "b1")
+	require.True(t, refused)
+
+	resolved := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(resolved, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	r2, refused := f.evaluateWith(t, resolved, "b2")
+	assert.False(t, refused, r2.Reason+"\n"+ "the quote resolves now: the citation is judged again and holds")
+}

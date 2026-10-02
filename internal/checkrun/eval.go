@@ -1129,7 +1129,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		return dispatchcore.Verdict{}, nil, false
 	}
 	if !ev.verify && cached.Status == checkstore.StatusFail && len(rr.unresolved) == 0 {
-		if n, _ := cached.Metadata["unresolvedCitations"].(float64); n > 0 {
+		if marked(cached.Metadata["unresolvedCitations"]) {
 			// The stored refusal was "these quotes are not in the session"; they all resolve
 			// now, so it is no longer the verdict on this key: judge again.
 			return dispatchcore.Verdict{}, nil, false
@@ -1195,10 +1195,11 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 			return
 		}
 		rec.Status, meta["reasoning"] = checkstore.StatusFail, verdict.Reason
-		if len(rr.unresolved) > 0 {
+		if len(rr.unresolved) > 0 && onlyCitationFailed(meta["steps"].([]stepRow)) {
 			// The key is over the quotes, not over how the session resolved them: say that
-			// this refusal rests on quotes the session did not hold, so `run` asks again once
-			// they resolve (a tool printed them since).
+			// this refusal is the citation requirement's, resting on quotes the session did
+			// not hold, so `run` asks again once they resolve (a tool printed them since). A
+			// content judge's or script's refusal is never marked: it is replayed as is.
 			meta["unresolvedCitations"] = len(rr.unresolved)
 		}
 	default:
@@ -1210,6 +1211,32 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 	if err := ev.recordCheck(rr.runID, rec); err != nil {
 		fmt.Fprintln(ev.log(rr.g), "sloprail:", err)
 	}
+}
+
+// marked says a stored count is positive, whether the store kept it as an int or read it back as JSON.
+func marked(v any) bool {
+	switch n := v.(type) {
+	case int:
+		return n > 0
+	case float64:
+		return n > 0
+	}
+	return false
+}
+
+// onlyCitationFailed says every failed step of a verdict is a citation requirement's.
+func onlyCitationFailed(steps []stepRow) bool {
+	any := false
+	for _, st := range steps {
+		if st.Status != checkstore.StatusFail {
+			continue
+		}
+		if !strings.HasPrefix(st.Kind, "require:citation") {
+			return false
+		}
+		any = true
+	}
+	return any
 }
 
 // engineError is the refusal for something that went wrong in the engine while a
