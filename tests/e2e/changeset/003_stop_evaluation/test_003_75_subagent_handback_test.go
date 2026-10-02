@@ -28,6 +28,7 @@ func subagentStopNow(t *testing.T, e *Env, proj, sess, wt, agent string) harness
 		"session_id": sess, "transcript_path": e.TranscriptPath(proj, sess), "cwd": wt,
 		"agent_id": agent, "agent_transcript_path": recs[0], "hook_event_name": "SubagentStop",
 	})
+	e.JudgeTracked(wt, sess, true) // the judging a real sub-agent asks for before it stops
 	return e.CLIDirectStdinEnv(wt, string(payload), e.SessionEnv(""), "sr-session", "subagent-stop")
 }
 

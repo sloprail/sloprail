@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -90,7 +91,7 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 // the session tracks (`sr-session refs list --json`: folder, head, base, tip), in the range's own
 // folder — sub-agent worktrees, other repositories, branches it left. The ranges are read when the
 // step runs, since the commits they cover do not exist when the scenario is written. A sub-agent
-// (own=true) runs only the ranges of its own worktree. Failures are ignored: the Stop reports.
+// (own=true) runs only the ranges of its own worktree. A folder that is gone (a removed worktree) is judged from the folder the agent is in: the range moves there. Failures are ignored: the Stop reports.
 func runTrackedRanges(own bool) string {
 	filter := `select(.UntrackedReason=="")`
 	if own {
@@ -99,7 +100,7 @@ func runTrackedRanges(own bool) string {
 	return `top=$(git rev-parse --show-toplevel 2>/dev/null); ` +
 		`sr-session refs list --json 2>/dev/null | jq -r --arg top "$top" '.[]? | ` + filter + ` | [.Folder,.Head,.Base,.HeadSHA] | @tsv' 2>/dev/null | ` +
 		`while IFS="	" read -r f h b t; do ` +
-		`[ -d "$f" ] || continue; ` +
+		`[ -d "$f" ] || f="$top"; [ -n "$f" ] || continue; ` +
 		`git -C "$f" rev-parse --verify -q "$h^{commit}" >/dev/null 2>&1 || h="$t"; ` +
 		`[ -n "$h" ] || continue; ` +
 		`if [ -z "$b" ]; then b=$(git -C "$f" merge-base origin/main "$h" 2>/dev/null || git -C "$f" rev-list --max-parents=0 "$h" | head -1); fi; ` +
@@ -275,4 +276,19 @@ func (e *Env) CacheRecords(projDir string) []checkcache.Run {
 		e.t.Fatalf("harness: read the results branch: %v", err)
 	}
 	return runs
+}
+
+// JudgeTracked is the turn a real agent takes before it stops, run by hand: `sr-checks run`
+// over every range the session tracks, from dir (a sub-agent's worktree judges its own ranges,
+// the root's folder all of them). For a test that commits outside a Run and then drives the
+// Stop itself.
+func (e *Env) JudgeTracked(dir, sessionID string, subagent bool) {
+	e.t.Helper()
+	cmd := exec.Command("bash", "-c", runTrackedRanges(subagent))
+	cmd.Dir = dir
+	cmd.Env = append(HostEnv(), "HOME="+e.home, "PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(cmd.Env, e.hookEnv(sessionID)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		e.t.Logf("harness: judging the tracked ranges: %v\n%s", err, out)
+	}
 }
