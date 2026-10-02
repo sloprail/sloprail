@@ -90,7 +90,8 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 // runTrackedRanges is the shell a real agent runs before it stops: `sr-checks run` over EVERY range
 // the session tracks (`sr-session refs list --json`: folder, head, base), in the range's own
 // folder — sub-agent worktrees, other repositories, branches it left — exactly as `refs list`
-// prints them. The ranges are read when the step runs, since the commits they cover do not exist
+// prints them (a branch that is gone is run at the commit it last pointed at, a folder that is gone is
+// skipped with a line saying so). The ranges are read when the step runs, since the commits they cover do not exist
 // when the scenario is written. A sub-agent (own=true) runs only the ranges of its own worktree.
 // A refusal is the judges' answer (the Stop reports it); anything else that goes wrong —
 // `refs list` failing, a folder or range `run` cannot use (nothing on stdout, a non-zero exit) — is
@@ -102,9 +103,11 @@ func runTrackedRanges(own bool) string {
 	}
 	return `top=$(git rev-parse --show-toplevel 2>/dev/null); ` +
 		`refs=$(sr-session refs list --json 2>&1) || { echo "harness: sr-session refs list failed: $refs" >&2; exit 1; }; ` +
-		`rows=$(printf '%s' "$refs" | jq -r --arg top "$top" '.[]? | ` + filter + ` | [.Folder,.Head,.Base] | @tsv') || { echo "harness: sr-session refs list printed no ranges: $refs" >&2; exit 1; }; ` +
-		`printf '%s\n' "$rows" | { rc=0; while IFS="	" read -r f h b; do ` +
+		`rows=$(printf '%s' "$refs" | jq -r --arg top "$top" '.[]? | ` + filter + ` | [.Folder,.Head,.Base,.HeadSHA] | @tsv') || { echo "harness: sr-session refs list printed no ranges: $refs" >&2; exit 1; }; ` +
+		`printf '%s\n' "$rows" | { rc=0; while IFS="	" read -r f h b sha; do ` +
 		`[ -n "$f" ] || continue; ` +
+		`[ -d "$f" ] || { echo "harness: skipping $f (the folder is gone)" >&2; continue; }; ` +
+		`(cd "$f" && git rev-parse --verify -q "$h^{commit}" >/dev/null) || h="$sha"; ` +
 		`out=$(cd "$f" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "$b" --head "$h" 2>&1); st=$?; ` +
 		`if [ "$st" -ne 0 ] && [ -z "$out" ]; then echo "harness: sr-checks run --base $b --head $h in $f failed ($st) with no output" >&2; rc=1; ` +
 		`elif [ "$st" -ne 0 ] && ! printf '%s' "$out" | grep -q "file-guard"; then echo "harness: sr-checks run --base $b --head $h in $f failed ($st): $out" >&2; rc=1; fi; ` +

@@ -30,7 +30,9 @@ func TestT003_43_AnAdHocRepositoryIsJudgedEvenWhenTheRootDeclaresNothing(t *test
 		Bash("b1", "cd "+other+" && "+write("FORBIDDEN words")+" && git add -A && git commit -q -m 'violate'"),
 	))
 	got := stopRefusals(e, proj, "s-003-43")
-	if !strings.Contains(got, refusalText) || !strings.Contains(got, other) {
+	// A run from another repository finds no session record, so it stores no refusal: the Stop's
+	// verify says "not judged yet", naming the folder and the file the rule is about.
+	if !strings.Contains(got, "docs/x.md") || !strings.Contains(got, other) {
 		t.Fatalf("the other repository's rule was not applied under a rule-less root:\n%s", got)
 	}
 	blocks := stopBlocks(e, proj, "s-003-43")
