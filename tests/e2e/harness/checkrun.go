@@ -77,15 +77,36 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 	if e.noAutoCheck {
 		return s
 	}
-	if err := exec.Command("git", "-C", projDir, "rev-parse", "--verify", "-q", "HEAD").Run(); err != nil {
-		return s // nothing committed yet: nothing to judge
-	}
 	base := e.stopBase(projDir, sessionID)
 	e.preStopRuns++
-	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "+shQuote(base)+" --head HEAD >/dev/null 2>&1; true")
+	rootRun := "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base " + shQuote(base) + " --head HEAD >/dev/null 2>&1"
+	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "cd "+shQuote(projDir)+" && "+rootRun+"; "+runTrackedRanges(false))
 	out := s
 	out.turns = append(append([]Turn{}, s.turns...), turn)
 	return out
+}
+
+// runTrackedRanges is the shell a real agent runs before it stops: `sr-checks run` over EVERY range
+// the session tracks (`sr-session refs list --json`: folder, head, base, tip), in the range's own
+// folder — sub-agent worktrees, other repositories, branches it left. The ranges are read when the
+// step runs, since the commits they cover do not exist when the scenario is written. A sub-agent
+// (own=true) runs only the ranges of its own worktree. Failures are ignored: the Stop reports.
+func runTrackedRanges(own bool) string {
+	filter := `select(.UntrackedReason=="")`
+	if own {
+		filter += ` | select(.Folder==$top)`
+	}
+	return `top=$(git rev-parse --show-toplevel 2>/dev/null); ` +
+		`sr-session refs list --json 2>/dev/null | jq -r --arg top "$top" '.[]? | ` + filter + ` | [.Folder,.Head,.Base,.HeadSHA] | @tsv' 2>/dev/null | ` +
+		`while IFS="	" read -r f h b t; do ` +
+		`[ -d "$f" ] || continue; ` +
+		`git -C "$f" rev-parse --verify -q "$h^{commit}" >/dev/null 2>&1 || h="$t"; ` +
+		`[ -n "$h" ] || continue; ` +
+		`if [ -z "$b" ]; then b=$(git -C "$f" merge-base origin/main "$h" 2>/dev/null || git -C "$f" rev-list --max-parents=0 "$h" | head -1); fi; ` +
+		`mb=$(git -C "$f" merge-base origin/main "$h" 2>/dev/null); ` +
+		`if [ -n "$mb" ] && git -C "$f" merge-base --is-ancestor "$b" "$mb" 2>/dev/null; then b="$mb"; fi; ` +
+		`(cd "$f" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "$b" --head "$h" >/dev/null 2>&1); ` +
+		`done; true`
 }
 
 // stopBase is the base of the range a Stop verifies: the merge base with origin's default

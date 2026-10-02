@@ -14,6 +14,9 @@ import (
 // — and in an isolated dispatch it is not even in the sub-agent's tree.
 func SubagentScript(t testing.TB, s Scenario) string {
 	t.Helper()
+	// The turn a real sub-agent takes before it stops: judge the ranges of its own worktree,
+	// which its SubagentStop will verify.
+	s.turns = append(append([]Turn{}, s.turns...), Bash("srsubprestop", runTrackedRanges(true)))
 	path := filepath.Join(t.TempDir(), "sub.sh")
 	if err := s.Script(path); err != nil {
 		t.Fatalf("harness: write sub-agent scenario: %v", err)

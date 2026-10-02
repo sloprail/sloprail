@@ -15,6 +15,7 @@ func TestT003_61_ASubagentWithoutAnIdentityIsStillJudged(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words")
 	e.CommitAll(proj, "add b")
+	e.CheckRunRaw(proj, "", "HEAD~1", "HEAD") // the judging a real agent asks for before it stops
 
 	payload, _ := json.Marshal(map[string]any{
 		"cwd": proj, "agent_id": "a-unresolvable", "agent_transcript_path": filepath.Join(t.TempDir(), "gone.jsonl"),
