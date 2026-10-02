@@ -537,13 +537,6 @@ func (ev *changesetEvaluation) runRequires(rr *ruleRun) (dispatchcore.Verdict, e
 	seen := map[string]int{}
 	for _, p := range g.Require {
 		kind := requireKind(p)
-		if ev.verify && (p.Skill != "" || p.Context != "") {
-			// What the agent loaded or read, and which contexts were open, lives in the session:
-			// judged where the session ran (`run`), not here.
-			ev.note(CheckOutcome{Rule: g.Qualified(), Subject: changeset.DefaultSubjectID, Kind: kind, Status: "skipped", Source: "ran",
-				Reason: "needs the session that made the change; checked where it ran"})
-			continue
-		}
 		if n := seen[kind]; n > 0 {
 			kind += "#" + strconv.Itoa(n+1)
 		}
