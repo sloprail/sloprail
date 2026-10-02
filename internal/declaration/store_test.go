@@ -252,14 +252,29 @@ func TestLoad_FileGuard_PureRequire(t *testing.T) {
 		"file-guard/require-topic/file-guard.yaml": `
 match: "memories/topics/**/*.md"
 require:
-  - skill: document-topic
+  - citation: {source_types: [user]}
 `,
 	})
 	require.Len(t, loaded.FileGuards, 1)
 	g := loaded.FileGuards[0]
 	assert.Empty(t, g.Checks)
 	assert.Len(t, g.Require, 1)
-	assert.Equal(t, "document-topic", g.Require[0].Skill)
+	assert.NotNil(t, g.Require[0].Citation)
+}
+
+// A file-guard cannot see the session, so `require: skill` / `require: context`
+// is refused at load, and the message carries the gate to write instead.
+func TestLoad_FileGuard_SessionRequireIsRefusedWithTheGate(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/require-topic/file-guard.yaml": `
+match: "memories/topics/**/*.md"
+require:
+  - skill: document-topic
+`,
+	})
+	assert.True(t, hasKind(iv, ErrRetiredKey), "a skill require on a file-guard is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "gate/<name>/gate.yaml")
+	assert.Contains(t, iv.Reason, "skill: document-topic")
 }
 
 // A file-guard with neither require nor checks would select a file and decide

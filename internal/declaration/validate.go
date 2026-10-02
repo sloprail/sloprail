@@ -94,6 +94,7 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	}
 
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
+	problems = append(problems, validateNoTranscriptRequire(g)...)
 	problems = append(problems, validateChecks(g.Checks)...)
 
 	// The at-least-one rule, identical to the gate's. Both are optional
