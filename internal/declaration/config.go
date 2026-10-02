@@ -50,11 +50,11 @@ type config struct {
 	// Disabled; a declaration that does not ship disabled is unaffected by it.
 	Enabled []string `yaml:"enabled"`
 
-	// TrackSubagents turns on automatic tracking of the ranges in a sub-agent's folders.
-	// Off by default: a sub-agent does not see the whole picture, so only the root's folders
-	// are tracked and verified, at the root's Stop. A sub-agent's folders still register as
-	// session folders either way.
-	TrackSubagents bool `yaml:"track_subagents"`
+	// EnableSubagentStopCheck makes a sub-agent's own Stop verify the tracked ranges too. Off by
+	// default: a sub-agent does not see the whole picture, so only the root's Stop verifies
+	// them (the ranges of every folder of the session, sub-agents' worktrees included, are
+	// tracked either way).
+	EnableSubagentStopCheck bool `yaml:"enable_subagent_stop_check"`
 }
 
 // isEnabled reports whether the project switched the named default-off declaration on.
@@ -103,11 +103,11 @@ func StopHookBlockCap(root string) (int, error) {
 	return *c.StopHookBlockCap, nil
 }
 
-// TrackSubagents reports whether the project opted in (`track_subagents: true`) to tracking
-// the ranges of sub-agents' folders automatically. An unreadable config is "not opted in".
-func TrackSubagents(root string) bool {
+// EnableSubagentStopCheck reports whether the project opted in (`enable_subagent_stop_check: true`)
+// to a sub-agent's Stop verifying the tracked ranges. An unreadable config is "not opted in".
+func EnableSubagentStopCheck(root string) bool {
 	c, err := loadConfig(root)
-	return err == nil && c.TrackSubagents
+	return err == nil && c.EnableSubagentStopCheck
 }
 
 // loadConfig reads a project's config, returning the zero value when there is

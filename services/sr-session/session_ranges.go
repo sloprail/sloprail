@@ -83,7 +83,7 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		return
 	}
 	for _, f := range folders {
-		if f.AgentID != p.AgentID || !autoTracks(p, f.AgentID) {
+		if f.AgentID != p.AgentID {
 			continue
 		}
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
@@ -91,15 +91,6 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		}
 		ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
 	}
-}
-
-// autoTracks says whether the folders of this agent are tracked automatically: the root's
-// always, a sub-agent's only when the project opted in (`track_subagents: true` in
-// .sloprail/config.yaml) — a sub-agent does not see the whole picture. A sub-agent's folders
-// are registered as session folders either way, and the root's Stop covers every range the
-// session tracks.
-func autoTracks(p HookPayload, agent string) bool {
-	return agent == "" || declaration.TrackSubagents(dotDir(p.Cwd))
 }
 
 // untrackGone drops, with the reason, the ranges of folders that no longer exist (a worktree
@@ -119,6 +110,11 @@ func untrackGone(reg sessionstate.Store, sessionID string, ranges []sessionstate
 // is verified against the stored results (no model is asked, nothing is written), and the
 // refusals are returned, with a note on what the agent untracked.
 func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store) []string {
+	if p.IsSubagent() && !declaration.EnableSubagentStopCheck(dotDir(p.Cwd)) {
+		// A sub-agent does not see the whole picture: its folders' ranges are tracked, and the
+		// ROOT's Stop verifies them (`enable_subagent_stop_check: true` makes its own Stop do so too).
+		return nil
+	}
 	rs, err := resolveRootSession(p)
 	if err != nil {
 		return nil // no session identity, so no ranges

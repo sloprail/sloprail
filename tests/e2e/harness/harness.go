@@ -1083,15 +1083,15 @@ func (e *Env) GitInit(dir string) {
 		}
 		e.DisablePluginGuardrail(dir, others...)
 	}
-	e.trackSubagents(dir)
+	e.enableSubagentStopCheck(dir)
 	e.CommitAll(dir, "initial")
 	e.addOrigin(dir)
 }
 
-// trackSubagents opts the project in to tracking the ranges of sub-agents' folders
-// (`track_subagents: true`), so the tests of sub-agents keep seeing their folders verified. The
+// enableSubagentStopCheck opts the project in to a sub-agent's own Stop verifying the tracked ranges
+// (`enable_subagent_stop_check: true`), so the tests of sub-agents keep seeing their folders verified. The
 // key goes first: `disabled:` stays the config's last key, which tests append list items to.
-func (e *Env) trackSubagents(dir string) {
+func (e *Env) enableSubagentStopCheck(dir string) {
 	e.t.Helper()
 	cfgDir := filepath.Join(dir, ".sloprail")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -1099,7 +1099,7 @@ func (e *Env) trackSubagents(dir string) {
 	}
 	path := filepath.Join(cfgDir, "config.yaml")
 	body, _ := os.ReadFile(path)
-	if err := os.WriteFile(path, append([]byte("track_subagents: true\n"), body...), 0o644); err != nil {
+	if err := os.WriteFile(path, append([]byte("enable_subagent_stop_check: true\n"), body...), 0o644); err != nil {
 		e.t.Fatalf("harness: write config: %v", err)
 	}
 }

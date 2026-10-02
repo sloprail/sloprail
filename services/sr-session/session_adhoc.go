@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
-	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
@@ -184,9 +183,7 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 		if _, err := reg.RegisterFolder(f); err != nil {
 			continue
 		}
-		if agent == "" || declaration.TrackSubagents(dotDir(tree)) {
-			ensureTracked(reg, rs.ID, tree, agent, f.BaseRef)
-		}
+		ensureTracked(reg, rs.ID, tree, agent, f.BaseRef)
 	}
 	if b, err := json.Marshal(pending); err == nil {
 		_ = reg.SetMeta(pendingWorktreesKey, string(b))
@@ -233,9 +230,7 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 			if _, err := reg.RegisterFolder(f); err != nil {
 				return err
 			}
-			if autoTracks(p, p.AgentID) {
-				ensureTracked(reg, rs.ID, tree, p.AgentID, f.BaseRef)
-			}
+			ensureTracked(reg, rs.ID, tree, p.AgentID, f.BaseRef)
 		}
 	}
 	return nil
