@@ -624,6 +624,25 @@ func TestEvaluate_SubjectsScriptKeysEachSubjectOnItsOwn(t *testing.T) {
 	assert.Equal(t, 3, f.runs(t))
 }
 
+// The `subjects:` script is handed the same input in `run` and in `verify` (citations from the
+// trailers only), so a script that fingerprints its stdin cannot key the two differently.
+func TestEvaluate_SubjectsScriptSeesTheSameInputInRunAndVerify(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) { g.Subjects = "./subjects.sh" })
+	script := "#!/bin/sh\nh=$(cksum | cut -d' ' -f1)\n" +
+		"printf '[{\"id\":\"a\",\"files\":[\"docs/a.md\"],\"fingerprint\":\"%s\"}]' \"$h\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "subjects.sh"), []byte(script), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	_, refused := f.evaluate(t, f.results)
+	require.False(t, refused)
+	require.Equal(t, 1, f.runs(t))
+	assert.Empty(t, f.verifyReasons(t), "verify's subjects script saw the same stdin, so it finds run's verdict")
+	assert.Equal(t, 1, f.runs(t))
+}
+
 // A check whose prepare refuses (no transcript to read, fail-closed) has a verdict, a FAIL: it
 // is stored, so verify reads it instead of "not judged yet", and run replays it.
 func TestEvaluate_APrepareRefusalIsAStoredFailNotAnEngineError(t *testing.T) {

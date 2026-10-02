@@ -424,9 +424,8 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	if err != nil {
 		return ev.fail(g, run, err)
 	}
-	base := ev.requestFor(g, r, cs, changeset.Whole(cs), tree.Path, unresolved)
 	if g.Subjects != "" {
-		if subjects, err = ev.guardSubjects(g, cs, base); err != nil {
+		if subjects, err = ev.guardSubjects(g, r, cs, tree.Path); err != nil {
 			dropAll()
 			return ev.fail(g, run, err)
 		}
@@ -520,7 +519,7 @@ func Show(p Params, g declaration.FileGuard) (Shown, error) {
 			return out, err
 		}
 		defer func() { _ = tree.Remove() }()
-		if subjects, err = ev.guardSubjects(g, cs, ev.requestFor(g, r, cs, changeset.Whole(cs), tree.Path, out.Unresolved)); err != nil {
+		if subjects, err = ev.guardSubjects(g, r, cs, tree.Path); err != nil {
 			return out, err
 		}
 	}
@@ -560,8 +559,12 @@ func (ev *changesetEvaluation) agentEnv(env ...string) []string {
 
 // guardSubjects runs the rule's `subjects:` script: the changeset payload on stdin, no
 // session (it must give the same list in `run` and in `verify`), the subjects as JSON on
-// stdout.
-func (ev *changesetEvaluation) guardSubjects(g declaration.FileGuard, cs changeset.Changeset, req dispatchcore.Request) ([]changeset.Subject, error) {
+// stdout. The citations it is handed are the commit trailers' quotes in both modes (what
+// `verify` has), never the session-resolved ones, so a script cannot key the two differently.
+func (ev *changesetEvaluation) guardSubjects(g declaration.FileGuard, r gitrepo.Range, cs changeset.Changeset, tree string) ([]changeset.Subject, error) {
+	trusted := cs
+	TrustTrailers(&trusted)
+	req := ev.requestFor(g, r, trusted, changeset.Whole(trusted), tree, nil)
 	out, v, err := ev.runner.RunSubjects(withoutSession(req), g.Subjects)
 	if err != nil {
 		return nil, fmt.Errorf("its subjects script %q could not run: %w", g.Subjects, err)
