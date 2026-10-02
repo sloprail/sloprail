@@ -115,7 +115,7 @@ func TestGcKeepsRunOnlyAndSupersededRuns(t *testing.T) {
 	empty := Run{ID: "run_empty", RunAt: "2026-01-01T00:00:00.000000000Z", Rule: "plug/file-guard/x", RuleHash: "h", Error: "git: bad", ExitCode: 1, Checks: []Check{}}
 	older := withCheck(rs[0], StatusFail, "2000-01-01T00:00:00Z")
 	older.ID = "run_superseded"
-	if err := s.Put(append(append([]Run{empty, older}, rs...))); err != nil {
+	if err := s.Put(append([]Run{empty, older}, rs...)); err != nil {
 		t.Fatal(err)
 	}
 	before, err := s.Runs()
