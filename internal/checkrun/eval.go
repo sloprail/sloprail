@@ -362,13 +362,9 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	rule := g.Qualified()
 	// RULE AGE: the range is the stated one, raised to the rule's floor (the parent of its last
 	// change) when that is later, so work made before the rule existed is not its debt.
-	r := ev.rng
-	if rel, err := filepath.Rel(ev.root, g.Dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		raised, err := gitrepo.RaiseBaseToRuleFloor(ev.root, r, filepath.ToSlash(rel))
-		if err != nil {
-			return ev.fail(g, checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}, fmt.Errorf("its range is not computable: %w", err))
-		}
-		r = raised
+	r, err := ev.ruleRange(g)
+	if err != nil {
+		return ev.fail(g, checkstore.CheckRun{CheckID: rule, BaseRef: ev.rng.Base, HeadRef: ev.rng.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}, fmt.Errorf("its range is not computable: %w", err))
 	}
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 
@@ -459,6 +455,79 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		rrs = append(rrs, &ruleRun{g: g, hash: hash, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head})
 	}
 	return rrs, FileGuardResult{}, false
+}
+
+// ruleRange is the stated range raised to the rule's floor (the parent of its last change)
+// when that is later: the one range `run`, `verify` and `changeset` judge a rule over.
+func (ev *changesetEvaluation) ruleRange(g declaration.FileGuard) (gitrepo.Range, error) {
+	r := ev.rng
+	if rel, err := filepath.Rel(ev.root, g.Dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return gitrepo.RaiseBaseToRuleFloor(ev.root, r, filepath.ToSlash(rel))
+	}
+	return r, nil
+}
+
+// Shown is what `sr-checks changeset` prints for a rule: the range the engine would judge it
+// over, and what each subject's checks would be handed.
+type Shown struct {
+	Range      gitrepo.Range
+	RuleHash   string
+	Unresolved []changeset.Unresolved
+	// Subjects: one per `subjects:` entry, or the whole changeset when the rule has none.
+	Subjects []ShownSubject
+}
+
+// ShownSubject is one subject and the payload its checks receive.
+type ShownSubject struct {
+	ID      string
+	Payload changeset.Payload
+}
+
+// Show builds, for one rule and with no store, exactly what Evaluate would hand it: the
+// same raised range, the same match and the same `subjects:` script (run here, as in `run`).
+// Nothing is judged or recorded.
+func Show(p Params, g declaration.FileGuard) (Shown, error) {
+	ev := &changesetEvaluation{errw: io.Discard, diags: map[string]*bytes.Buffer{}, root: p.Root, params: p, verify: p.Verify, rng: p.Range}
+	r, err := ev.ruleRange(g)
+	if err != nil {
+		return Shown{}, fmt.Errorf("its range is not computable: %w", err)
+	}
+	out := Shown{Range: r}
+	if out.RuleHash, err = changeset.RuleHashAt(p.Root, g.Dir, g.Origin.FromPlugin()); err != nil {
+		return out, err
+	}
+	match, err := guardrail.CompileFileMatch(g.Match)
+	if err != nil {
+		return out, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err)
+	}
+	cs, err := changeset.Build(p.Root, r, changeset.Options{
+		Deletions: changeset.DeletionMode(g.Deletions),
+		Scan:      Markers,
+		Select:    Selector(match),
+	})
+	if err != nil {
+		return out, err
+	}
+	if p.Verify {
+		TrustTrailers(&cs)
+	} else {
+		out.Unresolved = ResolveCitations(&cs, p.Transcript, p.Cwd)
+	}
+	subjects := []changeset.Subject{changeset.Whole(cs)}
+	if g.Subjects != "" && len(cs.Files) > 0 {
+		tree, err := gitrepo.AddSnapshot(p.Root, "", r.Head)
+		if err != nil {
+			return out, err
+		}
+		defer func() { _ = tree.Remove() }()
+		if subjects, err = ev.guardSubjects(g, cs, ev.requestFor(g, r, cs, changeset.Whole(cs), tree.Path, out.Unresolved)); err != nil {
+			return out, err
+		}
+	}
+	for _, sub := range subjects {
+		out.Subjects = append(out.Subjects, ShownSubject{ID: sub.ID, Payload: changeset.NewPayload(cs, sub, p.Transcript)})
+	}
+	return out, nil
 }
 
 // requestFor is what a rule's checks are handed for one subject of the changeset.

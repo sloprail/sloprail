@@ -132,9 +132,29 @@ func TestRuleHashAt_NewRuleHashesItsUnignoredFiles(t *testing.T) {
 	put(t, repo, "base", map[string]string{"other.txt": "1"})
 	dir := filepath.Join(repo, ".sloprail", "file-guard", "new")
 	write(t, dir, "check.sh", "#!/bin/sh\n", 0o755)
-	want, err := RuleHash(dir)
-	require.NoError(t, err)
-	assert.Equal(t, want, hashAt(t, repo, dir))
+	before := hashAt(t, repo, dir)
+	assert.Equal(t, before, hashAt(t, repo, dir))
+	write(t, dir, "check.sh", "#!/bin/sh\nexit 1\n", 0o755)
+	assert.NotEqual(t, before, hashAt(t, repo, dir), "an edit of the new rule's own file is seen")
+}
+
+// A shared file under the guard's .sloprail root but outside its folder (a `_lib` script the
+// guard sources) is part of the rule: its tracked edit changes the hash; an untracked ledger
+// anywhere under the root does not.
+func TestRuleHashAt_ATrackedSharedFileUnderTheRootChangesIt(t *testing.T) {
+	repo := initRepo(t)
+	dir := filepath.Join(repo, ".sloprail", "file-guard", "r")
+	put(t, repo, "rule", map[string]string{
+		".sloprail/file-guard/r/check.sh": "#!/bin/sh\n. ../../_lib/x.sh\n",
+		".sloprail/_lib/x.sh":             "echo 1\n",
+	})
+	before := hashAt(t, repo, dir)
+
+	write(t, filepath.Join(repo, ".sloprail", "_lib"), "ledger", "run\n", 0o644)
+	assert.Equal(t, before, hashAt(t, repo, dir), "an untracked file under the root is not the rule")
+
+	write(t, filepath.Join(repo, ".sloprail", "_lib"), "x.sh", "echo 2\n", 0o644)
+	assert.NotEqual(t, before, hashAt(t, repo, dir), "a tracked _lib edit is a different rule")
 }
 
 func TestRuleHashAt_SymlinkedRepoPathIsTheSameRule(t *testing.T) {

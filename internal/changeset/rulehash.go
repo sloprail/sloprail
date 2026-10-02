@@ -32,25 +32,40 @@ func RuleHash(dir string) (string, error) {
 	return ruleHashOnDisk(dir)
 }
 
+// sloprailRoot is the `.sloprail` folder a guard's folder sits under (its nearest ancestor
+// of that name), or dir itself when it sits under none.
+func sloprailRoot(dir string) string {
+	for d := dir; ; d = filepath.Dir(d) {
+		if filepath.Base(d) == ".sloprail" {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			return dir
+		}
+	}
+}
+
 // RuleHashAt is the hash of the bytes the engine EXECUTES for the guard whose folder is dir:
-// the files of the folder as they are on disk, restricted to
+// every file of the guard's `.sloprail` root (its own folder, the other rules, the shared
+// `_lib` scripts it sources, config) as it is on disk, restricted to
 //
 //   - the files git TRACKS in the repository at repo, so an uncommitted edit of a tracked
-//     rule file (script, template, prompt, file-guard.yaml) changes the hash and its verdict
-//     never matches the committed rule's, while an untracked or ignored file a check writes
-//     into its own folder (a ledger, a cache) does not; and
-//   - for a rule with nothing tracked yet (new, uncommitted), every file git does not ignore.
+//     file changes the hash and its verdict never matches the committed rule's, while an
+//     untracked or ignored file a check writes (a ledger, a cache) does not; and
+//   - for a guard with nothing tracked in its own folder yet (new, uncommitted), also every
+//     file of that folder git does not ignore.
 //
-// A plugin's rule (plugin true) lives outside the repository and has no git: all of its
-// on-disk files are hashed (an installed plugin's folder is never written to). `run` and
-// `verify` call this with the same arguments, so one rule has one hash in both.
+// A plugin's rule (plugin true) lives outside the repository and has no git: all of the
+// on-disk files of its plugin's `.sloprail` root are hashed (an installed plugin's folder is
+// never written to). `run` and `verify` call this with the same arguments, so one rule has
+// one hash in both.
 //
 // It fails closed: a git error, or a dir outside the repository for a rule that is not a
 // plugin's, is an error, never a fallback to another hash. Both paths are symlink-resolved
 // before they are compared (macOS /tmp is /private/tmp).
 func RuleHashAt(repo, dir string, plugin bool) (string, error) {
 	if plugin {
-		return RuleHash(dir)
+		return RuleHash(sloprailRoot(dir))
 	}
 	realRepo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -65,20 +80,35 @@ func RuleHashAt(repo, dir string, plugin bool) (string, error) {
 		return "", fmt.Errorf("changeset: hash rule %s: it is outside the repository %s", dir, repo)
 	}
 	rel = filepath.ToSlash(rel)
-	names, err := gitrepo.TrackedFiles(realRepo, rel)
+	root := sloprailRoot(realDir)
+	rootRel, err := filepath.Rel(realRepo, root)
 	if err != nil {
 		return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
 	}
-	if len(names) == 0 {
-		if names, err = gitrepo.UnignoredFiles(realRepo, rel); err != nil {
-			return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
+	rootRel = filepath.ToSlash(rootRel)
+	set := map[string]bool{}
+	add := func(names []string) {
+		for _, n := range names {
+			set[strings.TrimPrefix(strings.TrimPrefix(n, rootRel), "/")] = true
 		}
 	}
-	set := map[string]bool{}
-	for _, n := range names {
-		set[strings.TrimPrefix(strings.TrimPrefix(n, rel), "/")] = true
+	tracked, err := gitrepo.TrackedFiles(realRepo, rootRel)
+	if err != nil {
+		return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
 	}
-	return hashFolder(realDir, func(r string) bool { return set[filepath.ToSlash(r)] })
+	add(tracked)
+	own, err := gitrepo.TrackedFiles(realRepo, rel)
+	if err != nil {
+		return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
+	}
+	if len(own) == 0 {
+		unignored, err := gitrepo.UnignoredFiles(realRepo, rel)
+		if err != nil {
+			return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
+		}
+		add(unignored)
+	}
+	return hashFolder(root, func(r string) bool { return set[filepath.ToSlash(r)] })
 }
 
 func ruleHashOnDisk(dir string) (string, error) { return hashFolder(dir, nil) }
