@@ -6,6 +6,7 @@
 //	sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when red
 //	sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
 //	sr-checks changeset --rule X --base --head   what a rule would be handed, without running it
+//	sr-checks staged --needs citation            the staged files a commit must cite; read-only
 //
 // Nothing here tracks a session, a branch or what was judged before: the caller states the
 // range, and a judge's verdict is keyed by the rule, its definition, the check and a
@@ -40,6 +41,7 @@ func newRoot() *cobra.Command {
   sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
   sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
   sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
+  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)
 
 The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
 states the range. A judge's verdict is keyed by the rule, its definition, the check and a
@@ -51,6 +53,6 @@ origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd(), newDefaultBaseCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd())
 	return root
 }

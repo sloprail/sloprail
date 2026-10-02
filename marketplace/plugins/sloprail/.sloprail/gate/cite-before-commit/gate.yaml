@@ -1,0 +1,35 @@
+# The prevention half of a file-guard's `require: citation`. A file-guard judges commits, so a file it
+# guards with a citation requirement is caught only AFTER the commit (at Stop, and by `sr-checks
+# verify` in CI and in verify-before-push). This gate refuses the commit itself when it would
+# change such a file with no citation riding on the command.
+#
+# `staged.sh` asks the engine which files the commit would change that a file-guard wants cited
+# (`sr-checks staged --needs citation`: the file-guards loaded and matched, and each requirement's
+# `when` evaluated, exactly as `sr-checks run` does, over the staged change). When it lists any,
+# the `require: citation` below must be met by a cite chained in front of the command:
+#
+#   sr-session trajectory cite '<exact quote>' && git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'
+#
+# The refusal names the files. The chained cite is what this gate can see; the trailer is what the
+# file-guard reads afterwards, so the refusal gives the command that does both. A commit touching
+# no such file is untouched. `git commit --amend` is judged against HEAD's parent (the amended commit
+# replaces HEAD); an amend that only reuses a HEAD message already carrying a Sloprail-Cites-*
+# trailer, and stages nothing new that needs one, passes.
+#
+# It fails closed: a commit whose folder, index or file-guards cannot be read is refused. It does not
+# see files the same command line creates before the commit (the gate runs before the line); `git add`,
+# `git rm`, `-a` and pathspecs on the line are replayed on a throwaway index, and any other command that
+# moves the index in the same line is refused. CI's `sr-checks verify` stays the backstop for whatever
+# this cannot see.
+#
+# On by default, like every shipped rule, and switched off by listing
+# `sloprail/gate/cite-before-commit` under `disabled:` in .sloprail/config.yaml.
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, .bin == "git" and any(.argv, # == "commit"))
+require:
+  - citation: {source_types: [user, tool_result]}
+    when: ./staged.sh when
+checks:
+  - script: ./staged.sh check

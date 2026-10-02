@@ -454,7 +454,7 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. A judge's verdict is keyed by the rule, its definition, the check and a\nfingerprint of everything the judge was given — never by a commit, session or agent — so the\nsame content after a rebase, a squash or a revert is a cache hit, and so is the same content\nanother clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   judge, asking a model where there is no stored pass; writes the results\n  sr-checks verify --base <rev> --head <rev>   deterministic: asks no model, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. A judge's verdict is keyed by the rule, its definition, the check and a\nfingerprint of everything the judge was given — never by a commit, session or agent — so the\nsame content after a rebase, a squash or a revert is a cache hit, and so is the same content\nanother clone already judged. Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
@@ -522,6 +522,23 @@
             "name": "json",
             "default": "false",
             "usage": "Print the per-subject results as JSON"
+          }
+        ]
+      },
+      {
+        "path": "sr-checks staged",
+        "use": "staged --needs citation [--amend]",
+        "short": "The staged files a commit must cite, by the file-guards' `require: citation`",
+        "long": "Print, one path per line, the staged files that a file-guard selects and that carry a\n`require: citation` the commit being made must meet.\n\nThe candidate change is the index against HEAD (against git's empty tree when HEAD does not exist\nyet). With --amend it is the index against HEAD's parent: the amended commit replaces HEAD, so\neverything HEAD changed is the commit's again. File-guards are loaded, matched and their\n`when` evaluated exactly as `sr-checks run` does over a range, and a requirement whose\n`when` waives a file leaves it out. Nothing is judged, written, staged or committed.\n\nThis is the prevention half of the commit-time check: `run` and `verify` refuse the commit afterwards,\nthis says before it which files will need a citation. Exits 1 with the reason on stderr when the\nchange could not be read: no answer is never \"nothing is needed\".",
+        "flags": [
+          {
+            "name": "amend",
+            "default": "false",
+            "usage": "The commit replaces HEAD: judge the index against HEAD's parent"
+          },
+          {
+            "name": "needs",
+            "usage": "What to list the staged files for; only 'citation' is known (required)"
           }
         ]
       },

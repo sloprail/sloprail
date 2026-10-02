@@ -205,7 +205,25 @@ or a push in the same line as a command that moves refs first, is refused. No us
 citation lifts it: a gate that guards what leaves the machine must not be unlockable by a
 quote (an agent can wash an old, generic instruction into one).
 `sloprail/gate/checks-ref-sr-only` is built the same way to keep the `sloprail/checks`
-results branch writable by `sr-checks` alone. Both ship **on**: a project turns one off
+results branch writable by `sr-checks` alone.
+
+`sloprail/gate/cite-before-commit` is the prevention half of a file-guard's `require:
+citation`, which is otherwise caught only after the commit (Stop, `sr-checks verify` in CI).
+It matches any `git commit` (`--amend` included) and its `require: citation` carries a `when:
+./staged.sh when` that asks the engine `sr-checks staged --needs citation [--amend]`: which
+staged files (the index against HEAD, or against HEAD's parent for an amend; git's empty tree
+when there is no commit) a file-guard selects and whose citation requirement's `when` applies.
+No such file, no requirement. Otherwise the commit must be chained behind a cite, and the
+refusal names the files and gives the command that also carries the trailer the file-guard reads
+afterwards: `sr-session trajectory cite '<exact quote>' && git commit -m '<msg>' -m
+'Sloprail-Cites-User: <exact quote>'`. An amend that reuses HEAD's message (`--no-edit`) when
+HEAD already carries a `Sloprail-Cites-*` trailer needs a cite only for files it newly stages.
+`git add`/`git rm`, `-a` and pathspecs on the same line are replayed on a throwaway index; any
+other index-moving command on the line is refused, as is a commit whose folder or file-guards
+cannot be read (fail closed). Files the same line creates before the commit are not seen: CI's
+verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.
+
+These ship **on**: a project turns one off
 with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
 
 ### The resolution floor
