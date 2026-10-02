@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -101,7 +102,13 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	// A judge beside the recorder: a script runs every time it is asked (the root's own
+	// run and its Stop's verify both count), so "judged exactly once" is a judge's count.
+	e.FileGuard(proj, "verdict", "match: \"**/*.md\"\nchecks:\n  - judge: ./rubric.md.j2\n",
+		map[string]string{"rubric.md.j2": "Does this change hold up?\n{{ change }}\n"})
 	e.GitInit(proj)
+	const promptFile = ".git/judge-prompt"
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": true, "reasoning": "fine"}`)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		harness.CommitFile("sb1", "from-the-sub.md", "delegated\n", "the sub-agent's work"),
@@ -131,6 +138,15 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	lines := e.FileGuardLedgerLines(proj, "recorder", "log")
 	if !containsPath(lines, "from-the-sub.md") {
 		t.Fatalf("the sub-agent's committed file was judged by nobody (%v):\n%s", lines, res.Output)
+	}
+	// And once: the sub-agent's own Stop did not judge a range it does not own, so the
+	// range's one verdict is the root's. Judging it at the sub-agent's stop too would be
+	// one verdict twice.
+	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
+		t.Fatalf("the sub-agent's file was put to the judge %d times (want exactly 1: the root's):\n%s", n, res.Output)
+	}
+	if p := e.JudgePrompt(proj, promptFile); !strings.Contains(p, "from-the-sub.md") {
+		t.Fatalf("the judge was not shown the sub-agent's file:\n%s", p)
 	}
 }
 
