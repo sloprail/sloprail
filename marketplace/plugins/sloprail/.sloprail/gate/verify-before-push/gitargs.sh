@@ -28,3 +28,4 @@ git_split() {
     i=$((i + 1))
   done
 }
+gitargs_loaded=1

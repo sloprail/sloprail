@@ -11,9 +11,10 @@ refuse() {
   exit 1
 }
 
-here="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=gitargs.sh
-. "$here/gitargs.sh" || refuse "verify-before-push could not load its helpers, so this push could not be checked"
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
+unset gitargs_loaded
+. "$lib_dir/gitargs.sh" || refuse "verify-before-push could not load its helpers, so this push could not be checked"
+[ "${gitargs_loaded:-}" = 1 ] || refuse "verify-before-push's helpers loaded only partly, so this push could not be checked"
 
 command -v sr-checks >/dev/null 2>&1 ||
   refuse "sr-checks is not on PATH, so the commits this push would send could not be verified. Install the sloprail plugin's binaries, then push again."

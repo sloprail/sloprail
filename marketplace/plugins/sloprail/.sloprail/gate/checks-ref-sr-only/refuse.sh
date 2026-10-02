@@ -17,8 +17,10 @@ case "$kind" in
   *) refuse "unexpected event kind '$kind', so this could not be checked" ;;
 esac
 
-here="$(cd "$(dirname "$0")" && pwd)"
-. "$here/../verify-before-push/gitargs.sh" || refuse "could not load the git argument helper, so this could not be checked"
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
+unset gitargs_loaded
+. "$lib_dir/../verify-before-push/gitargs.sh" || refuse "could not load the git argument helper, so this could not be checked"
+[ "${gitargs_loaded:-}" = 1 ] || refuse "the git argument helper loaded only partly, so this could not be checked"
 
 n="$(printf '%s' "$payload" | jq -r '.event.invocations | length')" || n=""
 case "$n" in '' | *[!0-9]*) refuse "the command's invocations could not be read, so this could not be checked" ;; esac
