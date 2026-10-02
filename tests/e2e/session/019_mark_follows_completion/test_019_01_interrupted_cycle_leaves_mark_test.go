@@ -26,17 +26,19 @@ import (
 // is NOT covered there is the consequence for a cycle that judged SOME of its
 // turns and was then cut short, which is what this directory adds.
 
-// askWhatHappened is a NEW-FORMAT file-guard , after-check so it runs
-// at a cycle's end. `match: "**/*.md"` fires on every committed change. —. The check reaches the
+// askWhatHappened is a Stop gate, so it runs at a cycle's end. A file-guard is no
+// longer the vehicle: it is judged by `sr check run` over a commit range, outside
+// any session, so it has no session record to read. The check reaches the
 // session's record through SR_TRANSCRIPT / SR_WORKSPACE, which the dispatch sets
-// on a file-guard check.
-const askWhatHappened = `match: "**/*.md"
+// on a gate's check.
+const askWhatHappened = `on:
+  - event: Stop
 checks:
   - script: ./ask.sh
 `
 
 // The check's own stdin is discarded and the record is named explicitly from the
-// environment. A file-guard check is handed the flat CheckPayload rather than the
+// environment. A gate's check is handed the flat CheckPayload rather than the
 // harness payload; piping that in makes the command answer "no transcript path on
 // the hook payload" every time — an answer in which every marker below reads as
 // absent, indistinguishable from correct narrowing. See answered() for the guard
@@ -116,7 +118,7 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	const secondMarker = "MARKERZETA"
 
 	// A cycle whose judging is cut short.
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript(led)})
+	e.Gate(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript(led)})
 	e.CommitAll(proj, "the guards")
 	first := e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "interrupted cycle\n"),
@@ -124,8 +126,8 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	// The premise: the cycle really did not finish cleanly. Without this the
 	// test is about an ordinary completed cycle and proves nothing.
 	//
-	// Read from the blocking attachments rather than from the stream. A Post
-	// hook's refusal blocks the Stop and its words travel to the agent as a
+	// Read from the blocking attachments rather than from the stream. A Stop
+	// gate's refusal blocks the Stop and its words travel to the agent as a
 	// hook_blocking_error record in the conversation, never as a line on the
 	// result stream — so Result.Saw would be asking a channel this text does not
 	// use, and would fail for a working engine.
@@ -141,7 +143,7 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 
 	// The next cycle finishes cleanly, and must still be offered the turns the
 	// interrupted one never settled.
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.Gate(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
 	e.CommitAll(proj, "the clean guard replaces the crashing one")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "completed cycle\n"),
@@ -185,7 +187,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	// bound to one would never run.
 	e.GitInit(proj)
 	led := e.NewLedger("answers")
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.Gate(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
 	e.CommitAll(proj, "the guards")
 
 	const sess = "s-019-02"

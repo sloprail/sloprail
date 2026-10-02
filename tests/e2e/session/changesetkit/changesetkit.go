@@ -8,7 +8,23 @@ package changesetkit
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
+
+// JudgeRun is one Run followed by `sr check run` over exactly the commits that Run
+// added: HEAD before it .. HEAD after it. A file-guard judges the range its caller
+// states, and nothing remembers what an earlier range passed, so a test about what
+// ONE cycle of work puts in front of a rule states that cycle's range itself. The
+// Env must be built with harness.NoAutoCheck, or the harness's own check of the
+// whole session's range records into the same ledger too.
+func JudgeRun(t testing.TB, e *harness.Env, proj, sess, prompt string, s harness.Scenario) harness.Result {
+	t.Helper()
+	base := e.Git(proj, "rev-parse", "HEAD")
+	res := e.Run(proj, sess, prompt, s)
+	e.CheckRunRange(proj, sess, base, "HEAD")
+	return res
+}
 
 // Observed is one file entry of one recorded changeset.
 type Observed struct {

@@ -41,25 +41,18 @@ import (
 // passes the subdirectory AS the project dir, which is exactly the shape of the
 // defect: a payload whose `cwd` sits below the repository root. See RunFrom.
 //
-// A consequence worth stating, because it decides how these tests are built: the
-// engine loads guardrails from `<cwd>/.sloprail`, so a cycle reporting a
-// subdirectory looks for its rules THERE. That is the engine's real behaviour
-// rather than an artefact of the harness, and the rule is placed accordingly —
-// in the subdirectory for the cycles that report it, with its own ledger.
-//
-// The transcript follows the reported directory too, so a cycle driven with Run
-// and one driven with RunFrom are different CONVERSATIONS. Every test below
-// therefore keeps all of its cycles on one reported directory. Crossing the two
-// is what T025_03 tried to do, and the note where it used to sit records why
-// that cannot be observed from outside.
+// FILE-GUARDS ARE JUDGED BY `sr check run --base --head`, not by the session's
+// Stop, and the command loads the rules of the repository it is run in — from the
+// git root, wherever below it the caller stands. So the rule here lives at the
+// repository root, and each test runs `sr check run` from the SUBDIRECTORY the
+// session reported (judgeFromBelow): the subdirectory arrangement now reaches a
+// file-guard through its caller's cwd rather than through a hook payload.
 //
 // Every test asserts a POSITIVE before any absence: a differ that fell over on
 // this arrangement reports nothing at all, and "no spurious delete arrived" is
 // satisfied perfectly by that.
 
-// recordEverything is a NEW-FORMAT file-guard that records every Changeset it is handed . It is installed in the SUBDIRECTORY the session
-// reports, because the engine loads rules from `<cwd>/.sloprail` and every cycle
-// here reports that subdirectory. `match: "**/*.md"` fires on every committed change; every path this directory drives is `.md`, and — crucially
+// recordEverything is a file-guard that records every Changeset it is handed. `match: "**/*.md"` fires on every committed change; every path this directory drives is `.md`, and — crucially
 // for this suite — the paths arrive REPOSITORY-relative (`sub/deep/inner.md`,
 // `top.md`), which the `**/` optional-leading-directory glob matches at the root
 // and at any depth alike. The ledger (`seen`, no `.md`) is not matched, so the
@@ -79,19 +72,24 @@ checks:
 // is what distinguishes an engine that walks up a single step from one that asks
 // git for the root — and `cd internal/foo` is the ordinary shape of the bug.
 //
-// Returns the repository root and the subdirectory the session reports. Callers
-// read the ledger from the SUBDIRECTORY, because that is where the rule the
-// cycle loaded actually lives.
+// Returns the repository root and the subdirectory the session reports.
 func subProject(t *testing.T) (e *harness.Env, proj, sub, ledger string) {
 	t.Helper()
 	e = New(t)
 	proj = e.Project()
 	e.GitInit(proj)
 	sub = filepath.Join(proj, "sub", "deep")
+	e.WriteFile(sub, ".keep", "")
 	ledger = filepath.Join(t.TempDir(), "seen")
-	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, sub, ledger
+}
+
+// judgeFromBelow runs `sr check run` over the session's range from the
+// subdirectory, and returns its refusals.
+func judgeFromBelow(e *harness.Env, sub, sess string) []string {
+	return e.CheckRunRange(sub, sess, e.RunBase(sess), "HEAD")
 }
 
 // T025_01: a cycle reporting a subdirectory reports its work at all, and names
@@ -108,11 +106,12 @@ func subProject(t *testing.T) (e *harness.Env, proj, sub, ledger string) {
 // "inner.md" here would mean the paths are cwd-relative, and the same joining
 // would resolve nothing.
 func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
-	e, proj, _, ledger := subProject(t)
+	e, proj, sub, ledger := subProject(t)
 
 	e.RunFrom(proj, "sub/deep", "s-025-01", "work from below", Turns("done",
 		Bash("b1", "printf 'written from the subdirectory\n' > inner.md"),
 	).ThenCommit("the agent's work"))
+	judgeFromBelow(e, sub, "s-025-01")
 
 	// The premise: the file really landed inside the subdirectory. The mock runs
 	// Bash turns in the directory it was given, and a test that assumed otherwise
@@ -148,17 +147,17 @@ func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
 // defect still reports the path — it reports it wrongly — so a test checking
 // only that `top.md` arrived passes against the broken build.
 func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T) {
-	// A file at the top of the tree, committed BEFORE the rule is installed: the
-	// rule's range starts at the commit that added the rule, so the file is
-	// unambiguously at the baseline. It is the one a cwd-rooted differ loses.
+	// A file at the top of the tree, committed before the session: it is
+	// unambiguously at the range's base. It is the one a cwd-rooted differ loses.
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "top.md", "original\n")
 	e.CommitAll(proj, "a file at the top of the tree")
 	sub := filepath.Join(proj, "sub", "deep")
+	e.WriteFile(sub, ".keep", "")
 	ledger := filepath.Join(t.TempDir(), "seen")
-	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 
 	// The session reports the subdirectory and edits the file ABOVE it, which is
@@ -166,6 +165,7 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 	e.RunFrom(proj, "sub/deep", "s-025-02", "edit upwards", Turns("done",
 		Bash("b1", "printf 'edited from below\n' > ../../top.md"),
 	).ThenCommit("the agent's work"))
+	judgeFromBelow(e, sub, "s-025-02")
 
 	// The premise: the file is still there and really was changed. Without this
 	// the assertion below could pass on a cycle that deleted it for real.
@@ -245,98 +245,23 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 // test at services/sr-session/subagent_test.go:333 asserts that a hook fired
 // from a subdirectory does NOT key a different database, naming that exact
 // failure. What this directory covers end to end is everything downstream of the
-// anchor being right — the paths (T025_01, T025_02), the verdict record
-// (T025_04) and the retained refusal (T025_05) — each of which does discriminate,
-// and each of which is mutation-checked.
+// anchor being right — the paths (T025_01, T025_02) and the refusal (T025_05).
 
-// T025_04: a verdict recorded from the root exempts the same content from a
-// subdirectory cycle.
+// T025_05: an unfixed violation still refuses when judged from a subdirectory,
+// after a later cycle that did not touch it.
 //
-// The anchor's other consequence, and the one a person actually notices. The
-// revalidation record lives in the session's store, so an engine keying on the
-// raw cwd does not merely lose the baseline — it loses every verdict, and the
-// rule is asked again about content it has already passed. On a judge hook that
-// is a fresh model call, free to come back with a different answer about work
-// the agent has moved on from.
-//
-// The shape: pass a file in cycle one from the root; touch something else in
-// cycle two from the subdirectory. The settled file must NOT be re-judged. The
-// control is the second cycle's own file, which must be — otherwise the silence
-// is an engine that dispatched nothing from down there.
-//
-// One rule, in the subdirectory, loaded by BOTH cycles. The root cycle is driven
-// with RunFrom too — reporting the subdirectory — so that the guardrail and its
-// single ledger are the same in both, and the only thing under test is whether
-// the store follows. The two cycles being in one conversation is what the
-// transcript's root keying provides.
-func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T) {
-	e, proj, _, ledger := subProject(t)
-
-	const sess = "s-025-04"
-
-	e.RunFrom(proj, "sub/deep", sess, "settle a file", Turns("done",
-		Write("w1", "settled.md", "judged and passed\n"),
-	).ThenCommit("the agent's work"))
-	first := harness.ReadLedgerLines(t, ledger)
-	if len(changesetkit.Statuses(changesetkit.Files(t, first), "sub/deep/settled.md")) == 0 {
-		t.Fatalf("the file was never judged in the first cycle (%v), so there is no verdict for "+
-			"the second cycle to inherit and the skip below would hold for the wrong reason",
-			changesetkit.Files(t, first))
-	}
-
-	e.RunFrom(proj, "sub/deep", sess, "work elsewhere from below", Turns("done",
-		Write("w2", "other.md", "cycle two\n"),
-	).ThenCommit("the agent's work"))
-
-	all := harness.ReadLedgerLines(t, ledger)
-	if len(all) <= len(first) {
-		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d) — a session "+
-			"whose hooks report a subdirectory judged nothing", len(all), len(first))
-	}
-	second := changesetkit.Files(t, all[len(first):])
-
-	// The control: this cycle's own work reached the rule.
-	if !changesetkit.Saw(second, "sub/deep/other.md") {
-		t.Fatalf("the second cycle's own file never reached the rule: %v — nothing was "+
-			"dispatched, so the exemption asserted below is vacuous", second)
-	}
-	if k := changesetkit.Statuses(second, "sub/deep/settled.md"); len(k) > 0 {
-		t.Fatalf("content already judged and passed was put in front of the rule again (%v): %v\n"+
-			"the verdict was recorded in one database and looked for in another, so the session "+
-			"re-judges everything it had settled — and a judge hook is a model call, free to "+
-			"answer differently about work the agent has moved on from", k, second)
-	}
-}
-
-// T025_05: a refusal recorded earlier still refuses in a subdirectory cycle.
-//
-// The direction that loses ENFORCEMENT rather than merely repeating work, which
-// makes it the more serious half of T025_04. A refusal lives in the same record
-// as a pass, so an engine that cannot find the record finds no refusal either —
-// and `refusal_outlives_baseline` quietly stops holding. The file stays broken
-// with nothing left to say so.
-//
-// The second cycle does not touch the offending file, so nothing but the
-// RETAINED refusal — read back by readdOutstanding, out of the session's store —
+// The direction that loses ENFORCEMENT. The second cycle does not touch the
+// offending file, so only the range — the session's commits, judged from below —
 // can put it in front of the rule again.
 func TestT025_05_ARefusalStillRefusesInASubdirectoryCycle(t *testing.T) {
 	e := New(t)
-	// This test's Stop block is PERMANENT: the retained refusal for bad-file.md
-	// never clears across the two cycles, so the mock re-runs the agent to its
-	// blocked-Stop cap every time, and each re-run re-judges the (subdirectory)
-	// Stop changeset — with the default cap of 8 that is ~56s of wasted
-	// retries for a fact one re-run already establishes. The assertions read the
-	// RETAINED refusal out of the store (BlockingErrors), not the count of
-	// re-prompts, so one re-run is enough. Cap it at 1.
-	e.SetStopBlockCap(1)
 	proj := e.Project()
 	e.GitInit(proj)
 	sub := filepath.Join(proj, "sub", "deep")
 
 	// Refuses any path containing "bad", and records everything it is handed
 	// BEFORE deciding — so arrival is observable independently of the verdict.
-	// A NEW-FORMAT file-guard, after-check: it observes at Stop and RE-FIRES next
-	// cycle, which is exactly where a retained refusal is measured. `match: "**/*.md"`
+	// `match: "**/*.md"`
 	// selects the repository-relative markdown paths the cycle produces
 	// (`sub/deep/bad-file.md`) at the root or any depth; the ledger (`seen`) has no
 	// `.md` suffix and is not matched, so the guard cannot re-observe it.
@@ -358,7 +283,8 @@ exit 0
 `
 	ledger := filepath.Join(t.TempDir(), "seen")
 	judgeScript := strings.Replace(judgeTemplate, "LEDGER", ledger, 1)
-	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.WriteFile(sub, ".keep", "")
+	e.FileGuard(proj, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-025-05"
@@ -366,6 +292,7 @@ exit 0
 	e.RunFrom(proj, "sub/deep", sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
 	).ThenCommit("the agent's work"))
+	refusals := judgeFromBelow(e, sub, sess)
 	first := harness.ReadLedgerLines(t, ledger)
 	if len(changesetkit.Statuses(changesetkit.Files(t, first), "sub/deep/bad-file.md")) == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle (%v), so there "+
@@ -374,16 +301,9 @@ exit 0
 	}
 	// The premise: it really was REFUSED, not merely seen. A pass would leave
 	// nothing outstanding, and the second cycle's silence would be correct.
-	//
-	// Read against the SUBDIRECTORY, because that is where this session's record
-	// lives: a harness keys a conversation's transcript by the directory the
-	// session reports, and every cycle here reports the subdirectory. Asking at
-	// the repository root reads a file this session never wrote, finds no
-	// blocking attachments, and reports "not refused" for a cycle that was.
-	if blocking := e.BlockingErrors(sub, sess); len(blocking) == 0 ||
-		!strings.Contains(strings.Join(blocking, "\n"), "not acceptable") {
-		t.Fatalf("the first cycle was not refused (blocking: %v), so there is no retained "+
-			"refusal under test here", blocking)
+	if len(refusals) == 0 || !strings.Contains(strings.Join(refusals, "\n"), "not acceptable") {
+		t.Fatalf("the first cycle was not refused (refusals: %v), so there is no unfixed "+
+			"violation under test here", refusals)
 	}
 
 	// A second cycle that does NOT touch the bad file. Only the retained refusal
@@ -391,6 +311,9 @@ exit 0
 	e.RunFrom(proj, "sub/deep", sess, "work elsewhere from below", Turns("done",
 		Write("w2", "fine.md", "acceptable\n"),
 	).ThenCommit("the agent's work"))
+	if again := judgeFromBelow(e, sub, sess); len(again) == 0 {
+		t.Fatalf("the range still holds the unfixed bad file and was not refused")
+	}
 
 	all := harness.ReadLedgerLines(t, ledger)
 	if len(all) <= len(first) {
@@ -404,8 +327,7 @@ exit 0
 			"dispatched, so the absence below proves nothing", second)
 	}
 	if len(changesetkit.Statuses(second, "sub/deep/bad-file.md")) == 0 {
-		t.Fatalf("an unfixed refusal was dropped in a cycle reporting a subdirectory: %v\n"+
-			"the refusal is recorded in the session's store, and the store was looked for in "+
-			"another place — so the file is still broken and nothing is left to report it", second)
+		t.Fatalf("an unfixed violation was dropped when judged from a subdirectory: %v\n"+
+			"the file is still broken and nothing is left to report it", second)
 	}
 }

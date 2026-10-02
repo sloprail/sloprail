@@ -43,21 +43,22 @@ import (
 
 // askWhatHappened runs the query and records the answer, one cycle per line.
 //
-// A NEW-FORMAT file-guard , after-check so it runs at the END of a cycle —
-// the moment the question "what has this session done since I last looked" is
-// asked. `match: "**/*.md"` fires on every committed change (create or update). The check
-// reaches its workspace and the session's read mark through SR_TRANSCRIPT /
-// SR_WORKSPACE / SR_SESSION_ID, which the dispatch sets on a file-guard check
-// (internal/dispatch/exec.go). The ledger (`answers`, no `.md`)
-// is not matched, so the guard cannot re-observe its own bookkeeping.
-const askWhatHappened = `match: "**/*.md"
+// A Stop gate, so it runs at the END of a cycle — the moment the question "what
+// has this session done since I last looked" is asked. A file-guard is no longer
+// the vehicle: it is judged by `sr check run` over a commit range, outside any
+// session, so it has no session record to read. The check reaches its workspace
+// and the session's read mark through SR_TRANSCRIPT / SR_WORKSPACE /
+// SR_SESSION_ID, which the dispatch sets on a gate's check. The ledger is outside
+// the project, so the gate cannot re-observe its own bookkeeping.
+const askWhatHappened = `on:
+  - event: Stop
 checks:
   - script: ./ask.sh
 `
 
 // askScript records one line per invocation: the entries the engine handed back.
 //
-// A file-guard's check is handed the flat CheckPayload — the event and
+// A gate's check is handed the flat CheckPayload — the event and
 // transcriptPath, not the harness's raw hook payload — and its working directory
 // is the guard's own folder rather than the project. What lets it read the
 // session's record is SR_TRANSCRIPT, which the new dispatch sets on every check
@@ -143,7 +144,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	// bound to one would never run.
 	e.GitInit(proj)
 	led := e.NewLedger("answers")
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.Gate(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
 	e.CommitAll(proj, "the guards")
 
 	const sess = "s-018-01"
@@ -221,7 +222,7 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 	).ThenCommit("the cycle's work"))
 
 	// Now a rule appears, and the next cycle asks what the session has done.
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.Gate(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
 	e.CommitAll(proj, "the guards")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "judged cycle\n"),

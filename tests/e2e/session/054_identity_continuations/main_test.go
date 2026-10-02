@@ -14,7 +14,7 @@ import (
 // identity and so no store at all, and assert that what one cycle stored is
 // read back by the next cycle of the same conversation.
 //
-// The observation is the store's own: harness.ControlGuard's check writes a
+// The observation is the store's own: a Stop gate's probe check writes a
 // mark under its guardrail's state in one hook process and reads it back in the
 // next. "before=[yes]" can only be logged by a check that opened a store some
 // earlier check wrote to — so each test requires EVERY probe run of the
