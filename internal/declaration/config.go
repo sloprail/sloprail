@@ -49,6 +49,12 @@ type config struct {
 	// default (`enabled: false` in the declaration), by qualified name. The mirror of
 	// Disabled; a declaration that does not ship disabled is unaffected by it.
 	Enabled []string `yaml:"enabled"`
+
+	// TrackSubagents turns on automatic tracking of the ranges in a sub-agent's folders.
+	// Off by default: a sub-agent does not see the whole picture, so only the root's folders
+	// are tracked and verified, at the root's Stop. A sub-agent's folders still register as
+	// session folders either way.
+	TrackSubagents bool `yaml:"track_subagents"`
 }
 
 // isEnabled reports whether the project switched the named default-off declaration on.
@@ -95,6 +101,13 @@ func StopHookBlockCap(root string) (int, error) {
 			filepath.Join(root, configFile), *c.StopHookBlockCap)
 	}
 	return *c.StopHookBlockCap, nil
+}
+
+// TrackSubagents reports whether the project opted in (`track_subagents: true`) to tracking
+// the ranges of sub-agents' folders automatically. An unreadable config is "not opted in".
+func TrackSubagents(root string) bool {
+	c, err := loadConfig(root)
+	return err == nil && c.TrackSubagents
 }
 
 // loadConfig reads a project's config, returning the zero value when there is

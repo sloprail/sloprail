@@ -1083,8 +1083,25 @@ func (e *Env) GitInit(dir string) {
 		}
 		e.DisablePluginGuardrail(dir, others...)
 	}
+	e.trackSubagents(dir)
 	e.CommitAll(dir, "initial")
 	e.addOrigin(dir)
+}
+
+// trackSubagents opts the project in to tracking the ranges of sub-agents' folders
+// (`track_subagents: true`), so the tests of sub-agents keep seeing their folders verified. The
+// key goes first: `disabled:` stays the config's last key, which tests append list items to.
+func (e *Env) trackSubagents(dir string) {
+	e.t.Helper()
+	cfgDir := filepath.Join(dir, ".sloprail")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	path := filepath.Join(cfgDir, "config.yaml")
+	body, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, append([]byte("track_subagents: true\n"), body...), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
+	}
 }
 
 // enableShipped merges names into the `enabled:` list of the project's config.

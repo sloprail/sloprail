@@ -12,6 +12,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/checkstore"
+	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -82,7 +83,7 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		return
 	}
 	for _, f := range folders {
-		if f.AgentID != p.AgentID {
+		if f.AgentID != p.AgentID || !autoTracks(p, f.AgentID) {
 			continue
 		}
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
@@ -90,6 +91,15 @@ func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 		}
 		ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
 	}
+}
+
+// autoTracks says whether the folders of this agent are tracked automatically: the root's
+// always, a sub-agent's only when the project opted in (`track_subagents: true` in
+// .sloprail/config.yaml) — a sub-agent does not see the whole picture. A sub-agent's folders
+// are registered as session folders either way, and the root's Stop covers every range the
+// session tracks.
+func autoTracks(p HookPayload, agent string) bool {
+	return agent == "" || declaration.TrackSubagents(dotDir(p.Cwd))
 }
 
 // untrackGone drops, with the reason, the ranges of folders that no longer exist (a worktree
@@ -136,8 +146,8 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet.SetErr(io.Discard)
 	var out, notes []string
 	for _, r := range ranges {
-		if r.AgentID != p.AgentID {
-			continue
+		if p.AgentID != "" && r.AgentID != p.AgentID {
+			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
 		}
 		if !r.Tracked() {
 			notes = append(notes, fmt.Sprintf("untracked: %s %s (reason: %s)", r.Folder, r.Head, r.UntrackedReason))
