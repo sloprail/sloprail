@@ -3,7 +3,6 @@
 disabled:
   - sloprail/file-guard/authoring-slop
   - sloprail/file-guard/grounded-rule-changes
-  - sloprail/file-guard/grounded-rule-changes
   - sloprail/gate/authoring-slop
   - sloprail/gate/read-context-doc
   - sloprail/gate/read-file-guard-doc
