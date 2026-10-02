@@ -24,7 +24,7 @@ func TestT003_26_TouchingSloprailAfterAViolationDoesNotSkipIt(t *testing.T) {
 	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 	e.CommitAll(proj, "Y: touch .sloprail")
 
-	r := e.StopNow(proj, "s-003-26", false)
+	r := e.StopJudged(proj, "s-003-26", false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 		t.Fatalf("a violation followed by a commit under .sloprail was not refused:\n%s", r.Output)
 	}
@@ -75,7 +75,7 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 			e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 			e.CommitAll(proj, "Y: touch .sloprail")
 
-			r := e.StopNow(proj, sess, false)
+			r := e.StopJudged(proj, sess, false)
 			if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 				t.Fatalf("a violation after a rewritten session start (%s) and a .sloprail touch was not refused:\n%s", name, r.Output)
 			}
@@ -92,7 +92,7 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 
 			// Fixed by a follow-up revert of the violation, the same range passes.
 			e.Git(proj, "revert", "--no-edit", violation)
-			if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+			if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 				t.Fatalf("the range with the violation reverted was still refused (%s):\n%s", name, r.Output)
 			}
 		})
@@ -120,7 +120,7 @@ func TestT003_31_AnAmendedRootCommitIsJudgedInFull(t *testing.T) {
 	e.Git(proj, "add", "docs/bad.md")
 	e.Git(proj, "commit", "-q", "--amend", "--no-edit")
 
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/bad.md") {
 		t.Fatalf("a violation inside an amended root commit was not refused:\n%s", r.Output)
 	}

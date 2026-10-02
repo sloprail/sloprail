@@ -73,7 +73,7 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 		t.Fatalf("premise: the blob is not a loose object: %v", err)
 	}
 
-	r := e.StopNow(proj, "s-003-04", false)
+	r := e.StopJudged(proj, "s-003-04", false)
 	if !harness.Blocked(r) || !strings.Contains(r.Output, "could not be evaluated") {
 		t.Fatalf("an unreadable range did not fail closed:\n%s", r.Output)
 	}
@@ -92,7 +92,7 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 	// The object comes back; the failed run moved nothing, so the range is the
 	// same one and is now judged.
 	e.Git(proj, "hash-object", "-w", "docs/a.md")
-	if r := e.StopNow(proj, "s-003-04", false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, "s-003-04", false); harness.Blocked(r) {
 		t.Fatalf("a readable range was still refused:\n%s", r.Output)
 	}
 	runs := ledger(t, led)
