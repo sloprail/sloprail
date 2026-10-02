@@ -15,6 +15,7 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -61,10 +62,65 @@ func autoBase(folder, sha, startedAt string) string {
 	return base
 }
 
+// folderHasFileGuards reports whether at least one file-guard loads for the folder: its own
+// .sloprail, or a plugin's shipped one that applies there. A folder with none is still a session
+// folder (its gates apply), but there is no range to track in it.
+func folderHasFileGuards(folder, trustedRev string) bool {
+	reg, err := modules.Registry()
+	if err != nil {
+		return false
+	}
+	quiet := &cobra.Command{}
+	quiet.SetOut(io.Discard)
+	quiet.SetErr(io.Discard)
+	if trustedRev == sessionstate.FolderBaseUnborn {
+		trustedRev = gitrepo.EmptyTree
+	}
+	// The commit the folder was registered at vouches for the project's own switch-offs of
+	// protected rules, as the session start does at a hook.
+	var loaded declaration.Loaded
+	if trustedRev != "" {
+		loaded = newNatureDeclarations(quiet, folder, reg, trustedRev)
+	} else {
+		loaded = newNatureDeclarations(quiet, folder, reg)
+	}
+	return len(loaded.FileGuards) > 0
+}
+
+// trackMissing tracks, at a hook, the folders of this agent that have no range yet: a
+// .sloprail with file-guards that appears mid-session starts being tracked at the next hook. A
+// folder that already has a range costs one query; one without it costs a declaration load.
+func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) {
+	folders, err := reg.Folders(rs.ID)
+	if err != nil {
+		return
+	}
+	ranges, err := reg.Ranges(rs.ID)
+	if err != nil {
+		return
+	}
+	has := map[string]bool{}
+	for _, r := range ranges {
+		has[r.Folder] = true
+	}
+	for _, f := range folders {
+		if f.AgentID != p.AgentID || has[filepath.Clean(f.Path)] {
+			continue
+		}
+		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
+			continue
+		}
+		ensureTracked(reg, rs.ID, f.Path, f.AgentID, f.BaseRef)
+	}
+}
+
 // ensureTracked tracks a folder's current branch, automatically, unless that range is already
 // there (what the agent changed or dropped stays so). startedAt is the folder's registered
 // BaseRef.
 func ensureTracked(reg sessionstate.Store, sessionID, folder, agent, startedAt string) {
+	if !folderHasFileGuards(folder, startedAt) {
+		return // nothing to answer for here: no range is tracked, and Stop says nothing of it
+	}
 	head, sha, ok := trackedHead(folder)
 	if !ok {
 		return

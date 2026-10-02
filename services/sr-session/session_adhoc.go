@@ -192,7 +192,8 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 
 // registerCommandFolders registers each repository outside the agent's own tree that
 // this Bash call is about to move history in, and observes its refs.
-func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayload) (err error) {
+	defer trackMissing(reg, rs, p)
 	registerPendingWorktrees(reg, rs, p.AgentID)
 	notePendingWorktrees(reg, p)
 	rootTree, err := gitrepo.Root(rs.Cwd)
