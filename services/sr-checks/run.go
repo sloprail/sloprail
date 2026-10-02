@@ -195,7 +195,11 @@ func execute(cmd *cobra.Command, m mode) error {
 			}
 		} else {
 			for _, o := range outcomes {
-				fmt.Fprintf(w, "%-7s %s  %s/%s  (%s)\n", o.Status, o.Rule, o.Subject, o.Kind, o.Source)
+				line := fmt.Sprintf("%-7s %s  %s/%s  (%s)", o.Status, o.Rule, o.Subject, o.Kind, o.Source)
+				if o.Status == "skipped" && o.Reason != "" {
+					line += "  " + o.Reason
+				}
+				fmt.Fprintln(w, line)
 			}
 		}
 	}

@@ -91,7 +91,7 @@ func ResolveCitations(cs *changeset.Changeset, record, cwd string) []changeset.U
 // part of the fingerprint, so a judge's verdict for it is found without the transcript.
 func TrustTrailers(cs *changeset.Changeset) {
 	cites, _ := changeset.ResolveCitations(cs.Commits, func(req transcript.CitationRequest) (transcript.Citation, error) {
-		return transcript.Citation{Quote: req.Quote, SourceTypes: req.SourceTypes}, nil
+		return transcript.Citation{Quote: req.Quote, SourceTypes: req.SourceTypes, Path: "(commit trailer)", Line: 1}, nil
 	})
 	changeset.AttributeFiles(cites, cs.Files)
 	cs.Citations = cites
