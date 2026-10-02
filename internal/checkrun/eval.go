@@ -1168,10 +1168,16 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if !have {
 		return dispatchcore.Verdict{}, nil, false
 	}
-	if !ev.verify && cached.Status == checkstore.StatusFail && len(rr.unresolved) == 0 {
-		if marked(cached.Metadata["unresolvedCitations"]) {
+	if !ev.verify && cached.Status == checkstore.StatusFail {
+		if len(rr.unresolved) == 0 && marked(cached.Metadata["unresolvedCitations"]) {
 			// The stored refusal was "these quotes are not in the session"; they all resolve
 			// now, so it is no longer the verdict on this key: judge again.
+			return dispatchcore.Verdict{}, nil, false
+		}
+		if cached.Run.HeadRef != rr.head && onlyCitationFailed(storedSteps(cached.Metadata)) {
+			// A citation requirement is cheap, and its reason names the commits of the range it
+			// was judged in (possibly another branch's, with the same content and quotes):
+			// from another head it is judged again so the reason is about THIS range.
 			return dispatchcore.Verdict{}, nil, false
 		}
 	}

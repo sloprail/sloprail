@@ -24,7 +24,7 @@ require:
 func TestT041_60_TheRefusalHandsBackTheQuoteAlreadyRecorded(t *testing.T) {
 	const ask = "adopt a decision log"
 	const sess = "s-041-60"
-	e, proj := guarded(t, userCiteGuard)
+	e, proj := guardedUncited(t, userCiteGuard)
 
 	e.Run(proj, sess, ask, Turns("done",
 		Bash("w1", "sr-file write memories/a.md --cite:user 'adopt a decision log' <<'EOF'\n# a\nEOF"),
@@ -64,7 +64,7 @@ require:
   - citation: {source_types: [tool_result]}
 `
 	const sess = "s-041-61"
-	e, proj := guarded(t, guard)
+	e, proj := guardedUncited(t, guard)
 	sub := subagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'build finished: CITEUX-7310 green'"),
 		Bash("sb2", "sr-file write memories/a.md --cite:tool_result 'CITEUX-7310 green' <<'EOF'\n# a\nEOF"),
@@ -91,7 +91,7 @@ require:
 // ground. A range whose net change is nil is not refused, however uncited its commits.
 func TestT041_62_RevertingTheRangeNeedsNoCitation(t *testing.T) {
 	const sess = "s-041-62"
-	e, proj := guarded(t, userCiteGuard)
+	e, proj := guardedUncited(t, userCiteGuard)
 	e.WriteFile(proj, "memories/a.md", "# a\nkeep this\n")
 	e.CommitAll(proj, "baseline file")
 

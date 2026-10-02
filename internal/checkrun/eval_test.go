@@ -916,3 +916,99 @@ func TestEvaluate_ASessionlessRunStoresNoFail(t *testing.T) {
 	require.False(t, refused)
 	require.Len(t, guardRows(t, g.results, g.guard), 1, "a pass is stored")
 }
+
+// A stored FAIL of an uncited change is never replayed once the same content is re-landed as
+// one cited commit on a fresh branch: the quotes that ground the file are part of the key.
+func TestEvaluate_ACitationFailIsNotReplayedOnceTheSameContentIsCitedOnAFreshBranch(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "old")
+	oldCommit := f.commitDoc(t, "docs/a.md", "clean")
+	r, refused := f.evaluateWith(t, session, "b1")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, oldCommit[:7], "the reason names the commit of this range")
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "fresh", fromRule)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	r, refused = f.evaluateWith(t, session, "b2")
+	assert.False(t, refused, r.Reason)
+	for _, g := range f.verifyReasons(t) {
+		assert.Empty(t, g.Reason, "verify agrees")
+	}
+}
+
+// The report: two files, one cited commit on the old branch grounded b only, and the file a
+// was refused. Re-landed as one commit citing the same quote on a fresh branch (same content,
+// same quote set), a is grounded now: the verdict key is per file, so it is judged fresh.
+func TestEvaluate_AStoredCitationFailIsNotReplayedWhenTheQuoteNowGroundsAnotherFile(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+	write := func(name, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", name), []byte(body), 0o644))
+	}
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "old")
+	write("a.md", "clean a")
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "uncited")
+	write("b.md", "clean b")
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "cited", "-m", changeset.TrailerCitesUser+": the user said so")
+	oldA := runGit(t, f.repo, "rev-list", "--max-count=1", "HEAD~1")
+	r, refused := f.evaluateWith(t, session, "b1")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, oldA[:7])
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "fresh", fromRule)
+	write("a.md", "clean a")
+	write("b.md", "clean b")
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "both", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	r, refused = f.evaluateWith(t, session, "b2")
+	assert.False(t, refused, r.Reason)
+	for _, g := range f.verifyReasons(t) {
+		assert.Empty(t, g.Reason, "verify agrees")
+	}
+}
+
+// A stored citation FAIL with the same key from another branch is judged again, so its
+// reason names the commit of the current range, not the old branch's.
+func TestEvaluate_ACitationFailReplayedAcrossBranchesNamesTheCurrentCommit(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(""), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+	runGit(t, f.repo, "checkout", "-q", "-b", "old")
+	oldC := f.commitDoc(t, "docs/a.md", "clean")
+	_, refused := f.evaluateWith(t, session, "b1")
+	require.True(t, refused)
+	runGit(t, f.repo, "checkout", "-q", "-b", "fresh", fromRule)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "re-landed")
+	newC := runGit(t, f.repo, "rev-parse", "HEAD")
+	r, refused := f.evaluateWith(t, session, "b2")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, newC[:7])
+	assert.NotContains(t, r.Reason, oldC[:7])
+}

@@ -390,7 +390,7 @@ func TestT049_21_RmOfTwoMemoriesNamesBoth(t *testing.T) {
 // engine sees ahead, so the gate never asks; the file-guard of the same name asks
 // at Stop, and the settled change removes a line with no citation, so it blocks.
 func TestT049_22_ScriptRewriteIsCaughtAtStop(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 

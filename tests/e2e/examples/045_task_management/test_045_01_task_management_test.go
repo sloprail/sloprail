@@ -216,7 +216,7 @@ func TestT045_07_UncitedEditOfAskRefused(t *testing.T) {
 // refused at Stop for the missing citation (before any judge), and the same ask
 // committed with the trailer passes.
 func TestT045_08_CommitMustCiteTheUsersWords(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)

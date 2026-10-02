@@ -20,7 +20,17 @@ const narrowedScanner = "active: true\nkeywords:\n  - guardrail\n  - llm\n"
 // already declared and committed.
 func keywordsProject(t *testing.T) (*harness.Env, string) {
 	t.Helper()
-	e := New(t)
+	return keywordsProjectOn(t, New(t))
+}
+
+// keywordsProjectUncited is keywordsProject with the commit-time cite gate off (see NewUncited).
+func keywordsProjectUncited(t *testing.T) (*harness.Env, string) {
+	t.Helper()
+	return keywordsProjectOn(t, NewUncited(t))
+}
+
+func keywordsProjectOn(t *testing.T, e *harness.Env) (*harness.Env, string) {
+	t.Helper()
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)

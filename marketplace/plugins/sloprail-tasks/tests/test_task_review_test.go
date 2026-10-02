@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -157,7 +158,7 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 // model call (the stub is PASS to show the deterministic layer is what refuses),
 // naming how to cite the proof.
 func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
-	e := New(t)
+	e := New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit")) // about Stop on an uncited commit; the gate is tested in 058
 	proj := e.Project()
 	e.GitInit(proj)
 	installPluginTree(t, e, proj)
@@ -191,7 +192,7 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 // refused for missing proof, before any judge. (Supersedes the earlier rule that an
 // uncited later commit rides on an earlier commit's citation in the same range.)
 func TestReview_UncitedEditAfterCitedTransitionRefused(t *testing.T) {
-	e := New(t)
+	e := New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit")) // about Stop on an uncited commit; the gate is tested in 058
 	proj := e.Project()
 	e.GitInit(proj)
 	installPluginTree(t, e, proj)

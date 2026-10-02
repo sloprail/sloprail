@@ -82,7 +82,7 @@ func TestT042_30_ACleanMergeIsNotTheLastChanger(t *testing.T) {
 // T042_31: a merge that RESOLVED a conflict in a protected file did change it: refused,
 // naming the merge, until the merge commit carries the citation.
 func TestT042_31_AConflictResolvingMergeStillMustCite(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	e.WriteFile(proj, ".sloprail/file-guard/demo/check.sh", bigScript)
 	e.CommitAll(proj, "a bigger demo rule")

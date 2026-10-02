@@ -38,7 +38,7 @@ func citationRefused(e *harness.Env, proj, sess string) bool {
 // T041_50: a citation in a paragraph of its own is read. A quote nobody said, in
 // that form, is refused; the user's words, in that form, ground the change.
 func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-50", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 		commitOwnParagraph("c1", "note the decision", "Sloprail-Cites-User: words nobody said"),
@@ -64,7 +64,7 @@ func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
 // output plus its echoes is one source. Two genuine outputs of the same words stay
 // ambiguous.
 func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
-	e, proj := guarded(t, toolResultGuard)
+	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, "s-041-51", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 		Bash("t1", "echo 'DUPLICATE-5521 passed'"),
@@ -90,7 +90,7 @@ func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
 // `git log` output as the only place a quote sits, ground nothing. A genuine output
 // of the same words does.
 func TestT041_52_TheUsersWordsAndAGitLogGroundNoToolCitation(t *testing.T) {
-	e, proj := guarded(t, toolResultGuard)
+	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, "s-041-52", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 	).ThenCommit("note the decision", harness.CitesTool("adopt a decision log")))
@@ -119,7 +119,7 @@ func TestT041_52_TheUsersWordsAndAGitLogGroundNoToolCitation(t *testing.T) {
 // does no harm.
 func echoRefusedThenPassed(t *testing.T, sess, quote, echoCmd string) {
 	t.Helper()
-	e, proj := guarded(t, toolResultGuard)
+	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, sess, prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 	).ThenCommit(quote, harness.CitesTool(quote)))
