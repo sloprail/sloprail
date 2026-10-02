@@ -194,3 +194,42 @@ func TestDropRemoved_NoHomeKeepsTheRangeTracked(t *testing.T) {
 	require.Len(t, ranges, 1)
 	assert.True(t, ranges[0].Tracked())
 }
+
+// An untracked range is tracked again at the next hook once its branch's tip moves.
+func TestTrackMissing_AnUntrackedRangeIsTrackedAgainWhenItsTipMoves(t *testing.T) {
+	proj := initRepo(t)
+	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	base := runGit(t, proj, "rev-parse", "HEAD")
+	reg := openStore(t)
+	rs := rootSession{ID: "s1", Cwd: proj}
+	_, err := reg.RegisterFolder(sessionstate.Folder{SessionID: rs.ID, Path: proj, Role: sessionstate.FolderRoot, GitRoot: proj, BaseRef: base})
+	require.NoError(t, err)
+	p := HookPayload{}
+
+	runGit(t, proj, "switch", "-c", "feature")
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "x.md"), []byte("x"), 0o644))
+	runGit(t, proj, "add", "x.md")
+	runGit(t, proj, "commit", "-m", "work")
+	trackMissing(reg, rs, p)
+	tip := runGit(t, proj, "rev-parse", "HEAD")
+	require.NoError(t, reg.UntrackRange(rs.ID, proj, "feature", "dead", "", tip))
+
+	trackMissing(reg, rs, p)
+	ranges, _ := reg.Ranges(rs.ID)
+	for _, r := range ranges {
+		if r.Head == "feature" {
+			assert.False(t, r.Tracked(), "the tip did not move: the untracking stands")
+		}
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "x.md"), []byte("y"), 0o644))
+	runGit(t, proj, "commit", "-am", "more")
+	trackMissing(reg, rs, p)
+	ranges, _ = reg.Ranges(rs.ID)
+	for _, r := range ranges {
+		if r.Head == "feature" {
+			assert.True(t, r.Tracked(), "a moved tip must track the range again")
+		}
+	}
+}

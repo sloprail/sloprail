@@ -28,7 +28,8 @@ import (
 // is answerable for: when a folder is discovered its current branch is tracked from where the
 // work started (the merge base with the default branch), and the agent may track another range
 // (`sr-session refs track`) or drop one with a reason (`sr-session refs untrack`). A drop is
-// free — CI is the backstop — but the Stop lists it.
+// free — CI is the backstop — but the Stop lists it, and it holds only while the branch's tip
+// stays where it was dropped: new commits track the range again.
 //
 // At Stop each tracked range is VERIFIED, never judged: the same deterministic logic as
 // `sr-checks verify`, which calls no model and writes nothing. A range whose judges have not
@@ -225,7 +226,7 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 			SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.Head, HeadSHA: r.HeadSHA,
 			Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
 		}); err == nil {
-			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID)
+			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID, "")
 		}
 		return
 	}
@@ -237,7 +238,7 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 		SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.HeadSHA, HeadSHA: r.HeadSHA,
 		Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
 	}); err == nil {
-		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone; the range moved to %s, pinned at %s", r.Head, home.Path, shortRev(r.HeadSHA)), r.AgentID)
+		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone; the range moved to %s, pinned at %s", r.Head, home.Path, shortRev(r.HeadSHA)), r.AgentID, "")
 	}
 }
 
@@ -672,7 +673,11 @@ lists what was untracked with the reason you give, so say it plainly.`,
 				}
 				head = h
 			}
-			if err := s.reg.UntrackRange(s.rs.ID, dir, head, reason, s.ownerOf(dir)); err != nil {
+			tip := ""
+			if out, err := gitrepo.ResolveRange(dir, "HEAD", headRef(head)); err == nil {
+				tip = out.Head
+			}
+			if err := s.reg.UntrackRange(s.rs.ID, dir, head, reason, s.ownerOf(dir), tip); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "untracked %s in %s: %s\n", head, dir, reason)
@@ -683,6 +688,14 @@ lists what was untracked with the reason you give, so say it plainly.`,
 	cmd.Flags().StringVar(&head, "head", "", "The range's head (default: the current branch)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Why the range is dropped (required)")
 	return cmd
+}
+
+// headRef is the revision a range's head names: a branch by its name, else as given.
+func headRef(head string) string {
+	if strings.HasPrefix(head, "refs/") || len(head) >= 40 {
+		return head
+	}
+	return "refs/heads/" + head
 }
 
 // recordedCitations is the citations this session (and the sessions sharing its tree) recorded

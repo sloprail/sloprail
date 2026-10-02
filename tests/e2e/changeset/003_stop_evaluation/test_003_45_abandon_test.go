@@ -8,7 +8,7 @@ import (
 )
 
 // T003_45: an abandon. A left branch is judged until the agent untracks it with a reason (no reason
-// does not drop it); the untracking holds until the agent tracks the branch again.
+// does not drop it); the untracking holds only while the tip stays: new commits judge it again.
 func TestT003_45_AGroundedAbandonDropsABranchUntilItsTipMoves(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	main := e.Git(proj, "branch", "--show-current")
@@ -42,19 +42,13 @@ func TestT003_45_AGroundedAbandonDropsABranchUntilItsTipMoves(t *testing.T) {
 		t.Fatalf("an untracked branch was still judged:\n%s", newBlocks(e, proj, sess, blocks))
 	}
 
-	// The tip moves: the untracking stands (the agent said why), until the agent takes it back.
+	// The tip moves: judged again, by itself.
 	e.Run(proj, sess, "one more commit", Turns("done",
 		Bash("m1", "git switch -q feat-a"),
 		harness.CommitFile("c2", "docs/a2.md", "FORBIDDEN again", "more on a"),
 		Bash("m2", "git switch -q "+main),
 	))
-	if n := stopBlocks(e, proj, sess); n != blocks {
-		t.Fatalf("an untracked branch was judged again by itself:\n%s", newBlocks(e, proj, sess, blocks))
-	}
-	e.Run(proj, sess, "take it back", Turns("done",
-		Bash("t1", "sr-session refs track --folder . --head feat-a"),
-	))
 	if got := newBlocks(e, proj, sess, blocks); !strings.Contains(got, "feat-a") {
-		t.Fatalf("a branch the agent took back was not judged again:\n%s", got)
+		t.Fatalf("a branch whose tip moved after the untrack was not judged again:\n%s", got)
 	}
 }

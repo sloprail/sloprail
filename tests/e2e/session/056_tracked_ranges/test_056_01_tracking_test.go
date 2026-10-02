@@ -91,11 +91,14 @@ func TestT056_02_StopVerifiesATrackedRangeAndNamesTheRunThatJudgesIt(t *testing.
 }
 
 // T056_03: a range the agent untracks, with a reason, is not verified; it stays listed with the
-// reason, and automatic tracking does not bring it back.
+// reason, and automatic tracking does not bring it back while its tip does not move.
 func TestT056_03_AnUntrackedRangeIsNotVerifiedAndStaysListed(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-03"
-	e.Run(proj, sess, "start", Turns("done", Bash("b1", "true")))
+	e.Run(proj, sess, "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
+	if got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(got, "not judged yet") {
+		t.Fatalf("premise: the unjudged commit is not refused at Stop:\n%s", got)
+	}
 
 	if r := refs(e, proj, sess, "untrack"); r.Code == 0 {
 		t.Fatalf("untrack without a reason succeeded:\n%s", r.Output)
@@ -104,13 +107,30 @@ func TestT056_03_AnUntrackedRangeIsNotVerifiedAndStaysListed(t *testing.T) {
 		t.Fatalf("untrack: exit %d:\n%s", r.Code, r.Output)
 	}
 
-	e.Run(proj, sess, "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
-	if got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); strings.Contains(got, "not judged yet") {
-		t.Fatalf("an untracked range was verified at Stop:\n%s", got)
+	before := len(e.BlockingErrorsFrom(proj, sess, "Stop"))
+	e.Run(proj, sess, "anything else?", Turns("done", Bash("b2", "true")))
+	if got := e.BlockingErrorsFrom(proj, sess, "Stop"); len(got) != before {
+		t.Fatalf("an untracked range, its tip unmoved, was verified at Stop:\n%s", strings.Join(got[before:], "\n"))
 	}
 	rs := ranges(t, e, proj, sess)
 	if len(rs) != 1 || rs[0].Tracked() || !strings.Contains(rs[0].UntrackedReason, "the user's own work") {
 		t.Fatalf("the untracked range is not listed with its reason: %+v", rs)
+	}
+}
+
+// T056_03 (b): an untrack is no escape: the range is tracked again, automatically, once the
+// branch's tip moves.
+func TestT056_03_AnUntrackedRangeIsTrackedAgainWhenItsTipMoves(t *testing.T) {
+	e, proj := project(t)
+	const sess = "s-056-03b"
+	e.Run(proj, sess, "start", Turns("done", Bash("b1", "true")))
+	if r := refs(e, proj, sess, "untrack", "--reason", "the user's own work"); r.Code != 0 {
+		t.Fatalf("untrack: exit %d:\n%s", r.Code, r.Output)
+	}
+	e.Run(proj, sess, "more", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
+	rs := ranges(t, e, proj, sess)
+	if len(rs) != 1 || !rs[0].Tracked() {
+		t.Fatalf("a moved tip did not track the untracked range again: %+v", rs)
 	}
 }
 
