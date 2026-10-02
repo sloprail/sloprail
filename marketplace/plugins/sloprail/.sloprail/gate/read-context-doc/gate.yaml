@@ -1,12 +1,12 @@
 # A context's own YAML (on/enter/exit — the activatable-scope shape) is
 # documented in context.md — the page that shows the enter/exit lifecycle, why
 # a context never binds to Stop directly, and how another rule reads its
-# active/payload. See read-script-checks-doc/file-guard.yaml for the shared
+# active/payload. See read-script-checks-doc/gate.yaml for the shared
 # argument for why `require: [{skill, files}]` is the right mechanism here.
 #
-# This is the PREVENTION half of the rule: a PreFileWrite gate refuses the write
-# before it lands. The plain file-guard of the same name, beside it under
-# file-guard/, is the settled-result backstop at Stop.
+# A PreFileWrite gate refuses the write
+# before it lands. There is no file-guard backstop: a file-guard judges committed
+# bytes at Stop and cannot see whether a page was read this session.
 on:
   - event: PreFileWrite
     match: 'event.path matches "^\\.sloprail/context/[^/]+/context\\.ya?ml$"'

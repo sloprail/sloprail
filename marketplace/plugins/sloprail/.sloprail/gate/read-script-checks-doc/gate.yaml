@@ -1,8 +1,32 @@
-# Refuses a write to a check script (.sh under file-guard/gate/context) until
-# script-checks.md and check-template.sh were read. The WHY (measured onboarding
-# eval, what `require: files` checks natively, why it runs before any judge) is
-# written once, in ../../file-guard/read-script-checks-doc/file-guard.yaml; this is
-# the prevention half (refuses before the write lands), that one the Stop backstop.
+# A check SCRIPT (.sh, under file-guard/gate/context) must be authored against
+# script-checks.md's contract — the resultKnown discipline, the flat
+# CheckPayload shape, the exit-code refusal contract — or it is wrong in one of
+# a small set of predictable ways. Loading the authoring-guardrails skill only
+# guarantees SKILL.md was read; script-checks.md is a page SKILL.md merely
+# links to, and nothing made opening it mandatory.
+#
+# Measured against a real onboarding eval run: every agent loaded the skill,
+# none of them opened script-checks.md or file-guard.md (the per-event-kind
+# skeleton lives there), and every check script was written from memory —
+# refused 3-8 times by authoring-slop's judge before it was right, minutes of
+# model time re-deriving what one page already states.
+#
+# check-template.sh is required alongside the prose for the same reason:
+# SKILL.md tells an author to start a script check from that file's copy-paste
+# skeleton, not to write one from scratch — a run of the onboarding eval
+# (fresh-plugin-rules-first) shows an agent going straight from
+# script-checks.md's prose to code, skipping the template, and getting the
+# fail-open PostFile branch wrong on its first attempt.
+#
+# require: [{skill, files}] (declaration.Prerequisite.Files) checks this
+# NATIVELY: not "did the agent load the skill" but "was THIS page read" — a
+# Read tool_use or a file-reading Bash command (cat, head, …) on it. `require`
+# is evaluated BEFORE any check, so this refuses ahead of authoring-slop's own
+# judge: cheaper (a trajectory lookup, no model call) and earlier.
+#
+# A gate, not a file-guard: whether a page was read is session state, which a
+# file-guard (committed bytes at Stop) cannot see. The other read-*-doc gates
+# point here for this argument.
 on:
   - event: PreFileWrite
     match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".sh"'
