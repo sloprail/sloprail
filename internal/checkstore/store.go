@@ -51,10 +51,8 @@ type Store interface {
 	// is terminal and is replayed, never re-judged until the input changes. An empty
 	// fingerprint (a script) never hits. The rule and its hash are part of the backend's key.
 	CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error)
-	// ResolveStale marks as skip every failing check of rule (at this rule hash, in COMPLETE runs)
-	// outside run liveRunID whose (subject, kind, fingerprint) is not one liveRunID
-	// holds: a failure whose input has left the range. Returns how many. The cache is
-	// append-only, so the marks are a run of their own that points at the checks it resolves.
+	// ResolveStale does nothing and returns 0: a stored fail is a fact about content that
+	// other branches share, so it is never marked stale (see the implementation).
 	ResolveStale(rule, ruleHash, liveRunID string) (int, error)
 	// PassedHeads lists, newest first, the head_ref of each of the rule's runs, at any
 	// rule hash, that passed: no engine error and no failing check. The
