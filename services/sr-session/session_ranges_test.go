@@ -55,7 +55,7 @@ func TestTrackMissing_ABranchCommittedOnAndLeftStaysTracked(t *testing.T) {
 }
 
 // A removed worktree (a finished sub-agent) must not drop a range whose branch still exists: the
-// range moves to the root's folder so its commits are still verified; a deleted branch is untracked.
+// range moves to the root's folder so its commits are still verified; a deleted branch's range stays, pinned at its last tip.
 func TestUntrackGone_AStillExistingBranchMovesToTheRoot(t *testing.T) {
 	proj := initRepo(t)
 	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
@@ -93,7 +93,9 @@ func TestUntrackGone_AStillExistingBranchMovesToTheRoot(t *testing.T) {
 			tracked[r.Head] = r.Folder
 		}
 	}
-	assert.Equal(t, map[string]string{"kept": filepath.Clean(proj)}, tracked)
+	// The deleted branch is not dropped: its range is pinned at the last tip on the root.
+	assert.Equal(t, map[string]string{"kept": filepath.Clean(proj), tip: filepath.Clean(proj)}, tracked)
+	assert.Equal(t, tip, runGit(t, proj, "rev-parse", "refs/sloprail/pins/"+tip), "the tip must be pinned against gc")
 }
 
 // A Stop whose session cannot be identified (no transcript on the payload) is refused, naming
@@ -199,4 +201,17 @@ func TestCoveredByBranch_OnlyWhenTheBranchRangeContainsTheCommit(t *testing.T) {
 	assert.False(t, coveredByBranch(detached(first), branch(c1, c2)), "older than the branch's base")
 	// The stored tip is stale: the live branch has moved on and now holds c2.
 	assert.True(t, coveredByBranch(detached(c2), branch(first, c1)), "the live tip, not the stored one, decides")
+}
+
+// A range whose folder is gone and whose branch is gone, with no root folder to move it to, is not
+// silently untracked: it stays, and the Stop refuses it until it is verified or untracked with a reason.
+func TestDropRemoved_NoHomeKeepsTheRangeTracked(t *testing.T) {
+	reg := openStore(t)
+	r := sessionstate.TrackedRange{SessionID: "s1", Folder: filepath.Join(t.TempDir(), "gone"), Head: "b", HeadSHA: "abc", Base: "def"}
+	require.NoError(t, reg.TrackRange(r))
+	dropRemoved(reg, "s1", r)
+	ranges, err := reg.Ranges("s1")
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	assert.True(t, ranges[0].Tracked())
 }

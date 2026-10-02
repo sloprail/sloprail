@@ -196,23 +196,37 @@ func untrackGone(reg sessionstate.Store, sessionID string, ranges []sessionstate
 
 // dropRemoved settles a tracked range whose folder is gone. A branch that still exists in the
 // session's own repository keeps being answered for: the range moves to the root's folder (its
-// commits are the session's, and the Stop verifies them there). Only a branch that is gone, with
-// nothing to verify it at, is untracked with the reason.
+// commits are the session's, and the Stop verifies them there). A branch that is gone is NOT
+// dropped: its commits are unverified, so the range moves to the root pinned at the last tip
+// (a ref under refs/sloprail/pins keeps the commits from garbage collection) and the Stop
+// verifies it there; only verification passing or `sr-session refs untrack` with a reason
+// releases it. With no root folder to move to, the range stays as it is and the Stop refuses it.
 func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.TrackedRange) {
-	if home, ok := homeFolder(reg, sessionID, r.Folder); ok {
-		moved := r
-		moved.Folder = home.Path
-		if rev, note := headRevision(moved); note == "" && rev != "" {
-			if err := reg.TrackRange(sessionstate.TrackedRange{
-				SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.Head, HeadSHA: r.HeadSHA,
-				Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
-			}); err == nil {
-				_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID)
-				return
-			}
-		}
+	home, ok := homeFolder(reg, sessionID, r.Folder)
+	if !ok {
+		return
 	}
-	_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed", r.AgentID)
+	moved := r
+	moved.Folder = home.Path
+	if rev, note := headRevision(moved); note == "" && rev != "" {
+		if err := reg.TrackRange(sessionstate.TrackedRange{
+			SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.Head, HeadSHA: r.HeadSHA,
+			Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
+		}); err == nil {
+			_ = reg.UntrackRange(sessionID, r.Folder, r.Head, "worktree removed; the range moved to "+home.Path, r.AgentID)
+		}
+		return
+	}
+	if r.HeadSHA == "" {
+		return
+	}
+	_ = gitrepo.PinRef(home.Path, "refs/sloprail/pins/"+r.HeadSHA, r.HeadSHA)
+	if err := reg.TrackRange(sessionstate.TrackedRange{
+		SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.HeadSHA, HeadSHA: r.HeadSHA,
+		Base: r.Base, AddedBy: sessionstate.RangeAuto, AgentID: home.AgentID,
+	}); err == nil {
+		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone; the range moved to %s, pinned at %s", r.Head, home.Path, shortRev(r.HeadSHA)), r.AgentID)
+	}
 }
 
 // homeFolder is the session's root folder, when it is the same repository as folder.

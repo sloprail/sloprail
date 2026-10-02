@@ -151,3 +151,10 @@ func mergeBaseWithHead(dir, commit, head string) (base string, found bool, err e
 	}
 	return base, true, nil
 }
+
+// PinRef points ref at the commit sha, so garbage collection keeps it after the branch that held
+// it is deleted.
+func PinRef(dir, ref, sha string) error {
+	_, err := run(dir, "update-ref", ref, sha)
+	return err
+}

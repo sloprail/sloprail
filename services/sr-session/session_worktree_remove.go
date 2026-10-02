@@ -13,9 +13,9 @@ import (
 // (a sub-agent finished, the session ended). It never blocks the removal: whatever it cannot do
 // it reports on stderr and exits 0. What it does is settle the ranges the session tracked in the
 // folder: a branch that still exists in the session's own repository moves there (its commits
-// are still verified at Stop), one that is gone is untracked with the reason "worktree removed",
-// which the Stop lists. (A harness without this hook is covered the same way at the next hook: a folder
-// of the session that no longer exists is untracked.)
+// are still verified at Stop), one that is gone moves there pinned at its last tip (never dropped
+// unverified). (A harness without this hook is covered the same way at the next hook: a folder
+// of the session that no longer exists is settled likewise.)
 func newSessionWorktreeRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "worktree-remove",
