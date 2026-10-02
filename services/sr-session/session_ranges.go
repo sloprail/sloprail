@@ -158,20 +158,16 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 
 // verifyRange verifies one tracked range, returning the refusal or "".
 func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, quiet *cobra.Command, r sessionstate.TrackedRange) string {
-	where := fmt.Sprintf("In %s (%s, from %s)", r.Folder, r.Head, shortRev(r.Base))
-	head := r.Head
-	goneNote := ""
-	if _, err := gitrepo.ResolveRange(r.Folder, "HEAD", "refs/heads/"+r.Head); err != nil {
-		// Not a branch (or not any more): a commit it was tracked at is still verifiable.
-		if _, serr := gitrepo.ResolveRange(r.Folder, "HEAD", r.Head); serr == nil {
-			head = r.Head // a sha, or another revision
-		} else if r.HeadSHA != "" {
-			head = r.HeadSHA
-			goneNote = fmt.Sprintf(" The branch %q is gone: verified at the commit it last pointed at (%s). Re-track the range under another head (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).", r.Head, shortRev(r.HeadSHA))
+	head, goneNote := headRevision(r)
+	if r.Base == "" {
+		// A row an older engine recorded: start from where the work on it began.
+		sha := r.HeadSHA
+		if h, err := gitrepo.ResolveRange(r.Folder, "HEAD", head); err == nil {
+			sha = h.Head
 		}
-	} else {
-		head = "refs/heads/" + r.Head
+		r.Base = autoBase(r.Folder, sha, "")
 	}
+	where := fmt.Sprintf("In %s (%s, from %s)", r.Folder, r.Head, shortRev(r.Base))
 	rng, err := gitrepo.ResolveRange(r.Folder, r.Base, head)
 	if err != nil {
 		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
@@ -200,6 +196,30 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 		parts = append(parts, f.Reason+" (file-guard "+f.Attribution+")")
 	}
 	return where + ": " + joinRefusals(parts) + goneNote
+}
+
+// headRevision is the revision a tracked range's head names now: its branch, else the commit it
+// was tracked at (with a note that the branch is gone).
+func headRevision(r sessionstate.TrackedRange) (rev, note string) {
+	head := r.Head
+	switch {
+	case strings.HasPrefix(head, "refs/"), len(head) >= 40:
+		// An older engine's full ref name, or a commit sha.
+	case strings.HasPrefix(head, "detached/"):
+		head = r.HeadSHA
+	default:
+		head = "refs/heads/" + head
+	}
+	if head == "" {
+		head = r.HeadSHA
+	}
+	if _, err := gitrepo.ResolveRange(r.Folder, "HEAD", head); err == nil {
+		return head, ""
+	}
+	if r.HeadSHA != "" {
+		return r.HeadSHA, fmt.Sprintf(" The branch %q is gone: verified at the commit it last pointed at (%s). Re-track the range under another head (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).", r.Head, shortRev(r.HeadSHA))
+	}
+	return head, ""
 }
 
 func shortRev(s string) string {
