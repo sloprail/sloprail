@@ -5,7 +5,8 @@
 #
 # The approval is a citation carried by the commit, never text in the unit:
 #   git commit -m 'Publish the launch post' -m 'Sloprail-Cites-User: ship it'
-# `require` below demands one in the `user` pool — an agent's own turn or a tool result is not
+# The session resolves the quote against its own record, and `require` below
+# demands one in the `user` pool — an agent's own turn or a tool result is not
 # the user's approval. Only `when` enters-published.sh says the write moves the
 # unit INTO published: a draft edit, or an edit to an already-published unit,
 # stays uncited.
@@ -14,8 +15,8 @@
 # unit-publish-approved) refuses the pending publish before it lands; this judges
 # every UNIT.md in the commits of the range (`sr-checks run --base --head`) — the same require and
 # check — as the backstop. The approval comes from the commits: a
-# `Sloprail-Cites-User: <the user's words>` trailer, handed to the check as
-# `changeset.citations`; this guard reads only committed bytes and those trailers.
+# `Sloprail-Cites-User: <the user's words>` trailer, resolved against the
+# transcript like sr-file --cite:user.
 #
 # match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
 # UNIT.md field (see unit.cue), never 02_draft.md's. unit-satisfies-rules
