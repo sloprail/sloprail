@@ -165,7 +165,7 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 // the read side: `verify` over the put-back's own range finds a verdict for it. An engine
 // that skipped a revert as "nothing new" would leave it unjudged, and verify would say so.
 // The control is the changed content in between: B IS judged, so the rule runs here.
-func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
+func TestT020_03_ContentPutBackAcrossCyclesIsReplayedFromItsVerdict(t *testing.T) {
 	e := NewJudgingEachRun(t)
 	led := e.NewLedger("seen")
 	proj := e.Project()
