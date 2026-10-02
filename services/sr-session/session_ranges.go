@@ -240,14 +240,26 @@ func trackCurrent(reg sessionstate.Store, sessionID, folder, agent, startedAt st
 	}
 	// Falling back to where the folder was registered is for work on the default branch itself. A
 	// branch cut at the default branch's tip starts there: what the default branch gained since
-	// the session began is upstream's, not the session's.
-	if db, ok := gitrepo.DefaultBase(folder, sha); ok && db == sha && !gitrepo.IsDefaultBranch(folder, head) && len(head) < 40 {
+	// the session began is upstream's, not the session's. A branch the session committed on is
+	// not "cut at the tip": its commits landed there (a fast-forward push), and the base never
+	// moves past them.
+	if db, ok := gitrepo.DefaultBase(folder, sha); ok && db == sha && !gitrepo.IsDefaultBranch(folder, head) && len(head) < 40 &&
+		!sessionCommittedOn(folder, head, sha, startedAt) {
 		startedAt = ""
 	}
 	_ = reg.TrackRange(sessionstate.TrackedRange{
 		SessionID: sessionID, Folder: filepath.Clean(folder), Head: head, HeadSHA: sha,
 		Base: autoBase(folder, sha, startedAt), AddedBy: sessionstate.RangeAuto, AgentID: agent,
 	})
+}
+
+// sessionCommittedOn reports whether this clone made sha on branch since the folder was registered.
+func sessionCommittedOn(folder, branch, sha, startedAt string) bool {
+	since := int64(0)
+	if startedAt != "" && startedAt != sessionstate.FolderBaseUnborn {
+		since = gitrepo.CommitTime(folder, startedAt)
+	}
+	return gitrepo.CommittedHere(folder, "refs/heads/"+branch, sha, since)
 }
 
 // trackFolders makes sure the current branch of this agent's folders is tracked: the tree it

@@ -437,8 +437,45 @@ func TestAutoBase_NoRemoteDefaultBranchNeverMakesAnEmptyRange(t *testing.T) {
 	runGit(t, proj, "add", "-A")
 	runGit(t, proj, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c")
 	sha := strings.TrimSpace(runGit(t, proj, "rev-parse", "HEAD"))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "g.txt"), []byte("g"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "d")
 	started := sha
+	sha = strings.TrimSpace(runGit(t, proj, "rev-parse", "HEAD"))
 
 	assert.Equal(t, started, autoBase(proj, sha, started), "the session's recorded base stands in")
 	assert.Equal(t, gitrepo.EmptyTree, autoBase(proj, sha, ""), "nothing recorded: the widest range, never base==head")
+}
+
+// A session's feature branch fast-forward-pushed to origin/main (then fetched) keeps its commits
+// in the range: the base never moves past a commit the session made, even when the first
+// tracking happens after the push.
+func TestTrackCurrent_FeatureBranchFastForwardedToMainStillJudgesSessionCommits(t *testing.T) {
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare", "--initial-branch=main")
+	proj := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "a.txt"), []byte("a"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "commit", "-q", "-m", "a")
+	started := runGit(t, proj, "rev-parse", "HEAD")
+	runGit(t, proj, "remote", "add", "origin", bare)
+	runGit(t, proj, "push", "-q", "origin", "main")
+	runGit(t, proj, "fetch", "-q", "origin")
+	runGit(t, proj, "remote", "set-head", "origin", "main")
+
+	runGit(t, proj, "switch", "-q", "-c", "feat")
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "b.txt"), []byte("b"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "commit", "-q", "-m", "session work")
+	sha := runGit(t, proj, "rev-parse", "HEAD")
+	runGit(t, proj, "push", "-q", "origin", "HEAD:refs/heads/main")
+	runGit(t, proj, "fetch", "-q", "origin")
+
+	reg := openStore(t)
+	trackCurrent(reg, "s1", proj, "", started, false)
+	rows, err := reg.Ranges("s1")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sha, rows[0].HeadSHA)
+	assert.Equal(t, started, rows[0].Base, "the landed session commit must stay inside the range")
 }

@@ -115,3 +115,20 @@ func TestT003_48_ASessionCommitThatLandedUpstreamIsStillJudged(t *testing.T) {
 		t.Fatalf("the fixed commit was still refused:\n%s", newBlocks(e, proj, "s-003-48c", blocks))
 	}
 }
+
+// (4) a session's feature branch fast-forward-pushed to origin/main (then fetched) leaves its tip
+// equal to origin/main's: the range is not empty, the landed session commit is still judged.
+func TestT003_48_AFeatureBranchFastForwardedToMainStillJudgesSessionCommits(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	remoteWithUpstream(t, e, proj)
+	main := e.Git(proj, "branch", "--show-current")
+
+	e.Run(proj, "s-003-48d", "push", Turns("done",
+		Bash("b1", "git switch -q -c feat"),
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
+		Bash("p1", "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin"),
+	))
+	if got := stopRefusals(e, proj, "s-003-48d"); !strings.Contains(got, refusalText) {
+		t.Fatalf("a feature-branch session commit that landed upstream was not judged:\n%s", got)
+	}
+}
