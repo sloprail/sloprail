@@ -186,7 +186,7 @@ func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
 		t.Errorf("a real follow-up change that cites did not ground the file:\n%s", blocks)
 	}
 
-	e3, proj3 := guarded(t, afterCitationGuard)
+	e3, proj3 := guardedUncited(t, afterCitationGuard)
 	e3.Run(proj3, "s-041-70c", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# log\nthe decision\n"),
 		harness.Commit("x", "write the decision", harness.CitesUser("adopt a decision log")),
