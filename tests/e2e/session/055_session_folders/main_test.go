@@ -41,7 +41,7 @@ func real(t *testing.T, p string) string {
 // two is a session's own project and another repository, each a committed repository.
 func two(t *testing.T) (*Env, string, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithSubagentStopCheck())
 	proj, other := e.Project(), e.Project()
 	e.GitInit(proj)
 	e.GitInit(other)

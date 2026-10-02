@@ -130,7 +130,7 @@ func New(t *testing.T) *Env {
 	// The merge gate is opt-in; these tests exercise it. The destroying gate is opt-in too
 	// and stays off: it would refuse the very deletions, resets and prunes these tests
 	// perform to prove the engine still judges what the hooks recorded.
-	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithEnabledShipped("sloprail/gate/no-merge-over-refusals"))
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithSubagentStopCheck(), harness.WithEnabledShipped("sloprail/gate/no-merge-over-refusals"))
 }
 
 // stopBlocks is how many times a session's Stop has refused and been gone past so

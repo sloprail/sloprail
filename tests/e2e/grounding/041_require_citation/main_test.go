@@ -62,4 +62,4 @@ exit 0
 
 // New is harness.New with the plugin's authoring file-guards switched off: this package
 // is about other rules, and the authoring guards would judge the rules' own files.
-func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithSubagentStopCheck()) }

@@ -213,14 +213,15 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	}
 }
 
-// T015_08b: by DEFAULT a re-fired stop is judged — an agent does not pass a rule
-// by being sent round again. An always-refusing rule is therefore asked on the
-// retry too, and the loop still ends: the engine's default cap (8, the harness's
-// own) lets the turn end once it is reached, before the harness has to override.
-func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
+// T015_08b: a re-fired stop is still judged — an agent does not pass a rule by being sent
+// round again. The always-refusing rule's stored FAIL is replayed at every re-fired stop (the
+// verdict is content-keyed: a retry that changes nothing is not a new question, so the check
+// is not re-rolled and runs once), and the loop still ends: the engine's default cap (8, the
+// harness's own) lets the turn end once it is reached, before the harness has to override.
+func TestT015_08b_AReFiredSubagentStopReplaysTheStoredRefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysOutsideRules})
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -236,10 +237,17 @@ func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
 	if hitRetryCap(res.Output) {
 		t.Fatalf("the harness had to override the hook; the engine's own cap should have ended the loop first:\n%s", res.Output)
 	}
-	lines := subLedger(t, proj, theWorktree(t, proj), "always", "log")
-	if len(lines) < 2 {
-		t.Fatalf("the guardrail ran %d time(s) (%v): the re-fired stop was not judged, so a "+
-			"rule gave way to the sub-agent simply being sent round again", len(lines), lines)
+	// The refusal is the rule's own, and it was delivered at more than one stop (the sub-agent was
+	// re-run each time: the de-duplicated record shows the text once, the stream shows the loop).
+	if !strings.Contains(strings.Join(e.SubagentBlockingErrors(proj, "s-015-08b"), "\n"), "this rule always says no") {
+		t.Fatalf("the rule's refusal never reached the sub-agent's own stop:\n%s", res.Output)
+	}
+	if n := strings.Count(res.Output, "re-running subagent (turn"); n < 2 {
+		t.Fatalf("the sub-agent was sent round %d time(s): the re-fired stop was not judged, so a rule "+
+			"gave way to the sub-agent simply being sent round again", n)
+	}
+	if lines := readLines(t, filepath.Join(proj, ".claude", "worktrees", theWorktree(t, proj), ".refused.log")); len(lines) != 1 {
+		t.Fatalf("the check ran %d times (%v): a stored refusal is replayed, never re-rolled", len(lines), lines)
 	}
 }
 
@@ -266,6 +274,34 @@ echo "asked" >> "$SR_GUARDRAIL_DIR/log"
 echo '{"reason":"this rule always says no"}'
 exit 1
 `
+
+// refuseAlwaysOutsideRules is refuseAlwaysScript with its ledger at the root of the tree, outside
+// the `.sloprail` whose files key every verdict (and which commit-required would ask to commit).
+const refuseAlwaysOutsideRules = `#!/bin/sh
+cat >/dev/null
+echo "asked" >> "$SR_GUARDRAIL_DIR/../../../.refused.log"
+echo '{"reason":"this rule always says no"}'
+exit 1
+`
+
+// readLines is the non-empty lines of a file ("" lines dropped; none when it does not exist).
+func readLines(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
 
 // T015_09: a sub-agent that changes nothing ends cleanly and judges nothing.
 //

@@ -203,18 +203,6 @@ func (e *Env) FileGuardRefusals(projDir, sessionID string) []string {
 	return e.BlockingErrorsFrom(projDir, sessionID, "Stop")
 }
 
-func dedupeStrings(in []string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // addOrigin gives a project a LOCAL BARE origin (in a temporary directory removed with the
 // test): the initial commit is pushed to it and origin/HEAD points at main, so `--base origin/main`
 // works, `sr checks run` pushes the results branch sloprail/checks there, and a second clone sees

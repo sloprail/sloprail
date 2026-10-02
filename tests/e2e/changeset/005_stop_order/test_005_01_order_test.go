@@ -64,7 +64,7 @@ func TestT005_04_ContextExitingAtThisStopIsStillActiveForIt(t *testing.T) {
 		harness.CommitFile("c1", "src/d.txt", "FORBIDDEN", "add d"),
 	))
 	got := joined(e.BlockingErrorsFrom(proj, "s-005-04", "Stop"))
-	for _, want := range []string{"STOP-GATE-RAN"} {
+	for _, want := range []string{"SCOPED-GATE refused", "STOP-GATE-RAN"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the Stop in which the context exits did not see it active: missing %q in %q", want, e.BlockingErrors(proj, "s-005-04"))
 		}
