@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 // One range, several tasks. A file-guard over task files is evaluated once over
-// the whole changeset (every TASK.md changed since the rule last passed), so a
+// the whole changeset (every TASK.md changed in the range), so a
 // single bad task among good ones must refuse the Stop and be NAMED; the good
 // one is not blamed, and fixing the bad one lets the range pass.
 
@@ -47,12 +47,11 @@ func TestMultiTask_OneBadTaskInARangeRefusesNamingIt(t *testing.T) {
 	if containsStr(joined, multiGoodPath) {
 		t.Errorf("the refusal blames the good task %s:\n%s", multiGoodPath, joined)
 	}
-	seen := len(e.StopContinuations(proj, sess))
 
 	// Rewritten without the dependency, the same range passes.
 	e.WriteFile(proj, multiBadPath, task("to_do", "P1", askBody))
 	e.Run(proj, sess, "drop the dependency", Turns("done").ThenCommit("Drop the dependency", CitesUser(askQuote)))
-	if n := len(e.StopContinuations(proj, sess)); n != seen {
-		t.Fatalf("the range with the bad task fixed was still refused:\n%s", stopBlocks(e, proj, sess))
+	if blocks := e.CheckRun(proj, sess); len(blocks) != 0 {
+		t.Fatalf("the range with the bad task fixed was still refused:\n%s", blocks)
 	}
 }

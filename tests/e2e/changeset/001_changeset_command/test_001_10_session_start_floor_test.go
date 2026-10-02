@@ -1,103 +1,99 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// startedSession is a repository with docs/a.md committed and a session the mock
-// has run in it, so the session's start HEAD is recorded. Returns the recorded
-// start commit.
-func startedSession(t *testing.T, sessionID string) (e *Env, proj, start string) {
+// trackedRanges is `sr-session refs list --json` as the session.
+func trackedRanges(t *testing.T, e *Env, proj, sess string) []sessionstate.TrackedRange {
 	t.Helper()
-	e = New(t)
-	proj = e.Project()
-	e.GitInit(proj)
-	e.WriteFile(proj, "docs/a.md", "one\n")
-	e.CommitAll(proj, "the project before the session")
-
-	e.Run(proj, sessionID, "hello", Turns("done", Bash("b1", "true")))
-	start = e.Meta(proj, sessionID, "baseline_commit")
-	if start == "" {
-		t.Fatal("the session recorded no start commit")
+	r := e.CLIDirectEnv(proj, e.SessionEnv(sess), "sr-session", "refs", "list", "--json")
+	if r.Code != 0 {
+		t.Fatalf("refs list: exit %d:\n%s", r.Code, r.Output)
 	}
-	// The mock session's own Stop evaluated the rules and recorded runs; a test
-	// about the range a rule has not been judged over starts without them.
-	e.RemoveCheckResults(proj, sessionID)
-	return e, proj, start
+	var out []sessionstate.TrackedRange
+	if err := json.Unmarshal([]byte(r.Output), &out); err != nil {
+		t.Fatalf("refs list --json is not JSON (%v):\n%s", err, r.Output)
+	}
+	return out
 }
 
-// T001_10: a repository rule that is not committed yet has no folder floor, so
-// the range starts where the session began.
-func TestT001_10_UncommittedRuleUsesTheSessionStart(t *testing.T) {
-	e, proj, start := startedSession(t, "s-001-10")
-	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
-	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
-	head := e.CommitAllExcept(proj, "an edit during the session", ".sloprail")
-
-	got, res := show(t, e, proj, e.SessionEnv("s-001-10"), "size")
-	if res.Code != 0 {
-		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
-	}
-	if got.Origin != "session-start" || got.Base != start || got.Head != head {
-		t.Fatalf("range = %s %s..%s, want session-start %s..%s", got.Origin, got.Base, got.Head, start, head)
-	}
-	if want := map[string]string{"docs/a.md": "M"}; !equal(filesOf(got), want) {
-		t.Fatalf("files = %v, want %v", filesOf(got), want)
-	}
-}
-
-// T001_11: a plugin's rule lives in the plugin cache, not in this repository, so
-// it has no folder floor at all — and other commits in the repo that touch a
-// `.sloprail` folder do not stand in for one.
-func TestT001_11_PluginRuleUsesTheSessionStart(t *testing.T) {
+// T001_12: a session's start that the tree left (its commit amended away) does not move the
+// range: the folder's tracked range is anchored at the merge base with origin's default branch,
+// not at where the session began.
+func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/a.md", "one\n")
 	e.CommitAll(proj, "the project before the session")
-	e.EnablePluginShippingFileGuard(proj, "shipped", "size", docsRule(""), map[string]string{"check.sh": passingCheck})
+	e.Git(proj, "push", "-q", "origin", "main")
+	e.Git(proj, "fetch", "-q", "origin")
+	mergeBase := e.Git(proj, "rev-parse", "origin/main")
+	e.WriteFile(proj, "docs/b.md", "two\n")
+	e.CommitAll(proj, "the session's first commit")
 
-	e.Run(proj, "s-001-11", "hello", Turns("done", Bash("b1", "true")))
-	start := e.Meta(proj, "s-001-11", "baseline_commit")
-	e.RemoveCheckResults(proj, "s-001-11")
-	e.WriteFile(proj, "docs/a.md", "one\nplugin era\n")
-	head := e.CommitAll(proj, "an edit during the session")
+	e.Run(proj, "s-001-12", "hello", Turns("done", Bash("b1", "true")))
+	e.Git(proj, "commit", "--amend", "--allow-empty", "-m", "the start commit, rewritten")
 
-	got, res := show(t, e, proj, e.SessionEnv("s-001-11"), "size")
-	if res.Code != 0 {
-		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
-	}
-	if got.Origin != "session-start" || got.Base != start || got.Head != head {
-		t.Fatalf("range = %s %s..%s, want session-start %s..%s", got.Origin, got.Base, got.Head, start, head)
-	}
-	if !strings.Contains(got.Rule, "shipped") {
-		t.Fatalf("rule = %q, want the plugin's qualified name", got.Rule)
+	e.Run(proj, "s-001-12", "again", Turns("done", Bash("b2", "true")))
+	rs := trackedRanges(t, e, proj, "s-001-12")
+	if len(rs) != 1 || rs[0].Base != mergeBase || rs[0].Head != "main" {
+		t.Fatalf("the tracked range after the rewrite = %+v, want main from the merge base with origin/main %s", rs, mergeBase)
 	}
 }
 
-// T001_12: a session start the tree left is re-anchored at its merge base with HEAD, so the
-// command still gives a range that holds everything the session did. The session's start
-// commit is amended away (no longer an ancestor of HEAD) and the rule has no folder commit
-// yet. The session began on the repository's root commit, so the rewritten one shares no
-// history with the old start and the range falls to the root commit. Committing the rule
-// makes it a rule added mid-session: it applies from its own add commit, so the base is
-// that commit's parent (its floor), not the earlier session start.
-func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) {
-	e, proj, _ := startedSession(t, "s-001-12")
+// T001_10: a repository rule that is not committed yet has no rule-age floor, so the range stays
+// the stated one: from the explicit base, not raised to anything.
+func TestT001_10_UncommittedRuleHasNoFloor(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.WriteFile(proj, "docs/a.md", "one\n")
+	start := e.CommitAll(proj, "the project before the work")
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
-	e.Git(proj, "commit", "--amend", "--allow-empty", "-m", "the start commit, rewritten")
+	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
+	head := e.CommitAllExcept(proj, "an edit", ".sloprail")
 
-	root := e.Git(proj, "rev-list", "--max-parents=0", "HEAD")
-	got, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
-	if res.Code != 0 || got.Base != root || got.Origin != "session-start" {
-		t.Fatalf("exit %d, range %s %s: want session-start at the root commit %s:\n%s", res.Code, got.Origin, got.Base, root, res.Output)
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size", start)
+	if res.Code != 0 {
+		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
+	if got.Base != start || got.Head != head {
+		t.Fatalf("range = %s..%s, want %s..%s (no floor for an uncommitted rule)", got.Base, got.Head, start, head)
+	}
+	if len(got.Payload.Changeset.Files) != 1 || got.Payload.Changeset.Files[0].Path != "docs/a.md" {
+		t.Fatalf("files = %+v, want docs/a.md", got.Payload.Changeset.Files)
+	}
+}
 
-	beforeRule := e.Git(proj, "rev-parse", "HEAD")
-	e.CommitAll(proj, "add the rule")
-	got, res = show(t, e, proj, e.SessionEnv("s-001-12"), "size")
-	if res.Code != 0 || got.Base != beforeRule || got.Origin != "floor" {
-		t.Fatalf("with the rule committed after it: exit %d range %s %s, want floor at %s:\n%s", res.Code, got.Origin, got.Base, beforeRule, res.Output)
+// T001_11: a plugin's rule lives in the plugin cache, not in this repository, so it has no
+// rule-age floor either: commits that touch other `.sloprail` folders do not stand in for one.
+func TestT001_11_PluginRuleHasNoFloor(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.WriteFile(proj, "docs/a.md", "one\n")
+	start := e.CommitAll(proj, "the project before the work")
+	e.EnablePluginShippingFileGuard(proj, "shipped", "size", docsRule(""), map[string]string{"check.sh": passingCheck})
+	e.WriteFile(proj, ".sloprail/notes.md", "an unrelated .sloprail commit\n")
+	e.CommitAll(proj, "touch .sloprail")
+	e.WriteFile(proj, "docs/a.md", "one\nplugin era\n")
+	head := e.CommitAll(proj, "an edit")
+
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size", start)
+	if res.Code != 0 {
+		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
+	}
+	if got.Base != start || got.Head != head {
+		t.Fatalf("range = %s..%s, want %s..%s (no floor for a plugin rule)", got.Base, got.Head, start, head)
+	}
+	if !strings.Contains(got.Rule, "shipped") {
+		t.Fatalf("rule = %q, want the plugin's qualified name", got.Rule)
 	}
 }

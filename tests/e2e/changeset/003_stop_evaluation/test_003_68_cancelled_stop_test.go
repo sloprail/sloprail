@@ -13,9 +13,9 @@ import (
 
 const slowRubric = "RULE=docs\n{{ change }}\n"
 
-// T003_68: a Stop killed while the judge is still thinking (the user interrupted, the harness
-// timed out, the machine slept) decided nothing. The run it left is recorded RUNNING and is no
-// watermark and no pass: the next Stop asks the judge again, and a judge that refuses refuses.
+// T003_68: a `sr-checks run` killed while the judge is still thinking (the user interrupted, the
+// harness timed out, the machine slept) decided nothing. It stores no pass: the next Stop reads
+// the range as not judged, the next run asks the judge again, and a judge that refuses refuses.
 func TestT003_68_AStopKilledMidJudgeIsNeverAPass(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -32,10 +32,10 @@ func TestT003_68_AStopKilledMidJudgeIsNeverAPass(t *testing.T) {
 	e.WriteFile(proj, "docs/bad.md", "VERDICT-FAIL words\n")
 	e.CommitAll(proj, "add bad")
 
-	stop := e.StopCmd(proj, sess, false)
+	stop := e.CheckRunCmd(proj, sess, "origin/main", "HEAD")
 	stop.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := stop.Start(); err != nil {
-		t.Fatalf("start the Stop: %v", err)
+		t.Fatalf("start the run: %v", err)
 	}
 	deadline := time.Now().Add(60 * time.Second)
 	for {
@@ -51,14 +51,14 @@ func TestT003_68_AStopKilledMidJudgeIsNeverAPass(t *testing.T) {
 	_ = syscall.Kill(-stop.Process.Pid, syscall.SIGKILL) // cancelled while the judge is thinking
 	_ = stop.Wait()
 
-	state := e.ChecksSQL(proj, sess, "select json_extract(metadata, '$.state') as state from check_runs where check_id = 'file-guard/docs' order by run_at desc, rowid desc limit 1")
-	if !strings.Contains(state.Output, "running") {
-		t.Fatalf("the cancelled evaluation should have left its run recorded as running:\n%s", state.Output)
+	if v := e.CheckVerify(proj, sess, "origin/main", "HEAD"); v.Code == 0 || !strings.Contains(v.Output, "not judged yet") {
+		t.Fatalf("the cancelled run should have left the range unjudged, not passed:\n%s", v.Output)
 	}
 
+	e.CheckRunRaw(proj, sess, "origin/main", "HEAD")
 	r := e.StopNow(proj, sess, false)
 	if !harness.Blocked(r) || !strings.Contains(r.Output, "JUDGE-NO-docs") {
-		t.Fatalf("the next Stop treated the cancelled judge as a pass instead of asking again:\n%s", r.Output)
+		t.Fatalf("the next run treated the cancelled judge as a pass instead of asking again:\n%s", r.Output)
 	}
 	body, _ := os.ReadFile(log)
 	if n := strings.Count(strings.TrimSpace(string(body)), "\n") + 1; n < 2 {

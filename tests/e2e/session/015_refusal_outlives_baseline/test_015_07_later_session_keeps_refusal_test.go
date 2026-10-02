@@ -6,12 +6,17 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
-// T015_07: a rule that existed at session start is judged from the session start,
-// EXTENDED backwards over any range an earlier session of the same worktree was
-// refused for and never fixed. Session one is refused on x.md; session two starts
-// later and is still refused on it (the refusal does not vanish with the new session
-// start); fixing it passes; session three then starts and does not judge x.md's old
-// commit (what passed stays grandfathered).
+// T015_07: a rule that existed at session start is judged over the range the folder
+// tracks (the merge base with origin's default branch up to HEAD), which a later session
+// of the same worktree shares: what an earlier session was refused for and never fixed
+// is still in it. Session one is refused on x.md; session two starts later and is still
+// refused on it (the refusal does not vanish with the new session); fixing it passes;
+// session three then starts and is not refused.
+//
+// What the per-session extension did on top — session three not being handed x.md's old
+// commit again once it had passed — is gone with it: the range is whatever the branch
+// holds ahead of the default branch, and the checks run over all of it every time, so
+// x.md is put to the rule again (now holding clean content) and passes.
 func TestT015_07_AnEarlierSessionsUnfixedRefusalStaysInSightUntilFixed(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -63,7 +68,7 @@ exit 0
 		t.Fatalf("the fixed range was still refused (%d refusals, had %d)", n, blocks)
 	}
 
-	// Session three begins after the fix: x.md's old commit passed, and is not judged again.
+	// Session three begins after the fix: the range still holds x.md, now clean, and passes.
 	before := len(changesetkit.Files(t, seen.Lines()))
 	e.Run(proj, "s-015-07-three", "write another file", Turns("done",
 		Write("w4", "z.md", "fine\n"),
@@ -71,9 +76,6 @@ exit 0
 	third := changesetkit.Files(t, seen.Lines())[before:]
 	if len(third) == 0 || !changesetkit.Saw(third, "z.md") {
 		t.Fatalf("session three never judged its own work: %v", third)
-	}
-	if changesetkit.Saw(third, "x.md") {
-		t.Fatalf("session three judged x.md, which was refused and then fixed: %v", third)
 	}
 	if n := len(e.StopContinuations(proj, "s-015-07-three")); n != 0 {
 		t.Fatalf("session three was refused (%d)", n)

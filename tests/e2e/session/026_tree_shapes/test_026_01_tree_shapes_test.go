@@ -91,31 +91,6 @@ func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.S
 	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
 }
 
-// cycles drives a sequence of cycles under one session id, the agent committing
-// at the end of each, and returns, for each, only the files THAT cycle added to
-// the ledger.
-//
-// The per-cycle slicing is the whole helper. Reading totals is how a multi-cycle
-// test silently stops testing anything: eight sightings after cycle one and
-// eight after cycle two is indistinguishable from a second cycle that reported
-// nothing, and a "reported again" assertion written against a total passes on
-// input where nothing was reported again at all.
-func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios ...harness.Scenario) [][]changesetkit.Observed {
-	t.Helper()
-	var out [][]changesetkit.Observed
-	seen := 0
-	for i, s := range scenarios {
-		e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
-		lines := harness.ReadLedgerLines(t, ledger)
-		if len(lines) < seen {
-			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
-		}
-		out = append(out, changesetkit.Files(t, lines[seen:]))
-		seen = len(lines)
-	}
-	return out
-}
-
 // T026_01: a file whose only change is its MODE is reported as an update.
 //
 // git records the executable bit, so `chmod +x` on a tracked file is a real
@@ -424,50 +399,62 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 	}
 }
 
-// T026_06: a file the agent COMMITS mid-cycle is judged on the committed bytes,
-// and is still exempt on the next cycle.
+// T026_06: a file the agent COMMITS mid-cycle is judged on the committed bytes, and the
+// verdict recorded for it stays settled.
 //
 // difference_spans_both is covered — 016 and 023_11 both show committed work
 // still reaching a rule. What is NOT covered is what happens to the VERDICT
-// across that boundary, and the two mechanisms could disagree: the difference is
-// measured against the session's point, which the commit does not move, while
-// the exemption is keyed on content, which the commit does not change either.
-// Both must hold, or a committed file is re-judged on every subsequent cycle for
-// the rest of the session.
+// across that boundary: the range holds the commit on the next cycle too, so the
+// committed file is in front of the rule again, and re-asking a model about the
+// same range is the cost a verdict cache exists to avoid. The recorder (a script)
+// runs every time by design; a judge is asked only when the results hold no
+// verdict for exactly what it would be given.
 //
-// The shape: cycle one writes and commits; cycle two touches something else. The
-// committed file must be judged once and then fall silent.
+// The shape: cycle one writes and commits; cycle two touches something else, which
+// makes the range a different question and asks the judge again; and a further
+// `sr check run` over that same range asks nothing.
 func TestT026_06_CommittedWorkIsJudgedOnceAndStaysSettled(t *testing.T) {
 	e, proj, ledger := project(t)
+	e.FileGuard(proj, "verdict", "match: \"**/*.md\"\nchecks:\n  - judge: ./rubric.md.j2\n",
+		map[string]string{"rubric.md.j2": "Does this change hold up?\n{{ change }}\n"})
+	e.CommitAll(proj, "the judged rule")
+	const promptFile = ".git/judge-prompt"
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": true, "reasoning": "fine"}`)
 
-	got := cycles(t, e, proj, ledger, "s-026-06",
-		Turns("done",
-			Write("w1", "committed.md", "written then committed\n"),
-		),
-		Turns("done", Write("w2", "elsewhere.md", "cycle two\n")),
-	)
-	first, second := got[0], got[1]
+	first := runOne(t, e, proj, ledger, "s-026-06", Turns("done",
+		Write("w1", "committed.md", "written then committed\n"),
+	))
 
-	// The premise: it really was committed, so the difference genuinely spans the
-	// commit boundary rather than reporting outstanding work.
+	// The premise: it really was committed, so the range genuinely spans the commit.
 	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
 		t.Fatalf("the file is still outstanding (%q), so this does not test the committed case", status)
 	}
-
 	if n := countPath(first, "committed.md"); n == 0 {
 		t.Fatalf("work the agent committed mid-cycle was not judged: %v — a difference that "+
 			"only looked at outstanding work found nothing and called the cycle empty", first)
 	}
+	asked := e.JudgeCalls(proj, promptFile, "")
+	if asked == 0 {
+		t.Fatalf("the judge was never asked about the committed file")
+	}
+	if p := e.JudgePrompt(proj, promptFile); !strings.Contains(p, "written then committed") {
+		t.Fatalf("the judge was not shown the committed bytes:\n%s", p)
+	}
 
-	// The control: cycle two dispatched.
+	// Cycle two touches something else; the range holds both files and is judged as a whole.
+	second := runOne(t, e, proj, ledger, "s-026-06", Turns("done", Write("w2", "elsewhere.md", "cycle two\n")))
 	if !changesetkit.Saw(second, "elsewhere.md") {
 		t.Fatalf("cycle two reported nothing at all: %v — the silence below proves nothing", second)
 	}
-	if n := countPath(second, "committed.md"); n > 0 {
-		t.Fatalf("a committed file already judged and passed was put in front of the rule "+
-			"again on the next cycle (%d times): %v\nthe commit moved neither the measuring "+
-			"point nor the content, so the verdict recorded for it still stands — re-asking is "+
-			"a fresh model call about work the agent has moved on from", n, second)
+	settled := e.JudgeCalls(proj, promptFile, "")
+	if settled == asked {
+		t.Fatalf("cycle two never asked the judge about its own work (%d calls throughout)", settled)
+	}
+
+	// The same range again: the verdict is in the results, and nothing is asked.
+	e.CheckRunRaw(proj, "s-026-06", "origin/main", "HEAD")
+	if again := e.JudgeCalls(proj, promptFile, ""); again != settled {
+		t.Fatalf("a settled verdict was re-asked: %d judge calls after the second cycle, %d after re-running the same range", settled, again)
 	}
 }
 

@@ -335,8 +335,8 @@ exit 0
 //   - the guard is not asked about the delete, so it cannot refuse it for lacking
 //     content — the turn is not blocked;
 //   - the refusal is not carried into later cycles;
-//   - the `deletions: only` observer, whose first range passed (it selected
-//     nothing), sees the delete once, in the cycle that made it.
+//   - the `deletions: only` observer is never handed the delete: the range is
+//     judged as its net change, and a file added and deleted inside it is not in it.
 func TestT038_06_AFileAddedAndDeletedInOneRangeIsNotJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -374,16 +374,15 @@ func TestT038_06_AFileAddedAndDeletedInOneRangeIsNotJudged(t *testing.T) {
 		t.Fatalf("a cycle after the delete was blocked: %v", blocking[len(afterFirst):])
 	}
 
-	// The observer passed the first cycle (a delete-only rule selected nothing), so
-	// its range began there: the delete is in its range once, in the cycle that made
-	// it, and not again.
+	// The range is base..HEAD as one net change: docs/bad.md was added and deleted
+	// inside it, so there is no delete of it for the observer to be handed.
 	deletes := 0
 	for _, line := range observed.Lines() {
 		if line == "Changeset:D docs/bad.md" {
 			deletes++
 		}
 	}
-	if deletes != 1 {
-		t.Errorf("the observer was handed the delete of docs/bad.md %d times, want exactly once (the cycle that deleted it)", deletes)
+	if deletes != 0 {
+		t.Errorf("the observer was handed the delete of docs/bad.md %d times, want never (it was added inside the range)", deletes)
 	}
 }

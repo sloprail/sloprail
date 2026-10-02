@@ -1,30 +1,24 @@
-// Command sr-checks reads what a session's file-guards concluded about its
-// commits. It is its own STANDALONE binary — one binary per command, with the
-// root `sr` proxying to it — and it only READS.
+// Command sr-checks judges a project's file-guards over an explicit range of commits, and
+// shows what they concluded. It is its own STANDALONE binary — one binary per command, with
+// the root `sr` proxying to it (`sr checks run` is `sr-checks run`).
 //
-//	sr-checks status [--failing] [--rule X] [--json]   each rule's latest run and its checks
-//	sr-checks sql '<select>'                            any read-only SELECT over the tables
+//	sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (scripts, judges, requirements); writes the results
+//	sr-checks verify --base <rev> --head <rev>   only reads stored verdicts, runs nothing, writes nothing; exit 1 when red
+//	sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
+//	sr-checks changeset --rule X --base --head   what a rule would be handed, without running it
 //
-// The results are written by the Stop evaluation in sr-session, into a database
-// beside the session's state; this opens it read-only, so nothing here can
-// create it, migrate it or change what a session concluded. Which database is
-// the session's is decided by internal/sessionpath, the same code sr-session
-// uses, so both find the same file.
-//
-// The tables — check_runs, checks, check_items — are a10n's check-results store,
-// with sloprail's data inside (see internal/checkstore).
+// Nothing here tracks a session, a branch or what was judged before: the caller states the
+// range, and a guard's verdict over a subject is keyed by the rule, its definition, the
+// subject and a fingerprint of the content it was given. Results live on the orphan branch
+// `sloprail/checks` (see internal/checkcache), so another clone or CI finds them.
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sloprail/sloprail/internal/checkstore"
-	"github.com/sloprail/sloprail/internal/sessionpath"
-	"github.com/sloprail/sloprail/internal/transcript"
 	"github.com/sloprail/sloprail/internal/version"
 )
 
@@ -38,56 +32,28 @@ func main() {
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "sr-checks <command>",
-		Short: "What this session's file-guards concluded about its commits",
-		Long: `What this session's file-guards concluded about its commits.
+		Short: "Judge the file-guards over an explicit commit range and show the results",
+		Long: `Judge the file-guards over an explicit range of commits.
 
-A file-guard judges commits: at Stop each rule is evaluated over the range of
-commits it has not yet passed, and every evaluation is recorded — the range, and
-one row per check with its status (pass, fail, skip, error), the fingerprint it
-is cached by, and what it found. These commands read that record. They change
-nothing.
+  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results
+  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged
+  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
+  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
+  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
 
-  sr-checks status [--failing] [--rule X] [--json]   the latest run of each rule
-  sr-checks sql '<select>'                            any read-only SELECT
-
-The session is the current one, found from the environment (CLAUDE_CODE_SESSION_ID)
-the way ` + "`sr-session trajectory cite`" + ` finds it. The tables are check_runs, checks
-and check_items; ` + "`sr-checks sql 'select name from sqlite_master'`" + ` lists them.`,
+The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
+states the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by
+the rule hash (which covers its scripts and templates), the subject, the content of the subject's
+files, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's
+subjects script, when it has one — never by a commit, session or agent — so the same content after
+a rebase, a squash or a revert is a cache hit, and so is the same content another clone already
+judged. ` + "`run`" + ` runs nothing on a hit (a stored fail is replayed); ` + "`verify`" + ` never executes a script or a judge: a key with
+no stored verdict is "not judged yet". Results are kept on the orphan branch sloprail/checks, pushed to
+origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newStatusCmd(), newSQLCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd(), newDefaultBaseCmd())
 	return root
-}
-
-// openChecks opens the current session's check results read-only.
-//
-// checkstore.ErrNoStore is returned as itself — nothing has been checked in this
-// session yet — because the two commands treat it differently.
-func openChecks() (checkstore.Store, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("sr-checks: working directory: %w", err)
-	}
-	record := transcript.CurrentSessionPath(cwd)
-	if record == "" {
-		return nil, fmt.Errorf("sr-checks: no session to read — run this inside a session (with %s set) whose transcript exists", transcript.SessionIDEnv)
-	}
-	id, err := sessionpath.StableIdentity(record, cwd)
-	if err != nil {
-		return nil, fmt.Errorf("sr-checks: session identity: %w", err)
-	}
-	path, err := sessionpath.ChecksDB(sessionpath.StateCwd(record, cwd), id.ID)
-	if err != nil {
-		return nil, err
-	}
-	store, err := checkstore.OpenReadOnly(path)
-	if err != nil {
-		if errors.Is(err, checkstore.ErrNoStore) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("sr-checks: %w", err)
-	}
-	return store, nil
 }

@@ -870,7 +870,7 @@ func citedPathsOf(guards []declaration.FileGuard) citedPath {
 		}
 		e := fe.Event(kind)
 		for _, m := range matches {
-			if ok, err := fileGuardSelects(m, e, nil); ok || err != nil {
+			if ok, err := fileGuardSelects(m, e); ok || err != nil {
 				return true
 			}
 		}

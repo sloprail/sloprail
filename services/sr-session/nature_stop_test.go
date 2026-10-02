@@ -71,7 +71,7 @@ func TestDispatchNatureStop_StepOrder(t *testing.T) {
 	file, err := parser.ParseFile(fset, "nature_stop.go", nil, 0)
 	require.NoError(t, err)
 
-	steps := []string{"runContextEnters", "commitRequired", "evaluateStopChangesets", "runGatesForEvents", "runContextExits"}
+	steps := []string{"runContextEnters", "commitRequired", "runGatesForEvents", "runContextExits"}
 	pos := map[string]token.Pos{}
 	for _, d := range file.Decls {
 		fn, ok := d.(*ast.FuncDecl)
@@ -100,6 +100,6 @@ func TestDispatchNatureStop_StepOrder(t *testing.T) {
 	}
 	for i := 1; i < len(steps); i++ {
 		assert.Less(t, pos[steps[i-1]], pos[steps[i]],
-			"%s must run before %s (enters -> commit-required -> file-guards -> gates -> exits)", steps[i-1], steps[i])
+			"%s must run before %s (enters -> commit-required -> gates -> exits)", steps[i-1], steps[i])
 	}
 }

@@ -136,6 +136,10 @@ func installReviewGuard(e *harness.Env, proj, guardYAML string, files map[string
 	files["require-known-result.sh"] = requireKnownResult
 	e.Gate(proj, "skip-review", guardYAML, files)
 	e.CommitAll(proj, "install skip-review guard")
+	// The session's range runs from origin's default branch, so the guard's own commit is
+	// published: left unpushed it is part of the range the Stop's check run judges, and
+	// authoring-slop would judge its files.
+	e.PushBranch(proj, "main")
 }
 
 // T030_01: prepare emits `{"skip": true}` on a guard whose only check is the judge

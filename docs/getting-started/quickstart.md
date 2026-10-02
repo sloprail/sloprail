@@ -44,10 +44,11 @@ And the check — a script whose exit code is the verdict (0 permits,
 non-zero refuses):
 
 ```bash
-# .sloprail/file-guard/no-todo-in-committed-code/check.sh
 #!/usr/bin/env bash
-if grep -q "TODO(no-ship)" "$SR_FILE"; then
-  echo '{"reason": "This file has a TODO(no-ship) marker — resolve it before writing."}'
+# .sloprail/file-guard/no-todo-in-committed-code/check.sh  (chmod +x)
+# stdin is the payload: .changeset.files[] holds each committed file's path and newContent
+if jq -e 'any(.changeset.files[]; (.newContent // "") | contains("TODO(no-ship)"))' >/dev/null; then
+  echo '{"reason": "A file in the committed range has a TODO(no-ship) marker — resolve it before committing."}'
   exit 1
 fi
 ```
@@ -55,12 +56,20 @@ fi
 ## 2. Prove it fires
 
 This is the part most people skip, and it's the whole point. Ask your agent
-to write a `.ts` file containing `TODO(no-ship)`. The write is **refused**,
-and the reason you wrote is shown back to the agent.
+to write and commit a `.ts` file containing `TODO(no-ship)`, then judge the
+commits:
 
-Now ask it to write a `.ts` file *without* that marker. The write lands.
+```bash
+sr-checks run --base origin/main --head HEAD
+```
 
-If both happened, your guardrail is real. If the bad write went through,
+The rule **refuses**, and the reason you wrote is shown back to the agent.
+(A file-guard judges the committed result; the Stop hook and CI only verify the
+stored verdicts with `sr-checks verify`, without asking a model.)
+
+Now ask it to commit a `.ts` file *without* that marker. The run passes.
+
+If both happened, your guardrail is real. If the bad file passed,
 your rule loaded but didn't fire — which is the failure this whole product
 exists to prevent.
 

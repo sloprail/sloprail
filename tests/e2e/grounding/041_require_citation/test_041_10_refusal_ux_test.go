@@ -47,11 +47,11 @@ func TestT041_60_TheRefusalHandsBackTheQuoteAlreadyRecorded(t *testing.T) {
 	if strings.Contains(refusal, "-m 'Sloprail-Cites-User: <exact quote>'") || strings.Contains(refusal, "--trailer 'Sloprail-Cites-User: <exact quote>'") {
 		t.Errorf("a command still leaves a placeholder where the recorded quote belongs:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	// The line as printed, with nothing filled in by the agent.
 	e.Run(proj, sess, "go on", Turns("done", harness.RefusalCommand(t, "fix", refusal, "git commit --amend", "")))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the refusal's own command did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
@@ -78,10 +78,10 @@ require:
 	if want := "memories/a.md: Sloprail-Cites-Tool: CITEUX-7310 green"; !strings.Contains(refusal, want) {
 		t.Fatalf("the refusal does not list the quote the sub-agent recorded (%q):\n%s", want, refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	e.Run(proj, sess, "go on", Turns("done", harness.RefusalCommand(t, "fix", refusal, "git commit --amend", "")))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the refusal's own command did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
@@ -108,10 +108,10 @@ func TestT041_62_RevertingTheRangeNeedsNoCitation(t *testing.T) {
 	if !strings.Contains(refusal, "git revert --no-commit ") || !strings.Contains(refusal, "..HEAD && git commit --no-edit") {
 		t.Fatalf("the refusal does not give the one command that undoes the range:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	e.Run(proj, sess, "undo it", Turns("done", harness.RefusalCommand(t, "undo", refusal, "git revert --no-commit", "")))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("a range whose net change is nil was refused (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }

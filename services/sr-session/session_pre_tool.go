@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -97,9 +98,7 @@ func recordBaselineBeforeTool(cmd *cobra.Command, store sessionstate.Store, p Ho
 // disable a plugin's shipped rules. Called from the nature dispatch at every hook
 // point that resolves the plugin set — see harness.Unresolved.
 func reportUnresolved(cmd *cobra.Command, unresolved []harness.Unresolved) {
-	for _, u := range unresolved {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", u.Message())
-	}
+	checkrun.ReportUnresolved(cmd.ErrOrStderr(), unresolved)
 }
 
 // registerStartFolderReporting registers the folder this agent began in (see

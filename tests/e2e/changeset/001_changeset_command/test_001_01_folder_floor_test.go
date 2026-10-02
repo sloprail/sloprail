@@ -1,13 +1,34 @@
 package e2e
 
 import (
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T001_01: with no watermark, the range starts at the last commit that touched
-// the rule's folder, and the payload is the squashed net change to HEAD.
+// T001_01: the range a folder answers for starts at the merge base with origin's default
+// branch (not at the last commit that touched the rule's folder), and covers every commit up to HEAD.
+func TestT001_01_TheTrackedRangeStartsAtTheMergeBase(t *testing.T) {
+	e, proj, _, _ := repoWithRule(t, docsRule(""))
+	e.Git(proj, "push", "-q", "origin", "main")
+	e.Git(proj, "fetch", "-q", "origin")
+	floor := e.Git(proj, "rev-parse", "origin/main")
+
+	// The session's own commits: the range covers them from the merge base, which is where
+	// the session began (a project's earlier work is already pushed).
+	e.Run(proj, "s-001-01", "work", Turns("done",
+		harness.CommitFile("c1", "docs/a.md", "one\ntwo\n", "first edit"),
+		harness.CommitFile("c2", "docs/b.md", "brand new\n", "second edit"),
+	))
+	rs := trackedRanges(t, e, proj, "s-001-01")
+	if len(rs) != 1 || rs[0].Base != floor || rs[0].Head != "main" || !rs[0].Tracked() {
+		t.Fatalf("tracked ranges = %+v, want main from the merge base with origin/main %s", rs, floor)
+	}
+}
+
+// T001_01: from an explicit base, the payload is the squashed net change to HEAD (the
+// base was the last commit before the rule's folder).
 func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 	e, proj, floor, led := repoWithRule(t, docsRule(""))
 
@@ -18,12 +39,12 @@ func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 	e.WriteFile(proj, "README.md", "readme v2\n")
 	head := e.CommitAll(proj, "second edit", "Sloprail-Refactor: move-only")
 
-	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size", floor)
 	if res.Code != 0 {
 		t.Fatalf("changeset exited %d:\n%s", res.Code, res.Output)
 	}
-	if got.Origin != "floor" || got.Base != floor || got.Head != head {
-		t.Fatalf("range = %s %s..%s, want floor %s..%s", got.Origin, got.Base, got.Head, floor, head)
+	if got.Base != floor || got.Head != head {
+		t.Fatalf("range = %s..%s, want %s..%s", got.Base, got.Head, floor, head)
 	}
 	if got.Payload.Changeset.Base != floor || got.Payload.Changeset.Head != head {
 		t.Fatalf("payload range does not match: %+v", got.Payload.Changeset)

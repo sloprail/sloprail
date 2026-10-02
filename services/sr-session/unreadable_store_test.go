@@ -109,7 +109,13 @@ func TestDispatch_UnreadableDeclarationStoreDoesNotBlockTheTurn(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetOut(&stdout)
 
-	reason := natureDispatchStop(cmd, HookPayload{Cwd: proj}, reg)
+	// A real session record: the Stop fails closed on a session it cannot identify
+	// (d496b69d), which is a different fault from the declaration folder this test
+	// isolates. The payload must name its session so only the folder is unreadable.
+	record := filepath.Join(t.TempDir(), "sess-unreadable-store.jsonl")
+	require.NoError(t, os.WriteFile(record, []byte(`{"type":"user","uuid":"origin","parentUuid":null,"message":{"role":"user","content":"hi"}}`+"\n"), 0o644))
+
+	reason := natureDispatchStop(cmd, HookPayload{Cwd: proj, SessionID: "sess-unreadable-store", TranscriptPath: record}, reg)
 
 	assert.Empty(t, reason,
 		"an unlistable declaration folder must not produce a block reason")
@@ -139,4 +145,32 @@ func TestPreTool_NoDeclarationDirectoryStillPermits(t *testing.T) {
 
 	assert.Empty(t, stdout.String(),
 		"a project with no guards at all is not a project whose guards could not be read")
+}
+
+// TestDispatch_UnreadableDeclarationStoreWithoutSessionDoesNotBlockTheTurn.
+//
+// The sessionless case: no file-guard can load from an unreadable folder, so no identity is
+// asked for and the turn is not held.
+func TestDispatch_UnreadableDeclarationStoreWithoutSessionDoesNotBlockTheTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root lists a 0000 directory, so the store cannot be made unreadable")
+	}
+
+	proj := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("s"), 0o644))
+	runGit(t, proj, "add", ".")
+	runGit(t, proj, "commit", "-m", "base")
+	unreadableDeclarationDir(t, proj)
+	t.Chdir(proj)
+
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&stdout)
+
+	assert.Empty(t, natureDispatchStop(cmd, HookPayload{Cwd: proj}, reg))
+	assert.NotContains(t, stdout.String(), `"decision":"block"`)
 }

@@ -57,9 +57,10 @@ func TestT003_20_IdenticalBytesAreJudgedAtEveryPath(t *testing.T) {
 }
 
 // T003_21: content edited back to a body that was refused is refused again. The
-// judge refuses the body, passes a corrected one (and the watermark moves), then
-// the agent puts the refused body back: a pass for the fix does not stand in for
-// the body it replaced, and the judge is asked about it afresh.
+// judge refuses the body, passes a corrected one, then the agent puts the refused
+// body back: a pass for the fix does not stand in for the body it replaced. The
+// refused body's own verdict (a stored fail, terminal while its input stands) is
+// replayed, so the judge is not asked about it a second time.
 func TestT003_21_ContentEditedBackToARefusedBodyIsRefusedAgain(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 	const sess = "s-003-21"
@@ -90,16 +91,16 @@ func TestT003_21_ContentEditedBackToARefusedBodyIsRefusedAgain(t *testing.T) {
 	if !strings.Contains(newBlocks(e, proj, sess, seen), "JUDGE-SAYS-NO") {
 		t.Fatalf("content edited back to a refused body was not refused: %q", e.BlockingErrors(proj, sess))
 	}
-	if n := e.JudgeCalls(proj, promptFile, ""); n <= asked {
-		t.Fatalf("the judge was not asked about the restored body (%d calls, had %d)", n, asked)
+	if n := e.JudgeCalls(proj, promptFile, ""); n != asked {
+		t.Fatalf("the stored fail of the restored body was not replayed: the judge was asked again (%d calls, had %d)", n, asked)
 	}
 }
 
-// T003_22: a stale fail is judged again when its input returns. The failing
+// T003_22: a stale fail is refused again when its input returns. The failing
 // judge's verdict is terminal while its input stands; when the file leaves the
 // range the old failure goes stale (the range passes, nothing outstanding), and
-// when the same file comes back the verdict is not replayed from the dead record:
-// the judge is asked again and refuses again.
+// when the same file comes back the stored fail for that content is replayed:
+// refused again, without asking the judge a second time.
 func TestT003_22_AStaleFailIsJudgedAgainWhenItsInputReturns(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 	const sess = "s-003-22"
@@ -136,8 +137,8 @@ func TestT003_22_AStaleFailIsJudgedAgainWhenItsInputReturns(t *testing.T) {
 	if !strings.Contains(newBlocks(e, proj, sess, seen), "JUDGE-SAYS-NO") {
 		t.Fatalf("the returning input was not refused: %q", e.BlockingErrors(proj, sess))
 	}
-	if n := e.JudgeCalls(proj, promptFile, ""); n <= first {
-		t.Fatalf("the stale failure was replayed instead of judged again (%d calls, had %d)", n, first)
+	if n := e.JudgeCalls(proj, promptFile, ""); n != first {
+		t.Fatalf("the returning input's stored fail was not replayed: the judge was asked again (%d calls, had %d)", n, first)
 	}
 }
 

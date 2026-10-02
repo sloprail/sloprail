@@ -9,7 +9,7 @@ import (
 
 // T003_47: a cheap-check refusal in rule A defers only A's own judges. Rule B's
 // judge still runs and its refusal surfaces in the same Stop. A's deferred judge
-// is a visible skip row in `sr-checks status`, not a silent absence.
+// is a visible skip row in `sr-checks verify`, not a silent absence.
 func TestT003_47_ARefusalDefersOnlyItsOwnJudges(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -35,7 +35,7 @@ func TestT003_47_ARefusalDefersOnlyItsOwnJudges(t *testing.T) {
 	if n := e.JudgeCalls(proj, promptFile, "A-RUBRIC"); n != 0 {
 		t.Fatalf("rule A's own judge ran %d times though its script refused first", n)
 	}
-	status := e.ChecksStatus(proj, "s-003-47")
+	status := e.CheckVerify(proj, "s-003-47", "origin/main", "HEAD").Output
 	if !strings.Contains(status, "skip") || !strings.Contains(status, "judge deferred") {
 		t.Fatalf("rule A's deferred judge is not shown as a skip with its reason:\n%s", status)
 	}

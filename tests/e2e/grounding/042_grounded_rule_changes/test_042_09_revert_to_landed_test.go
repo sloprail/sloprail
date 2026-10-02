@@ -13,6 +13,8 @@ func landedHistory(t *testing.T, e *harness.Env, proj string, trailers ...string
 	t.Helper()
 	e.WriteFile(proj, ".sloprail/file-guard/demo/check.sh", demoLoosened)
 	e.CommitAll(proj, "loosen the demo rule", trailers...)
+	e.Git(proj, "push", "-q", "origin", "HEAD:refs/heads/"+e.Git(proj, "branch", "--show-current"))
+	e.Git(proj, "fetch", "-q", "origin")
 }
 
 // T042_09: restoring a rule file to the version the default branch had, when everything

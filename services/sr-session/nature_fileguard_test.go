@@ -12,7 +12,6 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
-	"github.com/sloprail/sloprail/internal/natures"
 )
 
 // These cover the file-guard's MATCH SELECTION — how a guard's `match`
@@ -39,11 +38,11 @@ func TestFileGuardSelects_Glob(t *testing.T) {
 	m, err := guardrail.CompileFileMatch("memories/**/*.md")
 	require.NoError(t, err)
 
-	ok, err := fileGuardSelects(m, postCreate("memories/decisions/x.md", nil), nil)
+	ok, err := fileGuardSelects(m, postCreate("memories/decisions/x.md", nil))
 	require.NoError(t, err)
 	assert.True(t, ok, "a path under the glob is selected")
 
-	ok, err = fileGuardSelects(m, postCreate("src/main.go", nil), nil)
+	ok, err = fileGuardSelects(m, postCreate("src/main.go", nil))
 	require.NoError(t, err)
 	assert.False(t, ok, "a path outside the glob is not selected")
 }
@@ -55,56 +54,14 @@ func TestFileGuardSelects_Marker(t *testing.T) {
 	require.NoError(t, err)
 
 	withMarker := postCreate("src/x.go", []any{marker("invariant", "User.id", 4)})
-	ok, err := fileGuardSelects(m, withMarker, nil)
+	ok, err := fileGuardSelects(m, withMarker)
 	require.NoError(t, err)
 	assert.True(t, ok, "a file carrying the marker is selected")
 
 	without := postCreate("src/y.go", []any{marker("docs", "User", 1)})
-	ok, err = fileGuardSelects(m, without, nil)
+	ok, err = fileGuardSelects(m, without)
 	require.NoError(t, err)
 	assert.False(t, ok, "a file without the marker is not selected")
-}
-
-// A context-gated match reads context[<name>] off the threaded context map: the
-// guard applies only inside (or, with `not`, outside) a context.
-func TestFileGuardSelects_ContextGated(t *testing.T) {
-	// The guard applies to src/ files only while the refactor context is active.
-	m, err := guardrail.CompileFileMatch(`path startsWith "src/" and context["refactor"].active`)
-	require.NoError(t, err)
-
-	e := postCreate("src/x.go", nil)
-
-	// Refactor inactive → not selected.
-	inactive := map[string]natures.ContextState{"refactor": {Active: false, Payload: map[string]any{}}}
-	ok, err := fileGuardSelects(m, e, inactive)
-	require.NoError(t, err)
-	assert.False(t, ok, "guard does not apply while the context is inactive")
-
-	// Refactor active → selected.
-	active := map[string]natures.ContextState{"refactor": {Active: true, Payload: map[string]any{"scope": "src/"}}}
-	ok, err = fileGuardSelects(m, e, active)
-	require.NoError(t, err)
-	assert.True(t, ok, "guard applies while the context is active")
-}
-
-// The `not context[...].active` idiom (matching a context's ABSENCE) works
-// against a seeded-inactive context — the reason the context map must carry every
-// declared context, not just the active ones.
-func TestFileGuardSelects_NotContextActive(t *testing.T) {
-	m, err := guardrail.CompileFileMatch(`not context["refactor"].active`)
-	require.NoError(t, err)
-
-	e := postCreate("any.md", nil)
-	// A seeded-inactive context reads present-and-false, so `not …active` is true.
-	inactive := map[string]natures.ContextState{"refactor": {Active: false, Payload: map[string]any{}}}
-	ok, err := fileGuardSelects(m, e, inactive)
-	require.NoError(t, err)
-	assert.True(t, ok, "not-active matches a declared-but-inactive context")
-
-	active := map[string]natures.ContextState{"refactor": {Active: true, Payload: map[string]any{}}}
-	ok, err = fileGuardSelects(m, e, active)
-	require.NoError(t, err)
-	assert.False(t, ok, "not-active does not match while the context is active")
 }
 
 // A file-guard match that COMPILES but cannot be EVALUATED against the file
@@ -128,28 +85,22 @@ func TestFileGuardSelects_UnevaluableMatchErrorsNotFalse(t *testing.T) {
 	m, err := guardrail.CompileFileMatch("int(path) > 0")
 	require.NoError(t, err, "int(path) must COMPILE — the eval-error branch is only reachable past a clean compile")
 
-	_, err = fileGuardSelects(m, postCreate("notes.md", nil), nil)
+	_, err = fileGuardSelects(m, postCreate("notes.md", nil))
 	require.Error(t, err,
 		"a match that cannot be evaluated must surface the error (fail-closed), not answer false — false would read as 'this file does not concern me'")
 }
 
-// fileMatchScopeEvent builds a FLAT scope — path, markers, context at the top
+// fileMatchScopeEvent builds a FLAT scope — path and markers at the top
 // level, not the event nested under `event` a gate reads.
 func TestFileMatchScopeEvent_Flat(t *testing.T) {
 	e := postCreate("src/x.go", []any{marker("docs", "X", 2)})
-	ctx := map[string]natures.ContextState{"c": {Active: true, Payload: map[string]any{"k": "v"}}}
-	scope := fileMatchScopeEvent(e, ctx)
+	scope := fileMatchScopeEvent(e)
 
 	assert.Equal(t, "src/x.go", scope.Fields["path"])
 	markers, ok := scope.Fields["markers"].([]any)
 	require.True(t, ok)
 	assert.Len(t, markers, 1)
-	// context is wire-form: indexable with lowercase keys.
-	cm, ok := scope.Fields["context"].(map[string]any)
-	require.True(t, ok)
-	entry, ok := cm["c"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, true, entry["active"])
+	assert.NotContains(t, scope.Fields, "context", "a file-guard cannot see session state")
 }
 
 // A delete event carries no newMarkers, and one carrying no oldMarkers either

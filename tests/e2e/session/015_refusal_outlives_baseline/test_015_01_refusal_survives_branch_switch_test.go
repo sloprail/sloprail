@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -56,6 +57,51 @@ const refuseNamedGuard = `match: "**/*.md"
 checks:
   - script: ./judge.sh
 `
+
+// T015_06: a refusal is one session's state. Two sessions in one tree hold their own: session
+// one's unfixed refusal is not session two's — session two's first Stop verifies the range ITS
+// folder tracks (its range holds the bad file session one committed: the branch is shared, so it
+// arrives as an addition), is handed the file again and refused by that verdict — while session
+// one's record of refusals is untouched by anything session two did.
+func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.CommitAll(proj, "the guardrail before the sessions")
+
+	e.Run(proj, "s-015-06-one", "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+	).ThenCommit("the bad file"))
+	oneBefore := len(e.StopContinuations(proj, "s-015-06-one"))
+	if oneBefore == 0 {
+		t.Fatalf("premise: session one's bad file was not refused")
+	}
+	first := changesetkit.Files(t, led.Lines())
+
+	e.Run(proj, "s-015-06-two", "write something else", Turns("done",
+		Write("w2", "unrelated.md", "fine\n"),
+	).ThenCommit("unrelated work"))
+
+	after := changesetkit.Files(t, led.Lines())
+	second := after[len(first):]
+	if len(second) == 0 {
+		t.Fatalf("session two's range was never judged: session one's state stood in for it")
+	}
+	if !changesetkit.Saw(second, "unrelated.md") {
+		t.Fatalf("session two was not handed its own work: %v", second)
+	}
+	if got := changesetkit.Statuses(second, "bad-file.md"); len(got) == 0 || got[0] != "A" {
+		t.Fatalf("session two's range did not hold the file session one was refused for (as an addition): %v", second)
+	}
+	if len(e.StopContinuations(proj, "s-015-06-two")) == 0 {
+		t.Fatalf("session two, whose range holds the bad file, was not refused at its own Stop")
+	}
+	if n := len(e.StopContinuations(proj, "s-015-06-one")); n != oneBefore {
+		t.Fatalf("session one's refusals changed from %d to %d because of session two", oneBefore, n)
+	}
+}
 
 // judgeScript records the FLAT CheckPayload, then refuses when the path contains
 // "bad".
@@ -234,12 +280,12 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	}
 }
 
-// T015_03: a file that gets fixed stops being reported.
+// T015_03: a file that gets fixed stops being refused.
 //
 // The negative half, and the one that stops T015_01 and T015_02 from being
-// satisfied by an engine that simply reports every file it has ever seen
+// satisfied by an engine that simply refuses every file it has ever refused
 // forever. "Until a hook passes it" is a real boundary: once the content passes,
-// the file must fall out.
+// the refusal must end.
 //
 // The fix is a rename of the content, not of the path — the same path now holds
 // content the rule accepts.
@@ -320,59 +366,45 @@ exit 0
 			"and the comparison below cannot fail")
 	}
 
-	// Fixed, then a further cycle that touches something else entirely.
+	// Fixed: the same range, now holding acceptable content, passes. What used to
+	// be asserted here too — that a later unrelated cycle is not handed the fixed
+	// file again — was the per-session watermark, which is gone: the caller states
+	// the range, and a range that holds the file hands it to the rule.
 	e.Run(proj, sess, "fix it", Turns("done",
 		Write("w2", "subject.md", "acceptable content\n"),
 	).ThenCommit("fix subject"))
-	fixed := changesetkit.Files(t, seen.Lines())
-
-	e.Run(proj, sess, "unrelated work", Turns("done",
-		Write("w3", "elsewhere.md", "fine\n"),
-	).ThenCommit("elsewhere"))
-	after := changesetkit.Files(t, seen.Lines())
-
-	if countPath(after, "subject.md") != countPath(fixed, "subject.md") {
-		t.Fatalf("a file that has been fixed and passed was reported again on a later cycle: "+
-			"seen %d times when it passed, %d times after an unrelated cycle (%v) — "+
-			"a passing verdict must end the re-reporting, or every file ever refused accumulates forever",
-			countPath(fixed, "subject.md"), countPath(after, "subject.md"), after)
+	if refusals := e.CheckRun(proj, sess); len(refusals) != 0 {
+		t.Fatalf("a file that has been fixed is still refused: %q — a passing verdict must "+
+			"end the refusal, or every file ever refused accumulates forever", refusals)
 	}
 }
 
-// T015_04: a refused file that is NO LONGER A DIFFERENCE is still reported.
+// T015_04: a refusal outlives the branch the agent leaves it on.
 //
-// The invariant's real claim, and the one T015_02 above cannot make. There the
-// offending file is re-created after the switch, so it is outstanding work in
-// the tree and arrives in the ordinary difference — the refusal contributes
-// nothing to its arrival, and the test passes identically on an engine that
-// discards refusals outright. Measured: dropping every failing verdict in
-// revalidation.Record leaves T015_01, T015_02 and T015_03 all green.
+// The refused file is committed on main; the agent then checks out another branch,
+// where the file does not exist at all, and does unrelated work there. The range of
+// main is still one the session answers for (a tracked range is per branch), so the
+// Stop still verifies it: the rule is put the file again and the Stop refuses it,
+// naming main (the stored verdict of the unchanged range is replayed, not re-asked). A
+// refusal tied to the branch the agent happens to be on would drop the broken file out of
+// view at exactly this moment.
 //
-// Here the branch the agent switches to ALREADY HOLDS the offending file,
-// committed and identical. After the switch the file is on disk and broken,
-// the measuring point has been re-taken onto that line, and the file is not a
-// difference against it by any reading of the tree. Only the retained refusal
-// still knows. So this fails on an engine that keeps refusals but never reads
-// them, which is what the engine did until readdOutstanding existed.
-func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
+// There is no re-creation of the file after the switch (unlike T015_02): the file is
+// absent from the tree and from feature's range, so the only way it can be reported
+// is through main's range.
+func TestT015_04_ARefusedFileOnAnotherBranchIsStillReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
-	// The harness's own scenario script is kept out of every commit: a tracked
-	// copy rewritten by the next cycle would abort the branch switch below.
 	writeFile(t, proj, ".gitignore", ".scenario.sh\n")
 	e.CommitAll(proj, "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
-	// The branch already carries the offending file, so switching to it leaves
-	// the file on disk WITHOUT putting it in the difference.
 	e.Git(proj, "checkout", "-b", "feature", root)
-	writeFile(t, proj, "bad-file.md", "violates\n")
-	e.CommitAll(proj, "the bad file, already on this line")
+	e.Git(proj, "commit", "--allow-empty", "-m", "on feature")
 	e.Git(proj, "checkout", "main")
-	e.Git(proj, "commit", "--allow-empty", "-m", "on main, after the split")
 
 	const sess = "s-015-04"
 	e.Run(proj, sess, "write a bad file", Turns("done",
@@ -383,6 +415,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
 	}
+	stops := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	e.Run(proj, sess, "switch branches", Turns("done",
 		Bash("b2", "git checkout feature"),
@@ -390,76 +423,25 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	).ThenCommit("unrelated work"))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
-		t.Fatalf("the agent did not actually switch branches (on %q), so the measuring point "+
-			"never moved and this proves nothing", got)
+		t.Fatalf("the agent did not actually switch branches (on %q), so nothing moved and this proves nothing", got)
 	}
-	// The premise: the file is genuinely still broken on disk.
-	if !e.Wrote(proj, "bad-file.md") {
-		t.Fatalf("the offending file is not in the tree, so there is nothing left unfixed " +
-			"and its absence from the report would be correct")
+	if e.Wrote(proj, "bad-file.md") {
+		t.Fatalf("the offending file is still in the tree on feature, so it is in the branch's own " +
+			"range and its report proves nothing about the other branch's")
 	}
-
-	after := changesetkit.Files(t, led.Lines())
-	if len(after) <= len(first) {
-		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
-			"no evidence either way: %v", len(after), len(first), after)
-	}
-	// The control: this cycle's ordinary difference did arrive, so the assertion
-	// below is about the refused file rather than about a dead ledger.
-	second := after[len(first):]
+	second := changesetkit.Files(t, led.Lines())[len(first):]
 	if !changesetkit.Saw(second, "unrelated.md") {
-		t.Fatalf("the cycle's own work is missing from %v — nothing was dispatched, so the "+
-			"claim below would be vacuous", second)
+		t.Fatalf("the cycle's own work is missing from %v — the claim below would be vacuous", second)
 	}
-	if countPath(second, "bad-file.md") == 0 {
-		t.Fatalf("an unfixed refusal was dropped once it left the difference: the file is still "+
-			"broken on disk and was not reported after the branch switch (%v) — the refusal was "+
-			"tied to the measuring point after all", second)
+	// Every check is cached by content: main's range holds the same bytes it held when the rule
+	// refused them, so the rule is NOT asked again — the stored refusal is replayed, and it is
+	// the Stop's refusal below that proves the broken file stayed in view.
+	if countPath(second, "bad-file.md") != 0 {
+		t.Fatalf("main's unchanged range was judged again after the switch (%v): a stored verdict "+
+			"for the same content must be replayed, not re-asked", second)
 	}
-}
-
-// T015_06: a refusal is one session's state. Two sessions in one tree hold their
-// own: session one's unfixed refusal is not session two's — session two's first Stop
-// evaluates the rule itself, over a range that starts at the floor rather than
-// where session one is (it is handed the file session one was refused for as an
-// addition), and is refused by its own evaluation — while session one's record of
-// refusals is untouched by anything session two did.
-func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	led := e.NewLedger("seen")
-	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
-	e.CommitAll(proj, "the guardrail before the sessions")
-
-	e.Run(proj, "s-015-06-one", "write a bad file", Turns("done",
-		Write("w1", "bad-file.md", "violates\n"),
-	).ThenCommit("the bad file"))
-	oneBefore := len(e.StopContinuations(proj, "s-015-06-one"))
-	if oneBefore == 0 {
-		t.Fatalf("premise: session one's bad file was not refused")
-	}
-	first := changesetkit.Files(t, led.Lines())
-
-	e.Run(proj, "s-015-06-two", "write something else", Turns("done",
-		Write("w2", "unrelated.md", "fine\n"),
-	).ThenCommit("unrelated work"))
-
-	after := changesetkit.Files(t, led.Lines())
-	second := after[len(first):]
-	if len(second) == 0 {
-		t.Fatalf("session two's Stop never evaluated the rule: session one's state stood in for it")
-	}
-	if !changesetkit.Saw(second, "unrelated.md") {
-		t.Fatalf("session two was not handed its own work: %v", second)
-	}
-	if got := changesetkit.Statuses(second, "bad-file.md"); len(got) == 0 || got[0] != "A" {
-		t.Fatalf("session two was not judged from the floor (the file session one was refused for should arrive as an addition): %v", second)
-	}
-	if len(e.StopContinuations(proj, "s-015-06-two")) == 0 {
-		t.Fatalf("session two, whose range holds the bad file, was not refused by its own evaluation")
-	}
-	if n := len(e.StopContinuations(proj, "s-015-06-one")); n != oneBefore {
-		t.Fatalf("session one's refusals changed from %d to %d because of session two", oneBefore, n)
+	later := e.AllBlockingErrorsFrom(proj, sess, "Stop")[stops:]
+	if got := strings.Join(later, "\n"); !strings.Contains(got, "this file is not acceptable") || !strings.Contains(got, "(main") {
+		t.Fatalf("the Stop after the switch did not refuse main's unfixed range:\n%s", got)
 	}
 }

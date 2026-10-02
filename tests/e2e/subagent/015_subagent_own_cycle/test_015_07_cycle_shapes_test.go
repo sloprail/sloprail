@@ -21,9 +21,12 @@ import (
 // refusesOnceThenRelents refuses the first cycle it judges and permits every
 // cycle after.
 //
-// The counter is a file in the file-guard's own folder ($SR_GUARDRAIL_DIR), which
-// for an isolated sub-agent is the folder inside ITS worktree — so the count is
-// per-sub-agent and a second sub-agent does not inherit the first's.
+// The counter is a file at the root of the tree the check runs in (three levels above
+// $SR_GUARDRAIL_DIR), which for an isolated sub-agent is ITS worktree — so the count is
+// per-sub-agent and a second sub-agent does not inherit the first's. Not inside the
+// guard's folder: a verdict is keyed by a hash of everything under `.sloprail`, so a check
+// writing there changes its own key between the run and the verify, and the file would be
+// an uncommitted guarded change at the Stop.
 //
 // A file-guard after-check (a file-guard acts only at Stop): it fires at the sub-agent's
 // SubagentStop against the settled `.md` file it made, and a refusal blocks that
@@ -37,11 +40,11 @@ checks:
 
 const refuseOnceScript = `#!/bin/sh
 payload=$(cat)
-n=$(cat "$SR_GUARDRAIL_DIR/count" 2>/dev/null || echo 0)
+n=$(cat "$SR_GUARDRAIL_DIR/../../../.onceonly.count" 2>/dev/null || echo 0)
 n=$((n + 1))
-echo "$n" > "$SR_GUARDRAIL_DIR/count"
+echo "$n" > "$SR_GUARDRAIL_DIR/../../../.onceonly.count"
 for path in $(` + pathsOfPayload + `); do
-  echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+  echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/../../../.onceonly.log"
 done
 if [ "$n" -le 1 ]; then
   echo '{"reason":"the first attempt is refused"}'
@@ -125,7 +128,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	// tree the root never diffs, and no verdict of the root's is about it. A
 	// root judging it would be the parent handed another session's work as its
 	// own.
-	for _, l := range e.FileGuardLedgerLines(proj, "onceonly", "log") {
+	for _, l := range e.FileGuardLedgerLines(proj, "onceonly", "../../../.onceonly.log") {
 		if pathOf(l) == "first.md" || pathOf(l) == "second.md" {
 			t.Fatalf("the DISPATCHING session's own cycle judged %q — a file that exists only in "+
 				"the sub-agent's separate worktree. The delegated work was attributed to the "+
@@ -142,7 +145,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 
 	// The guardrail ran a bounded number of times: it refused once and relented
 	// on the judged retry, so the sub-agent did not loop.
-	lines := subLedger(t, proj, theWorktree(t, proj), "onceonly", "log")
+	lines := subLedger(t, proj, theWorktree(t, proj), "onceonly", "../../../.onceonly.log")
 	if len(lines) == 0 {
 		t.Fatalf("the guardrail never ran at the sub-agent's cycle at all")
 	}
@@ -210,14 +213,15 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	}
 }
 
-// T015_08b: by DEFAULT a re-fired stop is judged — an agent does not pass a rule
-// by being sent round again. An always-refusing rule is therefore asked on the
-// retry too, and the loop still ends: the engine's default cap (8, the harness's
-// own) lets the turn end once it is reached, before the harness has to override.
-func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
+// T015_08b: a re-fired stop is still judged — an agent does not pass a rule by being sent
+// round again. The always-refusing rule's stored FAIL is replayed at every re-fired stop (the
+// verdict is content-keyed: a retry that changes nothing is not a new question, so the check
+// is not re-rolled and runs once), and the loop still ends: the engine's default cap (8, the
+// harness's own) lets the turn end once it is reached, before the harness has to override.
+func TestT015_08b_AReFiredSubagentStopReplaysTheStoredRefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysOutsideRules})
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -233,10 +237,17 @@ func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
 	if hitRetryCap(res.Output) {
 		t.Fatalf("the harness had to override the hook; the engine's own cap should have ended the loop first:\n%s", res.Output)
 	}
-	lines := subLedger(t, proj, theWorktree(t, proj), "always", "log")
-	if len(lines) < 2 {
-		t.Fatalf("the guardrail ran %d time(s) (%v): the re-fired stop was not judged, so a "+
-			"rule gave way to the sub-agent simply being sent round again", len(lines), lines)
+	// The refusal is the rule's own, and it was delivered at more than one stop (the sub-agent was
+	// re-run each time: the de-duplicated record shows the text once, the stream shows the loop).
+	if !strings.Contains(strings.Join(e.SubagentBlockingErrors(proj, "s-015-08b"), "\n"), "this rule always says no") {
+		t.Fatalf("the rule's refusal never reached the sub-agent's own stop:\n%s", res.Output)
+	}
+	if n := strings.Count(res.Output, "re-running subagent (turn"); n < 2 {
+		t.Fatalf("the sub-agent was sent round %d time(s): the re-fired stop was not judged, so a rule "+
+			"gave way to the sub-agent simply being sent round again", n)
+	}
+	if lines := readLines(t, filepath.Join(proj, ".claude", "worktrees", theWorktree(t, proj), ".refused.log")); len(lines) != 1 {
+		t.Fatalf("the check ran %d times (%v): a stored refusal is replayed, never re-rolled", len(lines), lines)
 	}
 }
 
@@ -263,6 +274,34 @@ echo "asked" >> "$SR_GUARDRAIL_DIR/log"
 echo '{"reason":"this rule always says no"}'
 exit 1
 `
+
+// refuseAlwaysOutsideRules is refuseAlwaysScript with its ledger at the root of the tree, outside
+// the `.sloprail` whose files key every verdict (and which commit-required would ask to commit).
+const refuseAlwaysOutsideRules = `#!/bin/sh
+cat >/dev/null
+echo "asked" >> "$SR_GUARDRAIL_DIR/../../../.refused.log"
+echo '{"reason":"this rule always says no"}'
+exit 1
+`
+
+// readLines is the non-empty lines of a file ("" lines dropped; none when it does not exist).
+func readLines(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
 
 // T015_09: a sub-agent that changes nothing ends cleanly and judges nothing.
 //

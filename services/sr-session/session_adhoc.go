@@ -7,12 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/gitrepo"
-	"github.com/sloprail/sloprail/internal/module"
-	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -21,10 +17,9 @@ import (
 // A session that runs `git -C ../other commit` or `cd ../other && git commit` makes
 // commits in a repository nobody registered. Before the Bash call runs, the repository
 // the command names is registered as an ad-hoc folder of the agent that ran it, started
-// at the HEAD it has right then (before any commit this call makes), with a baseline of
-// its branch tips. At Stop the agent judges that folder like its own: HEAD and every ref
-// it moved there, by THAT repository's rules (its own .sloprail plus the plugins the
-// session has enabled), never by the session root's.
+// at the HEAD it has right then. That repository's own rules (its .sloprail plus the
+// plugins the session has enabled) apply to what is done there: gates judge the call, and
+// commit-required covers its uncommitted work.
 
 // historyMoving are the git subcommands that make commits or move a branch's history.
 var historyMoving = map[string]bool{
@@ -154,8 +149,8 @@ func notePendingWorktrees(reg sessionstate.Store, p HookPayload) {
 }
 
 // registerPendingWorktrees registers the worktrees earlier calls created, as ad-hoc
-// folders of the agent that made them, started where each was created (its own HEAD
-// reflog's oldest entry), so a commit made in the same call it was created in is judged.
+// folders of the agent that made them, started where each was created (its HEAD
+// at registration), so a commit made in the same call it was created in is judged.
 func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent string) {
 	v, had, err := reg.Meta(pendingWorktreesKey)
 	if err != nil || !had {
@@ -183,38 +178,25 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 			f.Branch, f.HeadRef = pos.Branch, pos.Commit
 			f.BaseRef = pos.Commit
 		}
-		if created, _ := gitrepo.RefCreation(tree, "HEAD"); created != "" {
-			f.BaseRef = created
-		}
 		if id, err := gitrepo.RootCommit(tree); err == nil {
 			f.RepoID = id
 		}
 		if _, err := reg.RegisterFolder(f); err != nil {
 			continue
 		}
-		noteFolderHome(reg, tree)
-		if tips, terr := gitrepo.RefTips(tree); terr == nil {
-			if b, merr := json.Marshal(tips); merr == nil {
-				_ = reg.SetMeta(refsAtStartKey(tree), string(b))
-			}
-		}
-		_ = observeRefs(reg, rs.ID, tree, tree, agent)
+		ensureTracked(reg, rs.ID, tree, agent, f.BaseRef)
 	}
 	if b, err := json.Marshal(pending); err == nil {
 		_ = reg.SetMeta(pendingWorktreesKey, string(b))
 	}
 }
 
-// refsAtStartKey is the per-folder baseline of branch tips an ad-hoc folder started with.
-func refsAtStartKey(folder string) string { return "refs_at_start:" + filepath.Clean(folder) }
-
 // registerCommandFolders registers each repository outside the agent's own tree that
 // this Bash call is about to move history in, and observes its refs.
-func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayload) error {
-	migrateRefs(reg, rs.ID)
+func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayload) (err error) {
+	defer trackMissing(reg, rs, p)
 	registerPendingWorktrees(reg, rs, p.AgentID)
 	notePendingWorktrees(reg, p)
-	observeAdHocFolders(reg, rs.ID, p.AgentID)
 	rootTree, err := gitrepo.Root(rs.Cwd)
 	if err != nil || rootTree == "" {
 		return nil
@@ -250,70 +232,57 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 			if _, err := reg.RegisterFolder(f); err != nil {
 				return err
 			}
-			noteFolderHome(reg, tree)
-			if tips, terr := gitrepo.RefTips(tree); terr == nil {
-				if b, merr := json.Marshal(tips); merr == nil {
-					_ = reg.SetMeta(refsAtStartKey(tree), string(b))
-				}
-			}
-		}
-		if err := observeRefs(reg, rs.ID, tree, tree, p.AgentID); err != nil {
-			return err
+			ensureTracked(reg, rs.ID, tree, p.AgentID, f.BaseRef)
 		}
 	}
 	return nil
 }
 
-// evaluateAdHocFolders judges, at Stop, every repository this agent registered outside
-// its own tree: HEAD and every ref it moved there, under that repository's own rules.
-func evaluateAdHocFolders(cmd *cobra.Command, p HookPayload, scope hookScope, mods *module.Registry,
-	contextMap map[string]natures.ContextState, state sessionstate.Store) []fileGuardResult {
+// sessionFoldersOf is the folders the session registered for this agent besides its own
+// tree — ad-hoc repositories a command ran in — whose rules apply to what is done there. One
+// that cannot be read reads as none: for a decision that must not do so, use sessionFolders.
+func sessionFoldersOf(p HookPayload) []sessionstate.Folder {
+	out, _ := sessionFolders(p)
+	return out
+}
+
+// unreadableRegistry is the error for a session registry that exists but cannot be read (corrupt
+// or unreadable): it names the file and the way out. It is never read as "absent".
+func unreadableRegistry(path string, err error) error {
+	return fmt.Errorf("the session registry %s exists but cannot be read (%w); to recover, delete that file (the session re-registers its folders at the next hook) or fix its permissions, then stop again", path, err)
+}
+
+// sessionFolders is sessionFoldersOf with the error of a registry that exists but could not be
+// read: a caller that refuses must not take that for "nothing else was committed".
+func sessionFolders(p HookPayload) ([]sessionstate.Folder, error) {
 	rs, err := resolveRootSession(p)
 	if err != nil {
-		return nil // no session identity, so no registry to read
-	}
-	// A registry that exists but cannot be read is a refusal naming the error, not "no
-	// other repositories": those repositories' commits would go unjudged and nothing
-	// would say so.
-	unread := func(err error) []fileGuardResult {
-		return []fileGuardResult{{Name: "file-guards", Attribution: "file-guards", Refused: true,
-			Reason: fmt.Sprintf("the repositories this session worked in outside its own tree could not be read, so they were not judged: %v; "+
-				"refusing because a registry that could not be read must not be read as 'nothing else was committed'", err)}}
+		return nil, nil // no session identity, so no registry to read
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return nil, nil // an absent registry is no registry: a project without rules is never blocked by it
 		}
-		return unread(err)
+		return nil, unreadableRegistry(rs.Path, err)
 	}
 	reg, err := sessionstate.Open(rs.Path)
 	if err != nil {
-		return unread(err)
+		return nil, unreadableRegistry(rs.Path, err)
 	}
+	defer reg.Close()
 	folders, err := reg.Folders(rs.ID)
-	reg.Close()
 	if err != nil {
-		return unread(err)
+		return nil, unreadableRegistry(rs.Path, err)
 	}
-	var out []fileGuardResult
-	var results = openChecksStore(cmd, p, scope)
-	if results != nil {
-		defer results.Close()
-	}
+	var out []sessionstate.Folder
 	for _, f := range folders {
-		if f.Role != sessionstate.FolderAdHoc || f.AgentID != p.AgentID {
+		if f.AgentID != p.AgentID || f.Role == sessionstate.FolderRoot {
 			continue
 		}
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
 			continue
 		}
-		loaded := newNatureDeclarations(cmd, f.Path, mods)
-		for _, r := range evaluateChangesets(cmd, loaded.FileGuards, p, scope, f.Path, contextMap, state, results) {
-			if r.Reason != "" && !strings.Contains(r.Reason, f.Path) {
-				r.Reason = "In " + f.Path + " (a repository outside the session's own tree): " + r.Reason
-			}
-			out = append(out, r)
-		}
+		out = append(out, f)
 	}
-	return out
+	return out, nil
 }

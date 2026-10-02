@@ -123,7 +123,7 @@ func TestT041_13_FileGuardReconcilesEachMarkerPython(t *testing.T) {
 	e.Run(proj, "s-041-13", "fix it", Turns("done",
 		Bash("b2", write(pyMoved(sha, pyA, pyB))),
 	).ThenCommit("carry the origin bytes"))
-	if res := e.StopNow(proj, "s-041-13", false); strings.Contains(res.Output, reconcileRefusal) {
+	if res := e.CheckRunRaw(proj, "s-041-13", e.RunBase("s-041-13"), "HEAD"); strings.Contains(res.Output, reconcileRefusal) {
 		t.Fatalf("the file-guard still refused a correct two-marker Python move:\n%s", res.Output)
 	}
 }

@@ -64,9 +64,9 @@ func TestReview_SubstantiatedPermits(t *testing.T) {
 	if !e.Exists(proj, taskPath) {
 		t.Errorf("the in_review task did not land on disk")
 	}
-	// The review judge runs last at Stop (task-review sorts after task-body), so the
-	// captured prompt is the reviewer's.
-	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	// The judges run concurrently, so the reviewer's prompt is the captured one with its
+	// <cited_results> block.
+	prompt := e.JudgePromptWith(proj, "judge-prompt.txt", "<cited_results>")
 	if !containsStr(prompt, "<cited_results>") || !containsStr(prompt, "quoted: "+proofMarker) {
 		t.Fatalf("the reviewer was not handed the cited tool result:\n%s", prompt)
 	}
@@ -142,7 +142,7 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 	if !e.Exists(proj, taskPath) {
 		t.Fatalf("the to_do task did not land on disk, so it never reached the Stop review")
 	}
-	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); prompt != "" {
+	if prompt := e.JudgePromptWith(proj, "judge-prompt.txt", "<cited_results>"); prompt != "" {
 		t.Fatalf("the review judge WAS invoked for a to_do task (%d-byte prompt) — the skip did not abstain the check:\n%s", len(prompt), prompt)
 	}
 }
@@ -249,7 +249,7 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	}
 	// Cited commits accumulate: the reviewer is handed the transition's proof AND
 	// the later commit's, each with its own tool output.
-	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	prompt := e.JudgePromptWith(proj, "judge-prompt.txt", "<cited_results>")
 	for _, marker := range []string{proofMarker, "PROOF-TWO-7715"} {
 		if !containsStr(prompt, "quoted: "+marker) {
 			t.Errorf("the reviewer was not handed the tool output cited as %q:\n%s", marker, prompt)

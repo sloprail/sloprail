@@ -1,127 +1,104 @@
 package gitrepo
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// Two scoping principles for a range a rule judges, applied the same way to every
-// recorded tip (HEAD, a branch, a sub-agent's worktree, an ad-hoc folder):
-//
-//   - RULE AGE: a rule judges only commits made after it came into force for the
-//     session (RaiseBaseToTime, RuleAbsentFromLine).
-//   - WHAT STILL STANDS: a tip that has already landed upstream is judged only on the
-//     paths whose content upstream still holds as the tip left it (StandsUpstream).
-
-// RaiseBaseToTime moves a range's base up to the newest commit on head's first-parent
-// line committed strictly BEFORE since, so only commits made at or after since remain in
-// the range. The base never moves earlier; a range with no commit before since, or whose
-// base is already later, is returned as it was. since is compared at second precision, the
-// resolution of a commit date: a commit in the same second as since counts as after it,
-// the stricter side.
-func RaiseBaseToTime(dir string, r Range, since time.Time) (Range, error) {
-	if since.IsZero() || r.Base == r.Head || r.Head == "" {
+// RaiseBaseToRuleFloor is the RULE AGE scoping of an explicit range: a rule judges only the
+// work made after it came into force. The rule's floor is the PARENT of the last commit
+// reachable from r.Head that touched the rule's folder (repository-relative), so a rule
+// added mid-branch applies from its add commit and what came before it is grandfathered.
+// The effective base is the later of the range's base and that floor; a range already
+// starting at or after the floor, a rule that already stood at the base, a rule committed nowhere on head's history, or a folder
+// outside the repository is returned as it was.
+func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
+	if strings.TrimSpace(folder) == "" || r.Head == "" || r.Base == r.Head {
 		return r, nil
 	}
-	out, err := run(dir, "log", "--first-parent", "--format=%H %ct", r.Head)
+	out, err := run(dir, "log", "-1", "--format=%H", r.Head, "--", folder)
 	if err != nil {
 		return r, err
 	}
-	cut := since.Unix()
-	for _, line := range strings.Split(out, "\n") {
-		sha, ts, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok || !isObjectName(sha) {
-			continue
-		}
-		n, err := strconv.ParseInt(ts, 10, 64)
-		if err != nil || n >= cut {
-			continue
-		}
-		if sha == r.Base {
+	last := strings.TrimSpace(out)
+	if last == "" {
+		return raiseByRuleDate(dir, r, folder)
+	}
+	if !isObjectName(last) {
+		return r, fmt.Errorf("gitrepo: floor for %q resolved to %q, not an object name", folder, last)
+	}
+	if r.Base != EmptyTree {
+		// A rule that already stood at the base keeps the strict range: editing, or deleting and
+		// re-adding, it mid-range is no way to skip judging the earlier work.
+		if _, err := run(dir, "cat-file", "-e", r.Base+":"+folder); err == nil {
 			return r, nil
 		}
-		if r.Base != EmptyTree {
-			if ok, err := IsAncestor(dir, sha, r.Base); err != nil || ok {
-				return r, err // the base is already at or after it
-			}
-		}
-		r.Base = sha
+	}
+	floor, err := parentOrEmptyTree(dir, last)
+	if err != nil {
+		return r, err
+	}
+	if floor == EmptyTree || floor == r.Base {
 		return r, nil
 	}
+	if r.Base != EmptyTree {
+		// Only ever RAISE: the floor must descend from the base. One on a side branch
+		// (before the merge-base, or unrelated to it) would widen the range to landed work.
+		if desc, err := IsAncestor(dir, r.Base, floor); err != nil || !desc {
+			return r, err
+		}
+	}
+	r.Base = floor
 	return r, nil
 }
 
-// RuleAbsentFromLine reports whether a rule's folder (repository-relative) was never part
-// of the history ending at tip while HEAD has it committed: it is absent from the tip's
-// tree and no commit of that history touched it, so that line of work predates the rule.
-// A rule that was there and was deleted is NOT absent (deleting a rule is a change of it,
-// judged as one), and a rule committed nowhere is left to the session-start floor.
-func RuleAbsentFromLine(dir, tip, folder string) bool {
-	if strings.TrimSpace(folder) == "" || tip == "" {
-		return false
-	}
-	if out, err := run(dir, "ls-tree", "--name-only", tip, "--", folder); err != nil || strings.TrimSpace(out) != "" {
-		return false
-	}
-	if out, err := run(dir, "log", "-1", "--format=%H", tip, "--", folder); err != nil || strings.TrimSpace(out) != "" {
-		return false
-	}
-	out, err := run(dir, "ls-tree", "--name-only", "HEAD", "--", folder)
-	return err == nil && strings.TrimSpace(out) != ""
-}
-
-// RuleAddedAt is when the commit that first brought a rule's folder (repository-relative)
-// into HEAD's history was committed, or the zero time when HEAD's history has none. It is
-// the instant a rule absent from an older line of history came into force: work committed
-// on that line after it is the rule's to judge (RaiseBaseToTime), work before it is not.
-func RuleAddedAt(dir, folder string) time.Time {
-	if strings.TrimSpace(folder) == "" {
-		return time.Time{}
-	}
-	out, err := run(dir, "log", "--reverse", "--format=%ct", "HEAD", "--", folder)
-	if err != nil {
-		return time.Time{}
-	}
-	first, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
-	n, err := strconv.ParseInt(strings.TrimSpace(first), 10, 64)
-	if err != nil {
-		return time.Time{}
-	}
-	return time.Unix(n, 0)
-}
-
-// UpstreamRef is the remote branch work lands on (origin/HEAD's target, else
-// origin/main), or "" when none is known.
-func UpstreamRef(dir string) string { return upstreamRef(dir) }
-
-// StandsUpstream reports whether path (and oldPath, for a rename) holds the same content
-// at upstream as at tip, a path absent from both included: the tip's contribution to it
-// still stands. A path upstream has changed since was superseded by later commits, which
-// are judged where they were made. Anything uncertain is true, so a file is never
-// dropped from judgement on a doubt.
-func StandsUpstream(dir, tip, up, path, oldPath string) bool {
-	if up == "" || tip == "" {
-		return true
-	}
-	same := func(p string) bool {
-		a, ok1 := blobAt(dir, up, p)
-		b, ok2 := blobAt(dir, tip, p)
-		return !ok1 || !ok2 || a == b
-	}
-	if !same(path) {
-		return false
-	}
-	return oldPath == "" || same(oldPath)
-}
-
-func blobAt(dir, rev, path string) (string, bool) {
-	out, err := run(dir, "rev-parse", "--verify", "-q", rev+":"+path)
+// parentOrEmptyTree is commit's first parent, or the empty tree for a root commit.
+func parentOrEmptyTree(dir, commit string) (string, error) {
+	// `--verify -q` exits 1, silently, when the commit has no parent.
+	out, err := run(dir, "rev-parse", "--verify", "-q", commit+"^")
 	if err != nil {
 		if exitCode(err) == 1 {
-			return "", true // absent there
+			return EmptyTree, nil
 		}
-		return "", false
+		return "", err
 	}
-	return strings.TrimSpace(out), true
+	sha := strings.TrimSpace(out)
+	if !isObjectName(sha) {
+		return "", fmt.Errorf("gitrepo: parent of %s resolved to %q, not an object name", commit, sha)
+	}
+	return sha, nil
+}
+
+// raiseByRuleDate is the floor of a rule that head's own history does not carry (an older branch,
+// cut before the rule arrived): the rule is in force from the commit that last changed it in the
+// checkout (HEAD) on, so the commits head made BEFORE that commit's date are not its debt. The
+// base becomes the newest commit of the range older than that date; a range with none is returned
+// as it was.
+func raiseByRuleDate(dir string, r Range, folder string) (Range, error) {
+	out, err := run(dir, "log", "-1", "--format=%ct", "HEAD", "--", folder)
+	if err != nil {
+		return r, nil // no checkout to ask: the rule has no floor
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return r, nil
+	}
+	if r.Base != EmptyTree {
+		if _, err := run(dir, "cat-file", "-e", r.Base+":"+folder); err == nil {
+			return r, nil
+		}
+	}
+	args := []string{"rev-list", "-1", fmt.Sprintf("--before=%d", ts-1), r.Head}
+	if r.Base != EmptyTree {
+		args = append(args, "^"+r.Base)
+	}
+	out, err = run(dir, args...)
+	if err != nil {
+		return r, err
+	}
+	if sha := strings.TrimSpace(out); sha != "" {
+		r.Base = sha
+	}
+	return r, nil
 }

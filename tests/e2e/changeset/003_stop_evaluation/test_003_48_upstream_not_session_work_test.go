@@ -19,10 +19,7 @@ const asUpstream = "-c user.name=upstream -c user.email=up@example.com"
 func remoteWithUpstream(t *testing.T, e *Env, proj string) (land func(path, content, msg string)) {
 	t.Helper()
 	main := e.Git(proj, "branch", "--show-current")
-	bare := filepath.Join(t.TempDir(), "origin.git")
-	e.Git(filepath.Dir(bare), "init", "-q", "--bare", bare)
-	e.Git(bare, "symbolic-ref", "HEAD", "refs/heads/"+main)
-	e.Git(proj, "remote", "add", "origin", bare)
+	bare := e.Origin(proj)
 	e.Git(proj, "push", "-q", "origin", "HEAD:refs/heads/"+main)
 	e.Git(proj, "fetch", "-q", "origin")
 	e.Git(proj, "remote", "set-head", "origin", main)
@@ -97,24 +94,60 @@ func TestT003_48_ABranchRebasedOntoANewerMainIsJudgedOnItsOwnCommits(t *testing.
 	}
 }
 
-// (3) a session commit that later lands on the default branch by a fast-forward push is
-// still the session's: judged (and refused) until it passed.
-func TestT003_48_ASessionCommitThatLandedUpstreamIsStillJudged(t *testing.T) {
+// (3) a session commit that lands on the default branch by a fast-forward push leaves an EMPTY
+// range locally: the base is always the merge base with the remote default branch, so the local
+// Stop (early feedback only) judges nothing. CI covers it: it verifies the push event's
+// before..after (and a pull request's merge-base(target, head)..head).
+func TestT003_48_ASessionCommitThatLandedUpstreamIsNotInTheLocalRangeCIOnPushCoversIt(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	remoteWithUpstream(t, e, proj)
 	main := e.Git(proj, "branch", "--show-current")
 
 	e.Run(proj, "s-003-48c", "push", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
-		Bash("p1", "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin"),
+		Bash("p1", "sh "+shipScript(e, proj, "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin")), // a script: the verify-before-push gate reads the command line, not the script
 	))
-	if got := stopRefusals(e, proj, "s-003-48c"); !strings.Contains(got, refusalText) {
-		t.Fatalf("a session commit that landed upstream was not judged:\n%s", got)
+	if got := stopRefusals(e, proj, "s-003-48c"); got != "" {
+		t.Fatalf("the local Stop judged a commit that landed on the default branch (CI on push covers it):\n%s", got)
 	}
-	blocks := stopBlocks(e, proj, "s-003-48c")
+}
 
-	e.Run(proj, "s-003-48c", "fix", Turns("fixed", harness.CommitFile("c2", "docs/a.md", "clean words", "fix a")))
-	if n := stopBlocks(e, proj, "s-003-48c"); n != blocks {
-		t.Fatalf("the fixed commit was still refused:\n%s", newBlocks(e, proj, "s-003-48c", blocks))
+// (4) a session's feature branch fast-forward-pushed to origin/main (then fetched): same, the range
+// is empty locally; CI on push covers it.
+func TestT003_48_AFeatureBranchFastForwardedToMainIsNotInTheLocalRangeCIOnPushCoversIt(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	remoteWithUpstream(t, e, proj)
+	main := e.Git(proj, "branch", "--show-current")
+
+	e.Run(proj, "s-003-48d", "push", Turns("done",
+		Bash("b1", "git switch -q -c feat"),
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
+		Bash("p1", "sh "+shipScript(e, proj, "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin")), // a script: the verify-before-push gate reads the command line, not the script
+	))
+	if got := stopRefusals(e, proj, "s-003-48d"); got != "" {
+		t.Fatalf("the local Stop judged a feature-branch commit that landed on the default branch (CI on push covers it):\n%s", got)
 	}
+}
+
+// (5) the session commits AND fast-forward-pushes to origin/main in ONE command: the same, nothing
+// is left in the local range; CI on push covers it.
+func TestT003_48_ACommitPushedFastForwardInOneCommandIsNotInTheLocalRangeCIOnPushCoversIt(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	remoteWithUpstream(t, e, proj)
+	main := e.Git(proj, "branch", "--show-current")
+
+	script := "mkdir -p docs && echo 'FORBIDDEN words' > docs/a.md && git add -A && git commit -q -m 'add a' && git push -q origin HEAD:refs/heads/" + main
+	e.WriteFile(proj, "../ship.sh", script)
+	e.Run(proj, "s-003-48e", "commit and push", Turns("done",
+		Bash("p1", "sh "+filepath.Join(filepath.Dir(proj), "ship.sh")), // one hook window: the verify-before-push gate reads the command line, not the script
+	))
+	if got := stopRefusals(e, proj, "s-003-48e"); got != "" {
+		t.Fatalf("the local Stop judged a commit that landed on the default branch (CI on push covers it):\n%s", got)
+	}
+}
+
+// shipScript writes a script next to the project that runs command, and returns its path.
+func shipScript(e *Env, proj, command string) string {
+	e.WriteFile(proj, "../ship-push.sh", "cd "+proj+" && "+command)
+	return filepath.Join(filepath.Dir(proj), "ship-push.sh")
 }

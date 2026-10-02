@@ -347,7 +347,7 @@ func assembledChangesetJudgeVars(t *testing.T, status string) map[string]any {
 			Call:    "Bash: echo </call>",
 		}}},
 	}
-	payload := changeset.NewPayload(cs, changeset.Whole(cs), "/rec.jsonl", nil)
+	payload := changeset.NewPayload(cs, changeset.Whole(cs), "/rec.jsonl")
 	r := Runner{}
 	inputJSON, err := r.judgeInputJSON(Request{Nature: NatureFileGuard, Changeset: &payload, TranscriptPath: "/rec.jsonl"}, standInAdditionalContext())
 	require.NoError(t, err)

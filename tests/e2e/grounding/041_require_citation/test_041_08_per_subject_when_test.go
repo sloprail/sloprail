@@ -59,7 +59,7 @@ exit 1
 	if !strings.Contains(refusal, "an empty commit carrying only the trailer does not count") {
 		t.Errorf("the refusal does not say an empty trailer-only commit grounds nothing:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	// Their one commit is HEAD, unpushed, with a clean tree: the amend is offered, but the
 	// recommended fix — and the command followed here — is a follow-up commit that
@@ -71,7 +71,7 @@ exit 1
 		Write("w3", "memories/a.md", "# a changed again\n"),
 		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
 	))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the refusal's own command did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
@@ -99,7 +99,9 @@ require:
 	if first := stopRefusal(e, proj, sess); !strings.Contains(first, "--amend") {
 		t.Fatalf("premise: an unpushed HEAD should be offered the amend:\n%s", first)
 	}
-	e.Git(proj, "update-ref", "refs/remotes/origin/main", "HEAD")
+	// Pushed to a branch that is not the default one: pushed to the default branch it would leave
+	// an empty range (the base is the merge base with the default branch; CI on push covers that).
+	e.Git(proj, "update-ref", "refs/remotes/origin/feature", "HEAD")
 	e.Run(proj, sess, "go on", Turns("done", Bash("b1", "true")))
 	all := e.AllBlockingErrorsFrom(proj, sess, "Stop")
 	refusal := all[len(all)-1]
@@ -109,13 +111,13 @@ require:
 	if strings.Contains(refusal, "--amend") || strings.Contains(refusal, "reset --soft") {
 		t.Fatalf("a pushed HEAD was offered a history rewrite:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	e.Run(proj, sess, "go on", Turns("done",
 		Write("w2", "memories/a.md", "# a changed\n"),
 		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
 	))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the follow-up commit did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }

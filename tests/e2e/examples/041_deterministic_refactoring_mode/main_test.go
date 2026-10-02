@@ -18,7 +18,8 @@ import (
 //     reconcile byte-for-byte (minus imports/whitespace) against the origin range
 //     the marker pins. Relevant only inside the refactoring context (its match
 //     reads `context["refactoring"].active`). The same-named file-guard
-//     re-runs the reconcile at Stop on the settled file. T041_01..05, T041_10.
+//     re-runs the reconcile at Stop on the committed file; it reads no context
+//     (file-guards cannot see the session), only the `moved-from` marker. T041_01..05, T041_10.
 //   - a COMPLETENESS check: a declared refactor's every promised move must land.
 //     This BLOCKS, so it is a Stop GATE (`gate/refactor-complete`), NOT the
 //     context's exit — a context's exit is pure lifecycle and cannot refuse a Stop
@@ -27,7 +28,7 @@ import (
 //     landed. T041_06..08.
 //
 // The `refactoring` context TRACKS the declaration: it activates on PreToolUse (so
-// the file-guard's `.active` match holds before a write) and on PostTagWrite (which
+// the gates' `.active` match holds before a write) and on PostTagWrite (which
 // fires at Stop, once the turn is settled, so enter can read `#refactor scope=...`
 // and populate declared_markers before the gate reads it). The declared scope
 // names the ACTUAL move fqns (`<path>@<sha>:<lines>`), so a declared token IS a
@@ -35,8 +36,8 @@ import (
 // the gate check a completed move by a plain search of the tree.
 //
 // This is the one composite in the wave that works end to end against the engine
-// as shipped: it reads the context via the file-guard's `match:
-// context["refactoring"].active` and the gate's stdin `.context`, and resolves the
+// as shipped: it reads the context via the gates' `match:
+// context["refactoring"].active` and stdin `.context`, and resolves the
 // origin via `git show <sha>:<path>` (no cwd-relative grep). Its scripts DO ship
 // with the execute bit.
 //

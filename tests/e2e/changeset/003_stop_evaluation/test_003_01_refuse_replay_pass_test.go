@@ -8,10 +8,9 @@ import (
 
 // T003_01: the rule is evaluated over the committed range and refuses; the
 // refusal reaches the agent. A fix commit is judged over the WHOLE range — the
-// squashed net change, both commits — and passes; the watermark then sits at that
-// head, so a Stop with nothing new runs no check, and a later commit is judged
-// alone.
-func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
+// squashed net change, both commits — and passes; the pass is stored, so a Stop with
+// nothing new runs no check, and a later commit is judged with the range it belongs to.
+func TestT003_01_RefuseThenFixThenPassIsStored(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	// The rule existed at session start: the base is the session start (the rule's commit).
 	floor := e.Git(proj, "rev-parse", "HEAD")
@@ -53,21 +52,27 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 	}
 	after := len(e.BlockingErrorsFrom(proj, "s-003-01", "Stop"))
 
-	// Pass recorded: the watermark is the head it passed at. A Stop with nothing
-	// new selects nothing and runs no check.
-	passedHead := last.Head
+	// A Stop with nothing new runs no check: the pre-Stop run replays the stored pass (a script
+	// verdict is cached like any other) and the Stop itself only verifies, executing nothing.
 	before := len(ledger(t, led))
 	e.Run(proj, "s-003-01", "anything else?", Turns("no", Bash("b1", "true")))
 	if n := len(ledger(t, led)); n != before {
 		t.Fatalf("a Stop with no new commits ran the check %d more time(s)", n-before)
 	}
+	if r := e.StopNow(proj, "s-003-01", false); harness.Blocked(r) {
+		t.Fatalf("a Stop over a passed range was refused:\n%s", r.Output)
+	}
+	if n := len(ledger(t, led)); n != before {
+		t.Fatalf("a bare Stop executed the check %d time(s); verify only reads stored verdicts", n-before)
+	}
 
-	// A later commit is judged alone, from the watermark.
+	// A later commit is judged with the range it belongs to: no watermark splits it off,
+	// the range is the whole session's work from its base.
 	e.Run(proj, "s-003-01", "one more", Turns("more", harness.CommitFile("c3", "docs/b.md", "more clean words", "add b")))
 	runs = ledger(t, led)
 	next := runs[len(runs)-1]
-	if next.Base != passedHead || len(next.Commits) != 1 || next.Commits[0] != "add b" {
-		t.Fatalf("the next range was %+v; want only the new commit, from %s", next, passedHead)
+	if next.Base != floor || len(next.Commits) != 3 || next.Commits[2] != "add b" {
+		t.Fatalf("the next range was %+v; want the session's three commits, from %s", next, floor)
 	}
 	if n := len(e.BlockingErrorsFrom(proj, "s-003-01", "Stop")); n != after {
 		t.Fatalf("a passing range was refused (%d blocking errors, had %d)", n, after)
@@ -78,6 +83,7 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 // recorded, so the watermark advances over it.
 func TestT003_02_NothingSelectedIsAPass(t *testing.T) {
 	e, proj, led := project(t, docsRule)
+	floor := e.Git(proj, "rev-parse", "HEAD")
 	e.Run(proj, "s-003-02", "take notes", Turns("done",
 		harness.CommitFile("c1", "notes/more.md", "FORBIDDEN but unguarded", "add a note"),
 	))
@@ -87,9 +93,9 @@ func TestT003_02_NothingSelectedIsAPass(t *testing.T) {
 	if errs := e.BlockingErrorsFrom(proj, "s-003-02", "Stop"); len(errs) != 0 {
 		t.Fatalf("refused: %q", errs)
 	}
-	res := e.CLIDirectEnv(proj, []string{"CLAUDE_CODE_SESSION_ID=s-003-02", "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="},
-		"sr-checks", "status")
-	if res.Code != 0 || !strings.Contains(res.Output, "file-guard/docs") || !strings.HasPrefix(strings.TrimSpace(res.Output), "pass") {
-		t.Fatalf("the empty selection was not recorded as a pass:\n%s", res.Output)
+	// Nothing selected leaves nothing to judge and nothing stored (no watermark to advance):
+	// the range verifies as a pass.
+	if res := e.CheckVerify(proj, "s-003-02", floor, "HEAD"); res.Code != 0 {
+		t.Fatalf("a range where match selected nothing did not verify:\n%s", res.Output)
 	}
 }

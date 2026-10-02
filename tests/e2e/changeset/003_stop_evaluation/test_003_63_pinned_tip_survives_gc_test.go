@@ -7,46 +7,39 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T003_63: an owed tip survives git's housekeeping. The branch holding an unjudged violating
-// commit is deleted, its reflog expired and the repository garbage-collected with
-// --prune=now: nothing but the engine's own pin holds the commit. Stop still judges and
-// refuses it. And once a rule has passed the tip, the pin is dropped, so the engine leaves
-// nothing behind.
-func TestT003_63_AnOwedTipSurvivesBranchDeletionAndGarbageCollection(t *testing.T) {
+// T003_63: a removed worktree's last tip survives git's housekeeping. The sub-agent's branch is
+// deleted before its worktree's removal is reported, so the range cannot move to the root under
+// the branch's name: it is kept pinned at the last tip (refs/sloprail/pins/…). With the reflog
+// expired and the repository garbage-collected --prune=now, nothing but the pin holds the commit,
+// and the root's Stop still verifies and refuses it.
+func TestT003_63_AGoneBranchsLastTipIsPinnedAndSurvivesGarbageCollection(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
-	main := e.Git(proj, "branch", "--show-current")
 	const sess = "s-003-63"
-
-	e.Run(proj, sess, "commit, delete the branch, collect garbage", Turns("done",
-		Bash("b1", "git switch -q -c side"),
-		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
-		Bash("b2", "git rev-parse HEAD > .git/owed-tip && git switch -q "+main),
-		Bash("b3", "git branch -D side"),
-		Bash("b4", "git reflog expire --expire=now --all && git gc -q --prune=now"),
+	sub := harness.SubagentScript(t, Turns("sub done",
+		Bash("b1", "git switch -q -c sub-a"),
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	if out := e.Git(proj, "cat-file", "-t", strings.TrimSpace(readLedger(t, proj+"/.git/owed-tip"))); out != "commit" {
-		t.Fatalf("premise: the engine's pin should have kept the commit through the collection, got %q", out)
-	}
-	got := stopRefusals(e, proj, sess)
-	if !strings.Contains(got, refusalText) || !strings.Contains(got, "docs/a.md") {
-		t.Fatalf("a violation whose branch was deleted and whose objects were collected escaped; refusals:\n%s", got)
-	}
-	if pins := e.Git(proj, "for-each-ref", "refs/sloprail/pins"); pins == "" {
-		t.Fatal("an owed tip should be pinned under refs/sloprail/pins")
-	}
-	blocks := stopBlocks(e, proj, sess)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	wt, _ := subagentFolder(t, e, proj, sess)
+	tip := strings.TrimSpace(e.Git(proj, "rev-parse", "sub-a"))
 
-	// Brought back and fixed, the tip passes, and its pin goes.
-	e.Run(proj, sess, "bring it back and fix it", Turns("fixed",
-		Bash("f1", "git switch -q -c side $(cat .git/owed-tip)"),
-		harness.CommitFile("f2", "docs/a.md", "clean words", "fix a"),
-		Bash("f3", "git switch -q "+main),
-	))
-	if n := stopBlocks(e, proj, sess); n != blocks {
-		t.Fatalf("the restored and fixed branch was still refused:\n%s", newBlocks(e, proj, sess, blocks))
+	e.Git(proj, "worktree", "remove", "--force", wt)
+	e.Git(proj, "branch", "-D", "sub-a")
+	removed := worktreeRemoved(t, e, proj, sess, wt)
+	if r := removed(); r.Code != 0 {
+		t.Fatalf("the hook blocked the removal: exit %d\n%s", r.Code, r.Output)
 	}
-	e.Run(proj, sess, "stop again", Turns("done", Bash("n1", "true")))
-	if pins := e.Git(proj, "for-each-ref", "refs/sloprail/pins"); strings.TrimSpace(pins) != "" {
-		t.Fatalf("a settled tip's pin was left behind:\n%s", pins)
+	if pins := e.Git(proj, "for-each-ref", "refs/sloprail/pins"); !strings.Contains(pins, tip) {
+		t.Fatalf("the gone branch's last tip %s was not pinned under refs/sloprail/pins:\n%s", tip, pins)
+	}
+	e.Git(proj, "reflog", "expire", "--expire=now", "--all")
+	e.Git(proj, "gc", "-q", "--prune=now")
+	if out := e.Git(proj, "cat-file", "-t", tip); strings.TrimSpace(out) != "commit" {
+		t.Fatalf("the pin did not keep the commit through the collection, got %q", out)
+	}
+
+	r := e.StopNow(proj, sess, false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "docs/a.md") || strings.Contains(r.Output, "cannot be read") {
+		t.Fatalf("the pinned tip's violation escaped the root's Stop:\n%s", r.Output)
 	}
 }

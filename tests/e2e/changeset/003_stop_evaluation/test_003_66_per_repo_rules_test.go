@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const libsRule = "match: \"lib/**\"\nchecks:\n  - script: ./check.sh\n"
+
 // T003_66: a rule belongs to the repository that declares it. A commit in another repository
 // (reached with `git -C`, no `cd`) is judged by THAT repository's rules and by the session's
 // enabled plugins, never by the root's: the root's `docs/**` rule does not follow the agent

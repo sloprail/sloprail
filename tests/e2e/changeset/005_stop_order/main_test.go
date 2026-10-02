@@ -9,10 +9,11 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// stop_order: at Stop the order is context ENTERS -> commit-required ->
-// file-guards -> gates -> context EXITS. A rule that reads context[] therefore
-// sees the contexts this turn entered (and the ones exiting at this very Stop),
-// never the previous turn's state.
+// stop_order: at Stop the order is context ENTERS -> commit-required -> gates ->
+// context EXITS. A rule that reads context[] therefore sees the contexts this turn
+// entered (and, for a gate, the ones exiting at this very Stop), never the previous
+// turn's state. Only gates read context: a file-guard judges committed bytes with no
+// session, and a file-guard whose match reads `context` fails to load.
 
 type Env = harness.Env
 
@@ -42,16 +43,17 @@ func modeContext(exitCode string) (string, map[string]string) {
 		}
 }
 
-// scopedGuard judges src/ only while the `mode` context is active. Its check
-// records a line per run in the ledger and refuses text containing FORBIDDEN.
-const scopedMatch = "match: path startsWith \"src/\" and context[\"mode\"].active\nchecks:\n  - script: ./check.sh\n"
+// scopedGate judges the workspace's src/ only while the `mode` context is active
+// (its match reads context). Its check records a line per run in the ledger and
+// refuses when a src/ file contains FORBIDDEN.
+const scopedMatch = "on:\n  - event: Stop\n    match: context[\"mode\"].active\nchecks:\n  - script: ./check.sh\n"
 
 func scopedCheck(ledger string) string {
 	return `#!/bin/sh
-payload="$(cat)"
+cat >/dev/null
 echo ran >> ` + ledger + `
-if printf '%s' "$payload" | jq -e 'any(.changeset.files[]; .newContent | contains("FORBIDDEN"))' >/dev/null; then
-  echo '{"reason":"SCOPED-GUARD refused FORBIDDEN text"}'
+if grep -rq FORBIDDEN "$SR_WORKSPACE/src" 2>/dev/null; then
+  echo '{"reason":"SCOPED-GATE refused FORBIDDEN text"}'
   exit 1
 fi
 exit 0
@@ -69,7 +71,7 @@ exit 1
 `
 
 // setup is a committed project with the mode context (exiting with exitCode at
-// Stop) and the scoped file-guard, plus the Stop gate when withGate.
+// Stop) and the context-scoped gate, plus the Stop gate when withGate.
 func setup(t *testing.T, exitCode string, withGate bool) (*Env, string, string) {
 	t.Helper()
 	e := New(t)
@@ -80,7 +82,7 @@ func setup(t *testing.T, exitCode string, withGate bool) (*Env, string, string) 
 	led := filepath.Join(t.TempDir(), "ledger")
 	y, files := modeContext(exitCode)
 	e.Context(proj, "mode", y, files)
-	e.FileGuard(proj, "scoped", scopedMatch, map[string]string{"check.sh": scopedCheck(led)})
+	e.Gate(proj, "scoped", scopedMatch, map[string]string{"check.sh": scopedCheck(led)})
 	if withGate {
 		e.Gate(proj, "stop-gate", stopGate, map[string]string{"check.sh": stopGateCheck})
 	}

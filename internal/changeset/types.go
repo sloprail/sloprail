@@ -34,9 +34,8 @@ type Payload struct {
 	// Subject is what is being judged as one unit. Without `subjects:` it is the
 	// whole changeset; with it, one entry the rule's script returned. Carried
 	// from the start so `subjects:` adds a producer, not a field.
-	Subject        Subject        `json:"subject"`
-	TranscriptPath string         `json:"transcriptPath"`
-	Context        map[string]any `json:"context"`
+	Subject        Subject `json:"subject"`
+	TranscriptPath string  `json:"transcriptPath"`
 }
 
 // Event is the fixed event a changeset evaluation presents.
@@ -121,17 +120,19 @@ type Marker struct {
 // Subject is one unit of evaluation and caching.
 //
 // Subjects (by Role) produces them: one file per requirement, the whole changeset
-// per check. The shape is here so that `subjects:` — a script returning several,
-// each fingerprinted and judged on its own, possibly over a per-commit sub-range —
-// replaces that producer and changes neither this type nor the verdict key, which
-// already carries a subject id.
+// per check. A rule's `subjects:` script (ParseSubjects) returns several instead, each
+// fingerprinted and judged on its own; the verdict key already carries a subject id.
 type Subject struct {
 	ID    string   `json:"id"`
 	Files []string `json:"files"`
 	// Range, when set, narrows the subject to a sub-range of the changeset (a
-	// single commit's, for example). Unused until `subjects:` exists.
+	// single commit's, for example). Not produced yet.
 	Range   *SubRange      `json:"range,omitempty"`
 	Context map[string]any `json:"context"`
+	// Fingerprint is what the `subjects:` script says the subject's verdict depends on
+	// besides its files' content (a file the checks open with their own tools): added to the
+	// verdict's cache key. Session-independent; empty for the default subject.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // SubRange is a sub-range of the changeset, as commit names.
@@ -179,10 +180,7 @@ func Subjects(cs Changeset, role Role) []Subject {
 }
 
 // NewPayload assembles what a check receives for one subject of a changeset.
-func NewPayload(cs Changeset, subject Subject, transcriptPath string, context map[string]any) Payload {
-	if context == nil {
-		context = map[string]any{}
-	}
+func NewPayload(cs Changeset, subject Subject, transcriptPath string) Payload {
 	if subject.Context == nil {
 		subject.Context = map[string]any{}
 	}
@@ -191,7 +189,6 @@ func NewPayload(cs Changeset, subject Subject, transcriptPath string, context ma
 		Changeset:      cs,
 		Subject:        subject,
 		TranscriptPath: transcriptPath,
-		Context:        context,
 	}
 }
 

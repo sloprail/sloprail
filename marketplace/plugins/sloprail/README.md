@@ -118,19 +118,25 @@ The name is qualified by the plugin AND the nature (`<plugin>/<nature>/<name>`),
 so disabling a shipped rule cannot also disable a project rule that happens to
 share its name — nor a differently-natured rule of the same name.
 
-## Opt-in rules
+## Judging file-guards
 
-Three gates ship off (`enabled: false`) and a project turns them on from its own
-`.sloprail/config.yaml`:
+File-guards are judged over an explicit range, never by the Stop hook:
 
-    enabled:
-      - sloprail/gate/judge-before-push
-      - sloprail/gate/no-merge-over-refusals
-      - sloprail/gate/no-destroying-owed-work
+    sr-checks run    --base origin/main --head HEAD   # runs what has no stored verdict; stores and pushes
+    sr-checks verify --base origin/main --head HEAD   # only reads stored verdicts, runs nothing; exit 1 on anything failing or unjudged
 
-`no-merge-over-refusals` refuses `gh pr merge` (and a push to the default branch) over
-refusals or unjudged commits; `no-destroying-owed-work` refuses the git commands that
-would destroy such commits (`branch -D`, `worktree remove`, hard resets, prunes).
+Every check (script, judge, requirement) is cached; a verdict per guard and subject is keyed by content (rule hash, subject, fingerprint), not by
+commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, so a
+rebase, another clone or CI reads the same results. The Stop hook only verifies: it
+refuses uncommitted work on guarded paths, then verifies each range the session
+tracks (`sr-session refs list|track|untrack`; a folder's current branch is tracked
+automatically). CI runs `sr-checks verify` as a required check. Two gates ship on by default
+around it: `sloprail/gate/verify-before-push` refuses an agent's `git push` until
+`sr-checks verify` passes for the commits it would send, and `sloprail/gate/checks-ref-sr-only`
+refuses any agent git write to the `sloprail/checks` results branch (only `sr-checks` writes
+it; reading stays allowed; it guards against an agent's accidental write, not a determined forger, since a ref name the shell builds at run time is not in the command's argv). The push gate sees the command line the agent runs, not the commands inside a script it runs; CI verify is the backstop for those. Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
+`pre-push` hook and the CI job are in
+`skills/authoring-guardrails/file-guard.md`.
 
 ## Changes to a project's rules
 

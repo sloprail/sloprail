@@ -12,10 +12,11 @@ import (
 type Env = harness.Env
 
 var (
-	New   = harness.New
-	Turns = harness.Turns
-	Bash  = harness.Bash
-	Write = harness.Write
+	New         = harness.New
+	Turns       = harness.Turns
+	NoAutoCheck = harness.NoAutoCheck
+	Bash        = harness.Bash
+	Write       = harness.Write
 )
 
 // TestMain removes the binary build dir when this package's tests finish.

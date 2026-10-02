@@ -49,6 +49,12 @@ type config struct {
 	// default (`enabled: false` in the declaration), by qualified name. The mirror of
 	// Disabled; a declaration that does not ship disabled is unaffected by it.
 	Enabled []string `yaml:"enabled"`
+
+	// EnableSubagentStopCheck makes a sub-agent's own Stop verify the tracked ranges too. Off by
+	// default: a sub-agent does not see the whole picture, so only the root's Stop verifies
+	// them (the ranges of every folder of the session, sub-agents' worktrees included, are
+	// tracked either way).
+	EnableSubagentStopCheck bool `yaml:"enable_subagent_stop_check"`
 }
 
 // isEnabled reports whether the project switched the named default-off declaration on.
@@ -95,6 +101,13 @@ func StopHookBlockCap(root string) (int, error) {
 			filepath.Join(root, configFile), *c.StopHookBlockCap)
 	}
 	return *c.StopHookBlockCap, nil
+}
+
+// EnableSubagentStopCheck reports whether the project opted in (`enable_subagent_stop_check: true`)
+// to a sub-agent's Stop verifying the tracked ranges. An unreadable config is "not opted in".
+func EnableSubagentStopCheck(root string) bool {
+	c, err := loadConfig(root)
+	return err == nil && c.EnableSubagentStopCheck
 }
 
 // loadConfig reads a project's config, returning the zero value when there is

@@ -8,7 +8,10 @@ import (
 )
 
 var (
-	New      = harness.New
+	// New opts in to a sub-agent's own Stop verifying (the default is off): this package tests it.
+	New = func(t *testing.T, o ...harness.Option) *harness.Env {
+		return harness.New(t, append(o, harness.WithSubagentStopCheck())...)
+	}
 	Turns    = harness.Turns
 	Write    = harness.Write
 	Bash     = harness.Bash

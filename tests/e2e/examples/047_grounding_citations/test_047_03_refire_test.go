@@ -51,7 +51,7 @@ func TestT047_09_NotFineDocBlocksUntilFixed(t *testing.T) {
 	harness.CommitInstalled(t, proj)
 
 	sess := "s-047-09"
-	refusals := func() int { return len(e.StopContinuations(proj, sess)) }
+	refusals := func() int { return len(e.AllBlockingErrorsFrom(proj, sess, "Stop")) }
 
 	e.Run(proj, sess, "write a doc with a bad citation", Turns("done",
 		Write("w1", "report.md", "# Report\n\nsee [x](UNRESOLVED).\n"),

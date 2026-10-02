@@ -30,14 +30,14 @@ func TestT034_01_LifecycleCommandsAreRefusedAndReadOnlyOnesAreNot(t *testing.T) 
 		`sr-session start < /dev/null`,
 	} {
 		res := e.Run(proj, sess, "run it", Turns("done", Bash("l"+string(rune('a'+i)), cmd)))
-		if !res.Refused() || !res.Saw("no-lifecycle-commands") || !res.Saw("Stop hook judges") {
+		if !res.Refused() || !res.Saw("no-lifecycle-commands") || !res.Saw("sr-checks run --base") {
 			t.Fatalf("%q was not refused with the way forward:\n%s", cmd, res.Output)
 		}
 	}
 
 	for i, cmd := range []string{
 		"sr-session refs list --session nothing; sr-session trajectory describe --help",
-		"sr-checks status",
+		"sr-checks show --help",
 	} {
 		res := e.Run(proj, sess, "read it", Turns("done", Bash("r"+string(rune('a'+i)), cmd)))
 		if res.Saw("no-lifecycle-commands") {

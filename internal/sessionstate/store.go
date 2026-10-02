@@ -97,12 +97,17 @@ type Store interface {
 	Folders(sessionID string) ([]Folder, error)
 	// SetFolderHead records the last HEAD seen in a registered folder.
 	SetFolderHead(sessionID, path, head string) error
-	// RecordRef records a ref a session committed on (the first sighting sets
-	// FirstTip, later ones move Tip). Refs lists them, one folder or all.
-	RecordRef(r Ref) error
-	Refs(sessionID, folder string) ([]Ref, error)
-	// SetRefAbandoned marks a recorded ref abandoned at a tip ("" clears it).
-	SetRefAbandoned(sessionID, folder, name, tip string) error
+
+	// TrackRange records a range of commits the session answers for in a folder. An automatic
+	// tracking only adds what is not there; the agent's replaces the base and tracks again.
+	TrackRange(r TrackedRange) error
+	// UntrackRange stops answering for a range, with the reason the agent gave. The range
+	// stays listed so the Stop can name it; a branch whose tip moves past tip is tracked again.
+	UntrackRange(sessionID, folder, head, reason, agentID, tip string) error
+	// SetRangeBase fills the base of a range an older engine recorded without one.
+	SetRangeBase(sessionID, folder, head, base string) error
+	// Ranges lists a session's ranges, tracked and untracked.
+	Ranges(sessionID string) ([]TrackedRange, error)
 
 	// Close releases the database.
 	Close() error

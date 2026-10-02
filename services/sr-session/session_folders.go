@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/sessionpath"
@@ -14,8 +12,9 @@ import (
 
 // The session's folders: a registry of the trees the session works in, kept in the
 // ROOT session's store, a row per (session, folder path) after a10n's
-// session_folders. Each row says where work in that folder began (BaseRef), and a
-// file-guard's range for a hook running in the folder starts there.
+// session_folders. A folder's own .sloprail rules apply in it: gates judge the calls made
+// there and commit-required covers its uncommitted work. (A file-guard's range is not
+// tracked from a folder: `sr-checks run` is given its range.)
 //
 // Why a registry and not the sub-agent's own session start. A sub-agent that owns a
 // worktree is dispatched into a tree created from the CURRENT main, hours after its
@@ -211,54 +210,7 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 		return err
 	}
 	if wrote {
-		noteFolderHome(reg, path)
+		ensureTracked(reg, rs.ID, path, f.AgentID, f.BaseRef)
 	}
-	if wrote && role == sessionstate.FolderRoot {
-		// What every branch held when the session began: not the session's work.
-		if tips, terr := gitrepo.RefTips(path); terr == nil {
-			if b, merr := json.Marshal(tips); merr == nil {
-				_ = reg.SetMeta(sessionstate.MetaRefsAtStart, string(b))
-			}
-		}
-	}
-	if err := registerCommandFolders(reg, rs, p); err != nil {
-		return err
-	}
-	// What this agent has touched in the folder so far, at every hook.
-	return observeRefs(reg, rs.ID, path, path, f.AgentID)
-}
-
-// sessionFolderFor is the registered folder a hook's tree is, or nil when it is not
-// one (nothing registered it, or the registry cannot be read — the caller then falls
-// back to the agent's own start, which is what it used before there was a registry).
-// root is the git root the range is computed in.
-//
-// A registry that EXISTS but cannot be read is an error, not "no folder": the caller then
-// falls back to the agent's own start, which for a sub-agent's worktree is the wrong
-// (wider) range, and nothing would say so. Only a session with no identity or no store
-// yet is "not registered".
-func sessionFolderFor(p HookPayload, root string) (*sessionstate.Folder, error) {
-	rs, err := resolveRootSession(p)
-	if err != nil {
-		return nil, nil // no session identity, so no registry to read
-	}
-	if _, err := os.Stat(rs.Path); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // a lookup never creates the root's store
-		}
-		return nil, fmt.Errorf("the session's folder registry could not be read: %w", err)
-	}
-	reg, err := sessionstate.Open(rs.Path)
-	if err != nil {
-		return nil, fmt.Errorf("the session's folder registry could not be read: %w", err)
-	}
-	defer reg.Close()
-	f, found, err := reg.Folder(rs.ID, filepath.Clean(root))
-	if err != nil {
-		return nil, fmt.Errorf("the session's folder registry could not be read: %w", err)
-	}
-	if !found || f.BaseRef == "" {
-		return nil, nil
-	}
-	return &f, nil
+	return registerCommandFolders(reg, rs, p)
 }

@@ -13,6 +13,13 @@ import (
 // `require: citation` stays legal on a file-guard: a citation rides on a commit
 // trailer, which the committed range carries.
 
+// contextInFileGuardMatch is the refusal for a file-guard `match` that reads `context`.
+// The match scope has no `context` variable, so the expression fails to compile on
+// that name and ValidateFileGuard swaps the compile error for this advice.
+const contextInFileGuardMatch = "a file-guard's match cannot read `context`: a file-guard judges committed bytes (in CI, with no session) " +
+	"and a context is session state — move the condition on the context to a gate " +
+	"(.sloprail/gate/<name>/gate.yaml, whose match reads `context`), and leave the file-guard to select files by what the commits hold"
+
 // transcriptDependent reports whether a prerequisite reads the session (a skill
 // loaded, a context active) and so may live only on a gate.
 func (p Prerequisite) transcriptDependent() bool { return p.Skill != "" || p.Context != "" }

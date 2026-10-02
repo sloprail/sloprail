@@ -7,16 +7,16 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T003_56: a force-move of a ref is not a commit. The session committed on branch X (clean,
-// judged), and later reused the name: `git branch -f X foreign`, a branch somebody else made
-// before the session began. X now points at commits the session never made, so Stop must not
-// judge them as "this session committed on X" - only commit-type reflog entries of the
-// folder claim a commit, never a ref that was moved onto it.
-func TestT003_56_AForceMovedRefDoesNotClaimWhatItNowPointsAt(t *testing.T) {
+// T003_56: a force-move of a ref is not a commit, but under observation tracking a branch whose
+// tip moved during the session onto commits that are not the remote's is the session's (the rule
+// errs toward over-tracking: the tip is the evidence, not who made the commit). The session
+// committed on branch X (clean), then reused the name: `git branch -f X foreign`, a branch
+// somebody else made before the session began. X is judged at the foreign tip, and the agent,
+// which did not make those commits, is released from them by untracking each range with a reason.
+func TestT003_56_AForceMovedRefIsOverTrackedAndCanBeUntracked(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	main := e.Git(proj, "branch", "--show-current")
 
-	// Somebody else's branch, with a commit the rule refuses, made before the session.
 	e.Git(proj, "switch", "-q", "-c", "foreign")
 	e.WriteFile(proj, "docs/foreign.md", "FORBIDDEN words\n")
 	e.CommitAll(proj, "somebody else adds foreign")
@@ -28,8 +28,17 @@ func TestT003_56_AForceMovedRefDoesNotClaimWhatItNowPointsAt(t *testing.T) {
 		Bash("b2", "git switch -q "+main),
 		Bash("b3", "git branch -f x foreign"),
 	))
-	if got := stopRefusals(e, proj, "s-003-56"); strings.Contains(got, refusalText) || strings.Contains(got, "committed on it") {
-		t.Fatalf("a ref force-moved onto commits the session never made was judged as the session's work:\n%s", got)
+	if got := stopRefusals(e, proj, "s-003-56"); !strings.Contains(got, refusalText) {
+		t.Fatalf("a ref force-moved onto commits that are not the remote's was not over-tracked:\n%s", got)
+	}
+
+	seen := stopBlocks(e, proj, "s-003-56")
+	e.Run(proj, "s-003-56", "untrack what is not mine", Turns("done",
+		Bash("u1", "sr-session refs untrack --head x --reason 'a branch somebody else made, force-moved onto by mistake'"),
+		Bash("u2", "sr-session refs untrack --head foreign --reason 'somebody else made it before this session'"),
+	))
+	if got := newBlocks(e, proj, "s-003-56", seen); strings.Contains(got, refusalText) {
+		t.Fatalf("the untracked branches were still judged:\n%s", got)
 	}
 }
 

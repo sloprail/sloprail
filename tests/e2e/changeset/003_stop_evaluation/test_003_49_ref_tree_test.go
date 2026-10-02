@@ -37,6 +37,12 @@ func requiredProject(t *testing.T) (*Env, string, string) {
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 
+// judgeInTree is the turn an agent takes to have the judges asked about the branch a worktree
+// holds: `sr-checks run` from that worktree, over the branch's own commits.
+func judgeInTree(wt, base string) harness.Turn {
+	return Bash("j-"+filepath.Base(base), "cd "+wt+" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
+}
+
 // commitOnX: from the coordinator's own checkout, make a commit on a new branch, then go
 // back to main and hand the branch to another worktree (the way a sub-agent holds it).
 func commitOnX(withRequired bool, wt string) []harness.Turn {
@@ -48,6 +54,7 @@ func commitOnX(withRequired bool, wt string) []harness.Turn {
 		Bash("b1", "git switch -q -c feat-x"),
 		Bash("b2", cmd+" && git add -A && git commit -q -m 'work on x'"),
 		Bash("b3", "git switch -q - && git worktree add -q "+wt+" feat-x"),
+		judgeInTree(wt, "HEAD~1"),
 	}
 }
 
@@ -82,33 +89,36 @@ func TestT003_50_TheRefusalNamesTheWorktreeAndNeverSwitchesTheCheckout(t *testin
 	blocks := stopBlocks(e, proj, "s-003-50")
 
 	e.Run(proj, "s-003-50", "fix it", Turns("fixed",
-		Bash("b4", "cd "+wt+" && printf '%s' 'required' > REQUIRED.md && git add -A && git commit -q -m 'add the file'"),
+		// The fix touches the guarded file too: a verdict is cached by the changeset content, so a fix
+		// that left docs/a.md as it was would be replayed as the same refusal.
+		Bash("b4", "cd "+wt+" && printf '%s' 'required' > REQUIRED.md && printf '%s' ' (confirmed)' >> docs/a.md && git add -A && git commit -q -m 'add the file'"),
+		judgeInTree(wt, "HEAD~2"),
 	))
 	if n := stopBlocks(e, proj, "s-003-50"); n != blocks {
 		t.Fatalf("the branch fixed in its own worktree was still refused:\n%s", newBlocks(e, proj, "s-003-50", blocks))
 	}
 }
 
-// T003_51: a branch another worktree made, which the coordinator only started a rebase onto
-// and moved on from, is not the coordinator's work: it is not claimed, so its judge never
-// runs against it here.
-func TestT003_51_ARebaseStartedOntoAnotherBranchDoesNotClaimIt(t *testing.T) {
+// T003_51: a branch somebody else made BEFORE the session, which the coordinator only started a
+// rebase onto and moved on from, is not the coordinator's work: its tip never moved during the
+// session, so it is not tracked and its judges never run against it here.
+func TestT003_51_ARebaseStartedOntoAForeignBranchDoesNotClaimIt(t *testing.T) {
 	e, proj, _ := requiredProject(t)
+	main := e.Git(proj, "branch", "--show-current")
+	e.Git(proj, "switch", "-q", "-c", "feat-x")
+	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
+	e.CommitAll(proj, "somebody else's work")
+	e.Git(proj, "switch", "-q", main)
 
-	// The sub-agent's commit and branch are made without touching this folder's HEAD
-	// (plumbing stands in for a commit made in another worktree), after the session began.
-	subagentCommit := "git branch feat-x && export GIT_INDEX_FILE=$(mktemp -u) && git read-tree HEAD && " +
-		"git update-index --add --cacheinfo 100644,$(printf 'the release is Friday' | git hash-object -w --stdin),docs/a.md && " +
-		"git update-ref refs/heads/feat-x $(git commit-tree $(git write-tree) -p HEAD -m 'the sub-agent work') && rm -f $GIT_INDEX_FILE"
-	// The coordinator starts a rebase onto the sub-agent's branch (HEAD is moved to that
-	// branch's tip, "rebase (start)") and backs out of it: nothing was made there.
 	e.Run(proj, "s-003-51", "integrate", Turns("done",
-		Bash("b0", subagentCommit),
 		Bash("b1", "git switch -q -c coordination"),
 		Bash("b2", "mkdir -p notes && printf '%s' 'plan' > notes/plan.md && git add -A && git commit -q -m 'plan'"),
 		Bash("b3", "git rebase --exec false feat-x >/dev/null 2>&1; git rebase --abort"),
 	))
 	if got := stopRefusals(e, proj, "s-003-51"); got != "" {
 		t.Fatalf("the coordinator answered for a branch it only started a rebase onto:\n%s", got)
+	}
+	if trackedIn(sessionRanges(t, e, proj, "s-003-51"), proj, "feat-x") {
+		t.Fatal("a foreign branch the session never moved is tracked")
 	}
 }

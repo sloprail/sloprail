@@ -1,140 +1,84 @@
 package gitrepo
 
 import (
+	"os"
 	"strings"
 )
 
-// DefaultRemoteRef is the local remote-tracking ref of the repository's default
-// branch, or "" when none is known: origin/HEAD (any remote's HEAD) first, else the
-// upstream of the local main or master. Nothing is fetched; only refs already in the
-// repository are read.
-func DefaultRemoteRef(dir string) string {
-	if out, err := run(dir, "for-each-ref", "--format=%(refname)", "refs/remotes/*/HEAD"); err == nil {
-		for _, head := range strings.Fields(out) {
-			ref, err := run(dir, "symbolic-ref", "-q", head)
-			if err != nil {
-				continue
-			}
-			if ref = strings.TrimSpace(ref); ref != "" && refExists(dir, ref) {
-				return ref
-			}
-		}
+// BranchWorktree is the path of ANOTHER worktree of the repository that has branch checked out
+// (not dir itself), or "" when none does.
+func BranchWorktree(dir, branch string) string {
+	if branch == "" {
+		return ""
 	}
-	for _, b := range []string{"main", "master"} {
-		out, err := run(dir, "rev-parse", "--symbolic-full-name", b+"@{upstream}")
-		if err != nil {
-			continue
-		}
-		if ref := strings.TrimSpace(out); strings.HasPrefix(ref, "refs/remotes/") && refExists(dir, ref) {
-			return ref
+	out, err := run(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return ""
+	}
+	self, _ := run(dir, "rev-parse", "--show-toplevel")
+	self = strings.TrimSpace(self)
+	var path string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path = strings.TrimPrefix(line, "worktree ")
+		case line == "branch refs/heads/"+branch:
+			if path != "" && !sameFile(path, self) {
+				return path
+			}
 		}
 	}
 	return ""
 }
 
-func refExists(dir, ref string) bool {
-	_, err := run(dir, "rev-parse", "--verify", "-q", ref+"^{commit}")
-	return err == nil
+func sameFile(a, b string) bool {
+	ai, err1 := os.Stat(a)
+	bi, err2 := os.Stat(b)
+	return err1 == nil && err2 == nil && os.SameFile(ai, bi)
 }
 
-// madeByThisFolder reports whether a HEAD reflog subject is one that CREATES a commit
-// here: a commit, an amend, a merge commit, a cherry-pick, a revert, a rebased pick or
-// an applied patch. A commit that was only pulled, fast-forwarded to or checked out is
-// someone else's work.
-func madeByThisFolder(subject string) bool {
-	for _, p := range []string{"commit", "cherry-pick", "revert", "am"} {
-		if subject == p || strings.HasPrefix(subject, p+":") || strings.HasPrefix(subject, p+" (") {
-			return true
-		}
-	}
-	for _, p := range []string{"rebase (pick)", "rebase (reword)", "rebase (squash)", "rebase (fixup)", "rebase (edit)", "rebase -i (pick)", "rebase -i (reword)", "rebase -i (squash)", "rebase -i (fixup)", "rebase -i (edit)"} {
-		if strings.HasPrefix(subject, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func madeShas(dir string) map[string]bool {
-	made := map[string]bool{}
-	out, err := run(dir, "reflog", "show", "HEAD", "--format=%H%x09%gs")
-	if err != nil {
-		return made
-	}
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.SplitN(line, "\t", 2)
-		if len(f) == 2 && madeByThisFolder(f[1]) {
-			made[f[0]] = true
-		}
-	}
-	return made
-}
-
-// ExcludeUpstream narrows a range to the session's own work. A commit already reachable
-// from the repository's default branch on the remote (a local remote-tracking ref) is
-// not the session's work when it was merely pulled or rebased onto, so the base moves up
-// to the merge base of the head with that ref, unless that would skip a commit THIS
-// folder made (its reflog shows it being created: a commit that later landed on the
-// default branch by a push is still the session's, until it passed). A commit reachable
-// only from a feature branch's remote ref is not excluded. The base never moves earlier,
-// and a range that cannot be narrowed (no default ref, no common history, a base that is
-// not an ancestor of the merge base) is returned as it was.
-func ExcludeUpstream(dir string, r Range) (Range, error) {
-	if r.Base == r.Head || r.Base == "" {
-		return r, nil
-	}
-	ref := DefaultRemoteRef(dir)
-	if ref == "" {
-		return r, nil
-	}
-	c, found, err := mergeBaseWithHead(dir, ref, r.Head)
-	if err != nil || !found || c == r.Base {
-		return r, nil
-	}
-	if r.Base != EmptyTree {
-		ok, err := IsAncestor(dir, r.Base, c)
-		if err != nil || !ok {
-			return r, nil
-		}
-	}
-	span := c
-	if r.Base != EmptyTree {
-		span = r.Base + ".." + c
-	}
-	out, err := run(dir, "rev-list", span)
-	if err != nil {
-		return r, nil
-	}
-	made := madeShas(dir)
-	for _, sha := range strings.Fields(out) {
-		if !made[sha] {
+// RemoteDefaultBase is the merge base of head with the REMOTE default branch (origin's HEAD, else
+// origin/main, origin/master): what is already on it is not work still to answer for. ok is false
+// when there is no such branch or no shared history; a local main is never taken for it.
+func RemoteDefaultBase(dir, head string) (sha string, ok bool) {
+	for _, c := range remoteDefaultCandidates(dir) {
+		if _, err := commitOf(dir, c, "--base"); err != nil {
 			continue
 		}
-		po, err := run(dir, "rev-parse", "--verify", "-q", sha+"^")
+		out, err := run(dir, "merge-base", c, head)
 		if err != nil {
-			return r, nil // a root commit of the session's own: nothing before it to skip
+			continue
 		}
-		parent := strings.TrimSpace(po)
-		if ok, err := IsAncestor(dir, parent, c); err == nil && ok {
-			c = parent
-		}
-	}
-	if r.Base != EmptyTree {
-		if ok, err := IsAncestor(dir, c, r.Base); err == nil && ok {
-			return r, nil // never earlier than the base it already had
+		if mb := strings.TrimSpace(out); isObjectName(mb) {
+			return mb, true
 		}
 	}
-	r.Base = c
-	return r, nil
+	return "", false
 }
 
-// MergeBaseWithUpstream is the merge base of HEAD and the remote default branch (origin/HEAD,
-// else origin/main): the newest commit already on it, so everything after is not. ok is false
-// when there is no such branch or no shared history.
-func MergeBaseWithUpstream(dir string) (sha string, ok bool, err error) {
-	up := upstreamRef(dir)
-	if up == "" {
-		return "", false, nil
+// RemoteDefaultTip is the commit the remote default branch stands at; ok is false without one.
+func RemoteDefaultTip(dir string) (sha string, ok bool) {
+	for _, c := range remoteDefaultCandidates(dir) {
+		if tip, err := commitOf(dir, c, "--base"); err == nil {
+			return tip, true
+		}
 	}
-	return mergeBaseWithHead(dir, up, "HEAD")
+	return "", false
+}
+
+func remoteDefaultCandidates(dir string) []string {
+	candidates := []string{}
+	if out, err := run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			candidates = append(candidates, ref)
+		}
+	}
+	return append(candidates, "origin/main", "origin/master")
+}
+
+// PinRef points ref at the commit sha, so garbage collection keeps it after the branch that held
+// it is deleted.
+func PinRef(dir, ref, sha string) error {
+	_, err := run(dir, "update-ref", ref, sha)
+	return err
 }

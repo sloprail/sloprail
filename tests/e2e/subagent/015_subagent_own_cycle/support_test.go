@@ -7,91 +7,26 @@ import (
 	"testing"
 )
 
-// A sub-agent's OWN cycle, observed end to end through a user's own wiring.
+// A sub-agent working in its own worktree, judged where its work landed.
 //
-// # Why this package exists, and what it overturns
+// An isolated sub-agent's Bash executes INSIDE the bound worktree
+// (.../.claude/worktrees/agent-<id>), and the file it creates is in that worktree
+// and in no other tree. File-guards are judged by `sr check run --base --head`
+// rather than at a stop, so what this package keeps is the layout claim: run in
+// the sub-agent's worktree, a rule is handed paths relative to that tree's root.
 //
-// 013 and 014 both record that a sub-agent's own cycle cannot be asserted on
-// from an e2e, and 014 states the reason as a measurement:
+// What it used to assert besides — that a sub-agent's own SubagentStop judges its
+// own commits under its own session identity, that its guardrail state does not
+// pool with its parent's, its refusal cycle, its own range start and its folder
+// registry — was file-guard behaviour at a stop, which is gone.
 //
-//	"An isolated sub-agent's tool calls are never APPLIED. […] the bound
-//	 worktree […] is EMPTY — the file appears in no tree at all. So a
-//	 worktree-isolated sub-agent produces no tree difference, its Post cycle
-//	 has nothing to judge, and no guardrail can fire in it however correct the
-//	 engine is. A test asserting 'the sub-agent's own file was judged' is
-//	 therefore unwritable here, not merely awkward: one was written against
-//	 this and removed rather than weakened into something that passes."
-//
-// That measurement is WRONG, and re-measuring it is what this package is built
-// on. It is true of the Write tool and false of Bash, and the two notes above
-// generalised from the one to all tool calls. Measured here, and pinned by the
-// tests below rather than asserted in a comment:
-//
-//   - An isolated sub-agent's Bash DOES execute, and it executes INSIDE the
-//     bound worktree. A probe recorded its `pwd` as
-//     .../.claude/worktrees/agent-<id>, and the file it created is in that
-//     worktree and in no other tree.
-//   - So the sub-agent's Post cycle has a real tree difference to judge, and a
-//     guardrail DOES fire in it — the worktree carries its own checkout of
-//     .sloprail/guardrails, so the rule the project declares is live there.
-//   - And it fires under the SUB-AGENT'S OWN session identity, which is not the
-//     root's.
-//
-// The Write tool is genuinely never applied, which is what the earlier probes
-// used. That is why the limit looked total: every scenario in 013 and 014 that
-// tried to observe a sub-agent's effects used Write. Bash is the channel the
-// mock executes, and 013_06 already relies on this for the SHARED-tree case —
-// the isolated case was simply never retried with it.
-//
-// What follows from the correction is the substance of this package: two of the
-// four invariants that 014 declares unobservable are observable, and are
-// asserted here against a user's own wiring rather than only at unit level.
-//
-//	judged_on_its_own_record    — T015_01, T015_02. The sub-agent's cycle judges
-//	                              the file IT made, in the tree IT was bound to,
-//	                              and the root's cycle does not see it.
-//	subagent_state_is_its_own   — T015_03, T015_04. What a sub-agent's guardrail
-//	                              stores is not readable by the parent's, and two
-//	                              sub-agents do not read each other's.
-//
-// The other two remain where 014 puts them. the_event_says_which is a claim
-// about which command the plugin binds, covered by T013_01/T013_05; it has no
-// observable consequence to separate it from its negation at this level beyond
-// what those already assert. identity_comes_from_the_hook is asserted here in
-// its observable half — the identity a sub-agent's hook is handed is not the
-// parent's — but its "never from the agent itself" half is a statement about an
-// absence in the environment, and is pinned at unit level.
-//
-//
-// A sub-agent's OWN cycle settles in its tree, and the guardrail fires at the
-// sub-agent's SubagentStop against what it committed: a file-guard's Stop check,
-// driven from the SubagentStop path the same as the root's Stop. So every
-// observation this package rests on — that the sub-agent's cycle judges the file IT
-// made, under the SUB-AGENT'S own SR_SESSION_ID, and that its state does not pool
-// with the parent's — is reached through that check.
-//
-// The rules here observe the sub-agent's own changeset and its own SR_SESSION_ID.
-// `match: // "**/*.md"` selects the sub-agent's `.md` work at any depth (all of it lands as
-// `.md`), and never matches the guard's own ledger (`log`, `count` — no `.md`
-// suffix) so no self-observation doubles the ledger. Refusals (T015_07, T015_08)
-// still surface at SubagentStop and are read with e.SubagentBlockingErrors, from
-// the sub-agent's own record, where real Claude Code writes them.
-//
-// # The ledger channel, and a trap that cost real time
+// # The ledger channel
 //
 // A guardrail check here writes to "$SR_GUARDRAIL_DIR/log" (the folder the engine
 // sets for a file-guard check, `.sloprail/file-guard/<name>/`) and is read with
-// subLedger. An earlier round of probes wrote to an ABSOLUTE path under t.TempDir()
-// and recorded nothing at all — every one of them read as "the guardrail never
-// fired", which is the same observation a genuinely dead engine produces. The
-// check's own folder is the channel that works, and it is the one the rest of this
-// tree already uses.
-//
-// For an ISOLATED sub-agent the folder in question is the one in ITS OWN worktree,
-// not the project's, because the worktree is a separate checkout of a tree that
-// contains .sloprail/. So a test reading the project's ledger for a sub-agent's
-// verdict finds nothing and would conclude the opposite of the truth. subLedger
-// below reads the right one.
+// subLedger. For a check run inside the sub-agent's worktree the folder is the one
+// in THAT worktree, not the project's, because the worktree is a separate
+// checkout of a tree that contains .sloprail/.
 
 // subLedger returns the lines a file-guard's checks appended inside a SUB-AGENT'S
 // OWN worktree.
@@ -164,16 +99,8 @@ func theWorktree(t *testing.T, proj string) string {
 	return trees[0]
 }
 
-// recordsPathAndSession is a file-guard whose after-check judges files created in
-// a cycle, and writes down what it was asked about and WHOSE session it was asked
-// as.
-//
-// The session identity is the load-bearing half. That a sub-agent's file reached
-// a guardrail is true under an engine that scopes sub-agents properly and under
-// one that judges everything as the parent — the ledger line would carry the
-// same path either way. What separates them is SR_SESSION_ID, and nothing else
-// on the line does; the file-guard check is handed it (SR_SESSION_ID) exactly as
-// the old hook was.
+// recordsPathAndSession is a file-guard that writes down every path it was asked
+// to judge (and the SR_SESSION_ID it ran under, kept for diagnosis).
 //
 // `match: "**/*.md"` selects the sub-agent's `.md` work at any depth and never
 // its own `log` ledger (no `.md` suffix), so the guard cannot re-observe its own
@@ -196,47 +123,13 @@ const pathsOfPayload = `printf '%s' "$payload" | jq -r '.changeset.files[].path'
 const recordScript = `#!/bin/sh
 payload=$(cat)
 for path in $(` + pathsOfPayload + `); do
-  echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/log"
+  echo "judged path=[$path] session=[$SR_SESSION_ID] agent=[$SR_AGENT_ID]" >> "$SR_GUARDRAIL_DIR/log"
 done
 exit 0
 `
 
-// readsBackItsOwnState is the file-guard the state-isolation tests rest on: it
-// reports what it can read back before writing its own note.
-//
-// This is the only shape that can tell pooled state from separate state. A rule
-// that merely WROTE would leave two stores looking alike from outside; what
-// distinguishes them is whether one scope can READ what another wrote. So each run
-// reports `before=[...]` — the value standing in ITS scope when it ran — and then
-// writes a note of its own: the paths of the changeset it judged, comma-joined.
-const readsBackItsOwnState = `match: "**/*.md"
-checks:
-  - script: ./record.sh
-`
-
-const readsBackScript = `#!/bin/sh
-payload=$(cat)
-paths=$(` + pathsOfPayload + `)
-before=$(sr-session state get seen 2>&1)
-for path in $paths; do
-  echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$before]" >> "$SR_GUARDRAIL_DIR/log"
-done
-sr-session state set seen "$(printf '%s' "$paths" | tr '\n' ',')" >/dev/null 2>&1
-exit 0
-`
-
-// sessionOf reads the session identity a ledger line recorded, or "" when the
-// line carries none.
-func sessionOf(line string) string { return between(line, "session=[", "]") }
-
-// beforeOf reads what a hook could see in its own scope when it ran, or "" when
-// the line carries no such field.
-//
-// An empty CAPTURE is a real answer and is not the same as a missing field: it
-// is a scope holding nothing, which is exactly what a properly separated
-// sub-agent's store looks like on its first write. Callers that need to tell the
-// two apart check the line for the marker itself.
-func beforeOf(line string) string { return between(line, "before=[", "]") }
+// agentOf reads the sub-agent a ledger line was judged as, "" for the root session itself.
+func agentOf(line string) string { return between(line, "agent=[", "]") }
 
 // pathOf reads the file a ledger line was about.
 func pathOf(line string) string { return between(line, "path=[", "]") }
@@ -279,3 +172,63 @@ func containsPath(lines []string, path string) bool {
 // failure is silent in the assertions a test would otherwise make: the run still
 // produces output, and the tree still holds the work.
 func hitRetryCap(output string) bool { return strings.Contains(output, "still blocked after") }
+
+// The state-isolation tests rest on a GATE that reads back what it can see in its own
+// scope before storing a note of its own. (A file-guard's checks carry no session
+// identity any more — `sr check run` takes a range, not a session — so the property
+// that a sub-agent's guardrail state is its own is observed through a gate, which a
+// hook still runs as the agent whose tool call it judges.)
+//
+// This is the only shape that can tell pooled state from separate state. A rule that
+// merely WROTE would leave two stores looking alike from outside; what distinguishes
+// them is whether one scope can READ what another wrote. So each run reports
+// `before=[...]` — the value standing in ITS scope when it ran — and then writes a
+// note of its own: the .md file the command names.
+const memoGate = `on:
+  - event: PreCommandInvoke
+checks:
+  - script: ./record.sh
+`
+
+// memoScript records, for every command naming a markdown file, who it ran as and what
+// that session's own scope held, then stores the file as the scope's note. The ledger is
+// outside the rule's folder (a rule's hash covers its folder).
+func memoScript(ledger string) string {
+	return `#!/bin/sh
+payload=$(cat)
+path=$(printf '%s' "$payload" | grep -o '[A-Za-z0-9_-]*\.md' | head -1)
+[ -n "$path" ] || exit 0
+before=$(sr-session state get seen 2>&1)
+echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$before]" >> '` + ledger + `'
+sr-session state set seen "$path" >/dev/null 2>&1
+exit 0
+`
+}
+
+// sessionOf reads the session identity a ledger line recorded, or "" when the line
+// carries none.
+func sessionOf(line string) string { return between(line, "session=[", "]") }
+
+// beforeOf reads what a hook could see in its own scope when it ran, or "" when the
+// line carries no such field. An empty CAPTURE is a real answer and is not the same as a
+// missing field: it says the scope held nothing.
+func beforeOf(line string) string { return between(line, "before=[", "]") }
+
+// memoLines is the ledger's lines.
+func memoLines(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}

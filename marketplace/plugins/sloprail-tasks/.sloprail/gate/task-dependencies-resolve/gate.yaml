@@ -1,7 +1,7 @@
 # A task's `depends_on` — other tasks that must be DONE first — is enforced at the
 # moment a task tries to enter to_do, in_progress or in_review: the PRE-WRITE half.
 # This gate refuses the move before it lands; the plain file-guard of the same name,
-# beside it under file-guard/, judges the settled file at Stop. The full argument
+# beside it under file-guard/, judges the settled file (`sr-checks run` judges, Stop verifies). The full argument
 # (the three deterministic questions, and why this is separate from
 # task-evidence-resolves) lives in file-guard/task-dependencies-resolve/file-guard.yaml
 # and check-dependencies.sh.

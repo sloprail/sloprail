@@ -7,12 +7,11 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T003_65: where an owed tip's range STARTS is data recorded when the ref was first seen, not
-// read from the branch's reflog, which goes with the branch when it is deleted. The branch is
-// cut from main AFTER a commit of the user's that is itself a violation; the session commits on
-// it, deletes it, and Stop judges the tip: only the session's own file is in what that run was
-// handed, never the user's commit the branch was cut on top of.
-func TestT003_65_ADeletedBranchesRangeStartsWhereItWasCutNotAtTheSessionStart(t *testing.T) {
+// T003_65: a deleted branch's range starts at the merge base with the remote default branch,
+// not at the session's start and not at its own cut point: the user's commit that is already
+// on origin (a violation, were it in the range) is never reached back to, while the branch's own
+// file is refused. The branch is gone at Stop; its range is verified at the commit it pointed at.
+func TestT003_65_ADeletedBranchesRangeStartsAtTheRemoteDefaultNotBeforeIt(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	main := e.Git(proj, "branch", "--show-current")
 	const sess = "s-003-65"
@@ -20,6 +19,7 @@ func TestT003_65_ADeletedBranchesRangeStartsWhereItWasCutNotAtTheSessionStart(t 
 	e.Run(proj, sess, "begin", Turns("done", Bash("b0", "true")))
 	e.WriteFile(proj, "docs/user.md", "FORBIDDEN words the user committed\n")
 	e.CommitAll(proj, "the user's own commit, before the branch")
+	e.PushBranch(proj, main) // pushed: origin/main now holds it
 
 	e.Run(proj, sess, "branch, commit, delete", Turns("done",
 		Bash("b1", "git switch -q -c side"),
@@ -37,7 +37,7 @@ func TestT003_65_ADeletedBranchesRangeStartsWhereItWasCutNotAtTheSessionStart(t 
 		if strings.Contains(files, "docs/a.md") {
 			judged = true
 			if strings.Contains(files, "docs/user.md") {
-				t.Fatalf("the deleted branch's range reached back past where it was cut, to the user's commit: %v", paths(run.Files))
+				t.Fatalf("the deleted branch's range reached back past the remote default, to the user's pushed commit: %v", paths(run.Files))
 			}
 		}
 	}

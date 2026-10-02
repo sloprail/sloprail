@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
@@ -34,9 +32,11 @@ func damageState(t *testing.T, e *Env, proj, sess string) string {
 // ran, with a line on stderr and a pass.
 func TestT003_60_AStateThatCannotBeOpenedStillJudgesFileGuards(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
-	e.WriteFile(proj, "docs/b.md", "FORBIDDEN words")
-	e.CommitAll(proj, "add b")
 
+	// The judging turn (`sr-checks run`, inside the session: a run without one stores no
+	// refusal) judges and stores the verdict. The Stop only reads verdicts, and cannot name the
+	// session, so it refuses both for that and for the violation the stored verdict carries.
+	e.Run(proj, "s-003-60a", "add b", Turns("done", harness.CommitFile("c1", "docs/b.md", "FORBIDDEN words", "add b")))
 	payload, _ := json.Marshal(map[string]any{"cwd": proj, "stop_hook_active": false, "hook_event_name": "Stop"})
 	res := e.CLIDirectStdinEnv(proj, string(payload), e.SessionEnv(""), "sr-session", "stop")
 	if !harness.Blocked(res) || !strings.Contains(res.Output, refusalText) {
@@ -53,34 +53,8 @@ func TestT003_60_AnUnreadableRegistryIsARefusalNotNoOtherTips(t *testing.T) {
 
 	e.Run(proj, "s-003-60b", "clean again", Turns("done", harness.CommitFile("c2", "docs/b.md", "more clean words", "add b")))
 	got := stopRefusals(e, proj, "s-003-60b")
-	if !strings.Contains(got, "could not be read") || !strings.Contains(got, "not judged") {
+	if !strings.Contains(got, "could not be read") || !strings.Contains(got, "nothing to judge") {
 		t.Fatalf("an unreadable registry was not refused, naming the error; refusals: %q", got)
-	}
-}
-
-// (c) a session whose store has a baseline but never kept the commit it began at is not
-// wedged: the start is derived from the HEAD reflog at the record's first timestamp, and
-// the violation after it is judged and refused for what it is.
-func TestT003_60_ALostSessionStartIsDerivedFromTheReflog(t *testing.T) {
-	e, proj, _ := project(t, docsRule)
-	e.Run(proj, "s-003-60c", "clean", Turns("done", harness.CommitFile("c1", "docs/a.md", "clean words", "add a")))
-	if e.Meta(proj, "s-003-60c", sessionstate.MetaSessionStart) == "" || e.Meta(proj, "s-003-60c", sessionstate.MetaBaselineCommit) == "" {
-		t.Fatal("the session kept no start or baseline to lose")
-	}
-	e.DeleteMeta(proj, "s-003-60c", sessionstate.MetaSessionStart)
-	// Commits are timed to the second: the violation must fall after the session began.
-	time.Sleep(1100 * time.Millisecond)
-
-	e.Run(proj, "s-003-60c", "violate", Turns("done", harness.CommitFile("c2", "docs/b.md", "FORBIDDEN words", "add b")))
-	got := stopRefusals(e, proj, "s-003-60c")
-	if strings.Contains(got, "did not keep the commit") {
-		t.Fatalf("the session is wedged on its lost start instead of deriving it:\n%s", got)
-	}
-	if !strings.Contains(got, refusalText) {
-		t.Fatalf("the violation after the derived start was not judged; refusals: %q", got)
-	}
-	if e.Meta(proj, "s-003-60c", sessionstate.MetaSessionStart) == "" {
-		t.Fatal("the derived start was not kept")
 	}
 }
 

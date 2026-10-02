@@ -60,7 +60,7 @@ func TestT003_36_TheSameInASubagentWorktree(t *testing.T) {
 	res := e.Run(proj, "s-003-36b", "delegate", Turns("root done",
 		harness.Dispatch("d1", "write the docs", sub, "worktree"),
 	))
-	if !res.SubagentStopBlocked("On branch sub-a") {
+	if !res.SubagentStopBlockedWith("(sub-a, from ") {
 		t.Fatalf("a sub-agent's left branch was not judged at its Stop:\n%s", res.Output)
 	}
 	if !strings.Contains(res.Output, "sub-a") {
@@ -130,7 +130,7 @@ func TestT003_36_ASingleBranchSessionIsJudgedAsBefore(t *testing.T) {
 }
 
 // A row patched into the session's store for a branch the session never checked out is
-// judged at the next Stop (`sr-session refs add`).
+// judged at the next Stop (`sr-session refs track`).
 func TestT003_36_APatchedRowIsJudgedAtTheNextStop(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	main := e.Git(proj, "branch", "--show-current")
@@ -141,13 +141,12 @@ func TestT003_36_APatchedRowIsJudgedAtTheNextStop(t *testing.T) {
 	e.Git(proj, "switch", "-q", "-c", "patched", main)
 	e.WriteFile(proj, "docs/p.md", "FORBIDDEN words")
 	e.CommitAll(proj, "violation on a branch the engine never saw")
-	tip := e.Git(proj, "rev-parse", "HEAD")
+	base := e.Git(proj, "rev-parse", "patched~1")
 	e.Git(proj, "switch", "-q", main)
 
-	id := e.SessionIdentity(proj, "s-003-36g")
-	out := e.CLIDirect(proj, "sr-session", "refs", "add", "--session", id, "--workspace", proj, "--ref", "patched", "--tip", tip)
+	out := e.CLIDirectEnv(proj, e.SessionEnv("s-003-36g"), "sr-session", "refs", "track", "--head", "patched", "--base", base)
 	if out.Code != 0 {
-		t.Fatalf("refs add failed:\n%s", out.Output)
+		t.Fatalf("refs track failed:\n%s", out.Output)
 	}
 	e.Run(proj, "s-003-36g", "anything else?", Turns("no", Bash("b1", "true")))
 	if got := newBlocks(e, proj, "s-003-36g", blocks); !strings.Contains(got, refusalText) || !strings.Contains(got, "patched") {

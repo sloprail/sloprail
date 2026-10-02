@@ -1,7 +1,7 @@
 package e2e
 
-// The commit-based after-check judges the SQUASHED range: every commit since the
-// rule last passed, as one diff from the range's base to HEAD. What the range's
+// The commit-based after-check judges the SQUASHED range: every commit of the
+// explicit range, as one diff from the range's base to HEAD. What the range's
 // history did in between is not the question; its net result is — and that is a
 // user decision (a deletion the agent put back is no deletion; one it left is).
 
@@ -36,12 +36,12 @@ func TestT049_23_DeletionRestoredInTheRangePasses(t *testing.T) {
 	if !strings.Contains(blocks, "preserves-unasked-content") || !strings.Contains(blocks, "must cite the user's own words") {
 		t.Fatalf("an uncited committed deletion was not refused at Stop:\n%s", blocks)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	e.Run(proj, sess, "that memory was needed", Turns("done",
 		Write("w1", "memories/topic.md", "a fact worth keeping\n"),
 	).ThenCommit("restore the topic memory"))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); got != refused {
 		t.Fatalf("a deletion restored within the range was still refused (%d refusals, had %d):\n%s",
 			got, refused, strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
 	}
@@ -61,7 +61,7 @@ func TestT049_24_DeletionNeverRestoredStaysRefused(t *testing.T) {
 	e.Run(proj, sess, "drop the topic memory", Turns("done",
 		Bash("d1", deleteTopic),
 	).ThenCommit("drop the topic memory"))
-	afterDelete := len(e.StopContinuations(proj, sess))
+	afterDelete := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 	if afterDelete == 0 {
 		t.Fatalf("an uncited committed deletion did not refuse the Stop")
 	}
@@ -69,7 +69,7 @@ func TestT049_24_DeletionNeverRestoredStaysRefused(t *testing.T) {
 	e.Run(proj, sess, "add an unrelated memory", Turns("done",
 		Write("w1", "memories/other.md", "another fact\n"),
 	).ThenCommit("add another memory"))
-	afterUnrelated := len(e.StopContinuations(proj, sess))
+	afterUnrelated := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 	if afterUnrelated <= afterDelete {
 		t.Fatalf("the unrestored deletion stopped being refused after an unrelated commit (%d, had %d)", afterUnrelated, afterDelete)
 	}
@@ -77,7 +77,7 @@ func TestT049_24_DeletionNeverRestoredStaysRefused(t *testing.T) {
 	// A citation grounds the files its own commit changed, so the deletion is cited by
 	// folding the commits since into one that carries the user's words.
 	e.Run(proj, sess, "cite it", Turns("done", harness.SquashLast("squash", 2, "drop the topic memory", harness.CitesUser("drop the topic memory"))))
-	if got := len(e.StopContinuations(proj, sess)); got != afterUnrelated {
+	if got := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); got != afterUnrelated {
 		t.Fatalf("a deletion whose commit cites the user's words was still refused (%d, had %d):\n%s",
 			got, afterUnrelated, strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
 	}

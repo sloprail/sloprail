@@ -9,8 +9,8 @@ import (
 
 // writesOwnFolderGuard is a file-guard that passes everything and records each
 // time it is asked into a ledger INSIDE its own rule folder ($SR_GUARDRAIL_DIR).
-// That is the trap: the rule's hash covers the whole folder, so once the ledger is
-// swept into a commit the rule's definition has changed.
+// That is the trap: the rule's hash covers the tracked files of its .sloprail root, so once
+// the ledger is swept into a commit the rule's definition has changed.
 const writesOwnFolderGuard = `match: "notes/**/*.md"
 checks:
   - script: ./check.sh
@@ -22,44 +22,52 @@ echo asked >> "$SR_GUARDRAIL_DIR/ledger"
 exit 0
 `
 
-// T034_19: a file-guard that writes into its own rule folder voids its watermark.
+// T034_19: a file-guard that writes into its own rule folder changes its own key.
 //
 // Every other test in this tree keeps its ledger OUTSIDE the project (harness.Ledger),
 // which is what a test wants and what hides this trap. Here the ledger is written into
-// the rule's folder on purpose, so the agent's `git add -A` sweeps it into its commit and
-// the rule folder changes: its hash changes, so the watermark the rule earned by passing is voided
-// and the rule is judged again from the PARENT of the last commit that touched its
-// folder. That parent is the commit before the sweep, so the work committed together
-// with the ledger IS judged (the floor is the parent, not the commit itself), and so
-// is whatever the rule has already passed: the rule is re-asked about it.
+// the rule's folder on purpose. While it is untracked the hash ignores it, so `run`
+// stores its verdict under the key it computed; the agent's `git add -A` then sweeps the
+// ledger into a commit, the rule's hash changes, and the verdict `run` stored no longer
+// applies: `verify` (Stop, CI) reads the new key and says "not judged yet", and the next
+// `run` asks again.
 //
 // Keep a rule's state in `sr-session state` or under .git/, never in its folder.
-func TestT034_19_ARuleThatWritesItsOwnFolderLosesItsWatermark(t *testing.T) {
-	e := New(t)
+func TestT034_19_ALedgerCommittedInsideTheGuardFolderChangesTheKey(t *testing.T) {
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "own-ledger", writesOwnFolderGuard, map[string]string{"check.sh": writesOwnFolderCheck})
 	harness.CommitInstalled(t, proj)
 
 	const session = "s-034-19"
+	base := e.Git(proj, "rev-parse", "HEAD")
 	asked := func() int { return len(e.FileGuardLedgerLines(proj, "own-ledger", "ledger")) }
 
 	e.Run(proj, session, "first note", Turns("done",
 		Write("w1", "notes/a.md", "a\n"),
 	).ThenCommit("first note"))
-	first := asked()
-	if first != 1 {
-		t.Fatalf("premise: the rule should be asked once about the first note, asked %d times", first)
+	if r := e.CheckRunRaw(proj, session, base, "HEAD"); r.Code != 0 {
+		t.Fatalf("premise: the note should pass:\n%s", r.Output)
+	}
+	if got := asked(); got != 1 {
+		t.Fatalf("premise: the rule should be asked once, asked %d times", got)
+	}
+	if r := e.CheckVerify(proj, session, base, "HEAD"); r.Code != 0 {
+		t.Fatalf("premise: the verdict run stored should be read by verify (the ledger is still untracked):\n%s", r.Output)
 	}
 
-	e.Run(proj, session, "second note", Turns("done",
-		Write("w2", "notes/b.md", "b\n"),
-	).ThenCommit("second note, with the ledger"))
+	e.CommitAll(proj, "sweep everything, ledger included")
 	if out := e.Git(proj, "show", "--stat", "--format=", "HEAD"); !strings.Contains(out, ".sloprail/file-guard/own-ledger/ledger") {
-		t.Fatalf("premise: the second commit should have swept the ledger into the rule's folder:\n%s", out)
+		t.Fatalf("premise: the commit should have swept the ledger into the rule's folder:\n%s", out)
 	}
-	if got := asked(); got <= first {
-		t.Fatalf("the commit that swept the rule's ledger into its folder was not judged (%d asks, was %d): "+
-			"the floor is the parent of the last commit that touched the folder, so that commit is in the range", got, first)
+	if r := e.CheckVerify(proj, session, base, "HEAD"); r.Code == 0 || !strings.Contains(r.Output, "not judged yet") {
+		t.Fatalf("a ledger committed inside the guard folder changes the rule's key, so the stored verdict must no longer apply:\n%s", r.Output)
+	}
+	if r := e.CheckRunRaw(proj, session, base, "HEAD"); r.Code != 0 {
+		t.Fatalf("the rule judges again under its new key:\n%s", r.Output)
+	}
+	if got := asked(); got != 2 {
+		t.Fatalf("the rule must be asked again under the new key (asked %d times, want 2)", got)
 	}
 }

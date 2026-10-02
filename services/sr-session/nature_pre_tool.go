@@ -50,7 +50,6 @@ type natureVerdict struct {
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
-	recordRulesSeen(cmd, store, loaded.FileGuards)
 	grounds := requiresCitation(loaded)
 	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
@@ -419,4 +418,13 @@ func naturePreToolBoundKinds(loaded declaration.Loaded) []string {
 		}
 	}
 	return bound
+}
+
+// quietCmd is a command whose output goes nowhere: loading another folder's rules reports
+// that folder's faults where its own sessions read them, not into this call's hook output.
+func quietCmd() *cobra.Command {
+	c := &cobra.Command{}
+	c.SetOut(io.Discard)
+	c.SetErr(io.Discard)
+	return c
 }

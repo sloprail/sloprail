@@ -83,6 +83,10 @@ func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	if before == 0 {
 		t.Fatalf("precondition: the declared scanner should be owed a search")
 	}
+	// The declaration lands (is pushed) before the delete, so the delete is its own
+	// range: a Stop judges origin/main..HEAD, and a scanner declared and deleted inside
+	// one range nets to no change at all, so nothing would ask for a citation or retire it.
+	e.PushBranch(proj, "main")
 	res := e.Run(proj, sess, "go ahead", Turns("done",
 		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
 	).ThenCommit("remove the scanner", harness.CitesUser(ask)))

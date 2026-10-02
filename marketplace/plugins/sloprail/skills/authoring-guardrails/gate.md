@@ -73,7 +73,7 @@ The gate refuses **before** the action, preventing it. Examples:
 ### Preventing a write or a delete — `PreFileWrite` and `PreFileDelete`
 
 This is where writes and deletes are **prevented**. A file-guard judges only what
-settled at Stop; the gate is the one that refuses before the bytes land or the
+was committed (`sr-checks run`); the gate is the one that refuses before the bytes land or the
 file goes. (A `preventive:` key on a file-guard no longer exists — such a
 declaration is refused at load. Split it into a gate like the ones below plus a
 plain file-guard for the settled result; see [file-guard.md](file-guard.md).)
@@ -120,7 +120,7 @@ checks:
   (see [file-guard.md](file-guard.md), "The resultKnown discipline"). A
   `PreFileWrite` or `PreFileDelete` gate holds only cheap checks — a `require`, a
   script; the judge belongs to the file-guard of the same name, which judges the
-  settled file at Stop. The exception is a gate whose judge is not about a file
+  committed file (`sr-checks run`). The exception is a gate whose judge is not about a file
   write: a `Stop` gate or a `PreCommandInvoke` gate may keep its judge
   (`examples/action-proof` `screenshot-proves-fields`, `examples/no-unasked-commit`
   `require-live-ask-for-commit`).
@@ -195,20 +195,18 @@ flattened list.
 
 ### Example: a shipped command gate
 
-The plugin's `sloprail/gate/no-merge-over-refusals` is a command gate with all its
-policy in YAML and one script. It matches `gh pr merge` (any flags, `--admin` too),
-and a single `checks:` script refuses it on facts only: the branch being merged has open
-refusals in this session's check results (read with `sr-checks sql`), or commits no rule
-has judged yet, or the target cannot be told. A merge with none is untouched; one with
-open refusals is refused until the fix is committed and judged. No user citation lifts
-it: a gate that guards irreversible work must not be unlockable by a quote (an agent
-can wash an old, generic instruction into one). Engine failures (a run that errored
-without refusing anything) are not listed as refusals; the unjudged tip they leave is
-judged at the next Stop. `no-destroying-owed-work` is built the same way for branch
-deletion, `worktree remove`, hard resets and prunes; dropping owed work stays the user's
-through `sr-session refs abandon --cite-user`. Both ship **off** (opt-in): a project turns them on with
-`enabled: [sloprail/gate/no-merge-over-refusals, sloprail/gate/no-destroying-owed-work]` in
-`.sloprail/config.yaml`.
+The plugin's `sloprail/gate/verify-before-push` is a command gate with its policy in YAML
+and one script. It matches any `git ... push`, and a single `checks:` script asks git
+itself which refs the push would update (`git push --dry-run --porcelain`), then runs
+`sr-checks verify` over each one's range. A push whose commits all have stored passes is
+untouched; one with a failing or unjudged range is refused with the exact `sr-checks run`
+that judges it. It fails closed: a ref, folder or default branch that cannot be resolved,
+or a push in the same line as a command that moves refs first, is refused. No user
+citation lifts it: a gate that guards what leaves the machine must not be unlockable by a
+quote (an agent can wash an old, generic instruction into one).
+`sloprail/gate/checks-ref-sr-only` is built the same way to keep the `sloprail/checks`
+results branch writable by `sr-checks` alone (it reads the command's argv, so it stops an agent's accidental write, not a determined forger: a ref name the shell builds at run time never appears in it). Both ship **on**: a project turns one off
+with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
 
 ### The resolution floor
 
@@ -306,11 +304,8 @@ project switches it on, by qualified name, in the same config:
 
 ```yaml
 enabled:
-  - sloprail/gate/judge-before-push
+  - <plugin>/gate/<name>
 ```
-
-(The plugin's `judge-before-push` gate is the example: it runs `sr-session judge` before a
-`git push` / `gh pr create` and refuses while a file-guard refuses the commits that would leave.)
 
 The nature is part of the key — `.../gate/<name>` — because a gate and a context
 may share a bare name. Keep the sibling prose that records why the gate exists.

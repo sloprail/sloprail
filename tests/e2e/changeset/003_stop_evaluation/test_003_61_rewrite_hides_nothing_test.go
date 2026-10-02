@@ -11,14 +11,14 @@ import (
 // has judged it, in every way git offers: a soft reset and recommit, an amend, a rebase onto a
 // newer main, a branch moved with update-ref to a commit made by plumbing, a branch renamed,
 // the commit cherry-picked to a new branch and the old one deleted. A rewrite changes SHAs and
-// topology, never the content: the violation still stands on a branch, so Stop refuses it
-// and names the branch it is on now; fixing it there passes.
+// topology, never the content: the violation still stands on a branch, so Stop refuses it;
+// fixing it there passes.
 func TestT003_61_RewritingAnUnjudgedViolationHidesNothing(t *testing.T) {
 	cases := []struct {
 		name    string
 		rewrite string // run on `side`, which holds the violating commit as HEAD
 		final   string // the branch that holds the content afterwards
-		dead    string // a deleted branch whose original tip nothing holds, left owed until the user drops it
+		dead    string // a deleted branch whose original tip nothing holds, left owed until it is untracked
 	}{
 		{"soft reset and recommit", "git reset -q --soft HEAD~1 && git commit -q -m recommitted", "side", ""},
 		{"amend", "git commit -q --amend -m reworded", "side", ""},
@@ -56,10 +56,10 @@ func TestT003_61_RewritingAnUnjudgedViolationHidesNothing(t *testing.T) {
 				Bash("b5", "git switch -q "+main),
 			))
 			if c.dead != "" {
-				// The old tip is a deleted branch's: owed until the user's own words drop it.
+				// The old tip is a deleted branch's: owed until it is untracked, with a reason.
 				blocks = stopBlocks(e, proj, sess)
 				e.Run(proj, sess, "the "+c.dead+" branch is dead, the work moved", Turns("done",
-					Bash("a1", "sr-session refs abandon --ref "+c.dead+" --cite-user 'the "+c.dead+" branch is dead, the work moved'"),
+					Bash("a1", "sr-session refs untrack --head "+c.dead+" --reason 'the "+c.dead+" branch is dead, the work moved'"),
 				))
 			}
 			if n := stopBlocks(e, proj, sess); n != blocks {

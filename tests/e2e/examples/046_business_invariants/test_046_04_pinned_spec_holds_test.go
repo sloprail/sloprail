@@ -202,10 +202,10 @@ func TestT046_61_CommitMustCiteTheUsersWords(t *testing.T) {
 	if !strings.Contains(blocks, "must cite the user's own words") || !strings.Contains(blocks, "pinned-spec-holds") {
 		t.Fatalf("an uncited commit of a pinned spec change was not refused at Stop:\n%s", blocks)
 	}
-	seen := len(e.StopContinuations(proj, sess))
+	seen := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	e.Run(proj, sess, "cite it", Turns("done", harness.AmendLast("amend", "reword rule 1", harness.CitesUser(ask))))
-	if got := len(e.StopContinuations(proj, sess)); got != seen {
+	if got := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); got != seen {
 		t.Fatalf("a commit citing the user's words was still refused (%d refusals, had %d):\n%s", got, seen,
 			strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
 	}
