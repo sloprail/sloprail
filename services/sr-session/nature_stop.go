@@ -117,7 +117,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap), reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
-		commitOwed = true
+		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
 	}
 
 	// 2. tracked ranges: each range of commits this agent's folders track is VERIFIED against
@@ -163,7 +163,7 @@ func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.
 	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, contextMatchValue(contextMap), reg); reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
-		commitOwed = true
+		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
 	}
 	// The tracked ranges are still verified: the verification opens the root session's registry
 	// itself, and one it cannot read is a refusal, never "nothing to judge".

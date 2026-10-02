@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -91,4 +93,20 @@ func TestUntrackGone_AStillExistingBranchMovesToTheRoot(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[string]string{"kept": filepath.Clean(proj)}, tracked)
+}
+
+// A Stop whose session cannot be identified (no transcript on the payload) is refused, naming
+// what is missing and how to recover; it is never read as "no ranges".
+func TestVerifyTrackedRanges_AnUnidentifiableSessionIsRefusedNotPassed(t *testing.T) {
+	proj := initRepo(t)
+	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
+		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+
+	got := verifyTrackedRanges(&cobra.Command{}, HookPayload{Cwd: proj}, reg, nil)
+	require.NotEmpty(t, got, "a Stop that cannot name its session passed unchecked")
+	assert.Contains(t, got[0], "cannot be identified")
+	assert.Contains(t, got[0], "transcript_path")
+	assert.Contains(t, got[0], "To recover")
 }

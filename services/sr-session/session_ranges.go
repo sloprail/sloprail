@@ -235,7 +235,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	}
 	rs, err := resolveRootSession(p)
 	if err != nil {
-		return nil // no session identity, so no ranges
+		return identityRefusal(cmd, p, reg, store, err)
 	}
 	if _, err := os.Stat(rs.Path); err != nil {
 		if os.IsNotExist(err) {
@@ -278,6 +278,30 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(notes, "; "))
 		if len(out) > 0 {
 			out = append(out, "Not verified, because it was untracked: "+strings.Join(notes, "; ")+".")
+		}
+	}
+	return out
+}
+
+// identityRefusal is the Stop's answer when the session it belongs to cannot be named: the
+// registry of tracked ranges cannot be found, so what the agent committed cannot be known to
+// be judged. That is a refusal, never a pass. The folder this hook runs in is still verified,
+// from the start of its history (the start is unknown), so what can be found is not hidden
+// behind the missing identity either.
+func identityRefusal(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, cause error) []string {
+	out := []string{fmt.Sprintf("the session this Stop belongs to cannot be identified (%v), so its tracked ranges are unknown and cannot be verified; refusing because a session that cannot be named must not be read as 'nothing to judge'. To recover: make sure the hook payload carries the session's transcript_path (for a sub-agent, agent_transcript_path and the parent's record) and that the record exists, then stop again.", cause)}
+	if folder, err := gitrepo.Root(p.Cwd); err == nil && folder != "" {
+		if head, sha, ok := trackedHead(folder); ok {
+			base := gitrepo.DefaultBase(folder, sha)
+			if base == sha {
+				base = gitrepo.EmptyTree
+			}
+			quiet := &cobra.Command{}
+			quiet.SetOut(io.Discard)
+			quiet.SetErr(io.Discard)
+			if reason := verifyRange(cmd, p, reg, store, quiet, sessionstate.TrackedRange{Folder: folder, Head: head, HeadSHA: sha, Base: base}); reason != "" {
+				out = append(out, reason)
+			}
 		}
 	}
 	return out

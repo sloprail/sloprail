@@ -225,10 +225,14 @@ func statusWord(s byte) string {
 	return "modified"
 }
 
+// unknownCommitState opens the refusal for a tree or registry that could not be read: work is
+// not known to be owed a commit, so the tracked ranges are still verified beside it.
+const unknownCommitState = "could not tell whether your work is committed"
+
 // failClosed is the refusal for a git failure: a tree whose status could not be
 // read is not a clean one.
 func failClosed(err error) string {
-	return fmt.Sprintf("could not tell whether your work is committed (%v); refusing because a state that could not be read must not be read as clean", err)
+	return fmt.Sprintf(unknownCommitState+" (%v); refusing because a state that could not be read must not be read as clean", err)
 }
 
 func isNotARepo(err error) bool { return errors.Is(err, gitrepo.ErrNotARepository) }
