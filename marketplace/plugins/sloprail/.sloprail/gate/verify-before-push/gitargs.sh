@@ -4,7 +4,7 @@
 git_split() {
   GOPTS=() SUB="" REST=()
   local args=() a
-  while IFS= read -r -d '' a; do args+=("$a"); done < <(printf '%s' "$1" | jq -j '(.argv // [])[1:][] , "\u0000"')
+  while IFS= read -r a; do args+=("$a"); done < <(printf '%s' "$1" | jq -r '(.argv // [])[1:][]')
   local i=0 n=${#args[@]}
   while [ "$i" -lt "$n" ]; do
     a="${args[$i]}"

@@ -70,8 +70,11 @@ for inv in "${pushes[@]}"; do
   case "$cwd" in /*) dir="$cwd" ;; *) dir="${SR_WORKSPACE:-.}/$cwd" ;; esac
   [ -d "$dir" ] || refuse "The folder this push runs in ($dir) does not exist, so the commits it would send could not be checked."
 
+  # -q / --quiet would hide the porcelain lines this reads, so they are not passed on.
+  dry=()
+  for a in ${REST[@]+"${REST[@]}"}; do case "$a" in -q | --quiet) ;; *) dry+=("$a") ;; esac; done
   err="$(mktemp)"
-  out="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" push --dry-run --porcelain --no-verify ${REST[@]+"${REST[@]}"} 2>"$err")"
+  out="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" push --dry-run --porcelain --no-verify ${dry[@]+"${dry[@]}"} 2>"$err")"
   status=$?
   why="$(head -c 600 "$err")"
   rm -f "$err"
