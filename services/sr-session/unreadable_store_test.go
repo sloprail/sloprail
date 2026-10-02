@@ -109,13 +109,7 @@ func TestDispatch_UnreadableDeclarationStoreDoesNotBlockTheTurn(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetOut(&stdout)
 
-	// A real session record: the Stop fails closed on a session it cannot identify
-	// (d496b69d), which is a different fault from the declaration folder this test
-	// isolates. The payload must name its session so only the folder is unreadable.
-	record := filepath.Join(t.TempDir(), "sess-unreadable-store.jsonl")
-	require.NoError(t, os.WriteFile(record, []byte(`{"type":"user","uuid":"origin","parentUuid":null,"message":{"role":"user","content":"hi"}}`+"\n"), 0o644))
-
-	reason := natureDispatchStop(cmd, HookPayload{Cwd: proj, SessionID: "sess-unreadable-store", TranscriptPath: record}, reg)
+	reason := natureDispatchStop(cmd, HookPayload{Cwd: proj}, reg)
 
 	assert.Empty(t, reason,
 		"an unlistable declaration folder must not produce a block reason")

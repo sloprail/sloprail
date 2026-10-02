@@ -172,4 +172,3 @@ func IsDefaultBranch(dir, branch string) bool {
 	}
 	return branch == "main" || branch == "master"
 }
-

@@ -471,6 +471,20 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	}
 	rs, err := resolveRootSession(p)
 	if err != nil {
+		// Identity is asked for only where there is something to verify: a file-guard loads here.
+		// A project with no rules is never blocked for a session it cannot name.
+		quiet := &cobra.Command{}
+		quiet.SetOut(io.Discard)
+		quiet.SetErr(io.Discard)
+		// With no session there is no recorded start to vouch for a project's switch-offs of
+		// protected rules, so the commit the folder stands at does.
+		rev := "HEAD"
+		if _, sha, ok := trackedHead(p.Cwd); ok {
+			rev = sha
+		}
+		if len(newNatureDeclarations(quiet, p.Cwd, reg, rev).FileGuards) == 0 {
+			return nil
+		}
 		return identityRefusal(cmd, p, reg, store, err)
 	}
 	if _, err := os.Stat(rs.Path); err != nil {

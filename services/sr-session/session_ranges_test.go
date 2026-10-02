@@ -578,3 +578,17 @@ func TestTrackMissing_AGitErrorIsReturnedNotSwallowed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), proj)
 }
+
+// The original case, kept beside the one with a session commit ahead of the recorded start: the
+// folder is still at the commit it was registered at (started == head).
+func TestAutoBase_NoRemoteDefaultBranchStartedAtHeadNeverMakesAnEmptyRange(t *testing.T) {
+	proj := initRepo(t) // no origin: a local main is not the remote default
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "f.txt"), []byte("f"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c")
+	sha := strings.TrimSpace(runGit(t, proj, "rev-parse", "HEAD"))
+	started := sha
+
+	assert.Equal(t, started, autoBase(proj, sha, started), "the session's recorded base stands in")
+	assert.Equal(t, gitrepo.EmptyTree, autoBase(proj, sha, ""), "nothing recorded: the widest range, never base==head")
+}
