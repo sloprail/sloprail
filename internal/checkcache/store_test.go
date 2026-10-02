@@ -38,28 +38,34 @@ func hex32(r *rand.Rand) string {
 	return hex.EncodeToString(b[:])
 }
 
-// genResults makes n synthetic results shaped like real judge rows.
-func genResults(seed int64, n int) []Result {
+// genRuns makes n synthetic runs shaped like real ones: one rule evaluated once, holding a
+// judge check (findable) and a script check (never cached).
+func genRuns(seed int64, n int) []Run {
 	r := rand.New(rand.NewSource(seed))
-	out := make([]Result, n)
+	out := make([]Run, n)
 	for i := range out {
 		st := StatusPass
 		if r.Intn(5) == 0 {
 			st = StatusFail
 		}
-		out[i] = Result{
-			Key: Key{
-				Rule:        fmt.Sprintf("plug/file-guard/rule-%d", r.Intn(30)),
-				RuleHash:    hex32(r)[:16],
-				Kind:        fmt.Sprintf("check[%d]:judge:./rubric.md.j2", r.Intn(3)),
-				Subject:     fmt.Sprintf("internal/%s/%s.go", words[r.Intn(len(words))], words[r.Intn(len(words))]),
-				Fingerprint: hex32(r),
+		out[i] = Run{
+			ID:       "run_" + hex32(r)[:16],
+			RunAt:    time.Unix(1_790_000_000+int64(i), 0).UTC().Format("2006-01-02T15:04:05.000000000Z"),
+			Rule:     fmt.Sprintf("plug/file-guard/rule-%d", r.Intn(30)),
+			RuleHash: hex32(r)[:16],
+			BaseRef:  hex32(r)[:40], HeadRef: hex32(r)[:40],
+			Complete: true, SessionID: hex32(r)[:16],
+			Checks: []Check{
+				{
+					Subject:     fmt.Sprintf("internal/%s/%s.go", words[r.Intn(len(words))], words[r.Intn(len(words))]),
+					Kind:        fmt.Sprintf("check[%d]:judge:./rubric.md.j2", r.Intn(3)),
+					Status:      st,
+					Fingerprint: hex32(r),
+					Metadata:    map[string]any{"reasoning": sentence(r, 120), "model": "claude-x"},
+					Items:       []Item{{Key: sentence(r, 12), Passed: st == StatusPass, Metadata: map[string]any{"line": float64(r.Intn(900))}}},
+				},
+				{Subject: "changeset", Kind: "check[1]:script:./x.sh", Status: StatusPass},
 			},
-			Status:    st,
-			Reasoning: sentence(r, 120),
-			Cites:     []Cite{{Quote: sentence(r, 12), Path: "t.jsonl", Line: r.Intn(900)}},
-			Prov: Provenance{Model: "claude-x", Prompt: hex32(r), Response: hex32(r), SR: "0.4.0", Session: hex32(r)[:16],
-				At: time.Unix(1_790_000_000+int64(i), 0).UTC().Format(time.RFC3339)},
 		}
 	}
 	return out
@@ -95,17 +101,28 @@ func bareRemote(t testing.TB) string {
 	return dir
 }
 
-func keysOf(rs []Result) []Key {
+// keyOf is the key of a run's judge check.
+func keyOf(r Run) Key { return r.CheckKey(r.Checks[0]) }
+
+func keysOf(rs []Run) []Key {
 	ks := make([]Key, len(rs))
 	for i, r := range rs {
-		ks[i] = r.Key
+		ks[i] = keyOf(r)
 	}
 	return ks
 }
 
+// withCheck is a copy of r whose judge check has the status, at the run time.
+func withCheck(r Run, status, at string) Run {
+	r.Checks = append([]Check(nil), r.Checks...)
+	r.Checks[0].Status = status
+	r.RunAt = at
+	return r
+}
+
 func TestRoundTrip(t *testing.T) {
 	s := newRepo(t, "")
-	rs := genResults(1, 50)
+	rs := genRuns(1, 50)
 	if err := s.Put(rs); err != nil {
 		t.Fatal(err)
 	}
@@ -117,9 +134,10 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("got %d of 50", len(got))
 	}
 	for _, r := range rs {
-		g := got[r.Key.ID()]
-		if g.Reasoning != r.Reasoning || g.Status != r.Status || g.Prov != r.Prov || g.Cites[0] != r.Cites[0] {
-			t.Fatalf("round trip differs for %s", r.Key.Subject)
+		g := got[keyOf(r).ID()]
+		if g.Check.Metadata["reasoning"] != r.Checks[0].Metadata["reasoning"] || g.Check.Status != r.Checks[0].Status ||
+			g.Run.ID != r.ID || g.Run.HeadRef != r.HeadRef || g.Check.Items[0].Key != r.Checks[0].Items[0].Key || len(g.Run.Checks) != 2 {
+			t.Fatalf("round trip differs for %s", r.Checks[0].Subject)
 		}
 	}
 	miss := Key{Rule: "nope", Subject: "x"}
@@ -135,9 +153,9 @@ func TestRoundTrip(t *testing.T) {
 
 func TestLookupAcrossManySegmentsAndFreshProcess(t *testing.T) {
 	s := newRepo(t, "")
-	var all []Result
+	var all []Run
 	for i := 0; i < 25; i++ {
-		b := genResults(int64(100+i), 20)
+		b := genRuns(int64(100+i), 20)
 		all = append(all, b...)
 		if err := s.Put(b); err != nil {
 			t.Fatal(err)
@@ -158,18 +176,17 @@ func TestLookupAcrossManySegmentsAndFreshProcess(t *testing.T) {
 
 func TestDuplicateKeysResolveLatestWins(t *testing.T) {
 	s := newRepo(t, "")
-	a := genResults(7, 1)[0]
-	older, newer := a, a
-	older.Status, older.Prov.At = StatusFail, "2026-01-01T00:00:00Z"
-	newer.Status, newer.Prov.At = StatusPass, "2026-02-01T00:00:00Z"
-	if err := s.Put([]Result{newer}); err != nil {
+	a := genRuns(7, 1)[0]
+	older := withCheck(a, StatusFail, "2026-01-01T00:00:00Z")
+	newer := withCheck(a, StatusPass, "2026-02-01T00:00:00Z")
+	if err := s.Put([]Run{newer}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Put([]Result{older}); err != nil {
+	if err := s.Put([]Run{older}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Lookup([]Key{a.Key})
-	if got[a.Key.ID()].Status != StatusPass {
+	got, _ := s.Lookup([]Key{keyOf(a)})
+	if got[keyOf(a).ID()].Check.Status != StatusPass {
 		t.Fatal("the later At must win regardless of write order")
 	}
 }
@@ -183,11 +200,11 @@ func TestTwoWritersConcurrentlyToBareRemote(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, writers)
-	var all [][]Result
+	var all [][]Run
 	for i := range stores {
-		var mine []Result
+		var mine []Run
 		for j := 0; j < per; j++ {
-			mine = append(mine, genResults(int64(1000*i+j), 5)...)
+			mine = append(mine, genRuns(int64(1000*i+j), 5)...)
 		}
 		all = append(all, mine)
 	}
@@ -230,7 +247,7 @@ func TestTwoWritersConcurrentlyToBareRemote(t *testing.T) {
 
 func TestPutIsIdempotent(t *testing.T) {
 	s := newRepo(t, "")
-	rs := genResults(3, 10)
+	rs := genRuns(3, 10)
 	_ = s.Put(rs)
 	tip := s.tip()
 	if err := s.Put(rs); err != nil {
@@ -244,18 +261,18 @@ func TestPutIsIdempotent(t *testing.T) {
 func TestGcPreservesLatestResults(t *testing.T) {
 	remote := bareRemote(t)
 	s := newRepo(t, remote)
-	var all []Result
+	var all []Run
 	for i := 0; i < 12; i++ {
-		b := genResults(int64(50+i), 100)
+		b := genRuns(int64(50+i), 100)
 		all = append(all, b...)
 		if err := s.Put(b); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// a superseding duplicate
-	dup := all[0]
-	dup.Status, dup.Prov.At = StatusFail, "2999-01-01T00:00:00Z"
-	if err := s.Put([]Result{dup}); err != nil {
+	dup := withCheck(all[0], StatusFail, "2999-01-01T00:00:00Z")
+	dup.ID = "run_superseding"
+	if err := s.Put([]Run{dup}); err != nil {
 		t.Fatal(err)
 	}
 	all[0] = dup
@@ -276,19 +293,19 @@ func TestGcPreservesLatestResults(t *testing.T) {
 		t.Fatalf("got %d (%v)", len(got), err)
 	}
 	for _, r := range all {
-		if got[r.Key.ID()].Status != r.Status {
-			t.Fatalf("latest result lost for %s", r.Key.Subject)
+		if got[keyOf(r).ID()].Check.Status != r.Checks[0].Status {
+			t.Fatalf("latest result lost for %s", r.Checks[0].Subject)
 		}
 	}
 	// writes still work on top of the squashed branch
-	if err := fresh.Put(genResults(999, 3)); err != nil {
+	if err := fresh.Put(genRuns(999, 3)); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCorruptSegmentIsAnErrorNotAMiss(t *testing.T) {
 	s := newRepo(t, "")
-	rs := genResults(5, 10)
+	rs := genRuns(5, 10)
 	if err := s.Put(rs); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +334,7 @@ func TestCorruptSegmentIsAnErrorNotAMiss(t *testing.T) {
 
 func TestCorruptFrameDetected(t *testing.T) {
 	s := newRepo(t, "")
-	rs := genResults(6, 5)
+	rs := genRuns(6, 5)
 	_ = s.Put(rs)
 	sn, _ := s.snapshotAt(s.tip())
 	sg := sn.Segs[0]
@@ -341,7 +358,7 @@ func TestCorruptFrameDetected(t *testing.T) {
 
 func TestFutureSchemaRefused(t *testing.T) {
 	s := newRepo(t, "")
-	if err := s.Put(genResults(8, 3)); err != nil {
+	if err := s.Put(genRuns(8, 3)); err != nil {
 		t.Fatal(err)
 	}
 	// someone running a newer sloprail adds v2099-01-01/
@@ -368,7 +385,7 @@ func TestFutureSchemaRefused(t *testing.T) {
 	if _, err := s2.Lookup([]Key{{Rule: "x"}}); err == nil || !strings.Contains(err.Error(), "newer schema") {
 		t.Fatalf("lookup: %v", err)
 	}
-	if err := s2.Put(genResults(9, 1)); err == nil || !strings.Contains(err.Error(), "newer schema") {
+	if err := s2.Put(genRuns(9, 1)); err == nil || !strings.Contains(err.Error(), "newer schema") {
 		t.Fatalf("put: %v", err)
 	}
 }
@@ -386,13 +403,13 @@ func hashObject(t *testing.T, dir, content string) string {
 
 func TestShow(t *testing.T) {
 	s := newRepo(t, "")
-	rs := genResults(11, 4)
+	rs := genRuns(11, 4)
 	for i := range rs {
-		rs[i].Key.Subject = "internal/foo/bar.go"
+		rs[i].Checks[0].Subject = "internal/foo/bar.go"
 	}
 	_ = s.Put(rs)
 	out, err := s.Show("internal/foo/bar.go")
-	if err != nil || !strings.Contains(out, "4 stored result(s)") || !strings.Contains(out, rs[0].Key.Rule) {
+	if err != nil || !strings.Contains(out, "4 stored result(s)") || !strings.Contains(out, rs[0].Rule) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	out, _ = s.Show("nothing.go")
@@ -418,8 +435,8 @@ func TestGenerateDefaultDict(t *testing.T) {
 		t.Skip("set SR_GEN_DICT=1 (go generate)")
 	}
 	var samples [][]byte
-	for _, r := range genResults(424242, 3000) {
-		raw, _ := marshalResult(r)
+	for _, r := range genRuns(424242, 3000) {
+		raw, _ := marshalRun(r)
 		samples = append(samples, raw)
 	}
 	d, err := trainDict(samples)
@@ -434,9 +451,9 @@ func TestGenerateDefaultDict(t *testing.T) {
 // Bound: looking up the 40 keys of one PR among 10k stored records.
 func TestLookupBound40In10k(t *testing.T) {
 	s := newRepo(t, "")
-	all := make([]Result, 0, 10000)
+	all := make([]Run, 0, 10000)
 	for i := 0; i < 10; i++ {
-		b := genResults(int64(9000+i), 1000)
+		b := genRuns(int64(9000+i), 1000)
 		all = append(all, b...)
 		if err := s.Put(b); err != nil {
 			t.Fatal(err)
@@ -445,7 +462,7 @@ func TestLookupBound40In10k(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	var ks []Key
 	for i := 0; i < 40; i++ {
-		ks = append(ks, all[r.Intn(len(all))].Key)
+		ks = append(ks, keyOf(all[r.Intn(len(all))]))
 	}
 	cold, _ := Open(s.opt)
 	_ = os.RemoveAll(filepath.Dir(cold.cachePath()))
@@ -469,9 +486,9 @@ func TestLookupBound40In10k(t *testing.T) {
 
 func BenchmarkLookup40In10k(b *testing.B) {
 	s := newRepo(b, "")
-	var all []Result
+	var all []Run
 	for i := 0; i < 10; i++ {
-		bt := genResults(int64(9000+i), 1000)
+		bt := genRuns(int64(9000+i), 1000)
 		all = append(all, bt...)
 		if err := s.Put(bt); err != nil {
 			b.Fatal(err)
@@ -479,7 +496,7 @@ func BenchmarkLookup40In10k(b *testing.B) {
 	}
 	var ks []Key
 	for i := 0; i < 40; i++ {
-		ks = append(ks, all[i*250].Key)
+		ks = append(ks, keyOf(all[i*250]))
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

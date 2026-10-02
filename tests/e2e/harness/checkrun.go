@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/checkcache"
 )
 
 // File-guards are judged by `sr check run --base --head`, not by the Stop hook. The harness
@@ -65,7 +67,7 @@ func (e *Env) afterRun(projDir, sessionID string) {
 // stdout (the refusals) apart from the combined output.
 func (e *Env) checkCmd(projDir, sessionID, verb, base, head string) (stdout string, res Result) {
 	e.t.Helper()
-	cmd := exec.Command(filepath.Join(e.binDir, "sr"), "check", verb, "--base", base, "--head", head)
+	cmd := exec.Command(filepath.Join(e.binDir, "sr"), "checks", verb, "--base", base, "--head", head)
 	cmd.Dir = projDir
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
 	cmd.Env = append(cmd.Env, e.hookEnv(sessionID)...)
@@ -132,4 +134,67 @@ func dedupeStrings(in []string) []string {
 		}
 	}
 	return out
+}
+
+// addOrigin gives a project a LOCAL BARE origin (in a temporary directory removed with the
+// test): the initial commit is pushed to it and origin/HEAD points at main, so `--base origin/main`
+// works, `sr checks run` pushes the results branch sloprail/checks there, and a second clone sees
+// them. Done once, by GitInit.
+func (e *Env) addOrigin(dir string) {
+	e.t.Helper()
+	bare := filepath.Join(e.t.TempDir(), "origin.git")
+	Git(e.t, filepath.Dir(bare), "init", "-q", "--bare", "--initial-branch=main", bare)
+	Git(e.t, dir, "remote", "add", "origin", bare)
+	Git(e.t, dir, "push", "-q", "origin", "main")
+	Git(e.t, dir, "fetch", "-q", "origin")
+	Git(e.t, dir, "remote", "set-head", "origin", "main")
+	e.origins[dir] = bare
+}
+
+// Origin is the path of a project's local bare origin ("" for a directory GitInit never made).
+func (e *Env) Origin(projDir string) string { return e.origins[projDir] }
+
+// CloneFresh is a second clone of a project's origin in a new temporary directory — "another
+// machine": it has only what was pushed.
+func (e *Env) CloneFresh(projDir string) string {
+	e.t.Helper()
+	origin := e.origins[projDir]
+	if origin == "" {
+		e.t.Fatalf("harness: %s has no origin: it was not made with GitInit", projDir)
+	}
+	dir := filepath.Join(e.t.TempDir(), "clone")
+	Git(e.t, filepath.Dir(dir), "clone", "-q", origin, dir)
+	Git(e.t, dir, "config", "user.email", "e2e@example.invalid")
+	Git(e.t, dir, "config", "user.name", "E2E")
+	Git(e.t, dir, "config", "commit.gpgsign", "false")
+	return dir
+}
+
+// PushBranch pushes a branch of the project to its origin.
+func (e *Env) PushBranch(projDir, branch string) {
+	e.t.Helper()
+	Git(e.t, projDir, "push", "-q", "origin", branch)
+}
+
+// CacheRecords reads back every run the results branch (sloprail/checks) holds, as a10n-shaped
+// runs with their checks and items, newest first: what a test asserts a `sr checks run` stored.
+// With an origin it is origin's branch that is read, so a push that never happened shows as empty.
+func (e *Env) CacheRecords(projDir string) []checkcache.Run {
+	e.t.Helper()
+	opt := checkcache.Options{Dir: projDir}
+	if e.origins[projDir] != "" {
+		opt.Remote = "origin"
+	}
+	store, err := checkcache.Open(opt)
+	if err != nil {
+		e.t.Fatalf("harness: open the results branch: %v", err)
+	}
+	if err := store.Sync(); err != nil {
+		e.t.Fatalf("harness: fetch the results branch: %v", err)
+	}
+	runs, err := store.Runs()
+	if err != nil {
+		e.t.Fatalf("harness: read the results branch: %v", err)
+	}
+	return runs
 }

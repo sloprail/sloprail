@@ -52,7 +52,7 @@ const (
 // other — Go names an installed binary after its directory, and a directory
 // called `session` would install as `session` while the proxy looked for
 // `sr-session`. Listed once here so a new service is added in one place.
-var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent"}
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {
@@ -113,6 +113,7 @@ type Env struct {
 
 	// runBase, checkHistory and noAutoCheck: see checkrun.go.
 	runBase      map[string]string
+	origins      map[string]string // project -> its local bare origin
 	checkHistory map[string][]string
 	noAutoCheck  bool
 }
@@ -327,6 +328,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		mock:         mock,
 		seenSessions: map[string]bool{},
 		runBase:      map[string]string{},
+		origins:      map[string]string{},
 		checkHistory: map[string][]string{},
 	}
 	for _, opt := range opts {
@@ -1081,6 +1083,7 @@ func (e *Env) GitInit(dir string) {
 		e.DisablePluginGuardrail(dir, others...)
 	}
 	e.CommitAll(dir, "initial")
+	e.addOrigin(dir)
 }
 
 // enableShipped merges names into the `enabled:` list of the project's config.

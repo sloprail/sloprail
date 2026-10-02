@@ -15,7 +15,8 @@ import (
 // different verdict). a10n's key left both out and kept serving stale passes.
 //
 // The input part is the CONTENT of the change: the files (paths, statuses, both
-// contents, both marker sets, diffs), the others, the citations' quotes, the subject
+// contents, both marker sets, diffs), the others, the citations' quotes (not where in a
+// transcript they were found), the subject
 // and the context. It is never HISTORY: no commit SHA, and none of how many commits
 // the change was made in or what they said. A rebase or an amend changes every SHA, a
 // squash changes the commits and their messages, a revert and a re-apply changes the
@@ -44,9 +45,13 @@ func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, er
 		f.Commits, f.Substantive = nil, nil
 		view.Changeset.Files[i] = f
 	}
+	// A citation is its QUOTE and the pool it resolved in: where in which transcript it was found
+	// (path, line, the whole cited message) is only known where the transcript is, and a result
+	// found by the author must be found by anyone who sees the same quote in the commit.
 	view.Changeset.Citations = make([]Citation, len(p.Changeset.Citations))
 	for i, c := range p.Changeset.Citations {
 		c.Commits = nil
+		c.Citation.Path, c.Citation.Line, c.Citation.Message = "", 0, ""
 		view.Changeset.Citations[i] = c
 	}
 	body, err := json.Marshal(view)

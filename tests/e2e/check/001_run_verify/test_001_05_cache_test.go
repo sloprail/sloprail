@@ -152,9 +152,11 @@ func TestT001_11_VerifyReadsWhatRunStoredAndAsksNoOne(t *testing.T) {
 		t.Fatalf("verify after run: exit %d:\n%s", v.Code, v.Output)
 	}
 
-	clone := e.Project()
-	e.Git(clone, "clone", "-q", proj, clone+"/c")
-	if v := verify(e, clone+"/c", base, "HEAD"); v.Code != 0 {
+	// Another machine: a fresh clone of origin, which has only what was pushed. The commits it
+	// verifies are pushed too; the results come from origin's sloprail/checks branch.
+	e.PushBranch(proj, "main")
+	clone := e.CloneFresh(proj)
+	if v := verify(e, clone, base, "HEAD"); v.Code != 0 {
 		t.Fatalf("verify in another clone of the repository: exit %d:\n%s", v.Code, v.Output)
 	}
 	if n := judged(e, proj); n != 1 {

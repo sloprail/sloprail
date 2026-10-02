@@ -1,4 +1,4 @@
-package main
+package checkrun
 
 import (
 	"bytes"
@@ -13,8 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -24,7 +22,6 @@ import (
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
-	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
 // Evaluating file-guards over an explicit range: one changeset per rule.
@@ -48,20 +45,51 @@ import (
 // Checks run against a read-only snapshot of head (SR_TREE), never the working
 // tree, with SR_BASE and SR_HEAD naming the range.
 
+// Params is everything one evaluation of the file-guards is given. Nothing here knows about a
+// session's store or a hook: the caller states the range and where the transcript is.
+type Params struct {
+	// Err receives the diagnostics (stderr); nil discards them.
+	Err    io.Writer
+	Guards []declaration.FileGuard
+	// Root is the repository root; Range the commits judged.
+	Root  string
+	Range gitrepo.Range
+	// Cwd, Transcript, Workspace, SessionID and AgentID name the session the run is made
+	// from, when there is one; Subagent says a sub-agent's. All may be empty.
+	Cwd, Transcript, Workspace, SessionID, AgentID string
+	Subagent                                       bool
+	// ContextMap is each declared context's state (every one present, inactive by default).
+	ContextMap map[string]natures.ContextState
+	// Store records the runs and finds earlier ones; nil records and looks up nothing.
+	Store checkstore.Store
+	// Verify: a judge is looked up, never asked; nothing is recorded.
+	Verify bool
+}
+
+// FileGuardResult is one file-guard's outcome: the guard's name, how a refusal should
+// attribute it, whether it refused, and the reason to relay.
+//
+// Attribution carries the plugin-aware name (bare for a project's guard, plus
+// " from plugin X" for a shipped one).
+type FileGuardResult struct {
+	Name        string
+	Attribution string
+	Refused     bool
+	Reason      string
+}
+
 // changesetEvaluation is what one evaluation of every file-guard shares. Its rules are
 // evaluated concurrently (see evaluateChangesets), so everything here is read-only or
 // safe to use from several goroutines: stderr and git's worktree registry are guarded
 // below.
 type changesetEvaluation struct {
-	cmd        *cobra.Command
+	errw       io.Writer
 	diags      map[string]*bytes.Buffer // each rule's diagnostics, emitted in declaration order after the pool
 	root       string
-	p          HookPayload
-	scope      hookScope
+	params     Params
 	contextMap map[string]natures.ContextState
 	context    map[string]any
-	state      sessionstate.Store // optional: only the quotes the session recorded read it
-	store      checkstore.Store   // nil: nothing is recorded or looked up
+	store      checkstore.Store // nil: nothing is recorded or looked up
 	identity   checkstore.RunIdentity
 	batch      string
 	verify     bool // judges are looked up, never asked; nothing is written
@@ -70,12 +98,12 @@ type changesetEvaluation struct {
 	snapshots  sync.Mutex // `git worktree add/remove` race on the worktree names
 
 	mu       sync.Mutex
-	outcomes []checkOutcome
+	outcomes []CheckOutcome
 }
 
-// checkOutcome is one check's latest result as this evaluation saw it: what `verify`
+// CheckOutcome is one check's latest result as this evaluation saw it: what `verify`
 // and `run` print per subject.
-type checkOutcome struct {
+type CheckOutcome struct {
 	Rule    string `json:"rule"`
 	Subject string `json:"subject"`
 	Kind    string `json:"kind"`
@@ -84,7 +112,7 @@ type checkOutcome struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-func (ev *changesetEvaluation) note(o checkOutcome) {
+func (ev *changesetEvaluation) note(o CheckOutcome) {
 	ev.mu.Lock()
 	defer ev.mu.Unlock()
 	ev.outcomes = append(ev.outcomes, o)
@@ -138,7 +166,7 @@ type ruleRun struct {
 	next       int // index of the first check not yet run
 
 	cheap, slow time.Duration // time spent before / at the first judge
-	result      fileGuardResult
+	result      FileGuardResult
 	refused     bool
 	settled     bool // result is final
 }
@@ -146,6 +174,10 @@ type ruleRun struct {
 // evaluateChangesets evaluates every file-guard over rng and returns each refusal, in
 // the order the guards were declared, with every check's outcome. root is the
 // repository root; store may be nil. In verify mode nothing is recorded.
+//
+// Evaluate evaluates every file-guard over the range and returns each refusal, in the order
+// the guards were declared, with every check's outcome. In verify mode nothing is recorded.
+// The caller closes the store, which writes everything recorded as one segment.
 //
 // Rules are independent, so they run concurrently (SLOPRAIL_STOP_CONCURRENCY, default
 // 6) in three steps:
@@ -159,15 +191,19 @@ type ruleRun struct {
 //
 // Within a rule the declared order and first-refusal-ends are kept. The judged
 // verdicts are put in the cache once, at the end (one write per run).
-func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p HookPayload, scope hookScope, root string, rng gitrepo.Range,
-	contextMap map[string]natures.ContextState, state sessionstate.Store, store checkstore.Store, verify bool) ([]fileGuardResult, []checkOutcome) {
+func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
+	guards := p.Guards
 	if len(guards) == 0 {
 		return nil, nil
 	}
 	start := time.Now()
+	errw := p.Err
+	if errw == nil {
+		errw = io.Discard
+	}
 	ev := &changesetEvaluation{
-		cmd: cmd, diags: map[string]*bytes.Buffer{}, root: root, p: p, scope: scope, contextMap: contextMap,
-		context: contextMatchValue(contextMap), state: state, store: store, verify: verify, rng: rng,
+		errw: errw, diags: map[string]*bytes.Buffer{}, root: p.Root, params: p, contextMap: p.ContextMap,
+		context: ContextMatchValue(p.ContextMap), store: p.Store, verify: p.Verify, rng: p.Range,
 		batch: "check-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}
 	ev.identity = ev.runIdentity()
@@ -180,7 +216,7 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	out := make([]*ruleRun, len(guards))  // every rule's outcome, by declaration order
 	forEach(len(guards), limit, func(i int) {
 		g := guards[i]
-		if isLaunchedBy(os.Getenv, g.Name) {
+		if IsLaunchedBy(os.Getenv, g.Name) {
 			fmt.Fprintf(ev.log(g),
 				"sloprail: file-guard %q not enforced here — this session was launched by its own check (%s)\n",
 				g.Name, LaunchedByEnv)
@@ -208,7 +244,7 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 		}
 	})
 
-	var refusals []fileGuardResult
+	var refusals []FileGuardResult
 	for _, o := range out {
 		if o != nil && o.settled && o.refused {
 			refusals = append(refusals, o.result)
@@ -224,10 +260,10 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 	// the log's order depend on who finished first.
 	for _, g := range guards {
 		if b := ev.diags[g.Qualified()]; b != nil {
-			cmd.ErrOrStderr().Write(b.Bytes())
+			errw.Write(b.Bytes())
 		}
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
+	fmt.Fprintf(errw, "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
 		time.Since(start).Round(time.Millisecond), len(guards), limit)
 	sort.SliceStable(ev.outcomes, func(i, j int) bool {
 		a, b := ev.outcomes[i], ev.outcomes[j]
@@ -243,14 +279,14 @@ func evaluateChangesets(cmd *cobra.Command, guards []declaration.FileGuard, p Ho
 }
 
 // refusal is the result for a rule that could not be evaluated or that refused.
-func refusal(g declaration.FileGuard, reason string) fileGuardResult {
-	return fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason}
+func refusal(g declaration.FileGuard, reason string) FileGuardResult {
+	return FileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason}
 }
 
 // runIdentity fills the provenance columns: the repository (its root commit), the branch and
 // the session. Best effort — an unreadable one is left empty rather than costing the run.
 func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
-	id := checkstore.RunIdentity{SessionID: ev.scope.SessionID, AgentID: ev.p.AgentID}
+	id := checkstore.RunIdentity{SessionID: ev.params.SessionID, AgentID: ev.params.AgentID}
 	if root, err := gitrepo.RootCommit(ev.root); err == nil {
 		id.RepoID = root
 	}
@@ -284,7 +320,7 @@ func (ev *changesetEvaluation) recordCheck(runID string, c checkstore.CheckRecor
 
 // engineFailure records a run that failed as an engine — it passes nothing — and returns the
 // refusal that holds the caller.
-func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checkstore.CheckRun, err error) (fileGuardResult, bool) {
+func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checkstore.CheckRun, err error) (FileGuardResult, bool) {
 	fmt.Fprintf(ev.log(g), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
 	run.ExitCode, run.Error, run.Complete = 1, err.Error(), true
 	if _, recErr := ev.record(run); recErr != nil {
@@ -298,7 +334,7 @@ func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checks
 // prepare readies one rule over the range: the changeset, the snapshot, and the run recorded
 // RUNNING. A nil ruleRun means there is nothing more to do — the result and whether it
 // refused are the outcome.
-func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileGuardResult, bool) {
+func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, FileGuardResult, bool) {
 	rule := g.Qualified()
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: ev.rng.Base, HeadRef: ev.rng.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 
@@ -314,8 +350,8 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 	r := ev.rng
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
 		Deletions: changeset.DeletionMode(g.Deletions),
-		Scan:      changesetMarkers,
-		Select:    changesetSelector(match, ev.context),
+		Scan:      Markers,
+		Select:    Selector(match, ev.context),
 	})
 	if err != nil {
 		return ev.fail(g, run, err)
@@ -326,10 +362,18 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		if _, err := ev.record(run); err != nil {
 			return ev.fail(g, run, err)
 		}
-		return nil, fileGuardResult{}, false
+		return nil, FileGuardResult{}, false
 	}
 
-	unresolved := resolveChangesetCitations(&cs, ev.scope.Transcript, ev.p.Cwd)
+	// Verify never consults the session: a citation counts when a commit trailer carries it
+	// (what the author's `run`, where the transcript exists, resolved), and a verdict is keyed
+	// by the quote, not by the record it was found in.
+	var unresolved []changeset.Unresolved
+	if ev.verify {
+		TrustTrailers(&cs)
+	} else {
+		unresolved = ResolveCitations(&cs, ev.params.Transcript, ev.params.Cwd)
+	}
 
 	ev.snapshots.Lock()
 	tree, err := gitrepo.AddSnapshot(ev.root, "", r.Head)
@@ -338,19 +382,19 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		return ev.fail(g, run, err)
 	}
 
-	payload := changeset.NewPayload(cs, changeset.Whole(cs), ev.scope.Transcript, ev.context)
+	payload := changeset.NewPayload(cs, changeset.Whole(cs), ev.params.Transcript, ev.context)
 	req := dispatchcore.Request{
 		Nature:         dispatchcore.NatureFileGuard,
 		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.Citations))}},
-		TranscriptPath: ev.scope.Transcript,
-		Subagent:       ev.p.IsSubagent(),
+		TranscriptPath: ev.params.Transcript,
+		Subagent:       ev.params.Subagent,
 		Context:        ev.contextMap,
 		Dir:            g.Dir,
 		GuardName:      g.Name,
-		Workspace:      ev.scope.Workspace,
+		Workspace:      ev.params.Workspace,
 		ProjectRoot:    tree.Path,
-		SessionID:      ev.scope.SessionID,
-		LaunchedBy:     appendLaunchedBy(os.Getenv, g.Name),
+		SessionID:      ev.params.SessionID,
+		LaunchedBy:     AppendLaunchedBy(os.Getenv, g.Name),
 		Changeset:      &payload,
 		// SR_SESSION_START is kept for rules written against it: what stood before the work is the base.
 		Env: append(changeset.Env(tree.Path, r.Base, r.Head), "SR_SESSION_START="+r.Base),
@@ -363,11 +407,11 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) (*ruleRun, fileG
 		ev.dropTree(g, tree, r.Head)
 		return ev.fail(g, run, err)
 	}
-	return &ruleRun{g: g, hash: hash, req: req, payload: payload, runID: runID, unresolved: unresolved, tree: tree, head: r.Head}, fileGuardResult{}, false
+	return &ruleRun{g: g, hash: hash, req: req, payload: payload, runID: runID, unresolved: unresolved, tree: tree, head: r.Head}, FileGuardResult{}, false
 }
 
 // fail is engineFailure in prepare's three-value shape.
-func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.CheckRun, err error) (*ruleRun, fileGuardResult, bool) {
+func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.CheckRun, err error) (*ruleRun, FileGuardResult, bool) {
 	r, refused := ev.engineFailure(g, run, err)
 	return nil, r, refused
 }
@@ -428,7 +472,7 @@ func (ev *changesetEvaluation) skipDeferred(rr *ruleRun) {
 		}
 		reason := "judge deferred: this rule refused on a cheap check (" + rr.g.Qualified() + "); fix that and the judge runs next"
 		fmt.Fprintf(ev.log(rr.g), "sloprail: file-guard %s: judge %q not run; the rule's own cheap check refused first\n", rr.g.Attribution(), c.Judge)
-		ev.note(checkOutcome{Rule: rr.g.Qualified(), Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: "skipped", Source: "ran", Reason: reason})
+		ev.note(CheckOutcome{Rule: rr.g.Qualified(), Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: "skipped", Source: "ran", Reason: reason})
 		rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c), Status: checkstore.StatusSkip,
 			Metadata: map[string]any{"reasoning": reason, "model": c.Model}}
 		if err := ev.recordCheck(rr.runID, rec); err != nil {
@@ -493,6 +537,13 @@ func (ev *changesetEvaluation) runRequires(rr *ruleRun) (dispatchcore.Verdict, e
 	seen := map[string]int{}
 	for _, p := range g.Require {
 		kind := requireKind(p)
+		if ev.verify && (p.Skill != "" || p.Context != "") {
+			// What the agent loaded or read, and which contexts were open, lives in the session:
+			// judged where the session ran (`run`), not here.
+			ev.note(CheckOutcome{Rule: g.Qualified(), Subject: changeset.DefaultSubjectID, Kind: kind, Status: "skipped", Source: "ran",
+				Reason: "needs the session that made the change; checked where it ran"})
+			continue
+		}
 		if n := seen[kind]; n > 0 {
 			kind += "#" + strconv.Itoa(n+1)
 		}
@@ -533,7 +584,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 			grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.ForSubject(s))),
 		}}
 		v, err := ev.runner.CheckRequire(one)
-		out := checkOutcome{Rule: g.Qualified(), Subject: s.ID, Kind: kind, Status: checkstore.StatusPass, Source: "ran"}
+		out := CheckOutcome{Rule: g.Qualified(), Subject: s.ID, Kind: kind, Status: checkstore.StatusPass, Source: "ran"}
 		rec := checkstore.CheckRecord{Subject: s.ID, Kind: kind}
 		switch {
 		case err != nil:
@@ -573,7 +624,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 	}
 	reason := "a citation grounds only the commit it is in; an empty commit carrying only the trailer does not count. " +
 		"Not grounded by a citation in the commit that last changed it: " + strings.Join(failed, ", ") + ".\n" +
-		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe(), ev.recordedQuotes(failed, p.Citation.Pools())) + "\n" + body + unresolvedNote(unresolved)
+		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe()) + "\n" + body + unresolvedNote(unresolved)
 	return dispatchcore.Verdict{Refused: true, Reason: reason}, nil
 }
 
@@ -592,7 +643,7 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 // starts before the first commit has no commit to reset to). Undoing is `git revert`,
 // never `git reset --hard`.
 // Several quotes on one commit are fine.
-func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool, recorded []recordedQuote) string {
+func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendSafe bool) string {
 	var b strings.Builder
 	b.WriteString("Last changed by:")
 	allHead := true
@@ -610,15 +661,6 @@ func citeHowToFix(cs changeset.Changeset, files []string, trailer string, amendS
 		fmt.Fprintf(&b, "\n  %s: %s", path, describeCommit(cs, tip))
 	}
 	line := trailer + ": <exact quote>"
-	if len(recorded) > 0 {
-		// The agent already cited these files (sr-file --cite): hand back the
-		// quote it found, as the exact trailer to paste, never a placeholder.
-		line = recorded[0].Trailer + ": " + recorded[0].Quote
-		b.WriteString("\nQuotes already recorded for these files this session (sr-file --cite), each the trailer line to paste into the commit message:")
-		for _, r := range recorded {
-			fmt.Fprintf(&b, "\n  %s: %s: %s", r.Path, r.Trailer, r.Quote)
-		}
-	}
 	quoted := make([]string, len(files))
 	for i, f := range files {
 		quoted[i] = "'" + f + "'"
@@ -686,7 +728,7 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 
 	rule := g.Qualified()
 	rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c)}
-	out := checkOutcome{Rule: rule, Subject: rec.Subject, Kind: rec.Kind, Source: "ran"}
+	out := CheckOutcome{Rule: rule, Subject: rec.Subject, Kind: rec.Kind, Source: "ran"}
 	fail := func(err error) (dispatchcore.Verdict, error) {
 		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
 		_ = ev.recordCheck(runID, rec) // already failing
@@ -863,12 +905,12 @@ func (ev *changesetEvaluation) log(g declaration.FileGuard) io.Writer {
 	if b, ok := ev.diags[g.Qualified()]; ok {
 		return b
 	}
-	return ev.cmd.ErrOrStderr()
+	return ev.errw
 }
 
 // evaluate runs one rule on its own, start to finish: its cheap checks, then its
 // judges. The bool is whether it refused.
-func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResult, bool) {
+func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (FileGuardResult, bool) {
 	rr, r, refused := ev.prepare(g)
 	if rr == nil {
 		return r, refused

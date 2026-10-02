@@ -127,13 +127,15 @@ func (s *Store) sync() error {
 }
 
 func (s *Store) cachePath() string {
-	gd, err := s.g.str("rev-parse", "--git-path", "sloprail")
+	// The COMMON git dir, so every worktree of a repository shares one index.
+	gd, err := s.g.str("rev-parse", "--git-common-dir")
 	if err != nil {
 		return ""
 	}
 	if !filepath.IsAbs(gd) {
 		gd = filepath.Join(s.opt.Dir, gd)
 	}
+	gd = filepath.Join(gd, "sloprail")
 	sum := sha256.Sum256([]byte(s.opt.Ref))
 	return filepath.Join(gd, "checks-index-"+hex.EncodeToString(sum[:4])+".gob")
 }
@@ -345,14 +347,14 @@ type hit struct {
 
 // Lookup returns the stored result of each key, by Key.ID(). It reads the local
 // ref only (call Sync first for fresh data); a corrupt segment is an error.
-func (s *Store) Lookup(keys []Key) (map[string]Result, error) {
+func (s *Store) Lookup(keys []Key) (map[string]Found, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sn, err := s.snapshotAt(s.tip())
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]Result, len(keys))
+	out := make(map[string]Found, len(keys))
 	if len(sn.Segs) == 0 || len(keys) == 0 {
 		return out, nil
 	}
@@ -409,8 +411,8 @@ func (s *Store) Lookup(keys []Key) (map[string]Result, error) {
 // Put stores results as one new segment and publishes it. Concurrent writers
 // never conflict: the segment is content-addressed, so on a rejected push the
 // store re-bases the same files onto the new tip and pushes again.
-func (s *Store) Put(results []Result) error {
-	if len(results) == 0 {
+func (s *Store) Put(runs []Run) error {
+	if len(runs) == 0 {
 		return nil
 	}
 	s.mu.Lock()
@@ -427,7 +429,7 @@ func (s *Store) Put(results []Result) error {
 	if err != nil {
 		return err
 	}
-	name, zst, idx, err := encodeSegment(results, d)
+	name, zst, idx, err := encodeSegment(runs, d)
 	if err != nil {
 		return err
 	}
@@ -459,7 +461,7 @@ func (s *Store) Put(results []Result) error {
 			m, _ := json.Marshal(manifest{Schema: SchemaDir, Dict: d.sha})
 			f["MANIFEST.json"] = m
 		}
-		commit, err := s.commit(tip, false, f, fmt.Sprintf("checks: +%d results", len(results)))
+		commit, err := s.commit(tip, false, f, fmt.Sprintf("checks: +%d runs", len(runs)))
 		if err != nil {
 			return err
 		}

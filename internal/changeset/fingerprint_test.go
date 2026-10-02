@@ -48,6 +48,13 @@ func TestFingerprint_HistoryIsNotInput(t *testing.T) {
 	assert.Equal(t, fp(t, a), fp(t, b))
 }
 
+// Where a quote was found is only known where the transcript is: the quote is the input.
+func TestFingerprint_WhereACitationWasFoundIsNotInput(t *testing.T) {
+	a, b := samplePayload(), samplePayload()
+	b.Changeset.Citations[0].Citation.Path, b.Changeset.Citations[0].Citation.Line, b.Changeset.Citations[0].Citation.Message = "/elsewhere", 99, "the cited message"
+	assert.Equal(t, fp(t, a), fp(t, b))
+}
+
 func TestFingerprint_DoesNotChangeTheCallersPayload(t *testing.T) {
 	p := samplePayload()
 	fp(t, p)
@@ -66,17 +73,20 @@ func TestFingerprint_TheTranscriptLocationIsNotInput(t *testing.T) {
 func TestFingerprint_EverythingTheCheckReceivesMattersToIt(t *testing.T) {
 	base := fp(t, samplePayload())
 	for name, mutate := range map[string]func(*Payload){
-		"new content":     func(p *Payload) { p.Changeset.Files[0].NewContent = "3" },
-		"old content":     func(p *Payload) { p.Changeset.Files[0].OldContent = "0" },
-		"path":            func(p *Payload) { p.Changeset.Files[0].Path = "b.go" },
-		"status":          func(p *Payload) { p.Changeset.Files[0].Status = "A" },
-		"old path":        func(p *Payload) { p.Changeset.Files[0].OldPath = "z.go" },
-		"diff":            func(p *Payload) { p.Changeset.Files[0].Diff = "@@ changed" },
-		"marker":          func(p *Payload) { p.Changeset.Files[0].NewMarkers[0].FQN = "g" },
-		"old marker":      func(p *Payload) { p.Changeset.Files[0].OldMarkers = []Marker{{Kind: "k"}} },
-		"extra file":      func(p *Payload) { p.Changeset.Files = append(p.Changeset.Files, File{Path: "c.go"}) },
-		"other":           func(p *Payload) { p.Changeset.Others[0].Status = "D" },
-		"citation":        func(p *Payload) { p.Changeset.Citations[0].Citation.Message = "other message" },
+		"new content":    func(p *Payload) { p.Changeset.Files[0].NewContent = "3" },
+		"old content":    func(p *Payload) { p.Changeset.Files[0].OldContent = "0" },
+		"path":           func(p *Payload) { p.Changeset.Files[0].Path = "b.go" },
+		"status":         func(p *Payload) { p.Changeset.Files[0].Status = "A" },
+		"old path":       func(p *Payload) { p.Changeset.Files[0].OldPath = "z.go" },
+		"diff":           func(p *Payload) { p.Changeset.Files[0].Diff = "@@ changed" },
+		"marker":         func(p *Payload) { p.Changeset.Files[0].NewMarkers[0].FQN = "g" },
+		"old marker":     func(p *Payload) { p.Changeset.Files[0].OldMarkers = []Marker{{Kind: "k"}} },
+		"extra file":     func(p *Payload) { p.Changeset.Files = append(p.Changeset.Files, File{Path: "c.go"}) },
+		"other":          func(p *Payload) { p.Changeset.Others[0].Status = "D" },
+		"citation quote": func(p *Payload) { p.Changeset.Citations[0].Citation.Quote = "another quote" },
+		"citation pool": func(p *Payload) {
+			p.Changeset.Citations[0].Citation.SourceTypes = []transcript.SourceType{transcript.SourceToolResult}
+		},
 		"no citation":     func(p *Payload) { p.Changeset.Citations = nil },
 		"subject id":      func(p *Payload) { p.Subject.ID = "pkg/a" },
 		"subject files":   func(p *Payload) { p.Subject.Files = []string{"a.go", "x.go"} },

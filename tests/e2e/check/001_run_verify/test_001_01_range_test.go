@@ -7,7 +7,7 @@ func TestT001_01_BaseAndHeadAreRequired(t *testing.T) {
 	e, proj, _ := project(t, scriptRule, map[string]string{"check.sh": forbiddenCheck}, "")
 	for _, verb := range []string{"run", "verify"} {
 		for _, args := range [][]string{{}, {"--base", "HEAD"}, {"--head", "HEAD"}} {
-			r := e.CLIDirectEnv(proj, e.SessionEnv(session), "sr", append([]string{"check", verb}, args...)...)
+			r := e.CLIDirectEnv(proj, e.SessionEnv(session), "sr", append([]string{"checks", verb}, args...)...)
 			if r.Code == 0 {
 				t.Fatalf("sr check %s %v succeeded without both flags:\n%s", verb, args, r.Output)
 			}

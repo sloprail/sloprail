@@ -35,9 +35,6 @@ func TestProxyShortsMatchTheServices(t *testing.T) {
 
 	for _, s := range services {
 		t.Run(s.name, func(t *testing.T) {
-			if s.target != "" {
-				t.Skip("a subcommand group of another service: its Short is that command's own")
-			}
 			path := filepath.Join(root, "services", binaryName(s.name), "main.go")
 			src, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -88,7 +85,7 @@ func TestEveryServiceDirectoryIsInTheTable(t *testing.T) {
 
 	inTable := map[string]bool{}
 	for _, s := range services {
-		inTable[s.binaryOf()] = true
+		inTable[binaryName(s.name)] = true
 	}
 
 	for _, e := range entries {

@@ -87,6 +87,17 @@ type Store interface {
 	// owner selects only the guardrail, never another session's database.
 	ListStateOwned(owner, prefix string) ([]Entry, error)
 
+	// RegisterFolder records a folder of the session the first time it is seen and
+	// reports whether it wrote; a folder already there is left as it is, so its
+	// BaseRef — where work in it began — never moves.
+	RegisterFolder(f Folder) (bool, error)
+	// Folder reads one registered folder; absent is an answer, not a failure.
+	Folder(sessionID, path string) (Folder, bool, error)
+	// Folders lists the session's folders, the root first.
+	Folders(sessionID string) ([]Folder, error)
+	// SetFolderHead records the last HEAD seen in a registered folder.
+	SetFolderHead(sessionID, path, head string) error
+
 	// Close releases the database.
 	Close() error
 }

@@ -6,7 +6,7 @@
 //	sr mark ...       → sr-mark
 //	sr agent ...      → sr-agent
 //	sr eval ...       → sr-eval
-//	sr check ...      → sr-session check ...
+//	sr checks ...     → sr-checks
 //
 // So `sr session start` and `sr-session start` are the same run of the same
 // binary, reached two ways. The proxy adds one exec and changes nothing else:
@@ -65,7 +65,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -84,10 +83,6 @@ func main() {
 type service struct {
 	name  string // the word typed after `sr`
 	short string // one line, matching the target binary's own Short
-	// target is the binary the word dispatches to ("" means sr-<name>), and prefix the
-	// words put before the caller's arguments (`sr check run` is `sr-session check run`).
-	target string
-	prefix []string
 }
 
 // services is the dispatch table — the single list of what `sr` proxies.
@@ -106,24 +101,16 @@ type service struct {
 // the five services in the table at the time had ALREADY drifted when that test
 // was written.
 var services = []service{
-	{name: "session", short: "Session lifecycle — the hook points a harness calls"},
-	{name: "file", short: "Check a file's contents, or change a file grounded in citations"},
-	{name: "mark", short: "Write // sr:<kind> <fqn> enforcement markers into impl files"},
-	{name: "agent", short: "Run an agent, whichever harness is running"},
-	{name: "eval", short: "Prove a guardrail's use case against a real agent"},
-	{name: "check", short: "Judge the file-guards over an explicit commit range: run, verify", target: "sr-session", prefix: []string{"check"}},
+	{"session", "Session lifecycle — the hook points a harness calls"},
+	{"file", "Check a file's contents, or change a file grounded in citations"},
+	{"mark", "Write // sr:<kind> <fqn> enforcement markers into impl files"},
+	{"agent", "Run an agent, whichever harness is running"},
+	{"eval", "Prove a guardrail's use case against a real agent"},
+	{"checks", "Judge the file-guards over an explicit commit range and show the results"},
 }
 
 // binaryName is the binary a service word dispatches to.
 func binaryName(s string) string { return "sr-" + s }
-
-// binaryOf is the binary a service dispatches to.
-func (s service) binaryOf() string {
-	if s.target != "" {
-		return s.target
-	}
-	return binaryName(s.name)
-}
 
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
@@ -166,10 +153,10 @@ func newProxyCmd(s service) *cobra.Command {
 	return &cobra.Command{
 		Use:                s.name + " ...",
 		Short:              s.short,
-		Long:               s.short + ".\n\nRuns " + strings.TrimSpace(s.binaryOf()+" "+strings.Join(s.prefix, " ")) + ", passing everything after `" + s.name + "` to it unchanged.\nRun `sr " + s.name + " --help` for its own help.",
+		Long:               s.short + ".\n\nRuns " + binaryName(s.name) + ", passing everything after `" + s.name + "` to it unchanged.\nRun `" + binaryName(s.name) + " --help` — or `sr " + s.name + " --help` — for its own help.",
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return subbin.Exec(cmd.Context(), s.binaryOf(), append(append([]string{}, s.prefix...), args...)...)
+			return subbin.Exec(cmd.Context(), binaryName(s.name), args...)
 		},
 	}
 }

@@ -16,15 +16,17 @@ import (
 //go:generate sh -c "SR_GEN_DICT=1 go test -run TestGenerateDefaultDict ."
 
 // A segment is one write-once blob of per-record zstd frames (all with the same
-// dictionary), named by the sha256 of its bytes, plus a sorted index of
-// key16 -> (offset, length) so a lookup inflates only the frames it needs.
+// dictionary), named by the sha256 of its bytes, plus a sorted index so a lookup inflates
+// only the frames it needs. A record is a RUN (a rule evaluated once, with its checks and
+// their items); the index has one entry per findable check, so several entries may point
+// at one frame: key16 -> (offset, length, position of the check in the run).
 //
-// idx layout: "SRIDX001" | dictSha[32] | n u32 | n x (key16 | off u32 | len u32), big endian.
+// idx layout: "SRIDX002" | dictSha[32] | n u32 | n x (key16 | off u32 | len u32 | pos u16), big endian.
 
 const (
-	idxMagic  = "SRIDX001"
+	idxMagic  = "SRIDX002"
 	keyLen    = 16
-	idxEntry  = keyLen + 8
+	idxEntry  = keyLen + 10
 	idxHeader = len(idxMagic) + 32 + 4
 )
 
@@ -35,6 +37,7 @@ type segIdx struct {
 	Keys   [][keyLen]byte
 	Offs   []uint32
 	Lens   []uint32
+	Pos    []uint16
 }
 
 func (s *segIdx) find(k [keyLen]byte) int {
@@ -95,46 +98,79 @@ func stampDictID(d []byte) []byte {
 	return out
 }
 
-func marshalResult(r Result) ([]byte, error) { return json.Marshal(r) }
+func marshalRun(r Run) ([]byte, error) { return json.Marshal(r) }
 
-// encodeSegment compresses results (duplicate keys within the batch resolve by
-// Newer) into a segment and its index.
-func encodeSegment(results []Result, d *zdict) (name string, zst, idx []byte, err error) {
-	byID := map[string]Result{}
-	for _, r := range results {
-		id := r.Key.ID()
-		if p, ok := byID[id]; ok && !Newer(r, p) {
-			continue
+// entry is one findable check of one run.
+type entry struct {
+	id  string
+	run int
+	pos int
+}
+
+// encodeSegment compresses runs into a segment and its index. Duplicate keys within the
+// batch resolve by Newer.
+func encodeSegment(runs []Run, d *zdict) (name string, zst, idx []byte, err error) {
+	best := map[string]entry{}
+	for ri, r := range runs {
+		for pi, c := range r.Checks {
+			if !Findable(c) {
+				continue
+			}
+			id := r.CheckKey(c).ID()
+			if p, ok := best[id]; ok && !Newer(Found{Run: r, Check: c}, Found{Run: runs[p.run], Check: runs[p.run].Checks[p.pos]}) {
+				continue
+			}
+			best[id] = entry{id, ri, pi}
 		}
-		byID[id] = r
 	}
-	ids := make([]string, 0, len(byID))
-	for id := range byID {
-		ids = append(ids, id)
+	entries := make([]entry, 0, len(best))
+	for _, e := range best {
+		entries = append(entries, e)
 	}
-	sort.Strings(ids) // hex order == key16 byte order
+	sort.Slice(entries, func(i, j int) bool { return entries[i].id < entries[j].id }) // hex order == key16 byte order
 	var data, ix bytes.Buffer
-	dsha, _ := hex.DecodeString(d.sha)
-	ix.WriteString(idxMagic)
-	ix.Write(dsha)
-	_ = binary.Write(&ix, binary.BigEndian, uint32(len(ids)))
-	for _, id := range ids {
-		raw, err := marshalResult(byID[id])
+	frames := map[int][2]uint32{} // run -> offset, length
+	for _, ri := range sortedRuns(entries) {
+		raw, err := marshalRun(runs[ri])
 		if err != nil {
 			return "", nil, nil, err
 		}
 		frame := d.enc.EncodeAll(raw, nil)
-		k, err := key16(id)
+		frames[ri] = [2]uint32{uint32(data.Len()), uint32(len(frame))}
+		data.Write(frame)
+	}
+	dsha, _ := hex.DecodeString(d.sha)
+	ix.WriteString(idxMagic)
+	ix.Write(dsha)
+	_ = binary.Write(&ix, binary.BigEndian, uint32(len(entries)))
+	for _, e := range entries {
+		k, err := key16(e.id)
 		if err != nil {
 			return "", nil, nil, err
 		}
+		fr := frames[e.run]
 		ix.Write(k[:])
-		_ = binary.Write(&ix, binary.BigEndian, uint32(data.Len()))
-		_ = binary.Write(&ix, binary.BigEndian, uint32(len(frame)))
-		data.Write(frame)
+		_ = binary.Write(&ix, binary.BigEndian, fr[0])
+		_ = binary.Write(&ix, binary.BigEndian, fr[1])
+		_ = binary.Write(&ix, binary.BigEndian, uint16(e.pos))
 	}
 	sum := sha256.Sum256(data.Bytes())
 	return hex.EncodeToString(sum[:]), data.Bytes(), ix.Bytes(), nil
+}
+
+// sortedRuns is the runs that own at least one entry, in a stable order (their position in
+// the batch), so the same runs always make the same bytes.
+func sortedRuns(entries []entry) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, e := range entries {
+		if !seen[e.run] {
+			seen[e.run] = true
+			out = append(out, e.run)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 func parseIdx(name, oid string, b []byte) (*segIdx, error) {
@@ -146,12 +182,13 @@ func parseIdx(name, oid string, b []byte) (*segIdx, error) {
 		return nil, fmt.Errorf("%w: index of %s has wrong length", ErrCorrupt, name)
 	}
 	s := &segIdx{Name: name, ZstOid: oid, Dict: hex.EncodeToString(b[len(idxMagic) : len(idxMagic)+32]),
-		Keys: make([][keyLen]byte, n), Offs: make([]uint32, n), Lens: make([]uint32, n)}
+		Keys: make([][keyLen]byte, n), Offs: make([]uint32, n), Lens: make([]uint32, n), Pos: make([]uint16, n)}
 	p := idxHeader
 	for i := 0; i < n; i++ {
 		copy(s.Keys[i][:], b[p:p+keyLen])
 		s.Offs[i] = binary.BigEndian.Uint32(b[p+keyLen:])
 		s.Lens[i] = binary.BigEndian.Uint32(b[p+keyLen+4:])
+		s.Pos[i] = binary.BigEndian.Uint16(b[p+keyLen+8:])
 		if i > 0 && bytes.Compare(s.Keys[i-1][:], s.Keys[i][:]) >= 0 {
 			return nil, fmt.Errorf("%w: index of %s is not sorted", ErrCorrupt, name)
 		}
@@ -160,24 +197,39 @@ func parseIdx(name, oid string, b []byte) (*segIdx, error) {
 	return s, nil
 }
 
-// decodeAt inflates entry i of a segment whose verified bytes are blob.
-func (s *segIdx) decodeAt(blob []byte, i int, d *zdict) (Result, error) {
+// decodeRun inflates the run frame of entry i of a segment whose verified bytes are blob.
+func (s *segIdx) decodeRun(blob []byte, i int, d *zdict) (Run, error) {
 	off, ln := int(s.Offs[i]), int(s.Lens[i])
 	if off < 0 || ln <= 0 || off+ln > len(blob) {
-		return Result{}, fmt.Errorf("%w: %s entry out of bounds", ErrCorrupt, s.Name)
+		return Run{}, fmt.Errorf("%w: %s entry out of bounds", ErrCorrupt, s.Name)
 	}
 	raw, err := d.dec.DecodeAll(blob[off:off+ln], nil)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %s: %v", ErrCorrupt, s.Name, err)
+		return Run{}, fmt.Errorf("%w: %s: %v", ErrCorrupt, s.Name, err)
 	}
-	var r Result
+	var r Run
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return Result{}, fmt.Errorf("%w: %s: %v", ErrCorrupt, s.Name, err)
-	}
-	if k, _ := key16(r.Key.ID()); k != s.Keys[i] {
-		return Result{}, fmt.Errorf("%w: %s record does not match its index key", ErrCorrupt, s.Name)
+		return Run{}, fmt.Errorf("%w: %s: %v", ErrCorrupt, s.Name, err)
 	}
 	return r, nil
+}
+
+// decodeAt is the check entry i of a segment points at, with its run. The run's own check
+// must hash to the index key: a record that does not match its index is corrupt, never a hit.
+func (s *segIdx) decodeAt(blob []byte, i int, d *zdict) (Found, error) {
+	r, err := s.decodeRun(blob, i, d)
+	if err != nil {
+		return Found{}, err
+	}
+	pos := int(s.Pos[i])
+	if pos >= len(r.Checks) {
+		return Found{}, fmt.Errorf("%w: %s entry names check %d of a run with %d", ErrCorrupt, s.Name, pos, len(r.Checks))
+	}
+	c := r.Checks[pos]
+	if k, _ := key16(r.CheckKey(c).ID()); k != s.Keys[i] {
+		return Found{}, fmt.Errorf("%w: %s record does not match its index key", ErrCorrupt, s.Name)
+	}
+	return Found{Run: r, Check: c}, nil
 }
 
 func verifySegment(name string, blob []byte) error {

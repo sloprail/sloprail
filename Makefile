@@ -19,7 +19,7 @@
 # copies to `/` when the shell substitution comes back empty. See INSTALL_DIR.
 
 BIN_DIR  := bin
-SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval
+SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
 # VERSION is what `sr-session --version` (etc.) reports, and what the plugin's

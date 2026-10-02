@@ -9,7 +9,7 @@
 #   1. detects the platform (darwin/linux, amd64/arm64)
 #   2. downloads that platform's archive from the latest GitHub Release
 #      (sloprail/sloprail), verifies it against the release's checksums.txt
-#   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval into one directory —
+#   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks into one directory —
 #      $SLOPRAIL_INSTALL_DIR if set, else ~/.local/bin — because sibling
 #      resolution (internal/subbin) requires the set to be installed together
 #   4. warns, once, if that directory is not on $PATH — the wrapper the
@@ -152,7 +152,7 @@ fi
 # --- unpack and install ---------------------------------------------------------
 tar -C "${tmp}" -xzf "${tmp}/${archive}"
 mkdir -p "${INSTALL_DIR}"
-for bin in sr sr-session sr-file sr-mark sr-agent sr-eval; do
+for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
   cp "${tmp}/sloprail-${platform}/${bin}" "${INSTALL_DIR}/${bin}"
   chmod +x "${INSTALL_DIR}/${bin}"
   # macOS kills a binary copied over an existing signed one at exec with a
@@ -163,7 +163,7 @@ for bin in sr sr-session sr-file sr-mark sr-agent sr-eval; do
   command -v codesign >/dev/null 2>&1 && codesign --sign - --force "${INSTALL_DIR}/${bin}" 2>/dev/null || true
 done
 
-say "sloprail install: installed ${tag} (sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval) into ${INSTALL_DIR}"
+say "sloprail install: installed ${tag} (sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks) into ${INSTALL_DIR}"
 
 case ":$PATH:" in
 *":${INSTALL_DIR}:"*) ;;

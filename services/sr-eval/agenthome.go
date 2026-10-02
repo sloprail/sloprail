@@ -20,7 +20,7 @@ import (
 // stranger's machine has it. It is also what buildRelease stages, so it must be
 // everything install.sh copies (TestSloprailBinaries_CoverEverythingInstallShCopies):
 // a missing one made install.sh fail on `cp` and sloprail never ran.
-var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval"}
+var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval", "sr-checks"}
 
 // agentEnv is how an agent-under-test is launched: its HOME, the environment
 // it runs in, and where its harness keeps transcripts. releaseURL is set only
