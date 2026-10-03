@@ -76,6 +76,29 @@ func (s *store) allRuns() ([]checkcache.Run, error) {
 // the runs the store can see; done discards them. A run that only resolves stale checks is
 // not a run: it turns the checks it names into skips.
 func (s *store) view() (db *sql.DB, done func(), err error) {
+	return s.buildView()
+}
+
+// readView is view for a caller that only runs its own fixed SELECTs. A read-only store never
+// gains a run, so its view is built once and shared (and closed with the store); every other
+// store builds a fresh one, as view does.
+func (s *store) readView() (*sql.DB, func(), error) {
+	if !s.readOnly {
+		return s.view()
+	}
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	if s.viewDB == nil {
+		db, done, err := s.buildView()
+		if err != nil {
+			return nil, nil, err
+		}
+		s.viewDB, s.viewDone = db, done
+	}
+	return s.viewDB, func() {}, nil
+}
+
+func (s *store) buildView() (db *sql.DB, done func(), err error) {
 	runs, err := s.allRuns()
 	if err != nil {
 		return nil, nil, err
@@ -221,7 +244,7 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 }
 
 func (s *store) RunRefs(rule string) (RunRefs, error) {
-	db, done, err := s.view()
+	db, done, err := s.readView()
 	if err != nil {
 		return RunRefs{}, err
 	}
@@ -271,7 +294,7 @@ func (s *store) RunRefs(rule string) (RunRefs, error) {
 // stale: it failed, and clearing the orphan must not turn it into a pass; a run with no checks at all (`match` selected nothing)
 // passed too, which is what lets an empty selection advance the watermark.
 func (s *store) PassedHeads(rule string) ([]string, error) {
-	db, done, err := s.view()
+	db, done, err := s.readView()
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +324,7 @@ func (s *store) PassedHeads(rule string) ([]string, error) {
 }
 
 func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error) {
-	db, done, err := s.view()
+	db, done, err := s.readView()
 	if err != nil {
 		return nil, err
 	}

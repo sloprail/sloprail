@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -594,12 +598,19 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet.SetOut(io.Discard)
 	quiet.SetErr(io.Discard)
 	out, notes := trackRefusal, []string(nil)
+	tSerial := time.Now()
 	var due []sessionstate.TrackedRange
+	memo := newCoverMemo()
+	vmemo := &verifyMemo{store: store}
 	recorded := lazyRecordedCitations(p, store)
 	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
-	for _, r := range ranges {
+	oneEach := collapseByRepo(ranges, p.AgentID, memo)
+	for i, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
+		}
+		if r.Tracked() && !oneEach[i] {
+			continue // the same branch of the same repository, tracked from another worktree: one range
 		}
 		if !r.Tracked() {
 			if r.UntrackedReason == prunedReason {
@@ -608,14 +619,15 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			notes = append(notes, fmt.Sprintf("untracked: %s %s (reason: %s)", r.Folder, r.Head, r.UntrackedReason))
 			continue
 		}
-		if coveredByBranch(r, ranges) {
+		if coveredByBranch(r, ranges, memo) {
 			continue // commits left on a detached HEAD, since given a branch: that branch's range holds them
 		}
-		if coveredWhenGone(r, ranges) {
+		if coveredWhenGone(r, ranges, memo) {
 			continue // a folder that no longer exists, whose commits another tracked range holds
 		}
 		due = append(due, r)
 	}
+	debugTiming(cmd, fmt.Sprintf("select-ranges (%d of %d)", len(due), len(ranges)), tSerial)
 	// The distinct ranges are verified in parallel, bounded; refusals keep the registry's order.
 	reasons := make([]string, len(due))
 	sem := make(chan struct{}, rangeVerifyConcurrency)
@@ -627,7 +639,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			defer wg.Done()
 			defer func() { <-sem }()
 			t0 := time.Now()
-			reasons[i] = verifyRangeWith(cmd, p, reg, quiet, r, recorded, seen)
+			reasons[i] = verifyRangeWith(cmd, p, reg, quiet, r, recorded, seen, vmemo)
 			debugTiming(cmd, "range "+r.Folder+" "+r.Head, t0)
 		}(i, r)
 	}
@@ -694,7 +706,7 @@ func effectiveBase(r sessionstate.TrackedRange, head string) string {
 // verifyRange verifies one tracked range, returning the refusal or "". It only reads what `sr-checks run`
 // stored: no check is executed, so it needs no record or session id.
 func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, quiet *cobra.Command, r sessionstate.TrackedRange) string {
-	return verifyRangeWith(cmd, p, reg, quiet, r, lazyRecordedCitations(p, store), nil)
+	return verifyRangeWith(cmd, p, reg, quiet, r, lazyRecordedCitations(p, store), nil, nil)
 }
 
 var repoOfMemo sync.Map
@@ -706,12 +718,14 @@ func repoOf(folder string) string {
 	if v, ok := repoOfMemo.Load(folder); ok {
 		return v.(string)
 	}
-	repo := folder
-	if out, err := exec.Command("git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err == nil {
-		if s := strings.TrimSpace(string(out)); s != "" {
-			repo = s
-		}
+	// The repository's stable identity, plus the git directory its worktrees share: two clones
+	// of one remote have one RepoID but are two repositories, with branches of their own.
+	common, err := gitrepo.CommonDir(folder)
+	if err != nil {
+		common = folder
 	}
+	id, _ := gitrepo.RepoID(folder)
+	repo := id + "\x00" + common
 	repoOfMemo.Store(folder, repo)
 	return repo
 }
@@ -738,7 +752,7 @@ const rangeVerifyConcurrency = 8
 
 // verifyRangeWith is verifyRange with the recorded-quotes hint supplied lazily, so a Stop that
 // verifies many ranges builds it at most once, and only if a citation refusal needs it.
-func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, quiet *cobra.Command, r sessionstate.TrackedRange, recorded func() map[string][]transcript.Citation, seen *seenRanges) string {
+func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, quiet *cobra.Command, r sessionstate.TrackedRange, recorded func() map[string][]transcript.Citation, seen *seenRanges, vm *verifyMemo) string {
 	head, goneNote := headRevision(r)
 	r.Base = effectiveBase(r, head)
 	if seen != nil {
@@ -779,6 +793,12 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 		return fmt.Sprintf("%s: the check results could not be opened (%v); refusing because results that could not be read must not be read as 'nothing was judged'.", where, err)
 	}
 	cache.FreezeTip() // verify only reads: the ref is read once, not once per guard
+	// Verify is a pure function of the commits, the rules and the stored verdicts: a range
+	// already verified under all three keeps its answer.
+	memoKey := vm.key(r, p, where, rng, loaded.FileGuards, broken, cache.Tip())
+	if got, ok := vm.get(memoKey); ok {
+		return got
+	}
 	results := checkstore.Open(cache, true)
 	defer results.Close()
 	refusals, _ := checkrun.Evaluate(checkrun.Params{
@@ -787,6 +807,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 		Store: results, Verify: true, RecordedFn: recorded,
 	})
 	if len(refusals) == 0 && len(broken) == 0 {
+		vm.put(memoKey, "")
 		return ""
 	}
 	parts := append([]string(nil), broken...)
@@ -797,7 +818,98 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	if len(r.Head) < 40 && !strings.HasPrefix(r.Head, "refs/") {
 		out += fmt.Sprintf("\nIf %s is not yours to answer for (the user said to drop it), stop answering for it: `sr-session refs untrack --head %s --reason '<why>'`, and `sr-session refs track --head %s` takes it back.", r.Head, r.Head, r.Head)
 	}
+	vm.put(memoKey, out)
 	return out
+}
+
+// verifyMemo keeps, in the session's store, what verifying a range answered, so a Stop pays
+// only for the ranges whose commits, rules or stored verdicts changed since the last one.
+// A nil memo remembers nothing.
+type verifyMemo struct {
+	store sessionstate.Store
+	mu    sync.Mutex
+
+	hashMu sync.Mutex
+	hashes map[string][]string // (folder, its rules) -> their hashes, read once per Stop
+}
+
+// ruleHashes is the hash of every guard's rule, read from disk once per (folder, rule set) for
+// the Stop: every range of a folder loads the same rules.
+func (m *verifyMemo) ruleHashes(folder string, guards []declaration.FileGuard) ([]string, error) {
+	dirs := make([]string, len(guards))
+	plugins := make([]bool, len(guards))
+	for i, g := range guards {
+		dirs[i], plugins[i] = g.Dir, g.Origin.FromPlugin()
+	}
+	k := folder + "\x00" + strings.Join(dirs, "\x00")
+	m.hashMu.Lock() // held while hashing: ranges of one folder wait for the one hashing, not repeat it
+	defer m.hashMu.Unlock()
+	if h, ok := m.hashes[k]; ok {
+		return h, nil
+	}
+	h, err := changeset.RuleHashesAt(folder, dirs, plugins)
+	if err != nil {
+		return nil, err
+	}
+	if m.hashes == nil {
+		m.hashes = map[string][]string{}
+	}
+	m.hashes[k] = h
+	return h, nil
+}
+
+const verifyMemoPrefix = "verify-memo:"
+
+// key is the digest of everything a range's verify answer depends on: the repository, the two
+// commits, the rules that load (their hashes, and the ones that failed to load), who asks, how
+// the refusal is worded, and the tip of the results ref (a new `sr-checks run` moves it).
+func (m *verifyMemo) key(r sessionstate.TrackedRange, p HookPayload, where string, rng gitrepo.Range, guards []declaration.FileGuard, broken []string, resultsTip string) string {
+	if m == nil || m.store == nil {
+		return ""
+	}
+	got, err := m.ruleHashes(r.Folder, guards)
+	if err != nil {
+		return "" // a rule that cannot be hashed is never memoized
+	}
+	hashes := make([]string, 0, len(guards))
+	for i, g := range guards {
+		hashes = append(hashes, g.Qualified()+"="+got[i])
+	}
+	sort.Strings(hashes)
+	h := sha256.New()
+	for _, part := range [][]string{{repoOf(r.Folder), rng.Base, rng.Head, p.AgentID, fmt.Sprint(p.IsSubagent()), where, r.Head, resultsTip}, hashes, broken} {
+		for _, x := range part {
+			fmt.Fprintf(h, "%d:%s;", len(x), x)
+		}
+		h.Write([]byte{0})
+	}
+	return verifyMemoPrefix + hex.EncodeToString(h.Sum(nil))
+}
+
+func (m *verifyMemo) get(key string) (string, bool) {
+	if m == nil || m.store == nil || key == "" {
+		return "", false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok, err := m.store.Meta(key)
+	if err != nil || !ok || len(v) == 0 {
+		return "", false
+	}
+	return v[1:], v[0] == 'R' || v[0] == 'P'
+}
+
+func (m *verifyMemo) put(key, answer string) {
+	if m == nil || m.store == nil || key == "" {
+		return
+	}
+	tag := "P"
+	if answer != "" {
+		tag = "R"
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_ = m.store.SetMeta(key, tag+answer)
 }
 
 // headRevision is the revision a tracked range's head names now: its branch, else the commit it
@@ -1108,7 +1220,7 @@ func recordedCitations(p HookPayload, store sessionstate.Store) map[string][]tra
 // coveredWhenGone reports whether a range whose folder no longer exists is held by another
 // tracked range: its tip is reachable from that range's live head, so verifying that one judges
 // these commits too. A range that cannot be shown held is verified (and refused, if unreadable).
-func coveredWhenGone(r sessionstate.TrackedRange, all []sessionstate.TrackedRange) bool {
+func coveredWhenGone(r sessionstate.TrackedRange, all []sessionstate.TrackedRange, m *coverMemo) bool {
 	if r.HeadSHA == "" {
 		return false
 	}
@@ -1122,11 +1234,18 @@ func coveredWhenGone(r sessionstate.TrackedRange, all []sessionstate.TrackedRang
 		if _, err := os.Stat(o.Folder); err != nil {
 			continue
 		}
-		tip, note := headRevision(o)
+		tip, note := m.headRevision(o)
 		if note != "" {
 			continue
 		}
-		if exec.Command("git", "-C", o.Folder, "merge-base", "--is-ancestor", r.HeadSHA, tip).Run() == nil {
+		if name, ok := strings.CutPrefix(tip, "refs/heads/"); ok {
+			// One git call per (repository, commit) lists every branch holding it.
+			if m.branchesHolding(o.Folder, r.HeadSHA)[name] {
+				return true
+			}
+			continue
+		}
+		if in, err := m.isAncestor(o.Folder, r.HeadSHA, tip); err == nil && in {
 			return true
 		}
 	}
@@ -1138,13 +1257,16 @@ func coveredWhenGone(r sessionstate.TrackedRange, all []sessionstate.TrackedRang
 // (reachable from the branch's live tip, not from its base), so verifying the branch judges it
 // as well. A commit older than the branch's base, or one the branch cannot be shown to hold, is
 // not covered: it is verified on its own.
-func coveredByBranch(r sessionstate.TrackedRange, all []sessionstate.TrackedRange) bool {
+func coveredByBranch(r sessionstate.TrackedRange, all []sessionstate.TrackedRange, m *coverMemo) bool {
+	if _, err := os.Stat(r.Folder); err != nil {
+		return false // a folder that is gone holds no branch: no git call is made for it
+	}
 	commit := r.Head
 	switch {
-	case isCommitHead(r.Folder, r.Head):
+	case m.isCommitHead(r.Folder, r.Head):
 	case r.HeadSHA != "":
 		// A branch that is gone (renamed, deleted): the commit it last pointed at.
-		if _, note := headRevision(r); note == "" {
+		if _, note := m.headRevision(r); note == "" {
 			return false
 		}
 		commit = r.HeadSHA
@@ -1152,24 +1274,159 @@ func coveredByBranch(r sessionstate.TrackedRange, all []sessionstate.TrackedRang
 		return false
 	}
 	for _, o := range all {
-		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || isCommitHead(o.Folder, o.Head) || o.HeadSHA == "" || o.Base == "" || o.Head == r.Head {
+		if !o.Tracked() || o.Folder != r.Folder || o.AgentID != r.AgentID || o.HeadSHA == "" || o.Base == "" || o.Head == r.Head || m.isCommitHead(o.Folder, o.Head) {
 			continue
 		}
-		tip, note := headRevision(o) // the live tip
+		tip, note := m.headRevision(o) // the live tip
 		if note != "" {
 			continue // a branch that is gone holds nothing now
 		}
-		if in, err := gitrepo.IsAncestor(r.Folder, commit, tip); err != nil || !in {
+		if in, err := m.isAncestor(r.Folder, commit, tip); err != nil || !in {
 			continue
 		}
 		if o.Base != gitrepo.EmptyTree {
-			if before, err := gitrepo.IsAncestor(r.Folder, commit, o.Base); err != nil || before {
+			if before, err := m.isAncestor(r.Folder, commit, o.Base); err != nil || before {
 				continue
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// collapseByRepo picks, for each branch of each repository (per agent), the one tracked row that
+// answers for it: worktrees of one repository share every branch, so a branch registered once
+// per worktree is one range. The row with an explicit base wins, then the latest. A row at a bare commit, or of a folder that no longer exists, is its own. The result is indexed like
+// ranges; an untracked row is never picked here (the caller lists it).
+func collapseByRepo(ranges []sessionstate.TrackedRange, agentID string, m *coverMemo) []bool {
+	pick := make([]bool, len(ranges))
+	best := map[string]int{}
+	rank := func(r sessionstate.TrackedRange) int {
+		n := 0
+		if r.Base != "" && r.AddedBy != sessionstate.RangeAuto {
+			n += 2
+		}
+		if st, err := os.Stat(r.Folder); err == nil && st.IsDir() {
+			n++
+		}
+		return n
+	}
+	for i, r := range ranges {
+		if !r.Tracked() || (agentID != "" && r.AgentID != agentID) {
+			continue
+		}
+		if st, err := os.Stat(r.Folder); err != nil || !st.IsDir() {
+			// A folder that is gone (coveredWhenGone decides): rows naming the same head at the
+			// same commit are one.
+			k := "gone\x00" + r.AgentID + "\x00" + r.Head + "\x00" + r.HeadSHA
+			if _, dup := best[k]; !dup {
+				best[k] = i
+			}
+			continue
+		}
+		if m.isCommitHead(r.Folder, r.Head) {
+			pick[i] = true // a bare commit: its own range
+			continue
+		}
+		head := strings.TrimPrefix(r.Head, "refs/heads/")
+		key := repoOf(r.Folder) + "\x00" + r.AgentID + "\x00" + head
+		if j, ok := best[key]; !ok || rank(r) >= rank(ranges[j]) {
+			best[key] = i
+		}
+	}
+	for _, i := range best {
+		pick[i] = true
+	}
+	return pick
+}
+
+// coverMemo remembers, for one Stop, what git said about a head or a pair of commits, so the
+// pairwise coverage check spawns one git process per distinct question, not one per pair.
+// It is used from the sequential part of the Stop only.
+type coverMemo struct {
+	commitHead map[string]bool
+	revs       map[string][2]string
+	anc        map[string][2]any
+	holding    map[string]map[string]bool
+	branchSets map[string]map[string]bool
+}
+
+func newCoverMemo() *coverMemo {
+	return &coverMemo{commitHead: map[string]bool{}, revs: map[string][2]string{}, anc: map[string][2]any{}, holding: map[string]map[string]bool{}, branchSets: map[string]map[string]bool{}}
+}
+
+// branchesHolding is the local branches whose tip has commit among its ancestors, one git call
+// per (repository, commit).
+func (m *coverMemo) branchesHolding(folder, commit string) map[string]bool {
+	k := repoOf(folder) + "\x00" + commit
+	if v, ok := m.holding[k]; ok {
+		return v
+	}
+	v := map[string]bool{}
+	if out, err := exec.Command("git", "-C", folder, "for-each-ref", "--contains", commit, "--format=%(refname:short)", "refs/heads").Output(); err == nil {
+		for _, ln := range strings.Split(string(out), "\n") {
+			if ln = strings.TrimSpace(ln); ln != "" {
+				v[ln] = true
+			}
+		}
+	}
+	m.holding[k] = v
+	return v
+}
+
+func (m *coverMemo) isCommitHead(folder, head string) bool {
+	k := folder + "\x00" + head
+	if v, ok := m.commitHead[k]; ok {
+		return v
+	}
+	v := isCommitHead(folder, head)
+	m.commitHead[k] = v
+	return v
+}
+
+// branches is the local branch names of the repository folder belongs to, one git call each.
+func (m *coverMemo) branches(folder string) map[string]bool {
+	k := repoOf(folder)
+	if v, ok := m.branchSets[k]; ok {
+		return v
+	}
+	v := map[string]bool{}
+	if out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname:short)", "refs/heads").Output(); err == nil {
+		for _, ln := range strings.Split(string(out), "\n") {
+			if ln = strings.TrimSpace(ln); ln != "" {
+				v[ln] = true
+			}
+		}
+	}
+	m.branchSets[k] = v
+	return v
+}
+
+func (m *coverMemo) headRevision(r sessionstate.TrackedRange) (string, string) {
+	k := r.Folder + "\x00" + r.Head + "\x00" + r.HeadSHA
+	if v, ok := m.revs[k]; ok {
+		return v[0], v[1]
+	}
+	if r.Head != "" && !strings.HasPrefix(r.Head, "refs/") && !strings.HasPrefix(r.Head, "detached/") && m.branches(r.Folder)[r.Head] {
+		// A local branch that stands: its ref is the revision (what headRevision settles with
+		// two git calls per row).
+		m.revs[k] = [2]string{"refs/heads/" + r.Head, ""}
+		return "refs/heads/" + r.Head, ""
+	}
+	rev, note := headRevision(r)
+	m.revs[k] = [2]string{rev, note}
+	return rev, note
+}
+
+func (m *coverMemo) isAncestor(folder, a, b string) (bool, error) {
+	k := folder + "\x00" + a + "\x00" + b
+	if v, ok := m.anc[k]; ok {
+		err, _ := v[1].(error)
+		return v[0].(bool), err
+	}
+	in, err := gitrepo.IsAncestor(folder, a, b)
+	m.anc[k] = [2]any{in, err}
+	return in, err
 }
 
 // hasTrackedRanges reports whether the session has a tracked range of any agent: what the root's

@@ -25,6 +25,7 @@
 package checkstore
 
 import (
+	"database/sql"
 	"errors"
 	"sync"
 
@@ -82,6 +83,10 @@ type store struct {
 	runs   []*checkcache.Run
 	byID   map[string]*checkcache.Run
 	closed bool
+
+	viewMu   sync.Mutex
+	viewDB   *sql.DB // a read-only store's one view, built on first use
+	viewDone func()
 }
 
 // Open returns a store over a backend. readOnly: RecordRun refuses, Close writes nothing.
@@ -90,6 +95,13 @@ func Open(cache checkcache.Cache, readOnly bool) Store {
 }
 
 func (s *store) Close() error {
+	// viewMu is taken before mu (as readView does), never inside it.
+	s.viewMu.Lock()
+	if s.viewDone != nil {
+		s.viewDone()
+		s.viewDB, s.viewDone = nil, nil
+	}
+	s.viewMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

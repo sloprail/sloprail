@@ -112,6 +112,70 @@ type changesetEvaluation struct {
 
 	mu       sync.Mutex
 	outcomes []CheckOutcome
+
+	// Under verify the rules of one range share one checkout of its head: nothing writes to a
+	// snapshot (it is read-only), and a checkout of a large tree is by far the dearest step.
+	sharedMu   sync.Mutex
+	sharedTree *gitrepo.Snapshot
+	sharedHead string
+
+	statusMu   sync.Mutex
+	statusMemo map[string][]checkstore.CheckStatusRow // verify only: nothing is written, so a rule's rows hold
+}
+
+// verifyTree is the one snapshot of head every rule of a verify shares, made on first need.
+func (ev *changesetEvaluation) verifyTree(head string) (*gitrepo.Snapshot, error) {
+	ev.sharedMu.Lock()
+	defer ev.sharedMu.Unlock()
+	if ev.sharedTree != nil && ev.sharedHead == head {
+		return ev.sharedTree, nil
+	}
+	if ev.sharedTree != nil {
+		return nil, nil // another head: the caller takes its own
+	}
+	ev.snapshots.Lock()
+	defer ev.snapshots.Unlock()
+	tree, err := gitrepo.AddSnapshot(ev.root, "", head)
+	if err != nil {
+		return nil, err
+	}
+	ev.sharedTree, ev.sharedHead = tree, head
+	return tree, nil
+}
+
+// releaseShared removes the shared snapshot, once every rule is done with it.
+func (ev *changesetEvaluation) releaseShared() {
+	ev.sharedMu.Lock()
+	tree := ev.sharedTree
+	ev.sharedTree = nil
+	ev.sharedMu.Unlock()
+	if tree != nil {
+		ev.snapshots.Lock()
+		defer ev.snapshots.Unlock()
+		_ = tree.Remove()
+	}
+}
+
+// checkStatus is store.CheckStatus(false, rule), read once per rule under verify (the store is
+// only read then, and each read rebuilds a view of every run).
+func (ev *changesetEvaluation) checkStatus(rule string) ([]checkstore.CheckStatusRow, error) {
+	if !ev.verify {
+		return ev.store.CheckStatus(false, rule)
+	}
+	ev.statusMu.Lock()
+	defer ev.statusMu.Unlock()
+	if rows, ok := ev.statusMemo[rule]; ok {
+		return rows, nil
+	}
+	rows, err := ev.store.CheckStatus(false, rule)
+	if err != nil {
+		return nil, err
+	}
+	if ev.statusMemo == nil {
+		ev.statusMemo = map[string][]checkstore.CheckStatusRow{}
+	}
+	ev.statusMemo[rule] = rows
+	return rows, nil
 }
 
 // CheckOutcome is one check's latest result as this evaluation saw it: what `verify`
@@ -230,6 +294,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		batch: "check-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}
 	ev.identity = ev.runIdentity()
+	defer ev.releaseShared()
 	limit := stopConcurrency()
 	for _, g := range guards {
 		ev.diags[g.Qualified()] = &bytes.Buffer{} // filled before the pool: read-only map after
@@ -432,6 +497,11 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	subjects := []changeset.Subject{changeset.Whole(cs)}
 	trees := make([]*gitrepo.Snapshot, 0, 1)
 	snapshot := func() (*gitrepo.Snapshot, error) {
+		if ev.verify {
+			if tree, err := ev.verifyTree(r.Head); tree != nil || err != nil {
+				return tree, err
+			}
+		}
 		ev.snapshots.Lock()
 		defer ev.snapshots.Unlock()
 		tree, err := gitrepo.AddSnapshot(ev.root, "", r.Head)
@@ -620,6 +690,12 @@ func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.Chec
 func (ev *changesetEvaluation) dropTree(g declaration.FileGuard, tree *gitrepo.Snapshot, head string) {
 	if tree == nil {
 		return
+	}
+	ev.sharedMu.Lock()
+	shared := tree == ev.sharedTree
+	ev.sharedMu.Unlock()
+	if shared {
+		return // released by Evaluate, once every rule is done
 	}
 	ev.snapshots.Lock()
 	defer ev.snapshots.Unlock()
@@ -1057,7 +1133,7 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 // verdict, when it was the judge returning none ("" otherwise). The run is left incomplete, so
 // its row reads error or interrupted, never a verdict.
 func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
-	rows, err := ev.store.CheckStatus(false, rr.g.Qualified())
+	rows, err := ev.checkStatus(rr.g.Qualified())
 	if err != nil {
 		return ""
 	}

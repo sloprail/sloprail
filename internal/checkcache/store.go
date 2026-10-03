@@ -126,6 +126,14 @@ func (s *Store) FreezeTip() {
 	s.frozenSn = nil
 }
 
+// Tip is the commit the local results ref points at ("" if none): what a result memo is keyed
+// by, so a new `run` (which moves it) invalidates the memo.
+func (s *Store) Tip() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tip()
+}
+
 // tip returns the commit the local ref points at, "" if none.
 func (s *Store) tip() string {
 	if s.frozen {
