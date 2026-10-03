@@ -1,4 +1,4 @@
-# <img src=".github/assets/sloprail-wordmark.png" alt="sloprail" width="320">
+# <img src="https://sloprail.com/logotype.svg" alt="sloprail" width="320">
 
 Your agents slop. Take control.
 
