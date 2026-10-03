@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # The gate's match found a pgrep/pkill among the line's invocations. Refuse one that has -f/--full
-# and either matches its own command line or waits on `sr-checks` in a loop.
+# and whose pattern names a sloprail program (sr-checks, sr-session, ... or an `sr ` subcommand).
 # Contract: stdin is the GateCheckPayload; exit 1 with {"reason": ...} refuses.
 set -uo pipefail
 
 payload="$(cat)"
-reason='pgrep -f matches its own shell, so this wait never ends (and it waits for every run on the machine). Run the command in the foreground (sr-checks run reports progress), or wait on its own PID: `cmd & pid=$!; wait $pid`.'
+reason='pgrep -f matches its own shell, so waiting on our own sloprail commands this way never ends (and it sees every run on the machine). Run the sloprail command in the foreground (sr-checks run reports progress), or wait on its own PID: `cmd & pid=$!; wait $pid`.'
 
-raw="$(printf '%s' "$payload" | jq -r '.event.raw // ""')"
-loop=0
-[[ "$raw" =~ (^|[^[:alnum:]_.-])(while|until)([^[:alnum:]_.-]|$) ]] && loop=1
+sr_re='(^|[^[:alnum:]_.-])(sr-(checks|session|agent|file|mark|eval)([^[:alnum:]_]|$)|sr )'
 
 # Options of pgrep/pkill that take a separate value, so it is not mistaken for the pattern.
 valopts=" -u -U -g -G -P -s -t -d -F -c -O -T -M --euid --uid --pgroup --group --parent --session --terminal --delimiter --pidfile --ns --nslist --signal "
@@ -47,9 +45,7 @@ while IFS= read -r inv; do
   done < <(printf '%s' "$inv" | jq -c '(.argv // [])[1:][]')
   [ "$full" = 1 ] && [ -n "$pat" ] || continue
 
-  rest="${raw//"$pat"/}"
-  occurrences=$(((${#raw} - ${#rest}) / ${#pat}))
-  if [ "$occurrences" -ge 2 ] || { [ "$loop" = 1 ] && [[ "$pat" == *sr-checks* ]]; }; then
+  if [[ "$pat" =~ $sr_re ]]; then
     jq -n --arg r "$reason" '{reason: $r}'
     exit 1
   fi
