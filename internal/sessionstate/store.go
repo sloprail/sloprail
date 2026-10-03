@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	// The database is this package's resource: nothing else opens it, so
 	// nothing else needs the driver. Registered by this import; migrate.go also
@@ -108,6 +109,18 @@ type Store interface {
 	SetRangeBase(sessionID, folder, head, base string) error
 	// Ranges lists a session's ranges, tracked and untracked.
 	Ranges(sessionID string) ([]TrackedRange, error)
+
+	// StartAgent, TouchAgent, NoteAgentLaunch, EndAgent, MarkAgentStale, NewAgentSignal and Agents are
+	// the sub-agent registry (agents.go): which sub-agents the session dispatched, and whether each
+	// still runs, kept across compaction, /clear and resume because it does not depend on the
+	// transcript file.
+	StartAgent(sig AgentSignal) error
+	TouchAgent(sig AgentSignal) error
+	NoteAgentLaunch(sig AgentSignal) error
+	EndAgent(sessionID, agentID, status string, at time.Time) error
+	MarkAgentStale(sessionID, agentID string, at time.Time) error
+	NewAgentSignal(sessionID, signal string) (bool, error)
+	Agents(sessionID string) ([]Agent, error)
 
 	// Close releases the database.
 	Close() error

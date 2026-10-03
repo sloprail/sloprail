@@ -38,6 +38,18 @@ func rsWrite(t *testing.T, lines ...string) string {
 	return path
 }
 
+// runningOf is the agents the Stop would leave unjudged, through the registry: the dispatching
+// record is one input of it (settleRootAgents), over a store that starts empty.
+func runningOf(t *testing.T, p HookPayload, ranges []sessionstate.TrackedRange) map[string]bool {
+	t.Helper()
+	store, err := sessionstate.Open(filepath.Join(t.TempDir(), "state.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	return settleRootAgents(cmd, store, "root", p, ranges).Waiting
+}
+
 func TestRunningSubagents(t *testing.T) {
 	ranges := []sessionstate.TrackedRange{{AgentID: "bg1"}}
 	cases := []struct {
@@ -55,7 +67,7 @@ func TestRunningSubagents(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := runningSubagents(HookPayload{TranscriptPath: rsWrite(t, c.lines...)}, ranges)
+			got := runningOf(t, HookPayload{TranscriptPath: rsWrite(t, c.lines...)}, ranges)
 			if len(c.want) == 0 {
 				assert.Empty(t, got)
 			} else {
@@ -63,18 +75,18 @@ func TestRunningSubagents(t *testing.T) {
 			}
 		})
 	}
-	t.Run("unreadable transcript: nothing is running", func(t *testing.T) {
-		assert.Empty(t, runningSubagents(HookPayload{TranscriptPath: filepath.Join(t.TempDir(), "missing.jsonl")}, ranges))
+	t.Run("unreadable transcript: an unknown agent is judged", func(t *testing.T) {
+		assert.Empty(t, runningOf(t, HookPayload{TranscriptPath: filepath.Join(t.TempDir(), "missing.jsonl")}, ranges))
 	})
-	t.Run("unparseable transcript: nothing is running", func(t *testing.T) {
-		assert.Empty(t, runningSubagents(HookPayload{TranscriptPath: rsWrite(t, append(append([]string{rsOrigin}, rsLaunch("bg1")...), "{torn")...)}, ranges))
+	t.Run("unparseable transcript: an unknown agent is judged", func(t *testing.T) {
+		assert.Empty(t, runningOf(t, HookPayload{TranscriptPath: rsWrite(t, append(append([]string{rsOrigin}, rsLaunch("bg1")...), "{torn")...)}, ranges))
 	})
 	t.Run("a sub-agent's own Stop skips nothing", func(t *testing.T) {
 		path := rsWrite(t, append([]string{rsOrigin}, rsLaunch("bg1")...)...)
-		assert.Empty(t, runningSubagents(HookPayload{TranscriptPath: path, AgentID: "bg1"}, ranges))
+		assert.Empty(t, runningOf(t, HookPayload{TranscriptPath: path, AgentID: "bg1"}, ranges))
 	})
-	t.Run("no row names an agent: the record is not read", func(t *testing.T) {
-		assert.Empty(t, runningSubagents(HookPayload{TranscriptPath: filepath.Join(t.TempDir(), "missing.jsonl")}, []sessionstate.TrackedRange{{}}))
+	t.Run("no row names an agent and the registry knows none: the record is not read", func(t *testing.T) {
+		assert.Empty(t, runningOf(t, HookPayload{TranscriptPath: rsWrite(t, append([]string{rsOrigin}, rsLaunch("bg1")...)...)}, []sessionstate.TrackedRange{{}}))
 	})
 }
 

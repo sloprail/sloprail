@@ -39,6 +39,9 @@ type HookPayload struct {
 	// reports the sub-agent without reporting where it wrote it.
 	AgentID string `json:"agent_id"`
 
+	// AgentType is the kind of sub-agent, on SubagentStart/SubagentStop (e.g. "Explore").
+	AgentType string `json:"agent_type"`
+
 	// SessionID is the id the harness currently reports. Never the identity
 	// anything is keyed on — Claude Code re-forks it mid-conversation — but it
 	// names the file the harness is writing, which is what makes it worth
