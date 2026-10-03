@@ -103,6 +103,7 @@ var shippedGates = []string{"sloprail/gate/grounded-rule-changes"}
 // (in the range, since the commit that adds a rule is judged) are not about.
 var shippedFileGuards = []string{
 	"sloprail/file-guard/authoring-slop",
+	"sloprail/file-guard/ci-verify-step",
 	"sloprail/file-guard/grounded-rule-changes",
 	"sloprail/file-guard/misplaced-declaration",
 	"sloprail/file-guard/read-context-doc",

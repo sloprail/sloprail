@@ -304,7 +304,7 @@ func WithEnabledShipped(qualified ...string) Option {
 
 // WithCIVerifyRequired leaves the plugin's sloprail/gate/ci-verify-required in force. Every other
 // package has it switched off in the initial commit: it refuses a Stop in any repository with
-// file-guards and no committed `sr-mark: ci-verify`, which is no test's subject but its own.
+// file-guards and no committed `sr:ci verify` marker, which is no test's subject but its own.
 func WithCIVerifyRequired() Option { return func(e *Env) { e.ciVerifyGate = true } }
 
 // WithOnlyShippedFileGuard is WithoutShippedFileGuards for a package about ONE shipped
