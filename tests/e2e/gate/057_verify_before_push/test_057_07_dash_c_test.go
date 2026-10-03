@@ -61,6 +61,8 @@ func TestT057_09_OtherRedirectionSpellingsFailClosed(t *testing.T) {
 		"f() { local -x GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work; }; f",
 		"declare $OPT GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work",
 		"git --git-dir=%s/.git push -q origin HEAD:refs/heads/work",
+		"f() { export GIT_DIR=%s/.git; }; f; git push -q origin HEAD:refs/heads/work",
+		"f() { declare -gx GIT_DIR=%s/.git; }; f; git push -q origin HEAD:refs/heads/work",
 	} {
 		e, proj, _ := project(t, docsRule)
 		c := fmt.Sprintf(cmd, proj)

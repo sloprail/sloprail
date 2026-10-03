@@ -428,10 +428,21 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		// A function body is its own scope, seeded with what is known where it
 		// is defined; nothing in it reaches the statements after the definition.
 		cwdForStmt(cfg, cmd.Body, ptr(*current), out)
+		// Calls are not followed, so what the body exports globally is applied
+		// from here on, as if it had been called: over-approximate, which is
+		// the safe side for "is GIT_DIR set". A `local` stays in the body.
+		syntax.Walk(cmd.Body, func(n syntax.Node) bool {
+			if d, ok := n.(*syntax.DeclClause); ok {
+				if exp, global := exportsOf(cfg, d); exp != nil && global {
+					current.env = withEnv(current.env, exp)
+				}
+			}
+			return true
+		})
 	case *syntax.DeclClause:
 		// `export NAME=value` is a declaration clause, not a call; so are
 		// `declare -x`, `typeset -x` and `local -x`.
-		if exp := exportsOf(cfg, cmd); exp != nil {
+		if exp, _ := exportsOf(cfg, cmd); exp != nil {
 			current.env = withEnv(current.env, exp)
 		}
 	case *syntax.Subshell:
@@ -826,11 +837,14 @@ var redirectNames = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_
 // `declare`, `typeset` and `local` do with a literal option containing `x`
 // (`-x`, `-gx`, `-rx`), and, because an option this package cannot evaluate
 // might be one, also with any non-literal bare word.
-func exportsOf(cfg *expand.Config, d *syntax.DeclClause) map[string]string {
+func exportsOf(cfg *expand.Config, d *syntax.DeclClause) (env map[string]string, global bool) {
 	if d.Variant == nil {
-		return nil
+		return nil, false
 	}
 	exports := d.Variant.Value == "export"
+	// global: the export outlives a function body that makes it (`export`,
+	// `declare -g`; never `local`). An unreadable word may be `-g`.
+	global = exports
 	unreadable := false
 	for _, as := range d.Args {
 		if as.Name != nil || as.Value == nil {
@@ -840,12 +854,18 @@ func exportsOf(cfg *expand.Config, d *syntax.DeclClause) map[string]string {
 			unreadable = true
 			continue
 		}
+		if o, err := expand.Literal(cfg, as.Value); err == nil && strings.HasPrefix(o, "-") && !strings.HasPrefix(o, "--") && strings.Contains(o, "g") && d.Variant.Value != "local" {
+			global = true
+		}
 		if o, err := expand.Literal(cfg, as.Value); err == nil && strings.HasPrefix(o, "-") && !strings.HasPrefix(o, "--") && strings.Contains(o, "x") {
 			exports = true
 		}
 	}
 	if !exports && !unreadable {
-		return nil
+		return nil, false
+	}
+	if unreadable && d.Variant.Value != "local" {
+		global = true
 	}
 	out := map[string]string{}
 	if unreadable {
@@ -864,7 +884,7 @@ func exportsOf(cfg *expand.Config, d *syntax.DeclClause) map[string]string {
 			}
 		}
 	}
-	return out
+	return out, global
 }
 
 // validEnvName reports whether s is a shell variable name.

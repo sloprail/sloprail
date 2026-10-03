@@ -240,6 +240,8 @@ func TestT058_25_OtherRedirectionSpellingsStillRefused(t *testing.T) {
 		"declare -gx GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
 		"f() { local -x GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x; }; f",
 		"declare $OPT GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
+		"f() { export GIT_DIR=%s/.git; }; f; git -C %s commit -q --allow-empty -m x",
+		"f() { declare -gx GIT_DIR=%s/.git; }; f; git -C %s commit -q --allow-empty -m x",
 	} {
 		e, proj := project(t)
 		oth := other(t, e)
@@ -250,5 +252,17 @@ func TestT058_25_OtherRedirectionSpellingsStillRefused(t *testing.T) {
 			t.Fatalf("%q was not refused:\n%s", cmd, res.Output)
 		}
 		has(t, res.Output, "could not check")
+	}
+}
+
+// T058_26: a function's `local -x` stays in its body: it is not a redirection of the commit after it.
+func TestT058_26_LocalExportInAFunctionDoesNotLeak(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-26", prompt, Turns("done",
+		Bash("c", "f() { local -x GIT_DIR="+oth+"/.git; }; f; git -C "+oth+" commit -q --allow-empty -m x"),
+	))
+	if res.Refused() {
+		t.Fatalf("a function's local export was read as a redirection:\n%s", res.Output)
 	}
 }
