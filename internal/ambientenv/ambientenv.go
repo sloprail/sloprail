@@ -43,6 +43,10 @@ var harnessKeys = map[string]bool{
 	"CLAUDE_CODE_PLUGIN_CACHE_DIR":    true,
 	"CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": true,
 	"SLOP_SUBBIN_DIR":                 true,
+	// CI's own: `sr-checks verify` speaks GitHub when it runs in Actions, so a suite run there
+	// must not have it change what the binary under test prints.
+	"GITHUB_ACTIONS":      true,
+	"GITHUB_STEP_SUMMARY": true,
 }
 
 // Session returns environ without the enclosing Claude Code session's identity

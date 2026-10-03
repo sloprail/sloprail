@@ -56,10 +56,11 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           BEFORE: ${{ github.event.before }}
+          FORK_URL: ${{ github.event.pull_request.head.repo.clone_url }}
         run: |
           PATH="$PWD/bin:$PATH"
           if [ "$EVENT" = pull_request ]; then
-            sr-checks verify --base "origin/$BASE_REF" --head "$PR_HEAD"
+            sr-checks verify --base "origin/$BASE_REF" --head "$PR_HEAD" --fork-url "$FORK_URL"
           else
             # force push: before is all zeros or a missing object -> merge-base with main, else the root commit
             if [ -z "${BEFORE//0/}" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then

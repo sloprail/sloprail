@@ -70,6 +70,9 @@ type Store struct {
 	frozenTip string
 	frozenSn  *snapshot
 
+	forkTip string    // the overlay PullFrom fetched ("" = none); consulted after the local ref
+	forkSn  *snapshot //
+
 	beforeGcPush func() // test seam: runs after Gc committed locally, before it pushes
 
 	pushErr error // why the last push of local results failed; they are retried on the next sync or put
@@ -188,8 +191,11 @@ func (s *Store) isAncestor(a, b string) bool {
 }
 
 // fetch updates the tracking ref from the remote. A remote without the branch is not an error.
-func (s *Store) fetch() error {
-	_, err := s.g.run(nil, nil, "fetch", "--quiet", "--no-tags", s.opt.Remote, "+"+s.opt.Branch+":"+s.track())
+func (s *Store) fetch() error { return s.fetchFrom(s.opt.Remote, s.track()) }
+
+// fetchFrom updates track from the branch of remote (a name or a URL).
+func (s *Store) fetchFrom(remote, track string) error {
+	_, err := s.g.run(nil, nil, "fetch", "--quiet", "--no-tags", remote, "+"+s.opt.Branch+":"+track)
 	if err != nil && !strings.Contains(err.Error(), "couldn't find remote ref") {
 		return err
 	}
@@ -204,7 +210,34 @@ func (s *Store) sync() error {
 	if err := s.fetch(); err != nil {
 		return err
 	}
-	return s.reconcile(old)
+	return s.reconcile(old, s.track())
+}
+
+// PullFrom fetches the results branch of another repository (a URL or a remote name: a fork's
+// clone URL) as a read-only overlay for Lookup: nothing is pushed, nothing is written to the
+// remote or to the local results ref. A missing branch is not an error, an unreachable
+// repository is.
+//
+// Trust: the other repository's author wrote those records, so they can say PASS for anything.
+// For now that is accepted: fork verdicts are trusted and human code review is the safeguard
+// (the decision on issue #189; see sr-checks verify --fork-url).
+//
+// Precedence: the base repository's own records always win. A fork record is consulted only for
+// a key the local ref has no record for at all, whatever the timestamps, so a fork can never
+// mask a FAIL (or a PASS) the base repository holds for the same key.
+func (s *Store) PullFrom(remote string) error {
+	if remote == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	track := s.opt.Ref + "-fork"
+	if err := s.fetchFrom(remote, track); err != nil {
+		return err
+	}
+	s.forkTip = s.rev(track)
+	s.forkSn = nil
+	return nil
 }
 
 // reconcile makes the local ref hold everything the tracking ref does, and keeps what only
@@ -213,8 +246,8 @@ func (s *Store) sync() error {
 // tip that adds the local-only segments (those added since oldTrack, the tracking ref before
 // this fetch; every local segment when that is unknown) — segments are content-addressed, so
 // a union is always sound, and a Gc by another machine is not undone by it.
-func (s *Store) reconcile(oldTrack string) error {
-	local, remote := s.tip(), s.rev(s.track())
+func (s *Store) reconcile(oldTrack, track string) error {
+	local, remote := s.tip(), s.rev(track)
 	if remote == "" || local == remote {
 		return nil
 	}
@@ -356,7 +389,7 @@ func (s *Store) doPush() error {
 		if s.rev(s.track()) == remote {
 			return lastErr // the remote did not move: refused for another reason
 		}
-		if err := s.reconcile(remote); err != nil {
+		if err := s.reconcile(remote, s.track()); err != nil {
 			return err
 		}
 		time.Sleep(time.Duration(10+rand.Intn(40*(attempt+1))) * time.Millisecond)
@@ -604,6 +637,36 @@ func (s *Store) Lookup(keys []Key) (map[string]Found, error) {
 	if err != nil {
 		return nil, err
 	}
+	out, err := s.lookupIn(sn, keys)
+	if err != nil || s.forkTip == "" {
+		return out, err
+	}
+	var rest []Key
+	for _, k := range keys {
+		if _, ok := out[k.ID()]; !ok {
+			rest = append(rest, k)
+		}
+	}
+	if len(rest) == 0 {
+		return out, nil
+	}
+	if s.forkSn == nil {
+		if s.forkSn, err = s.readSnapshotAt(s.forkTip); err != nil {
+			return nil, err
+		}
+	}
+	fk, err := s.lookupIn(s.forkSn, rest)
+	if err != nil {
+		return nil, err
+	}
+	for id, r := range fk {
+		out[id] = r
+	}
+	return out, nil
+}
+
+// lookupIn is Lookup over one snapshot.
+func (s *Store) lookupIn(sn *snapshot, keys []Key) (map[string]Found, error) {
 	out := make(map[string]Found, len(keys))
 	if len(sn.Segs) == 0 || len(keys) == 0 {
 		return out, nil

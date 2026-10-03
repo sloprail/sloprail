@@ -590,11 +590,20 @@
         "path": "sr-checks verify",
         "use": "verify --base <rev> --head <rev>",
         "short": "Check every file-guard over merge-base(base, head)..head against the stored verdicts",
-        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nOnly reads: it never executes a script, a judge or a requirement and never writes. It computes each\nsubject's key (running the rule's subjects script, without a session) and reads the stored verdict, so the\nsame repository state and the same stored results read the same anywhere. A key with no stored verdict is\nred (\"not judged yet\", run sr-checks run); a stored fail shows its reasons. A citation requirement counts a\nSloprail-Cites-* trailer on the commit that last really changed the file, which is checkable from the repository\nalone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.",
+        "long": "Check every file-guard over merge-base(--base, --head)..--head, deterministically.\n\nOnly reads: it never executes a script, a judge or a requirement and never writes. It computes each\nsubject's key (running the rule's subjects script, without a session) and reads the stored verdict, so the\nsame repository state and the same stored results read the same anywhere. A key with no stored verdict is\nred (\"not judged yet\", run sr-checks run); a stored fail shows its reasons. A citation requirement counts a\nSloprail-Cites-* trailer on the commit that last really changed the file, which is checkable from the repository\nalone.\n\nPrints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when\nanything fails or has no result.\n\nIn GitHub Actions (GITHUB_ACTIONS=true, or --format github) it also emits what GitHub renders itself: an\n::error annotation per refused or not-judged file and rule (at most 50), a markdown job summary appended to\n$GITHUB_STEP_SUMMARY (rule x subject x status, reasons collapsed), and, when red, the exact local fix\n(sr-checks run --base .. --head .., then push the results branch and re-run the job). --format plain turns\nthat off. Outside Actions the output and the exit code are the same as ever. --junit <file> writes JUnit\nXML (testsuite = rule, testcase = subject).\n\n--fork-url <url> also fetches the results branch from a pull request's head repository (GitHub:\ngithub.event.pull_request.head.repo.clone_url) when it differs from origin, and merges its records into the\nlookup. Read-only: nothing is pushed to either repository. A fork's records are written by its contributor,\nwho could forge a pass; for now they are trusted and code review is the safeguard (issue #189).",
         "flags": [
           {
             "name": "base",
             "usage": "The base revision: a branch, tag or sha (required)"
+          },
+          {
+            "name": "fork-url",
+            "usage": "Also read the results branch of this repository (a fork PR's head repo clone URL), when it is not origin; read-only"
+          },
+          {
+            "name": "format",
+            "default": "auto",
+            "usage": "Output format: auto (github when GITHUB_ACTIONS=true), github (annotations, job summary, local fix) or plain"
           },
           {
             "name": "head",
@@ -604,6 +613,10 @@
             "name": "json",
             "default": "false",
             "usage": "Print the per-subject results as JSON"
+          },
+          {
+            "name": "junit",
+            "usage": "Also write the results as JUnit XML to this file (testsuite = rule, testcase = subject)"
           }
         ]
       }

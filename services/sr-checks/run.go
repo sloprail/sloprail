@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/checkcache"
 	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/ghresults"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
@@ -60,12 +64,27 @@ Sloprail-Cites-* trailer on the commit that last really changed the file, which 
 alone.
 
 Prints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when
-anything fails or has no result.`,
+anything fails or has no result.
+
+In GitHub Actions (GITHUB_ACTIONS=true, or --format github) it also emits what GitHub renders itself: an
+::error annotation per refused or not-judged file and rule (at most 50), a markdown job summary appended to
+$GITHUB_STEP_SUMMARY (rule x subject x status, reasons collapsed), and, when red, the exact local fix
+(sr-checks run --base .. --head .., then push the results branch and re-run the job). --format plain turns
+that off. Outside Actions the output and the exit code are the same as ever. --junit <file> writes JUnit
+XML (testsuite = rule, testcase = subject).
+
+--fork-url <url> also fetches the results branch from a pull request's head repository (GitHub:
+github.event.pull_request.head.repo.clone_url) when it differs from origin, and merges its records into the
+lookup. Read-only: nothing is pushed to either repository. A fork's records are written by its contributor,
+who could forge a pass; for now they are trusted and code review is the safeguard (issue #189).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return execute(cmd, modeVerify) },
 	}
 	addRangeFlags(cmd)
 	cmd.Flags().Bool("json", false, "Print the per-subject results as JSON")
+	cmd.Flags().String("format", "auto", "Output format: auto (github when GITHUB_ACTIONS=true), github (annotations, job summary, local fix) or plain")
+	cmd.Flags().String("junit", "", "Also write the results as JUnit XML to this file (testsuite = rule, testcase = subject)")
+	cmd.Flags().String("fork-url", "", "Also read the results branch of this repository (a fork PR's head repo clone URL), when it is not origin; read-only")
 	return cmd
 }
 
@@ -231,6 +250,9 @@ func execute(cmd *cobra.Command, m mode) error {
 	if err != nil {
 		return err
 	}
+	if m == modeVerify {
+		pullFork(cmd, t.root, cache)
+	}
 	results := checkstore.Open(cache, m != modeRun)
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: cmd.ErrOrStderr(), Guards: t.loaded.FileGuards, Root: t.root, Range: t.rng,
@@ -249,9 +271,15 @@ func execute(cmd *cobra.Command, m mode) error {
 	if m == modeShow {
 		outcomes = filterShown(cmd, outcomes)
 	}
+	gh := m == modeVerify && githubFormat(cmd)
+	listing := w
+	var listed bytes.Buffer
+	if gh {
+		listing = &listed // guarded below: see ghresults.Guard
+	}
 	if m != modeRun {
 		if asJSON {
-			enc := json.NewEncoder(w)
+			enc := json.NewEncoder(listing)
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(outcomes); err != nil {
 				return err
@@ -262,9 +290,12 @@ func execute(cmd *cobra.Command, m mode) error {
 				if o.Status == "skipped" && o.Reason != "" {
 					line += "  " + o.Reason
 				}
-				fmt.Fprintln(w, line)
+				fmt.Fprintln(listing, line)
 			}
 		}
+	}
+	if gh && listed.Len() > 0 {
+		fmt.Fprint(w, ghresults.Guard(listed.String()))
 	}
 	if m == modeShow {
 		return nil
@@ -273,12 +304,131 @@ func execute(cmd *cobra.Command, m mode) error {
 	for _, f := range refusals {
 		out = append(out, f.Reason+" (file-guard "+f.Attribution+")")
 	}
+	var annotated bool
+	var fix string
+	if gh {
+		rng := ghresults.Range{Base: t.rng.Base, Head: t.rng.Head, FirstLine: firstChangedLines(t.root, t.rng)}
+		fix = rng.Fix()
+		ann := ghresults.Annotations(outcomes, broken, rng)
+		annotated = ann != ""
+		fmt.Fprint(w, ann)
+		if err := appendStepSummary(ghresults.Summary(outcomes, broken, rng)); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the job summary could not be written:", err)
+		}
+	}
+	if m == modeVerify {
+		if path, _ := cmd.Flags().GetString("junit"); path != "" {
+			if err := writeJUnit(path, outcomes); err != nil {
+				return err
+			}
+		}
+	}
 	if len(out) == 0 {
 		return nil
 	}
-	fmt.Fprintln(w, joinRefusals(out))
+	if gh {
+		// The reasons can quote attacker-controlled file content: no line of it may act as a
+		// workflow command. Only the escaped ::error lines above run as commands.
+		// Each refusal is already shown once, as its ::error annotation: repeat the text only
+		// when nothing was annotated.
+		var text string
+		if !annotated {
+			text = joinRefusals(out) + "\n" + fix
+		} else {
+			text = fmt.Sprintf("sloprail: %d rule(s) refused; each is annotated above and in the job summary.\n%s", len(out), fix)
+		}
+		fmt.Fprint(w, ghresults.Guard(text))
+	} else {
+		fmt.Fprintln(w, joinRefusals(out))
+	}
 	os.Exit(1)
 	return nil
+}
+
+// firstChangedLines is, per file, the first line the range changed (empty when git cannot say:
+// annotations then stay at file level).
+func firstChangedLines(root string, r gitrepo.Range) map[string]int {
+	out, err := exec.Command("git", "-C", root, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", r.Base, r.Head).Output()
+	if err != nil {
+		return nil
+	}
+	return ghresults.FirstLines(string(out))
+}
+
+// githubFormat is whether verify speaks GitHub: asked for with --format github, or --format
+// auto (the default) inside GitHub Actions.
+func githubFormat(cmd *cobra.Command) bool {
+	switch f, _ := cmd.Flags().GetString("format"); f {
+	case "github":
+		return true
+	case "plain":
+		return false
+	default:
+		return os.Getenv("GITHUB_ACTIONS") == "true"
+	}
+}
+
+// appendStepSummary appends md to the file $GITHUB_STEP_SUMMARY names; with none set (a local
+// --format github) there is nowhere to write and that is fine.
+func appendStepSummary(md string) error {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(md + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func writeJUnit(path string, outcomes []checkrun.CheckOutcome) error {
+	b, err := ghresults.JUnit(outcomes)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("sloprail: the JUnit file could not be written: %w", err)
+	}
+	return nil
+}
+
+// pullFork merges the results branch of a pull request's head repository into the lookup, when
+// --fork-url names one that is not origin itself. TRUST: those records were written by the
+// fork's contributor, who could forge a pass; for now they are accepted and human code review
+// of the PR is the safeguard (the decision on issue #189). It only reads: a fork that cannot be
+// reached is reported and verify carries on with what origin holds.
+func pullFork(cmd *cobra.Command, root string, cache *checkcache.Store) {
+	url, _ := cmd.Flags().GetString("fork-url")
+	if url == "" {
+		return
+	}
+	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").Output(); err == nil && sameRepoURL(string(out), url) {
+		return
+	}
+	if err := cache.PullFrom(url); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: the check results of the fork %s could not be fetched, using what origin holds: %v\n", url, err)
+	}
+}
+
+// sameRepoURL compares two clone URLs ignoring credentials, a trailing .git or slash, and case.
+func sameRepoURL(a, b string) bool {
+	norm := func(u string) string {
+		u = strings.ToLower(strings.TrimSpace(u))
+		if i := strings.Index(u, "://"); i >= 0 {
+			rest := u[i+3:]
+			if at := strings.Index(rest, "@"); at >= 0 && at < strings.Index(rest+"/", "/") {
+				rest = rest[at+1:]
+			}
+			u = rest
+		}
+		return strings.TrimSuffix(strings.TrimSuffix(u, "/"), ".git")
+	}
+	return norm(a) == norm(b)
 }
 
 // brokenFileGuards names every file-guard that failed to load, with why: a rule that cannot be

@@ -1,0 +1,20 @@
+## sloprail: sr-checks verify
+
+0 pass, 1 fail, 0 not judged, 0 cached
+
+| Rule | Subject | Files | Status | What to do |
+| --- | --- | --- | --- | --- |
+| r&#124;&lt;b&gt;x&lt;/b&gt; | changeset | a&#124;b&#96;c d.md<br>&lt;i&gt;.md | fail | &lt;script&gt;alert(1)&lt;/script&gt; &#124; a &#96;&#96;&#96; fence |
+
+<details><summary>fail: changeset (r&#124;&lt;b&gt;x&lt;/b&gt;)</summary>
+
+````text
+<script>alert(1)</script> | a ``` fence
+</details><img src=x onerror=1>
+```
+more
+````
+
+</details>
+
+To fix: run `sr-checks run --base aaa111 --head bbb222` locally (it judges what has no verdict and pushes the results branch sloprail/checks to origin; if the push failed, `git push origin sloprail/checks`), then re-run this job.

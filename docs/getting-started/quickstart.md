@@ -82,6 +82,14 @@ carries that marker, the shipped `sloprail/gate/ci-verify-required` refuses the
 end of the agent's turn and prints a snippet per provider (it installs `sr-checks` with `go install`, pinned to the revision the plugin was installed from, because no release carries it yet); switch it off with
 `disabled: [sloprail/gate/ci-verify-required]` in `.sloprail/config.yaml`.
 
+On GitHub Actions `sr-checks verify` reports natively: an `::error` annotation per refused or
+not-judged file, a job summary table (rule, subject, status) and, last, the exact local fix
+(`sr-checks run --base <base> --head <head>`, then push the checks ref and re-run the job).
+Pull requests from forks: pass `--fork-url "${{ github.event.pull_request.head.repo.clone_url }}"`
+(the snippets do) and `verify` also reads the results branch of the fork. Those verdicts are
+written by the contributor and trusted for now; code review is the safeguard. `--junit <file>`
+writes JUnit XML.
+
 Now ask it to commit a `.ts` file *without* that marker. The run passes.
 
 If both happened, your guardrail is real. If the bad file passed,
