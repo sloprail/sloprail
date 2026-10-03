@@ -16,6 +16,17 @@ suggestion in CLAUDE.md or AGENTS.md.
 
 One Claude Code session, one prompt: make every capability in [`harness-mocks`](https://github.com/sloprail/harness-mocks), our fakes of Claude Code, Codex and Cursor, real for every harness, proven by recordings of the real thing. It split the work across parallel agents, and sloprail checked every step.
 
+## Why not just hooks?
+
+| | Hooks, `CLAUDE.md`, skills, AI reviewers | sloprail |
+|---|---|---|
+| **When rules appear** | **after** a mistake, if you add them | **first**: the agent sets them up before any change that will repeat, and they stay |
+| **The rule** | **text** the model reads, or a hook script you write | a check that **verifies** the work, run by code |
+| **Shell changes** | the hook sees the command, not which **files** it changed | checks **every file** the change touched |
+| **What gets judged** | **one** tool call at a time | **sliced** the way each rule needs: one file, a module, or the whole commit |
+| **Push and merge** | blocked only if your hook **pattern** matches | blocked until the checks **pass** |
+| **Review** | an AI reviewer re-reads it every time; what it checked is **opaque** | every verdict **saved** with its rule and reason, reused until the code changes |
+
 ## Install
 
 ```
@@ -35,17 +46,6 @@ curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh |
 ```
 
 (or `go install ./services/...` from a checkout).
-
-## Harness hooks vs sloprail
-
-| | Hooks, `CLAUDE.md`, skills, AI reviewers | sloprail |
-|---|---|---|
-| **When rules appear** | **after** a mistake, if you add them | **first**: the agent sets them up before any change that will repeat, and they stay |
-| **The rule** | **text** the model reads, or a hook script you write | a check that **verifies** the work, run by code |
-| **Shell changes** | the hook sees the command, not which **files** it changed | checks **every file** the change touched |
-| **What gets judged** | **one** tool call at a time | **sliced** the way each rule needs: one file, a module, or the whole commit |
-| **Push and merge** | blocked only if your hook **pattern** matches | blocked until the checks **pass** |
-| **Review** | an AI reviewer re-reads it every time; what it checked is **opaque** | every verdict **saved** with its rule and reason, reused until the code changes |
 
 ## How it works
 
