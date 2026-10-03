@@ -952,8 +952,8 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 		return ""
 	}
 	if len(loaded.FileGuards) == 0 {
-		vm.put(qkey, where+": "+joinRefusals(broken)+goneNote)
-		return where + ": " + joinRefusals(broken) + goneNote
+		vm.put(qkey, rangeRefusal(where, broken)+goneNote)
+		return rangeRefusal(where, broken) + goneNote
 	}
 	cache, err := checkrun.OpenLocalCache(r.Folder)
 	if err != nil {
@@ -981,7 +981,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	}
 	parts := append([]string(nil), broken...)
 	parts = append(parts, groupRefusals(refusals, outcomes)...)
-	out := where + ": " + joinRefusals(parts) + goneNote
+	out := rangeRefusal(where, parts) + goneNote
 	if len(r.Head) < 40 && !strings.HasPrefix(r.Head, "refs/") {
 		out += fmt.Sprintf("\nIf %s is not yours to answer for (the user said to drop it), stop answering for it: `sr-session refs untrack --head %s --reason '<why>'`, and `sr-session refs track --head %s` takes it back.", r.Head, r.Head, r.Head)
 	}
