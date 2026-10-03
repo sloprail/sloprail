@@ -1609,20 +1609,11 @@ lists what was untracked with the reason you give, so say it plainly.`,
 			}
 			defer s.reg.Close()
 			if gone {
-				ranges, err := s.reg.Ranges(s.rs.ID)
-				if err != nil {
+				if err := untrackStored(s.reg, s.rs.ID, dir, head, reason); err != nil {
 					return err
 				}
-				for _, r := range ranges {
-					if r.Tracked() && r.Folder == dir && r.Head == head {
-						if err := s.reg.UntrackRange(s.rs.ID, dir, head, reason, r.AgentID, removedTip(r)); err != nil {
-							return err
-						}
-						fmt.Fprintf(cmd.OutOrStdout(), "untracked %s in %s: %s\n", head, dir, reason)
-						return nil
-					}
-				}
-				return fmt.Errorf("sloprail: %s no longer exists and no tracked range of this session is stored for %s there (see `sr-session refs list`)", dir, head)
+				fmt.Fprintf(cmd.OutOrStdout(), "untracked %s in %s: %s\n", head, dir, reason)
+				return nil
 			}
 			if head == "" {
 				h, _, ok := trackedHead(dir)
@@ -1633,7 +1624,17 @@ lists what was untracked with the reason you give, so say it plainly.`,
 			}
 			out, err := gitrepo.ResolveRange(dir, "HEAD", headRef(dir, head))
 			if err != nil {
-				return fmt.Errorf("sloprail: the tip of %s in %s could not be read (%v), so the untrack could not be recorded against it", head, dir, err)
+				// The folder stands but the branch is gone: the range is named by the head it was
+				// stored under, and untracked at the last tip it held.
+				storedErr := untrackStored(s.reg, s.rs.ID, dir, head, reason)
+				if storedErr == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "untracked %s in %s: %s\n", head, dir, reason)
+					return nil
+				}
+				if !errors.Is(storedErr, errNoStoredRange) {
+					return storedErr
+				}
+				return fmt.Errorf("sloprail: the tip of %s in %s could not be read (%v), and no tracked range of this session is stored for it (see `sr-session refs list`), so the untrack could not be recorded against it", head, dir, err)
 			}
 			tip := out.Head
 			if err := s.reg.UntrackRange(s.rs.ID, dir, head, reason, s.ownerOf(dir), tip); err != nil {
@@ -1647,6 +1648,27 @@ lists what was untracked with the reason you give, so say it plainly.`,
 	cmd.Flags().StringVar(&head, "head", "", "The range's head (default: the current branch)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Why the range is dropped (required)")
 	return cmd
+}
+
+var errNoStoredRange = errors.New("no tracked range stored")
+
+// untrackStored untracks the tracked row stored for (folder, head), matched literally (the head
+// also in its refs/heads/ form), at the last tip it held. It reads no repository, so it serves a
+// folder or a branch that no longer exists. errNoStoredRange when no such row is tracked.
+func untrackStored(reg sessionstate.Store, sessionID, folder, head, reason string) error {
+	ranges, err := reg.Ranges(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, r := range ranges {
+		if !r.Tracked() || r.Folder != folder {
+			continue
+		}
+		if r.Head == head || r.Head == "refs/heads/"+head || "refs/heads/"+r.Head == head {
+			return reg.UntrackRange(sessionID, folder, r.Head, reason, r.AgentID, removedTip(r))
+		}
+	}
+	return fmt.Errorf("sloprail: no tracked range of this session is stored for %s in %s (see `sr-session refs list`): %w", head, folder, errNoStoredRange)
 }
 
 // headRef is the revision a range's head names: a branch by its name, else as given.
