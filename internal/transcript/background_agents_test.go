@@ -148,3 +148,48 @@ func TestRunningBackgroundAgentsStartInThePreviousFileIsFailClosed(t *testing.T)
 	require.NoError(t, err)
 	assert.Empty(t, got, "the new file does not show the start, so nothing is skipped")
 }
+
+// The signals carry a key per record, stable across reads, so the registry applies a notification once.
+func TestBackgroundAgentSignalsAreOrderedAndKeyedByTheirRecord(t *testing.T) {
+	p := newProject(t)
+	path := p.write("sig", append(append(launch("1", "toolu_1", "bg1"), notification("bg1", "failed")), launch("2", "toolu_2", "bg2")...)...)
+	got, err := BackgroundAgentSignals(path)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, AgentLaunched, got[0].Kind)
+	assert.Equal(t, "bg1", got[0].AgentID)
+	assert.Equal(t, AgentEnded, got[1].Kind)
+	assert.Equal(t, "failed", got[1].Status)
+	assert.Equal(t, "n-bg1failed:bg1", got[1].Key)
+	assert.Equal(t, "bg2", got[2].AgentID)
+	again, err := BackgroundAgentSignals(path)
+	require.NoError(t, err)
+	assert.Equal(t, got, again)
+}
+
+// A notification record with no uuid is keyed by its text, so it is still applied once.
+func TestBackgroundAgentSignalKeyFallsBackToTheNotificationText(t *testing.T) {
+	p := newProject(t)
+	n := userMsg("", "<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n</task-notification>")
+	got, err := BackgroundAgentSignals(p.write("nokey", n))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Key, ":bg1")
+	assert.NotEqual(t, ":bg1", got[0].Key)
+}
+
+// The claude-mock records run_in_background as the string "true"; Claude Code writes a boolean.
+// Either is a background launch, and false in either spelling is not.
+func TestBackgroundAgentSignalsReadRunInBackgroundAsBooleanOrString(t *testing.T) {
+	p := newProject(t)
+	for i, c := range []struct {
+		input string
+		want  bool
+	}{{`{"run_in_background":true}`, true}, {`{"run_in_background":"true"}`, true}, {`{"run_in_background":false}`, false}, {`{"run_in_background":"false"}`, false}, {`{}`, false}} {
+		path := p.write("bool"+string(rune('a'+i)), namedCall("a1", "", "toolu_x", "Agent", c.input),
+			toolAnswer("r1", "a1", "toolu_x", "Async agent launched successfully.\nagentId: bgx (internal ID)"))
+		got, err := BackgroundAgentSignals(path)
+		require.NoError(t, err)
+		assert.Equal(t, c.want, len(got) == 1, c.input)
+	}
+}

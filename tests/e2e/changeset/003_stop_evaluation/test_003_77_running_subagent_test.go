@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -23,7 +24,8 @@ func appendRecord(t *testing.T, path string, lines ...string) {
 
 // T003_77: the parent's Stop does not judge the ranges of a background sub-agent that is still
 // running, says so without refusing, and judges them at the first Stop after the agent's
-// terminal notification.
+// terminal notification. The agent is held as running by the sub-agent registry (SubagentStart, and the
+// launch in the record), not by the record alone.
 //
 // The claude-mock runs a background Agent concurrently and writes its receipt and
 // notification, but the parent's Stop hook output is not observable mid-run (only its
@@ -59,7 +61,16 @@ func TestT003_77_TheParentsStopLeavesARunningBackgroundAgentsRangeForLater(t *te
 		t.Fatalf("premise: the agent's uncited range is refused at the parent's Stop:\n%s", r.Output)
 	}
 
-	// The record shows the agent launched in the background and not yet reported.
+	// The registry holds the agent as completed (its SubagentStop ended the mock's run). The dispatcher
+	// resumes it, as SendMessage does: the harness sends SubagentStart again, so it runs, and the
+	// record shows it launched in the background and not yet reported.
+	start, _ := json.Marshal(map[string]any{
+		"session_id": sess, "transcript_path": record, "cwd": proj,
+		"hook_event_name": "SubagentStart", "agent_id": agent, "agent_type": "general-purpose",
+	})
+	if r := e.CLIDirectStdinEnv(proj, string(start), e.SessionEnv(""), "sr-session", "subagent-start"); r.Code != 0 {
+		t.Fatalf("subagent-start failed: exit %d\n%s", r.Code, r.Output)
+	}
 	appendRecord(t, record,
 		`{"type":"assistant","uuid":"bg-a","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_bg","name":"Agent","input":{"prompt":"go","run_in_background":true}}]}}`,
 		`{"type":"user","uuid":"bg-r","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bg","content":"Async agent launched successfully.\nagentId: `+agent+` (internal ID)"}]}}`,

@@ -136,7 +136,11 @@ untracked, with the reason, and the range is tracked again by itself when the br
 moves. When a worktree is removed, its range moves to the root folder; if its branch is
 gone too, the range stays pinned at the last tip (`refs/sloprail/pins/...`) and is still
 verified. A sub-agent's ranges are verified at the root's Stop, unless
-`enable_subagent_stop_check: true` is set in `.sloprail/config.yaml`. A folder's own `.sloprail` rules apply in it: gates judge the calls made there and
+`enable_subagent_stop_check: true` is set in `.sloprail/config.yaml`. A background sub-agent
+the session's registry holds as running (`sr-session agents list`) has its ranges left for a
+later Stop; one silent for `subagent_silent_after_minutes` (default 10) is named by the Stop, and
+after `subagent_stale_after_minutes` (default 60), or once its session's process is gone, it is
+stale and its ranges are judged like any other. CI verify covers every range either way. A folder's own `.sloprail` rules apply in it: gates judge the calls made there and
 commit required covers its uncommitted work.
 
 ### Before a push: verify-before-push
