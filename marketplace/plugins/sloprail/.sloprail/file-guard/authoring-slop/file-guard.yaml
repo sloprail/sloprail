@@ -13,8 +13,8 @@
 # the OLD format's, which a later PR deletes. Each new-format nature keeps its
 # scripts under `.sloprail/<nature>/<name>/<script>.sh`, so the three nature
 # directories are the retarget of the single old prefix. A file-guard matches a
-# FILE of the changeset (flat `path`, `status`, `markers`, `oldMarkers`, `context`,
-# `trailers`), so the expression reads `path`, NOT `event.path` (that nested form is
+# FILE of the changeset (flat `path`, `status`, `markers`, `oldMarkers`,
+# `trailers`; no `context`: a file-guard sees no session), so the expression reads `path`, NOT `event.path` (that nested form is
 # a gate's scope).
 # The `contains`/`or`/`endsWith` operators are expr-lang builtins the file-guard
 # matcher already compiles (see internal/guardrail/matcher.go; `newContent contains`
@@ -45,7 +45,7 @@ match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/"
 # is the PreFileWrite gate of the same name, beside this guard under gate/: it runs
 # the deterministic grep (check-rules.sh) on the pending bytes and refuses a write
 # whose result the engine cannot compute. This file-guard judges the COMMITTED
-# changeset, at Stop: the same grep over every hook the range touched, then the
+# changeset (`sr-checks run`): the same grep over every hook the range touched, then the
 # judge, which needs a model call and so belongs with the result, not with every
 # pre-write. Both loop over `changeset.files`.
 

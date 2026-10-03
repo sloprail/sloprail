@@ -17,7 +17,7 @@ import (
 // todo.md beside them, which removes nothing and so needs no citation. Following the refusal's own command (a
 // follow-up commit that restates the deleted file and carries the quote) then passes.
 func TestT049_26_OnlyTheFileThatRemovedContentNeedsTheCitation(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to drop the notes"}`)
 	e.WriteFile(proj, "memories/notes.md", "a fact worth keeping\n")
@@ -47,7 +47,7 @@ func TestT049_26_OnlyTheFileThatRemovedContentNeedsTheCitation(t *testing.T) {
 	if !strings.Contains(refusal, "an empty commit carrying only the trailer does not count") {
 		t.Errorf("the refusal does not say an empty trailer-only commit grounds nothing:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	// The deletion's commit is not HEAD (the todo is), so the recommended fix is a
 	// follow-up commit that changes the file and carries the quote: the agent restates
@@ -59,7 +59,7 @@ func TestT049_26_OnlyTheFileThatRemovedContentNeedsTheCitation(t *testing.T) {
 		Write("w1", "memories/notes.md", "a fact worth keeping\n"),
 		harness.RefusalCommand(t, "fix", refusal, "git add", ask),
 	))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); got != refused {
 		t.Fatalf("the refusal's own command did not ground the deletion (%d refusals, had %d):\n%s",
 			got, refused, strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
 	}

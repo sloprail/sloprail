@@ -62,4 +62,14 @@ exit 0
 
 // New is harness.New with the plugin's authoring file-guards switched off: this package
 // is about other rules, and the authoring guards would judge the rules' own files.
-func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
+func New(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithSubagentStopCheck())
+}
+
+// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a
+// scenario whose subject is what Stop or `sr-checks run` does with a commit that carries no (or
+// no resolving) citation: with the gate on, the agent could not make that commit at all. The gate
+// itself is exercised in tests/e2e/gate/058_cite_before_commit.
+func NewUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithSubagentStopCheck(), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
+}

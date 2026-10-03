@@ -168,7 +168,28 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   harness's working directory for that tool call — in a transcript, the record's
   own `cwd` — so a script joins a relative `.cwd` onto that.
 
+- `.env` — map of string to string, the environment the line itself sets for the
+  program: an assignment prefix (`GIT_DIR=x git ...`), a wrapper's assignments
+  (`env GIT_DIR=x git ...`, `sudo FOO=1 cmd`), and an `export NAME=v` earlier on
+  the line in the same shell scope (a subshell's export stays in the subshell; an
+  `if` branch that exports on one path only still names the variable, with value
+  `""`). The value is `""` when it is not a literal word (`FOO=$X`,
+  `FOO=$(cmd)`): the name is certain, the value is not. A program with nothing set
+  has an empty map. It is only what the text says, not the environment the harness
+  started with. Read it instead of grepping `.raw` for `GIT_DIR`: a commit message
+  that merely mentions `GIT_DIR` sets nothing.
+
+- `.stdin` and `.stdinKnown` — the text the line itself feeds the program: the body of a
+  heredoc (`<<EOF`, `<<'EOF'`, `<<-EOF`) or the word of a here-string (`<<<word`, newline
+  appended) attached to that command. `.stdinKnown` is `true` only when that text is literal;
+  then `.stdin` holds it. Otherwise (a pipe from another command, `< file`, a variable or
+  substitution in an unquoted heredoc body, no redirect at all) `.stdinKnown` is `false` and
+  `.stdin` is `""`: the message is unknowable, so a rule that needs it should let the command
+  through and leave the check to Stop and CI. `git commit -F -` is the case it exists for.
+
 ```
+"GIT_DIR" in .env
+any(event.invocations, .bin == "git" and "GIT_DIR" in .env)
 any(event.invocations, .bin == "curl")
 any(event.invocations, .bin == "rm" and any(.argv, # == "-rf"))
 any(event.invocations, .bin == "npm" and "next" in .flags.tag)
@@ -178,7 +199,7 @@ len(event.invocations) > 1
 In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
-`.bin`, `.argv` and `.cwd` have declared shapes, so a mistyped key inside a
+`.bin`, `.argv`, `.cwd`, `.env`, `.stdin` and `.stdinKnown` have declared shapes, so a mistyped key inside a
 predicate is refused at load; `.flags` is the one map whose keys are open. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a
@@ -258,9 +279,8 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 
 `seen` on a Post file event is delivered to **contexts** (and anything else still
 bound to `PostFile*`). A **file-guard** does not receive Post file events: it
-judges commits. What replaces `seen` for it is the watermark — a passed range is
-never re-delivered — and the verdict cache — unchanged input is never re-judged; see
-[file-guard.md](file-guard.md#passed-ranges-and-replayed-fails).
+judges commits. What replaces `seen` for it is the verdict cache — unchanged input is
+never run again, whatever the check; see [file-guard.md](file-guard.md#cached-verdicts).
 
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
@@ -286,11 +306,11 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
    "others": [{"path": "README.md", "status": "M"}],
    "citations": [{"quote": "…", "sourceTypes": ["user"], "path": "…", "line": 3, "message": "…"}]},
  "subject": {"id": "changeset", "files": ["…"]},
- "transcriptPath": "…", "context": {}}
+ "transcriptPath": "…"}
 ```
 
-- `base`, `head` — the range, as SHAs ([file-guard.md](file-guard.md) for how the
-  base is chosen).
+- `base`, `head` — the range, as SHAs: the merge base of `--base` and `--head`, and
+  `--head` ([file-guard.md](file-guard.md)).
 - `commits` — every commit in the range, oldest first; `trailers` maps the
   trailer key in canonical case (`Sloprail-Cites-User`) to its values.
 - `files` — the files `match` selected, in full. `status` is `A` (body in
@@ -311,9 +331,9 @@ checks are handed one `Changeset` per rule per range (per **subject**, below). `
   - a **check** (a script or a judge) has ONE subject by default, the whole
     changeset: `{"id": "changeset", "files": [<every selected file>]}`.
 
-  A future `subjects:` key will supply the list, for requirements and checks alike,
-  in this same shape. A gate's payload has no `subject`: it has `.event`.
-  `transcriptPath` and `context` as everywhere.
+  A rule's `subjects:` script ([file-guard.md](file-guard.md#subjects--split-a-rule-into-units-each-cached-on-its-own))
+  supplies the list instead, in this same shape plus an optional `fingerprint`. A gate's payload has no `subject`: it has `.event`.
+  `transcriptPath` as everywhere.
 
 ### `Stop` — a work cycle ended
 
@@ -352,8 +372,7 @@ shapes are in `internal/declaration/payload.go`.
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
- "transcriptPath":"/abs/…session.jsonl",
- "context":{"some-context":{"active":true,"payload":{…}}}}
+ "transcriptPath":"/abs/…session.jsonl"}
 ```
 
 - `event` — the event, flat. A file-guard's check does not get this envelope: it
@@ -362,17 +381,16 @@ shapes are in `internal/declaration/payload.go`.
   `only` ([file-guard.md](file-guard.md)).
 - `transcriptPath` — the session record, for reading what the event does not carry
   (which human message grounds this write). Also on `$SR_TRANSCRIPT`.
-- `context` — every declared context by name, `{active, payload}`, at parity with
-  the match scope.
+- No `context`: a file-guard's payload does not carry session state.
 
 ### GateCheckPayload — a gate's script / prepare / judge
 
-The same three keys, but `event` is any **gate** kind — a gate wakes on command,
+The same two keys plus `context` (every declared context by name,
+`{active, payload}`, at parity with a gate's match scope), and `event` is any **gate** kind — a gate wakes on command,
 tool and `Stop` events too, never a `Post` variant. A gate on a pre-write event
 (`PreFileWrite`, `PreFileDelete`) is where a write or a delete is prevented, and
 it is run **once per file** a call changes. `context` is carried at top
-level, at parity with the gate's match scope, so a gate's checks can read what an
-upstream context left behind.
+level so a gate's checks can read what an upstream context left behind.
 
 ### ContextEnterPayload — a context's `enter`
 

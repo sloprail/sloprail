@@ -11,7 +11,7 @@
 # The engine resolves each quote against the session's transcripts, in the
 # tool_result pool only — the user's words or the agent's own summary never resolve
 # as source output — into `changeset.citations`, so a citation a check sees EXISTS.
-# A rule's range does not move until it passes, so the range's commits accumulate
+# Every commit of the explicit range counts, so the range's commits accumulate
 # their citations. An in-file `[quote](/abs/path:a-b)` link is gone: an absolute
 # path resolves on no other machine.
 #

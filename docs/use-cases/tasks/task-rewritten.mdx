@@ -56,7 +56,7 @@ can't be rewritten into something the user never said.
 
 This is a **gate plus a file-guard**. The gate runs before the write to the task's
 ask lands, so a diluting edit is refused rather than caught after the fact. The
-file-guard of the same name holds the committed `ASK.md` to the same rule at Stop
+file-guard of the same name holds the committed `ASK.md` to the same rule (`sr-checks run`)
 (the commits carry the user's words as `Sloprail-Cites-User:` trailers), the
 backstop for a write the gate could not see.
 
@@ -88,14 +88,14 @@ words — checked deterministically, no model involved — before any check runs
 The first check refuses a write whose resulting bytes cannot be computed (a
 `sed -i`), since a gate does not fail closed on that by itself. No model runs in the gate;
 the judge — which reads the cited words straight off the event and rules that the
-ask is faithful to them and scoped to only them — runs in the file-guard, at Stop.
+ask is faithful to them and scoped to only them — runs in the file-guard, on the commits.
 
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/ask-is-human-authored/gate.yaml" />
 <Code code={gateScript} lang="bash" title=".sloprail/gate/ask-is-human-authored/require-known-result.sh" />
 ### file-guard
 
-The after-check: the same match and citation requirement plus the judge, applied at
-Stop to the committed `ASK.md` — the range of commits since the rule last passed, as
+The after-check: the same match and citation requirement plus the judge, applied by
+`sr-checks run` to the committed `ASK.md` — `merge-base(base, head)..head`, as
 one diff, with the citations those commits carry. It carries no prevention of its own
 — a file-guard judges commits, and Stop refuses uncommitted `ASK.md` changes with
 "commit these".

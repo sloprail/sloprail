@@ -27,23 +27,18 @@ func amendOwnParagraph(id, subject, cite string) harness.Turn {
 	return Bash(id, "git commit -q --amend --allow-empty -m '"+subject+"' -m '"+cite+"'"+coAuthor)
 }
 
-// citationRefusals counts the Stops of the session refused for want of a
-// citation. The record keeps every refusal, so a test asks whether a run added
-// one, not whether any exists.
-func citationRefusals(e *harness.Env, proj, sess string) int {
-	n := 0
-	for _, m := range e.AllBlockingErrorsFrom(proj, sess, "Stop") {
-		if strings.Contains(m, noCitation) {
-			n++
-		}
-	}
-	return n
+// citationRefused reports whether the session's range is refused, as it stands, for want
+// of a citation. A quote is resolved by `sr-checks run`, where the transcript is; the Stop
+// only verifies what that run stored (it trusts the trailers), so the refusal is read from
+// the run over the session's range, the same call the agent makes before it stops.
+func citationRefused(e *harness.Env, proj, sess string) bool {
+	return strings.Contains(strings.Join(e.CheckRun(proj, sess), "\n"), noCitation)
 }
 
 // T041_50: a citation in a paragraph of its own is read. A quote nobody said, in
 // that form, is refused; the user's words, in that form, ground the change.
 func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-50", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 		commitOwnParagraph("c1", "note the decision", "Sloprail-Cites-User: words nobody said"),
@@ -53,15 +48,14 @@ func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
 	if got := e.Git(proj, "log", "-1", "--format=%(trailers:key=Sloprail-Cites-User)"); got != "" {
 		t.Fatalf("git parsed the citation as a trailer, so this would not test the paragraph rule: %q", got)
 	}
-	refused := citationRefusals(e, proj, "s-041-50")
-	if refused == 0 {
-		t.Fatalf("a citation that resolves nowhere passed at Stop:\n%q", e.AllBlockingErrorsFrom(proj, "s-041-50", "Stop"))
+	if !citationRefused(e, proj, "s-041-50") {
+		t.Fatalf("a citation that resolves nowhere passed the range's check")
 	}
 	e.Run(proj, "s-041-50", "fix it", Turns("done",
 		amendOwnParagraph("c2", "note the decision", "Sloprail-Cites-User: adopt a decision log"),
 	))
-	if got := citationRefusals(e, proj, "s-041-50"); got != refused {
-		t.Fatalf("a citation in a paragraph of its own was not read (%d refusals, had %d):\n%q", got, refused, e.AllBlockingErrorsFrom(proj, "s-041-50", "Stop"))
+	if citationRefused(e, proj, "s-041-50") {
+		t.Fatalf("a citation in a paragraph of its own was not read:\n%q", e.CheckRun(proj, "s-041-50"))
 	}
 }
 
@@ -70,15 +64,14 @@ func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
 // output plus its echoes is one source. Two genuine outputs of the same words stay
 // ambiguous.
 func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
-	e, proj := guarded(t, toolResultGuard)
+	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, "s-041-51", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 		Bash("t1", "echo 'DUPLICATE-5521 passed'"),
 		Bash("t2", "echo 'DUPLICATE-5521 passed'"),
 	).ThenCommit("note the result", harness.CitesTool("DUPLICATE-5521 passed")))
-	refused := citationRefusals(e, proj, "s-041-51")
-	if refused == 0 {
-		t.Fatalf("a quote of two genuine outputs passed at Stop:\n%q", e.AllBlockingErrorsFrom(proj, "s-041-51", "Stop"))
+	if !citationRefused(e, proj, "s-041-51") {
+		t.Fatalf("a quote of two genuine outputs passed the range's check")
 	}
 	e.Run(proj, "s-041-51", "cite the one", Turns("done",
 		Bash("t3", "echo 'SINGLE-5522 passed'"),
@@ -88,8 +81,8 @@ func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
 		harness.AmendLast("a1", "note the result", harness.CitesTool("SINGLE-5522 passed")),
 		Bash("l4", "git log -1"),
 	))
-	if got := citationRefusals(e, proj, "s-041-51"); got != refused {
-		t.Fatalf("a genuine output plus its echoes was ambiguous (%d refusals, had %d):\n%q", got, refused, e.AllBlockingErrorsFrom(proj, "s-041-51", "Stop"))
+	if citationRefused(e, proj, "s-041-51") {
+		t.Fatalf("a genuine output plus its echoes was ambiguous:\n%q", e.CheckRun(proj, "s-041-51"))
 	}
 }
 
@@ -97,29 +90,27 @@ func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
 // `git log` output as the only place a quote sits, ground nothing. A genuine output
 // of the same words does.
 func TestT041_52_TheUsersWordsAndAGitLogGroundNoToolCitation(t *testing.T) {
-	e, proj := guarded(t, toolResultGuard)
+	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, "s-041-52", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 	).ThenCommit("note the decision", harness.CitesTool("adopt a decision log")))
-	refused := citationRefusals(e, proj, "s-041-52")
-	if refused == 0 {
-		t.Fatalf("the user's words, cited as tool output, passed at Stop:\n%q", e.AllBlockingErrorsFrom(proj, "s-041-52", "Stop"))
+	if !citationRefused(e, proj, "s-041-52") {
+		t.Fatalf("the user's words, cited as tool output, passed the range's check")
 	}
 	e.Run(proj, "s-041-52", "again", Turns("done",
 		Bash("l1", "git log -1"),
 		harness.AmendLast("a1", "GITLOGONLY-6601 all green", harness.CitesTool("GITLOGONLY-6601 all green")),
 		Bash("l2", "git log -1"),
 	))
-	again := citationRefusals(e, proj, "s-041-52")
-	if again == refused {
-		t.Fatalf("the agent's own git log output grounded a citation:\n%q", e.AllBlockingErrorsFrom(proj, "s-041-52", "Stop"))
+	if !citationRefused(e, proj, "s-041-52") {
+		t.Fatalf("the agent's own git log output grounded a citation")
 	}
 	e.Run(proj, "s-041-52", "run it", Turns("done",
 		Bash("t1", "echo 'GITLOGONLY-6601 all green'"),
 		Bash("l3", "git log -1"),
 	))
-	if got := citationRefusals(e, proj, "s-041-52"); got != again {
-		t.Fatalf("a genuine output beside the git log did not ground it (%d refusals, had %d):\n%q", got, again, e.AllBlockingErrorsFrom(proj, "s-041-52", "Stop"))
+	if citationRefused(e, proj, "s-041-52") {
+		t.Fatalf("a genuine output beside the git log did not ground it:\n%q", e.CheckRun(proj, "s-041-52"))
 	}
 }
 
@@ -128,22 +119,23 @@ func TestT041_52_TheUsersWordsAndAGitLogGroundNoToolCitation(t *testing.T) {
 // does no harm.
 func echoRefusedThenPassed(t *testing.T, sess, quote, echoCmd string) {
 	t.Helper()
-	e, proj := guarded(t, toolResultGuard)
+	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, sess, prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 	).ThenCommit(quote, harness.CitesTool(quote)))
-	before := citationRefusals(e, proj, sess)
+	if !citationRefused(e, proj, sess) {
+		t.Fatalf("a quote nothing printed passed the range's check")
+	}
 	e.Run(proj, sess, "print it", Turns("done", Bash("l2", echoCmd)))
-	refused := citationRefusals(e, proj, sess)
-	if before == 0 || refused == before {
-		t.Fatalf("%s printing the commit message grounded a citation:\n%q", echoCmd, e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+	if !citationRefused(e, proj, sess) {
+		t.Fatalf("%s printing the commit message grounded a citation", echoCmd)
 	}
 	e.Run(proj, sess, "run it", Turns("done",
 		Bash("t1", "echo '"+quote+"'"),
 		Bash("l3", echoCmd),
 	))
-	if got := citationRefusals(e, proj, sess); got != refused {
-		t.Fatalf("a genuine output beside %s did not ground it (%d refusals, had %d):\n%q", echoCmd, got, refused, e.AllBlockingErrorsFrom(proj, sess, "Stop"))
+	if citationRefused(e, proj, sess) {
+		t.Fatalf("a genuine output beside %s did not ground it:\n%q", echoCmd, e.CheckRun(proj, sess))
 	}
 }
 

@@ -15,18 +15,19 @@
 --              rule (check[0]:script:./size.sh, check[1]:judge:./rubric.md.j2,
 --              require:citation); subject is the unit judged ("changeset" until
 --              `subjects:` exists). fingerprint is the cache key — a hash of the
---              rule's whole folder, the model and the exact input, never a SHA —
---              and NULL for a script, which always re-runs.
+--              rule's whole folder, the model and the exact input, never a SHA.
+--              Every kind of check is cached by it: scripts, judges and requirements.
 -- check_items  one row per finding inside a check (a file a judge named, a
 --              prerequisite of `require:`).
 --
--- The identity columns (repo_id, branch, session_id) are filled although this
--- database is per session today (checks.db beside the session's state.db), so the rows can move to one global store
--- without a change of shape.
+-- The identity columns (repo_id, branch, session_id, agent_id) say whose run it is. Results are
+-- kept in the check cache (internal/checkcache), not in a database: this schema is the SHAPE the
+-- store's queries (PassedHeads, RunRefs, ResolveStale, CheckStatus, Query) read, an in-memory
+-- database the store builds from the cache's runs each time one is asked. Nothing here is
+-- written to disk.
 --
 -- Not carried over from a10n: check_contexts (sloprail's contexts live in the
--- session's own guardrail state) and schema_version (the schema is applied with
--- IF NOT EXISTS on every open, as a10n's is, so it is idempotent by construction).
+-- session's own guardrail state) and schema_version (the database is built fresh each time).
 
 CREATE TABLE IF NOT EXISTS check_runs (
     id           TEXT PRIMARY KEY,
@@ -36,6 +37,10 @@ CREATE TABLE IF NOT EXISTS check_runs (
     repo_id      TEXT NOT NULL,
     branch       TEXT NOT NULL,
     session_id   TEXT NOT NULL,
+    -- The sub-agent that ran it, '' for the root session itself. One database serves the whole
+    -- session family (the root's, written by the root and every sub-agent), so this is what
+    -- says whose run it is.
+    agent_id     TEXT NOT NULL DEFAULT '',
     base_ref     TEXT NOT NULL DEFAULT '',
     head_ref     TEXT NOT NULL DEFAULT '',
     exit_code    INTEGER NOT NULL DEFAULT 0,

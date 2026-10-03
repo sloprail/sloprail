@@ -6,14 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// sr_checks: `sr-checks status` and `sr-checks sql` — reading what a session's
-// file-guards concluded about its commits. Driven through the COMPILED binary
-// against a check-results database seeded through the store (the writer is the
-// Stop evaluation; what is under test here is the reader, which must only read).
+// sr_checks: `sr-checks show --base --head` — reading what the file-guards concluded about a
+// range of commits. Driven through the COMPILED binary against results `sr-checks run` stored
+// (the writer is `run`; what is under test here is the reader, which must only read).
 
 type Env = harness.Env
 
@@ -35,54 +33,71 @@ const sessionID = "s-checks-001"
 // identity and where its check results belong.
 func session(t *testing.T) (*Env, string) {
 	t.Helper()
-	e := New(t)
+	e := New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Run(proj, sessionID, "hello", Turns("done", Bash("b1", "true")))
 	return e, proj
 }
 
-// checks runs `sr-checks <args>` in the session.
+// checks runs `sr-checks <args>` in the session, without the engine's timing lines.
 func checks(e *Env, proj string, args ...string) harness.Result {
-	return e.CLIDirectEnv(proj, e.SessionEnv(sessionID), "sr-checks", args...)
+	return quiet(e.CLIDirectEnv(proj, e.SessionEnv(sessionID), "sr-checks", args...))
 }
 
-// Row is one `sr-checks status --json` row.
+// quiet drops the engine's "sloprail: ... evaluated in" timing diagnostics, which differ run to run.
+func quiet(r harness.Result) harness.Result {
+	var keep []string
+	for _, l := range strings.SplitAfter(r.Output, "\n") {
+		if !strings.HasPrefix(l, "sloprail: file-guard") {
+			keep = append(keep, l)
+		}
+	}
+	r.Output = strings.Join(keep, "")
+	return r
+}
+
+// Row is one `sr-checks show --json` row.
 type Row struct {
 	Rule    string `json:"rule"`
 	Subject string `json:"subject"`
 	Kind    string `json:"kind"`
 	Status  string `json:"status"`
-	BaseRef string `json:"base_ref"`
-	HeadRef string `json:"head_ref"`
-	Error   string `json:"error"`
+	Source  string `json:"source"`
+	Reason  string `json:"reason"`
 }
 
 func statusRows(t *testing.T, e *Env, proj string, args ...string) []Row {
 	t.Helper()
-	res := checks(e, proj, append([]string{"status", "--json"}, args...)...)
+	res := checks(e, proj, append([]string{"show", "--json"}, args...)...)
 	if res.Code != 0 {
-		t.Fatalf("status exited %d:\n%s", res.Code, res.Output)
+		t.Fatalf("show exited %d:\n%s", res.Code, res.Output)
 	}
 	var rows []Row
 	if err := json.Unmarshal([]byte(res.Output), &rows); err != nil {
-		t.Fatalf("status printed unreadable JSON: %v\n%s", err, res.Output)
+		t.Fatalf("show printed unreadable JSON: %v\n%s", err, res.Output)
 	}
 	return rows
 }
 
-func run(rule, head string) checkstore.CheckRun {
-	return checkstore.CheckRun{CheckID: rule, BaseRef: "base000", HeadRef: head,
-		Metadata: map[string]any{"ruleHash": "h1", "eventKind": "Changeset", "baseOrigin": "floor"}}
-}
+const (
+	judgeRule   = "match: \"docs/**\"\nchecks:\n  - judge: ./rubric.md.j2\n"
+	rubric      = "Does this change to the docs hold up?\n{{ change }}\n"
+	verdictPass = `{"pass": true, "reasoning": "fine now"}`
+	verdictFail = `{"pass": false, "reasoning": "the ADR is not cited"}`
+	promptFile  = ".git/judge-prompt"
+)
 
-func judge(status, fp, why string) checkstore.CheckRecord {
-	return checkstore.CheckRecord{Subject: "changeset", Kind: "check[1]:judge:./rubric.md.j2", Status: status,
-		Fingerprint: fp, Metadata: map[string]any{"reasoning": why, "model": "size-md"}}
-}
-
-func script(status string) checkstore.CheckRecord {
-	return checkstore.CheckRecord{Subject: "changeset", Kind: "check[0]:script:./size.sh", Status: status}
+// judged is a committed judged rule over docs/ and one commit after it; returns the rule's
+// commit (the base of the range) with the judge shim answering verdict.
+func judged(t *testing.T, e *Env, proj, verdict string) string {
+	t.Helper()
+	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
+	base := e.CommitAll(proj, "the rule")
+	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
+	e.CommitAll(proj, "add a")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, verdict)
+	return base
 }
 
 func contains(t *testing.T, out string, want ...string) {

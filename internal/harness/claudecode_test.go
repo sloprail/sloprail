@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -673,5 +674,69 @@ func TestResolve_TheManifestCannotNameAVersionOutsideTheCache(t *testing.T) {
 	want := filepath.Join(home, ".claude", "plugins", "cache", "m", "p", "0.0.2")
 	if res.Roots[0].Dir != want {
 		t.Errorf("a traversing manifest version was honoured: got %s want %s", res.Roots[0].Dir, want)
+	}
+}
+
+func writeSession(t *testing.T, home, name, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessOfSession_FindsTheLiveProcessOfASessionId(t *testing.T) {
+	home := t.TempDir()
+	pid := os.Getpid()
+	writeSession(t, home, "1", `{"pid":1,"sessionId":"other","procStart":"x"}`)
+	writeSession(t, home, "me", `{"pid":`+itoa(pid)+`,"sessionId":"sess-1","procStart":"Mon Oct  3 10:00:00 2026"}`)
+	proc, ok := ProcessOfSession(home, "sess-1")
+	if !ok || proc.PID != pid || proc.ProcStart != "Mon Oct  3 10:00:00 2026" {
+		t.Fatalf("got %+v %v", proc, ok)
+	}
+	if _, ok := ProcessOfSession(home, "nope"); ok {
+		t.Fatal("an unknown session has no process")
+	}
+	if _, ok := ProcessOfSession(t.TempDir(), "sess-1"); ok {
+		t.Fatal("no sessions directory, no process")
+	}
+	if _, ok := ProcessOfSession(home, ""); ok {
+		t.Fatal("an empty id names nothing")
+	}
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+func TestProcessGone(t *testing.T) {
+	home := t.TempDir()
+	pid := os.Getpid()
+	proc := Process{PID: pid, ProcStart: "s1"}
+
+	if gone, known := ProcessGone(home, proc); gone || known {
+		t.Fatalf("no sessions directory is unknown, not gone: %v %v", gone, known)
+	}
+	writeSession(t, home, itoa(pid), `{"pid":`+itoa(pid)+`,"sessionId":"a","procStart":"s1"}`)
+	if gone, known := ProcessGone(home, proc); gone || !known {
+		t.Fatalf("a live process with its file is not gone: %v %v", gone, known)
+	}
+	if gone, known := ProcessGone(home, Process{PID: pid, ProcStart: "other"}); !gone || !known {
+		t.Fatalf("a pid reused by another start is gone: %v %v", gone, known)
+	}
+	if gone, known := ProcessGone(home, Process{PID: 999999, ProcStart: "s1"}); !gone || !known {
+		t.Fatalf("a process with no file is gone: %v %v", gone, known)
+	}
+	writeSession(t, home, "999998", `{"pid":999998,"sessionId":"a","procStart":"s1"}`)
+	if gone, known := ProcessGone(home, Process{PID: 999998, ProcStart: "s1"}); !gone || !known {
+		t.Fatalf("a file whose pid is dead is gone: %v %v", gone, known)
+	}
+	writeSession(t, home, itoa(pid), `not json`)
+	if gone, known := ProcessGone(home, proc); !gone || !known {
+		t.Fatalf("a file that cannot be read fails toward judging: %v %v", gone, known)
+	}
+	if gone, known := ProcessGone(home, Process{}); gone || known {
+		t.Fatalf("no process recorded is unknown: %v %v", gone, known)
 	}
 }

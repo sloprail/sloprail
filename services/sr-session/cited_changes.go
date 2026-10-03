@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
@@ -682,6 +683,10 @@ func otherHistories(p HookPayload, record string) (map[string][]historyPoint, ma
 	return points, contents
 }
 
+// otherStoreVisits counts the sessions forOtherStores looked at: a test asserts a Stop with no
+// citation refusal visits none.
+var otherStoreVisits atomic.Int64
+
 // forOtherStores opens, read-only, the store of every session sharing this
 // tree with the one whose record is at record — for the root, each sub-agent
 // dispatched beneath it; for a sub-agent, its root and its siblings — that
@@ -707,11 +712,12 @@ func forOtherStores(p HookPayload, record string, read func(sessionstate.Store))
 		others = append(others, HookPayload{Cwd: p.Cwd, AgentTranscriptPath: sub})
 	}
 	for _, o := range others {
+		otherStoreVisits.Add(1)
 		id, err := stableID(o)
 		if err != nil {
 			continue
 		}
-		db, err := sessionDBPath(p.Cwd, id)
+		db, err := sessionDBPath(o.stateCwd(), id)
 		if err != nil {
 			continue
 		}
@@ -870,7 +876,7 @@ func citedPathsOf(guards []declaration.FileGuard) citedPath {
 		}
 		e := fe.Event(kind)
 		for _, m := range matches {
-			if ok, err := fileGuardSelects(m, e, nil); ok || err != nil {
+			if ok, err := fileGuardSelects(m, e); ok || err != nil {
 				return true
 			}
 		}

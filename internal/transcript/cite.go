@@ -519,10 +519,26 @@ func queuedCommandText(raw json.RawMessage) string {
 		return ""
 	}
 	var text string
-	if json.Unmarshal(att.Prompt, &text) != nil {
+	if json.Unmarshal(att.Prompt, &text) == nil {
+		return text
+	}
+	// With an image pasted along, the prompt is a block list: the typed words are
+	// the "text" blocks, and the image blocks carry no words. Nothing else in the
+	// list is read.
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(att.Prompt, &blocks) != nil {
 		return ""
 	}
-	return text
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // queuedCommandContains reports whether quote appears in a human-typed

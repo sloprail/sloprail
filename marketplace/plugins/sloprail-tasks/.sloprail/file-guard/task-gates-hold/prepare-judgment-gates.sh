@@ -24,7 +24,7 @@ skip() { printf '{"skip": true}\n'; exit 0; }
 [ "$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] ||
   fail "task-gates-hold: expected a Changeset event, so the tasks could not be judged"
 [ -n "$root" ] || fail "task-gates-hold: SR_TREE is not set, so the committed tasks could not be read"
-[ -f "$schema" ] || skip
+[ -f "$schema" ] || fail "task-gates-hold: the plugin's task schema (schemas/task.cue) is missing, so the tasks could not be judged"
 
 # The changeset's files are read through this plugin's one library (a missing
 # content field is undecidable, never an empty file).

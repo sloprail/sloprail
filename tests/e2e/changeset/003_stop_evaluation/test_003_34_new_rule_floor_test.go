@@ -34,14 +34,14 @@ func TestT003_34_ARuleAddedAfterViolationsJudgesOnlyFromItsAddCommit(t *testing.
 	e.CommitAll(proj, "add the rule")
 
 	// Only the add commit and later: the three earlier violations are grandfathered.
-	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 		t.Fatalf("violations committed before the rule existed were reported:\n%s", r.Output)
 	}
 
 	// A violation after the rule is still refused, and only it is named.
 	e.WriteFile(proj, "docs/late.md", "FORBIDDEN words\n")
 	late := e.CommitAll(proj, "violation after the rule")
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/late.md") {
 		t.Fatalf("a violation committed after the rule was not refused:\n%s", r.Output)
 	}
@@ -55,7 +55,7 @@ func TestT003_34_ARuleAddedAfterViolationsJudgesOnlyFromItsAddCommit(t *testing.
 	}
 
 	e.Git(proj, "revert", "--no-edit", late)
-	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 		t.Fatalf("the reverted range was still refused:\n%s", r.Output)
 	}
 }
@@ -66,19 +66,18 @@ func TestT003_35_ARuleFromSessionStartStillJudgesABadCommitBeforeASloprailTouch(
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-35"
 	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
-	e.RemoveCheckResults(proj, sess)
 
 	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
 	bad := e.CommitAll(proj, "the violation")
 	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 	e.CommitAll(proj, "touch another .sloprail file")
 
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/bad.md") {
 		t.Fatalf("a bad commit followed by a .sloprail touch was not refused:\n%s", r.Output)
 	}
 	e.Git(proj, "revert", "--no-edit", bad)
-	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 		t.Fatalf("the reverted range was still refused:\n%s", r.Output)
 	}
 }
@@ -89,7 +88,6 @@ func TestT003_36_ARuleDeletedAndReAddedStaysStrict(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	const sess = "s-003-36"
 	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
-	e.RemoveCheckResults(proj, sess)
 
 	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
 	bad := e.CommitAll(proj, "the violation")
@@ -98,12 +96,12 @@ func TestT003_36_ARuleDeletedAndReAddedStaysStrict(t *testing.T) {
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)})
 	e.CommitAll(proj, "re-add the rule")
 
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/bad.md") {
 		t.Fatalf("deleting and re-adding the rule skipped the earlier violation:\n%s", r.Output)
 	}
 	e.Git(proj, "revert", "--no-edit", bad)
-	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 		t.Fatalf("the reverted range was still refused:\n%s", r.Output)
 	}
 }
@@ -120,12 +118,11 @@ func TestT003_37_ARuleOlderThanTheSessionJudgesOnlyTheSessionsOwnCommits(t *test
 	}
 	const sess = "s-003-37"
 	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true"))) // the session starts at C
-	e.RemoveCheckResults(proj, sess)
 
 	e.WriteFile(proj, "docs/d.md", "FORBIDDEN words\n")
 	e.CommitAll(proj, "D: the session's own violation")
 
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/d.md") {
 		t.Fatalf("the session's own violation was not refused:\n%s", r.Output)
 	}
@@ -140,7 +137,7 @@ func TestT003_37_ARuleOlderThanTheSessionJudgesOnlyTheSessionsOwnCommits(t *test
 
 	e.WriteFile(proj, "docs/d.md", "clean words\n")
 	e.CommitAll(proj, "fix D")
-	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
 	}
 }
@@ -167,7 +164,7 @@ func TestT003_38_ALaterSloprailTouchDoesNotHideViolationsAfterTheRuleWasAdded(t 
 	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 	e.CommitAll(proj, "D: touch another .sloprail file")
 
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/b.md") || !strings.Contains(r.Output, "docs/c.md") {
 		t.Fatalf("violations after the rule was added escaped a later .sloprail touch:\n%s", r.Output)
 	}
@@ -175,7 +172,7 @@ func TestT003_38_ALaterSloprailTouchDoesNotHideViolationsAfterTheRuleWasAdded(t 
 	e.WriteFile(proj, "docs/b.md", "clean words\n")
 	e.WriteFile(proj, "docs/c.md", "clean words\n")
 	e.CommitAll(proj, "fix B and C")
-	if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 		t.Fatalf("the fixed range was still refused:\n%s", r.Output)
 	}
 }

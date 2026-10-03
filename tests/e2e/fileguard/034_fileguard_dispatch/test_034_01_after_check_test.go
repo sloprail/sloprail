@@ -102,8 +102,8 @@ func TestT034_02_FineFileAdmits(t *testing.T) {
 // Cycle 1 commits the bad file and the guard refuses. The refused range is never
 // partly passed, so cycle 2 — unrelated work — is judged with the bad commit still
 // in its range, and refused again. Cycle 3 FIXES the file: the squashed range now
-// holds the fixed content, and passes. Cycle 4 is unrelated work, and only that
-// new commit is judged.
+// holds the fixed content, and passes. Cycle 4 is unrelated work, and the range
+// with it still passes.
 //
 // Cycles in one session are Run calls with the same session id.
 func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
@@ -150,8 +150,8 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	}
 	afterFix := led.Count()
 
-	// Cycle 4: unrelated work. Only the new commit is judged: the passed range
-	// is behind the rule's watermark.
+	// Cycle 4: unrelated work. The rule is asked once more (one check of the
+	// range per Run), and the fixed range with the new commit passes.
 	e.Run(proj, sess, "more unrelated work", Turns("done",
 		Write("w4", "memories/third.md", "clean"),
 	).ThenCommit("add a third memory"))

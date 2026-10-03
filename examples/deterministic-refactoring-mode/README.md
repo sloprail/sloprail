@@ -72,7 +72,9 @@ changeset. So the reconcile is split:
 - **`file-guard/moved-content-reconciles`** is the after-check, the same
   reconcile on the committed files at `Stop` (every file of the range that carries
   a `moved-from` marker, from `changeset.files[].newContent`). It is the backstop
-  for a write the gate could not see. One library per script, in the file-guard
+  for a write the gate could not see. Its `match:` is just
+  `any(markers, .kind == "moved-from")`: a file-guard judges committed bytes with
+  no session, so it cannot read the refactoring context (only the gates do). One library per script, in the file-guard
   folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry
   that reads its own input (the gate's `Pre*` event, the file-guard's Changeset) and
   sources it.
@@ -138,7 +140,8 @@ This was a deliberate choice among three:
   pinned origin, dropping imports and whitespace (the exception rules), and refuses
   before the write lands.
 - **`file-guard/moved-content-reconciles/`** — the same check at `Stop`, on the
-  committed files of the changeset.
+  committed files of the changeset that carry a `moved-from` marker (no context in
+  its match: contexts are session state, which a file-guard never sees).
 
 ## The refusal contract
 

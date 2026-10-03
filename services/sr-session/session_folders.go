@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/sessionpath"
@@ -13,8 +12,9 @@ import (
 
 // The session's folders: a registry of the trees the session works in, kept in the
 // ROOT session's store, a row per (session, folder path) after a10n's
-// session_folders. Each row says where work in that folder began (BaseRef), and a
-// file-guard's range for a hook running in the folder starts there.
+// session_folders. A folder's own .sloprail rules apply in it: gates judge the calls made
+// there and commit-required covers its uncommitted work. (A file-guard's range is not
+// tracked from a folder: `sr-checks run` is given its range.)
 //
 // Why a registry and not the sub-agent's own session start. A sub-agent that owns a
 // worktree is dispatched into a tree created from the CURRENT main, hours after its
@@ -50,7 +50,7 @@ func resolveRootSession(p HookPayload) (rootSession, error) {
 		if err != nil {
 			return rs, err
 		}
-		path, err := sessionDBPath(p.Cwd, id)
+		path, err := sessionDBPath(p.stateCwd(), id)
 		if err != nil {
 			return rs, err
 		}
@@ -94,8 +94,8 @@ func resolveRootSession(p HookPayload) (rootSession, error) {
 // no row the sub-agent's range fails closed.
 func folderToRegister(p HookPayload, rs rootSession) (path, role string, ok bool) {
 	tree, err := gitrepo.Root(p.Cwd)
-	if err != nil || tree == "" {
-		return "", "", false
+	if err != nil || tree == "" || gitrepo.IsSnapshot(tree) {
+		return "", "", false // a check's read-only snapshot is no folder of the session
 	}
 	rootTree, err := gitrepo.Root(rs.Cwd)
 	if err != nil || rootTree == "" {
@@ -136,7 +136,17 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	}
 	path, role, ok := folderToRegister(p, rs)
 	if !ok {
-		return nil
+		// Not a folder this agent starts in, but a command it runs may still move
+		// history in another repository.
+		if _, err := os.Stat(rs.Path); err != nil {
+			return nil
+		}
+		reg, err := sessionstate.Open(rs.Path)
+		if err != nil {
+			return err
+		}
+		defer reg.Close()
+		return registerCommandFolders(reg, rs, p)
 	}
 	var start string
 	if own != nil {
@@ -192,33 +202,15 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if headErr == nil {
 		f.Branch, f.HeadRef = pos.Branch, pos.Commit
 	}
-	if id, err := gitrepo.RootCommit(p.Cwd); err == nil {
+	if id, err := gitrepo.RepoID(p.Cwd); err == nil {
 		f.RepoID = id
 	}
-	_, err = reg.RegisterFolder(f)
-	return err
-}
-
-// sessionFolderFor is the registered folder a hook's tree is, or nil when it is not
-// one (nothing registered it, or the registry cannot be read — the caller then falls
-// back to the agent's own start, which is what it used before there was a registry).
-// root is the git root the range is computed in.
-func sessionFolderFor(p HookPayload, root string) *sessionstate.Folder {
-	rs, err := resolveRootSession(p)
+	wrote, err := reg.RegisterFolder(f)
 	if err != nil {
-		return nil
+		return err
 	}
-	if _, err := os.Stat(rs.Path); err != nil {
-		return nil // a lookup never creates the root's store
+	if wrote {
+		ensureTracked(reg, rs.ID, path, f.AgentID, f.BaseRef)
 	}
-	reg, err := sessionstate.Open(rs.Path)
-	if err != nil {
-		return nil
-	}
-	defer reg.Close()
-	f, found, err := reg.Folder(rs.ID, filepath.Clean(root))
-	if err != nil || !found || f.BaseRef == "" {
-		return nil
-	}
-	return &f
+	return registerCommandFolders(reg, rs, p)
 }

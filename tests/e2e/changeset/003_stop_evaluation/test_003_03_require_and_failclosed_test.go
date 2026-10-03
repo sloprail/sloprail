@@ -32,13 +32,20 @@ func TestT003_03_CitationTrailersGroundTheRange(t *testing.T) {
 
 	// Words nobody said: still not a citation, and the refusal says which trailer failed.
 	e.Run(proj, "s-003-03", "amend it", Turns("done", harness.CommitFile("c2", "docs/release.md", "steps v2", "document it", "Sloprail-Cites-User: delete the release notes")))
-	joined = strings.Join(e.BlockingErrorsFrom(proj, "s-003-03", "Stop"), "\n")
+	// The words are resolved by `sr-checks run`, where the transcript is; the Stop only
+	// verifies, trusting the trailers the author's run resolved.
+	joined = strings.Join(e.CheckRun(proj, "s-003-03"), "\n")
 	if !strings.Contains(joined, "delete the release notes") || !strings.Contains(joined, "did not resolve") {
 		t.Fatalf("an unresolvable trailer should be named:\n%s", joined)
 	}
 
 	// Pass: the user's own words, in a trailer of a later commit in the range.
 	e.Run(proj, "s-003-03", "cite it", Turns("done", harness.CommitFile("c3", "docs/release.md", "steps v3", "cite the ask", "Sloprail-Cites-User: document the release process")))
+	// What the check is handed is read from `sr-checks run`'s own call: it resolves each quote
+	// against the transcript. (The Stop's verify, which has none, trusts every trailer.)
+	if r := e.CheckRunRaw(proj, "s-003-03", e.RunBase("s-003-03"), "HEAD"); r.Code != 0 {
+		t.Fatalf("with the citation in place the range was refused:\n%s", r.Output)
+	}
 	runs := ledger(t, led)
 	if len(runs) == 0 {
 		t.Fatal("with the citation in place the checks never ran")
@@ -66,22 +73,32 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 		t.Fatalf("premise: the blob is not a loose object: %v", err)
 	}
 
-	r := e.StopNow(proj, "s-003-04", false)
-	if !harness.Blocked(r) || !strings.Contains(r.Output, "could not be evaluated") {
-		t.Fatalf("an unreadable range did not fail closed:\n%s", r.Output)
+	// The Stop reads no blob (its key is over the blob ids), so it does not meet the lost object:
+	// nothing was judged for this range, which the Stop does not report (it shows failures only).
+	// `verify`, which the pre-push gate and CI run, refuses it. The run below is what reads the bytes.
+	r := e.StopJudged(proj, "s-003-04", false)
+	if harness.Blocked(r) {
+		t.Fatalf("the Stop reported a range nobody could judge, which is no stored failure:\n%s", r.Output)
+	}
+	if v := e.CheckVerify(proj, "s-003-04", e.RunBase("s-003-04"), "HEAD"); v.Code == 0 || !strings.Contains(v.Output, "not judged yet") {
+		t.Fatalf("an unreadable range did not fail closed under verify:\n%s", v.Output)
 	}
 	if n := len(ledger(t, led)); n != 0 {
 		t.Fatalf("the check ran %d times against a range that could not be read", n)
 	}
-	status := e.ChecksStatus(proj, "s-003-04", "--failing")
-	if !strings.Contains(status, "error") || !strings.Contains(status, "file-guard/docs") {
-		t.Fatalf("the engine failure was not recorded as an error:\n%s", status)
+	e.CheckRunRaw(proj, "s-003-04", e.RunBase("s-003-04"), "HEAD")
+	var recorded bool
+	for _, run := range e.CacheRecords(proj) {
+		recorded = recorded || (run.Error != "" && strings.Contains(run.Rule, "docs"))
+	}
+	if !recorded {
+		t.Fatalf("the engine failure was not recorded as an error run: %+v", e.CacheRecords(proj))
 	}
 
 	// The object comes back; the failed run moved nothing, so the range is the
 	// same one and is now judged.
 	e.Git(proj, "hash-object", "-w", "docs/a.md")
-	if r := e.StopNow(proj, "s-003-04", false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, "s-003-04", false); harness.Blocked(r) {
 		t.Fatalf("a readable range was still refused:\n%s", r.Output)
 	}
 	runs := ledger(t, led)

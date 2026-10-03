@@ -236,7 +236,7 @@ func TestT047_08_ShellRedirectIsRefused(t *testing.T) {
 // engine sees ahead, so the gate never asks; the file-guard of the same name asks
 // at Stop, and the change carries no citation, so it blocks the turn.
 func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := gcProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
@@ -280,7 +280,7 @@ func TestT047_11_UnknownResultIsRefused(t *testing.T) {
 // trailer is refused at Stop for the missing citation, before any judge; amending
 // the commit that changed the files to cite the source output passes.
 func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := gcProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the claim matches the cited output"}`)
 
@@ -293,12 +293,12 @@ func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
 	if !containsAll(blocks, "citations-resolve", "must cite a tool's output") {
 		t.Fatalf("an uncited commit of markdown was not refused at Stop:\n%s", blocks)
 	}
-	seen := len(e.StopContinuations(proj, sess))
+	seen := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
 
 	// A citation grounds the files its own commit changed, so it is added by amending
 	// the commit that changed them.
 	e.Run(proj, sess, "cite it", Turns("done", harness.AmendLast("amend", "write the summary", harness.CitesTool(sourceLine))))
-	if got := len(e.StopContinuations(proj, sess)); got != seen {
+	if got := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); got != seen {
 		t.Fatalf("a commit citing the source output was still refused (%d refusals, had %d):\n%s", got, seen,
 			joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")))
 	}

@@ -141,3 +141,26 @@ func TestJudgeRefusalReason_VerifierReasoningWins(t *testing.T) {
 	stderr := []byte("sr-agent: verifier (attempt 1/2): JUDGE-REASON: the change drops field x\n")
 	assert.Equal(t, "the change drops field x", judgeRefusalReason(nil, stderr))
 }
+
+// A judge that produced no parseable answer is a typed NoVerdict refusal; a real refusal is not.
+func TestJudgeRefusal_NoVerdictIsTyped(t *testing.T) {
+	none := judgeRefusal(nil, []byte("sr-agent: the agent wrote no output to /x"))
+	assert.True(t, none.Refused)
+	assert.True(t, none.NoVerdict)
+	real := judgeRefusal(nil, []byte("sr-agent: verifier (attempt 1/1): JUDGE-REASON: the ADR is not cited"))
+	assert.True(t, real.Refused)
+	assert.False(t, real.NoVerdict)
+}
+
+// Only the verifier's own reasoning of a rejected verdict is a verdict; every other failure of
+// the judge (old sr-agent, the model's or transport's error text, a blank) is NoVerdict too.
+func TestJudgeRefusal_OnlyAVerifierReasonIsAVerdict(t *testing.T) {
+	assert.False(t, judgeRefusal(nil, []byte("sr-agent: verifier (attempt 1/2): JUDGE-REASON: the change drops field x\n")).NoVerdict)
+	for _, stderr := range []string{
+		"Error: unknown flag: --add-dir:readonly\n",
+		"API Error: 529 overloaded_error\n",
+		"",
+	} {
+		assert.True(t, judgeRefusal(nil, []byte(stderr)).NoVerdict, stderr)
+	}
+}

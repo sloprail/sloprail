@@ -129,6 +129,13 @@ type FileGuard struct {
 	// permitted — see Prerequisite. Optional.
 	Require []Prerequisite `yaml:"require"`
 
+	// Subjects is an optional script, resolved from the rule's folder, that splits the
+	// selected files into the units the rule is judged on, each cached on its own. Run with
+	// the changeset payload on stdin and no session; prints a JSON array of
+	// {"id", "files", "fingerprint"} (fingerprint optional: what that subject's verdict depends
+	// on beyond its files' content). Absent: one subject made of every selected file.
+	Subjects string `yaml:"subjects"`
+
 	// Checks are the checks a guarded file must pass, in order. Each is a script
 	// or a judge (both may appear across the list), and order is significant: a
 	// cheap deterministic script runs first and can settle the matter before a
@@ -148,10 +155,9 @@ type FileGuard struct {
 }
 
 // Root is the `.sloprail` directory this guard was loaded from — the project's own
-// or a plugin's, the two layouts being the same: `<root>/file-guard/<name>`. What
-// the guard's identity covers: its rule hash and the floor of its range are both
-// read over the whole root, not the guard's folder alone, because a schema, a
-// shared script or another rule's lib changes what the guard does.
+// or a plugin's: `<root>/file-guard/<name>`. The guard's rule hash does not read it: it
+// covers the guard's own folder (g.Dir), the files git tracks there (changeset.RuleHashAt);
+// the floor of its range is over the guard's folder too.
 func (g FileGuard) Root() string { return filepath.Dir(filepath.Dir(g.Dir)) }
 
 // Deletions is a file-guard's `deletions:` value — whether the guard is asked
@@ -273,6 +279,10 @@ type Gate struct {
 	// shape a file-guard uses. Optional, subject to the same at-least-one rule as
 	// Require.
 	Checks []Check `yaml:"checks"`
+
+	// Enabled, when false, ships the gate OFF: it is inert until the project lists its
+	// qualified name under `enabled:` in `.sloprail/config.yaml`. Absent means on.
+	Enabled *bool `yaml:"enabled"`
 
 	// Dir is the gate's own folder. Not a YAML field.
 	Dir string `yaml:"-"`
@@ -533,10 +543,11 @@ type Check struct {
 	// relative to the rule's folder. Exactly one of Script / Judge is set.
 	Judge string `yaml:"judge"`
 
-	// Prepare is an optional deterministic executable that runs before Judge and
-	// adds to the prompt's variables under `additionalContext`. Only meaningful
-	// alongside a Judge; a Prepare set on a script-only check is a mistake the
-	// validator refuses, since a script check has nothing to prepare for.
+	// Prepare is an optional deterministic executable that runs before the check
+	// (a Judge or a Script). What it returns under `additionalContext` is added to
+	// the judge's prompt variables, or to the script's payload. It only builds context:
+	// it names no fingerprint, and neither its output nor the rendered prompt is part of
+	// the verdict's cache key (a `subjects:` script supplies a fingerprint).
 	Prepare string `yaml:"prepare"`
 
 	// Model is which model a Judge asks, in the same modelset format sr-agent's
@@ -544,7 +555,7 @@ type Check struct {
 	// name, or a comma-separated preference list). Empty means the engine's
 	// default (size-md). Only meaningful alongside a Judge — a script has no
 	// model to choose — so Model set on a script-only check is a load error the
-	// validator refuses, mirroring the stray-prepare rule. See
+	// validator refuses. See
 	// dot-dir-file-store/main.tsp Check.model.
 	Model string `yaml:"model"`
 
@@ -595,9 +606,6 @@ func (c Check) isScript() bool { return c.Script != "" }
 
 // isJudge reports whether this check is the judge half of the union.
 func (c Check) isJudge() bool { return c.Judge != "" }
-
-// hasPrepare reports whether this check names a prepare script.
-func (c Check) hasPrepare() bool { return c.Prepare != "" }
 
 // StructureEntry is one entry in structure.yaml's allow/deny lists
 // (dot-dir-file-store/main.tsp StructureEntry). Exactly one of Glob / Regex is

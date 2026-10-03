@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +26,7 @@ func newSessionStopCmd() *cobra.Command {
 			// Stop: a reply does not pass a rule by being sent twice. What ends a
 			// refusal loop is the project's stop_hook_block_cap — see
 			// stopHookBlockCapReached.
+			defer gitrepo.CleanupOnSignal()() // a killed Stop must not leak its read-only snapshots
 			return completeCycle(cmd, readPayload(cmd))
 		},
 	}
@@ -43,7 +46,23 @@ func newSessionStopCmd() *cobra.Command {
 func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	store, err := openEngineState(p)
 	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		// The engine's own bookkeeping is unavailable, which is no reason to skip
+		// judging: the file-guards need only git and the check results. Run the Stop
+		// dispatch without a store (gate and context state in memory for this cycle),
+		// and say so in the refusal if it refuses. Never a silent pass.
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: session state unavailable at Stop, judging without it:", err)
+		if p.Cwd == "" {
+			// No folder named: there is nothing to judge, and guessing the process's own
+			// directory would judge somebody else's tree. Plumbing, never a block.
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the payload names no working directory, so there is no folder to judge")
+			return nil
+		}
+		if reason := natureStopDispatch(cmd, p); reason != "" {
+			note := fmt.Sprintf("\n(sloprail's session state could not be opened, so this Stop was judged without it and the refusal-loop cap does not apply: %v)", err)
+			if berr := block(cmd, reason+note); berr != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", berr)
+			}
+		}
 		return nil
 	}
 	defer store.Close()
@@ -109,7 +128,11 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	// — which has not moved — and sees everything this one saw, plus whatever
 	// arrived since. Carrying the position across instead would hand it to a
 	// cycle that never read those turns; see discardOffered.
+	notices := withStopNotices(cmd)
 	if reason := natureStopDispatch(cmd, p); reason != "" {
+		if note := notices.text(); note != "" {
+			reason += "\n" + note
+		}
 		if err := block(cmd, reason); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
@@ -118,6 +141,11 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		return nil
 	}
 	resetStopRefusals(cmd, store)
+	if note := notices.text(); note != "" { // said, not refused: shown to the user
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"systemMessage": note}); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
+	}
 
 	// Where this cycle's reading ended, for the next one to resume after, and
 	// then the position is spent. Only on this path: a cycle that was

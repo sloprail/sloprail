@@ -12,7 +12,7 @@
 # match: a guardrail's own hook script under the three nature dirs. A gate's match
 # reads the event nested (`event.path`); the file-guard's reads `path` bare. The
 # grep self-scopes to `.sh`, so a `.md.j2` prompt is permitted here and left to the
-# file-guard's judge at Stop.
+# file-guard's judge (`sr-checks run`, verified at Stop).
 on:
   - event: PreFileWrite
     match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".sh"'

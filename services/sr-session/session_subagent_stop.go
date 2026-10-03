@@ -133,14 +133,13 @@ func newSessionSubagentStopCmd() *cobra.Command {
 				return nil
 			}
 
-			// Resolved for its effect: which session this is decides which state
-			// anything recorded below belongs to. A sub-agent whose own record
-			// cannot be read is one whose cycle cannot be placed, which is again
-			// a reason to stand down rather than to trap it in a retry.
+			// A sub-agent whose own record cannot be read has no identity to key
+			// state by, which is no reason to let its work through unjudged:
+			// completeCycle then runs its file-guards against its folder (the git
+			// root of its cwd) without a store, and refuses with what they found.
 			if _, err := stableID(p); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(),
-					"sloprail: subagent-stop could not identify this sub-agent's session, so its cycle went unjudged: %v\n", err)
-				return nil
+					"sloprail: subagent-stop could not identify this sub-agent's session, judging its folder without state: %v\n", err)
 			}
 
 			// The sub-agent's cycle, run by the same function that runs a
@@ -149,7 +148,9 @@ func newSessionSubagentStopCmd() *cobra.Command {
 			// conversation and answers by re-running the sub-agent's turn — so a
 			// rule refusing delegated work now reaches something, which is the
 			// whole point of binding this event.
-			return completeCycle(cmd, p)
+			blocked, err := runCapturingBlock(cmd, func() error { return completeCycle(cmd, p) })
+			endAgent(cmd, p, blocked)
+			return err
 		},
 	}
 }

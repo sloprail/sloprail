@@ -152,22 +152,6 @@ checks:
 	assert.Equal(t, "**/*.md", loaded.FileGuards[0].Match)
 }
 
-// A file-guard's match reading a context is at parity with its checks — it must
-// load, since context[<name>] is in the file scope.
-func TestLoad_FileGuard_ContextInMatch(t *testing.T) {
-	loadOK(t, map[string]string{
-		"file-guard/moved/file-guard.yaml": `
-match: context["refactoring"].active and any(markers, .kind == "moved-from")
-checks:
-  - script: ./check.sh
-`,
-		// The context it names must exist for a prerequisite; a match read of a
-		// context is NOT a prerequisite, so this loads even without the context —
-		// but declare it so the test also documents the guard→context link.
-		"context/refactoring/context.yaml": validContextYAML,
-	})
-}
-
 // ---------------------------------------------------------------------------
 // File-guard: refusals
 // ---------------------------------------------------------------------------
@@ -201,7 +185,7 @@ checks:
 	// name is in front of them; the available names have to be too. (The old
 	// GUARDRAIL.md validator proved this via guardrail.Validate's field list; the
 	// new file-guard validator carries the same courtesy in its match message.)
-	for _, field := range []string{"path", "markers", "context"} {
+	for _, field := range []string{"path", "markers", "trailers"} {
 		assert.Containsf(t, iv.Reason, field,
 			"the refusal should name %q as an available field on the file scope", field)
 	}
@@ -252,14 +236,51 @@ func TestLoad_FileGuard_PureRequire(t *testing.T) {
 		"file-guard/require-topic/file-guard.yaml": `
 match: "memories/topics/**/*.md"
 require:
-  - skill: document-topic
+  - citation: {source_types: [user]}
 `,
 	})
 	require.Len(t, loaded.FileGuards, 1)
 	g := loaded.FileGuards[0]
 	assert.Empty(t, g.Checks)
 	assert.Len(t, g.Require, 1)
-	assert.Equal(t, "document-topic", g.Require[0].Skill)
+	assert.NotNil(t, g.Require[0].Citation)
+}
+
+// A file-guard cannot see the session, so `require: skill` / `require: context`
+// is refused at load, and the message carries the gate to write instead.
+func TestLoad_FileGuard_SessionRequireIsRefusedWithTheGate(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/require-topic/file-guard.yaml": `
+match: "memories/topics/**/*.md"
+require:
+  - skill: document-topic
+`,
+	})
+	assert.True(t, hasKind(iv, ErrRetiredKey), "a skill require on a file-guard is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "gate/<name>/gate.yaml")
+	assert.Contains(t, iv.Reason, "skill: document-topic")
+}
+
+// A file-guard's match has no `context`: an identifier use is refused (with the
+// gate advice), while the word inside a string literal still loads.
+func TestLoad_FileGuard_MatchReadingContextIsRefused(t *testing.T) {
+	for _, m := range []string{`context["x"].active`, `any(markers, context["x"].active)`, `path contains "a" and context["x"].active`} {
+		iv := loadOneInvalid(t, map[string]string{
+			"file-guard/ctx/file-guard.yaml": "match: '" + m + "'\nchecks:\n  - script: ./c.sh\n",
+		})
+		assert.True(t, hasKind(iv, ErrRetiredKey), "%s: %v", m, iv.Reason)
+		assert.Contains(t, iv.Reason, "move the condition on the context to a gate", m)
+	}
+}
+
+func TestLoad_FileGuard_ContextInAStringLiteralLoads(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"file-guard/lit/file-guard.yaml": "match: 'path contains \".sloprail/context/\"'\nchecks:\n  - script: ./c.sh\n",
+	})
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, loaded.Invalid, invalidReasons(loaded))
+	assert.Len(t, loaded.FileGuards, 1)
 }
 
 // A file-guard with neither require nor checks would select a file and decide
@@ -303,18 +324,37 @@ checks:
 	assert.Contains(t, iv.Reason, "neither")
 }
 
-// A prepare belongs with a judge; on a script-only check it can only be a
-// mistake and is refused, so the author learns it does nothing.
-func TestLoad_Check_StrayPrepareOnScript(t *testing.T) {
-	iv := loadOneInvalid(t, map[string]string{
-		"file-guard/stray/file-guard.yaml": `
+// A prepare also loads on a script check: it builds context for the script's payload
+// (additionalContext) and is never a refusal. It only builds context, so the check
+// itself still has to be a script or a judge.
+func TestLoad_Check_PrepareOnScriptLoads(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/prep/file-guard.yaml": `
 match: "**/*.md"
 checks:
   - script: ./s.sh
     prepare: ./p.sh
 `,
+		"file-guard/prep/s.sh": "#!/bin/sh\n",
+		"file-guard/prep/p.sh": "#!/bin/sh\n",
 	})
-	assert.True(t, hasKind(iv, ErrStrayPrepare), "prepare on a script-only check is refused: %v", iv.Reason)
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isScript())
+	assert.Equal(t, "./p.sh", c.Prepare)
+	assert.Empty(t, loaded.Invalid)
+}
+
+// A prepare with neither a script nor a judge is still the exactly-one-of refusal.
+func TestLoad_Check_PrepareAloneIsRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/lone/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - prepare: ./p.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "%v", iv.Reason)
 }
 
 // A prepare ALONGSIDE a judge is the sanctioned shape and loads.
@@ -330,11 +370,11 @@ checks:
 	require.Len(t, loaded.FileGuards, 1)
 	c := loaded.FileGuards[0].Checks[0]
 	assert.True(t, c.isJudge())
-	assert.True(t, c.hasPrepare())
+	assert.True(t, c.Prepare != "")
 }
 
 // model/timeout are judge-only. On a script-only check each can only be a
-// mistake and is refused, the same way a stray prepare is — so the author learns
+// mistake and is refused, so the author learns
 // the field does nothing rather than having it silently ignored.
 func TestLoad_Check_StrayModelOnScript(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{

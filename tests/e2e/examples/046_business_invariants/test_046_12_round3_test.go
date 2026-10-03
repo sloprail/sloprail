@@ -170,7 +170,7 @@ func TestT046_46_SpecConventionAgrees(t *testing.T) {
 // are gone, neither holds the pin, and both deletes are refused by the file-guard:
 // the after-check is the backstop, and names both files.
 func TestT046_47_DeletingTwoHoldersOfOnePinInOneCommand(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := biProject(t, e)
 	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
 	marked := invariantCode(proj+"@"+sha+":SPEC.md#L3-3", refundBody)

@@ -17,7 +17,7 @@ func statusesRepo(t *testing.T, ruleExtra string) Shown {
 	e.WriteFile(proj, "docs/gone.md", "goodbye\n")
 	e.WriteFile(proj, "docs/old.md", movable)
 	e.WriteFile(proj, "docs/kept.md", "kept\n")
-	e.CommitAll(proj, "before")
+	floor := e.CommitAll(proj, "before")
 	e.FileGuard(proj, "size", docsRule(ruleExtra), map[string]string{"check.sh": passingCheck})
 	e.CommitAll(proj, "add the rule")
 
@@ -27,7 +27,7 @@ func statusesRepo(t *testing.T, ruleExtra string) Shown {
 	e.WriteFile(proj, "docs/added.md", "added\n")
 	e.CommitAll(proj, "delete, rename, edit, add")
 
-	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size", floor)
 	if res.Code != 0 {
 		t.Fatalf("changeset exited %d:\n%s", res.Code, res.Output)
 	}

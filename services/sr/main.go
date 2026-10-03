@@ -106,7 +106,7 @@ var services = []service{
 	{"mark", "Write // sr:<kind> <fqn> enforcement markers into impl files"},
 	{"agent", "Run an agent, whichever harness is running"},
 	{"eval", "Prove a guardrail's use case against a real agent"},
-	{"checks", "What this session's file-guards concluded about its commits"},
+	{"checks", "Judge the file-guards over an explicit commit range and show the results"},
 }
 
 // binaryName is the binary a service word dispatches to.

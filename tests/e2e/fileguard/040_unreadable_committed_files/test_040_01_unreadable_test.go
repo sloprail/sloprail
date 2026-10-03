@@ -20,7 +20,7 @@ exit 1
 
 const docsRule = "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n"
 
-// maxStop is how long a Stop over these files may take. They are handled in
+// maxStop is how long a Run and its check over these files may take. They are handled in
 // seconds; a hang (reading a /dev/zero symlink) would be minutes, or forever.
 const maxStop = 90 * time.Second
 
@@ -53,20 +53,18 @@ func TestT040_01_UnreadableOrOversizedCommittedFilesFailClosed(t *testing.T) {
 				harness.Commit("c1", "add "+c.path),
 			))
 			if d := time.Since(start); d > maxStop {
-				t.Fatalf("the Stop over %s took %v: the engine is reading something it should not", c.path, d)
+				t.Fatalf("the run and check over %s took %v: the engine is reading something it should not", c.path, d)
 			}
-			blocks := strings.Join(e.StopContinuations(proj, sess), "\n")
-			if !strings.Contains(blocks, "UNREADABLE: "+c.path) {
-				t.Fatalf("%s was waved through or never handed to the rule: %q", c.path, e.BlockingErrors(proj, sess))
+			if blocks := strings.Join(e.CheckRun(proj, sess), "\n"); !strings.Contains(blocks, "UNREADABLE: "+c.path) {
+				t.Fatalf("%s was waved through or never handed to the rule: %q", c.path, blocks)
 			}
-			seen := len(e.StopContinuations(proj, sess))
 
 			e.Run(proj, sess, "replace it with text", Turns("done",
 				Bash("f1", "rm -f "+c.path),
 				harness.CommitFile("f2", c.path, "ordinary text\n", "replace "+c.path),
 			))
-			if n := len(e.StopContinuations(proj, sess)); n != seen {
-				t.Fatalf("the replaced file was still refused:\n%s", strings.Join(e.StopContinuations(proj, sess)[seen:], "\n"))
+			if blocks := e.CheckRun(proj, sess); len(blocks) != 0 {
+				t.Fatalf("the replaced file was still refused:\n%s", strings.Join(blocks, "\n"))
 			}
 		})
 	}

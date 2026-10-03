@@ -419,3 +419,12 @@ func naturePreToolBoundKinds(loaded declaration.Loaded) []string {
 	}
 	return bound
 }
+
+// quietCmd is a command whose output goes nowhere: loading another folder's rules reports
+// that folder's faults where its own sessions read them, not into this call's hook output.
+func quietCmd() *cobra.Command {
+	c := &cobra.Command{}
+	c.SetOut(io.Discard)
+	c.SetErr(io.Discard)
+	return c
+}

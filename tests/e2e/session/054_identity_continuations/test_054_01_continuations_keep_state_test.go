@@ -234,7 +234,9 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	e, proj, _ := project(t)
 	sub := proj + "/sub"
 	e.WriteFile(proj, "sub/.keep", "")
-	subLedger := installProbe(t, e, sub)
+	// The rule lives at the root: a file-guard is judged by `sr-checks run` from the
+	// project's folder, whichever directory the turn was resumed from.
+	subLedger := installProbe(t, e, proj)
 	e.CommitAll(proj, "sub")
 
 	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")).ThenCommit("first"))

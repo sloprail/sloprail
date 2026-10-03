@@ -15,14 +15,14 @@ func TestPayload_WireShapeIsTheDesignedOne(t *testing.T) {
 	cs, err := Build(dir, rng(base, head), Options{Scan: scan, Select: func(s Scope) (bool, error) { return s.Path == "a.go", nil }})
 	require.NoError(t, err)
 
-	raw, err := json.Marshal(NewPayload(cs, Whole(cs), "/t.jsonl", nil))
+	raw, err := json.Marshal(NewPayload(cs, Whole(cs), "/t.jsonl"))
 	require.NoError(t, err)
 	var wire map[string]any
 	require.NoError(t, json.Unmarshal(raw, &wire))
 
 	assert.Equal(t, map[string]any{"kind": "Changeset"}, wire["event"])
 	assert.Equal(t, "/t.jsonl", wire["transcriptPath"])
-	assert.Equal(t, map[string]any{}, wire["context"])
+	assert.NotContains(t, wire, "context")
 	assert.Equal(t, map[string]any{"id": "changeset", "files": []any{"a.go"}, "context": map[string]any{}}, wire["subject"], "range is omitted until subjects: exists")
 
 	c := wire["changeset"].(map[string]any)

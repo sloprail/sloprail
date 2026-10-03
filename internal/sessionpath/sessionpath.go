@@ -1,7 +1,7 @@
 // Package sessionpath is where a session's data lives, and who the session is.
 //
 // Both `sr-session` (which writes a session's state and check results) and
-// `sr-checks` (which reads the check results) have to find the SAME files, so
+// `sr check` (which reads and writes the check results) have to find the SAME files, so
 // the answer lives once, here: the platform's data directory, the encoding of a
 // workspace, the per-session directory, and the session's stable identity — the
 // uuid of where the conversation began, not the id the harness currently
@@ -67,6 +67,10 @@ func EncodeWorkspace(dir string) string {
 	return nonAlnum.ReplaceAllString(WorkspaceAnchor(dir), "-")
 }
 
+// anchorMemo remembers a git root per directory for the process: asking git costs a process,
+// and a Stop asks about the same directory once per sub-agent. Only a found root is kept.
+var anchorMemo sync.Map
+
 // WorkspaceAnchor is the tree a directory belongs to: its git root where there
 // is one, and the directory itself where there is not.
 //
@@ -101,7 +105,11 @@ func EncodeWorkspace(dir string) string {
 // than one it refuses to key state for at all — the same choice ensureBaseline
 // makes about baselineUnavailable.
 func WorkspaceAnchor(dir string) string {
+	if v, ok := anchorMemo.Load(dir); ok {
+		return v.(string)
+	}
 	if root, err := gitrepo.Root(dir); err == nil && root != "" {
+		anchorMemo.Store(dir, root)
 		return root
 	}
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
@@ -195,6 +203,14 @@ func WorkspaceAnchor(dir string) string {
 // risks exempting a file nothing judged, which loses a violation for good. Where
 // one error is recoverable and the other is not, the recoverable one is the one
 // to take.
+//
+// What the parent MAY read across is only what is content-addressed, so that it is a
+// statement about the very same bytes whichever folder ran it: a sub-agent's FINISHED,
+// PASSING run of a rule that matches exactly (the rule's qualified name, the rule's
+// definition hash, the judged head commit and, where it matters, the base). The root asks it
+// so as not to judge again a commit a sub-agent already passed (services/sr-session
+// results_family.go, ForeignPass). Writes stay per agent, nothing is pooled, and anything that
+// does not match exactly (another rule version, another head, a refusal) is not shared.
 func StateDB(cwd, sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("sloprail: no session id")
@@ -303,12 +319,45 @@ func ProjectDirOf(path, cwd string) string {
 	return filepath.Dir(path)
 }
 
-// ChecksDB is where the session's check results are kept: beside its state.db,
-// in the same per-session directory, so one identity finds both.
-func ChecksDB(cwd, sessionID string) (string, error) {
-	state, err := StateDB(cwd, sessionID)
+// ChecksDB is where a repository's check results are kept (checkcache.OpenFile):
+//
+//	{data home}/sloprail/checks/{root commit}/results.jsonl
+//
+// Keyed by the repository (its root commit, which every worktree and clone of it shares)
+// and by nothing else: a check result is a fact about a rule, a subject and an input,
+// whichever session, agent or worktree recorded it. A repository with no commit has no
+// results.
+func ChecksDB(repoRoot string) (string, error) {
+	id, err := gitrepo.RootCommit(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("sloprail: no repository identity for %s: %w", repoRoot, err)
+	}
+	home, err := DataHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(state), "checks.db"), nil
+	return filepath.Join(home, AppName, "checks", id, "results.jsonl"), nil
+}
+
+// StateCwd is the directory a ROOT session's stores are keyed by: where its record
+// says it began, never where the hook happens to stand.
+//
+// An agent that works in another worktree (`cd ../wt`) reports that worktree as its
+// cwd from then on. Keyed by it, the verdicts, baseline, loop-breaker counters and
+// context state would silently reset at the first hook after the `cd`, and the
+// session would be split over two stores while its folder registry (which is keyed
+// by the starting directory) stayed behind. So the start is the key.
+//
+// A SUB-AGENT keeps its own cwd (its record is nested under the dispatching
+// session's directory, and its isolated worktree is its own tree): it is separated
+// from the root by its own session id, not by this. An empty record, or one that
+// names no starting directory, falls back to cwd.
+func StateCwd(record, cwd string) string {
+	if record == "" || transcript.SessionDirOfSubagent(record) != "" {
+		return cwd
+	}
+	if start, err := transcript.StartCwd(record); err == nil && start != "" {
+		return start
+	}
+	return cwd
 }

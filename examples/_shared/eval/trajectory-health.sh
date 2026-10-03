@@ -477,85 +477,73 @@ gate_ran_and_passed() {
 }
 
 # file_guard_judge_ran: did the named file-guard's judge reach a verdict on THIS
-# run's change to <file>? A file-guard's results are rows in the run's checks.db
-# (internal/checkstore), beside the session's state under the data home. A judge
-# that was skipped (its prepare script found nothing to judge) is recorded as
-# `skip`, which is NOT a judgement, so a run whose rule never judged anything
-# cannot pass on that rule's behalf.
+# run's change to <file>? A file-guard's verdicts live on the project's results
+# branch (sloprail/checks, internal/checkcache), keyed by what was judged, and
+# `sr-checks show` reads them without asking a model or writing anything. A judge
+# that was skipped (its prepare script found nothing to judge, or a cheap check
+# refused first) is reported `skipped`, and one never asked `missing`; neither is a
+# judgement, so a run whose rule never judged anything cannot pass on that rule's
+# behalf.
 #
-# Scoped to the run, not to any verdict in any database:
-#   - the database is the project's own: sessions/<project dir encoded the way the
-#     engine keys it (symlinks resolved, every non-alphanumeric character `-`)>/
-#     <session>/checks.db, and a run counts only when its session_id is that
-#     session's directory;
-#   - the run is COMPLETE and judged a range whose head is a commit of the
-#     project's own history (git rev-list HEAD), so a verdict about some other
-#     range does not count;
-#   - the same run holds a check whose subject is <file>: the file was in the
-#     range the rule judged (a file-guard records one `require:` row per file);
+# Scoped to the run, not to any verdict anywhere:
+#   - the range is the work the run did: from where work on HEAD started (the merge
+#     base with the default branch, `sr-checks default-base`), else from the commit
+#     sr-eval installed the rules in (SR_EVAL_RULES_COMMIT), up to the project's HEAD.
+#     A verdict recorded for other content (the file changed after it was judged)
+#     is a different key, so it is `missing` here and does not count;
+#   - the rule's own changeset over that range holds <file> (`sr-checks changeset`):
+#     the file was in the range the rule judged;
 #   - the judge's check (kind `check[N]:judge:...`) came back pass or fail.
 #
-# The data home is the one the agent ran with: $XDG_DATA_HOME, else Library/
-# Application Support (macOS) or .local/share under SR_EVAL_AGENT_HOME, else the
-# same under the scorer's own HOME (a sandbox links ~/Library in).
+# `sr-checks` is found on PATH, with SR_EVAL_BIN_DIR prepended as for every scorer.
 #
 # Usage: file_guard_judge_ran '<name>' '<file>' ; # sets JUDGE_RAN, JUDGE_DETAIL
-# JUDGE_RAN is yes only on a verdict found by the above; no when the run's rows
-# were found and hold none; unknown when they could not be looked at (no sqlite3,
-# no git, no project, no database). A scorer that needs the judgement fails on
+# JUDGE_RAN is yes only on a verdict found by the above; no when the run's range was
+# read and holds none; unknown when it could not be looked at (no jq, no sr-checks,
+# no git, no project, no commit). A scorer that needs the judgement fails on
 # anything but yes.
 file_guard_judge_ran() {
   fg_name="$1"
   fg_file="$2"
   JUDGE_RAN="unknown"
-  JUDGE_DETAIL="no check-results database found for this run"
-  command -v sqlite3 >/dev/null 2>&1 || { JUDGE_DETAIL="sqlite3 is not installed"; return 0; }
+  JUDGE_DETAIL="no check results could be read for this run"
+  command -v jq >/dev/null 2>&1 || { JUDGE_DETAIL="jq is not installed"; return 0; }
   fg_proj="${SR_EVAL_PROJECT_DIR:-}"
   if [ -z "$fg_proj" ] || ! [ -d "$fg_proj" ]; then
     JUDGE_DETAIL="the project directory is not there"
     return 0
   fi
-  fg_heads="$(git -C "$fg_proj" rev-list HEAD 2>/dev/null | sed "s/.*/'&'/" | paste -sd, -)"
-  if [ -z "$fg_heads" ]; then
-    JUDGE_DETAIL="the project has no commit history to match a judged range against"
+  if ! git -C "$fg_proj" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    JUDGE_DETAIL="the project has no commit history to read a judged range from"
     return 0
   fi
-  fg_real="$(cd "$fg_proj" && pwd -P)"
-  fg_enc="$(printf '%s' "$fg_real" | sed 's/[^a-zA-Z0-9]/-/g')"
-  fg_safe_name="$(printf '%s' "$fg_name" | sed "s/'/''/g")"
-  fg_safe_file="$(printf '%s' "$fg_file" | sed "s/'/''/g")"
+  fg_path="${SR_EVAL_BIN_DIR:+$SR_EVAL_BIN_DIR:}$PATH"
+  PATH="$fg_path" command -v sr-checks >/dev/null 2>&1 || { JUDGE_DETAIL="sr-checks is not on PATH"; return 0; }
+  fg_bases="$(cd "$fg_proj" && PATH="$fg_path" sr-checks default-base --head HEAD 2>/dev/null)"
+  if [ -n "${SR_EVAL_RULES_COMMIT:-}" ] && git -C "$fg_proj" cat-file -e "$SR_EVAL_RULES_COMMIT^{commit}" 2>/dev/null; then
+    fg_bases="$fg_bases
+$SR_EVAL_RULES_COMMIT"
+  fi
+  [ -n "$fg_bases" ] || { JUDGE_DETAIL="no base of the run's range could be found"; return 0; }
+  fg_read="no"
   fg_n=0
   fg_skipped=0
-  fg_found="no"
-  for fg_root in \
-    "${XDG_DATA_HOME:-}" \
-    "${SR_EVAL_AGENT_HOME:-/nonexistent}/Library/Application Support" \
-    "${SR_EVAL_AGENT_HOME:-/nonexistent}/.local/share" \
-    "${HOME:-/nonexistent}/Library/Application Support" \
-    "${HOME:-/nonexistent}/.local/share"; do
-    [ -n "$fg_root" ] || continue
-    for fg_db in "$fg_root/sloprail/sessions/$fg_enc"/*/checks.db; do
-      [ -f "$fg_db" ] || continue
-      fg_found="yes"
-      fg_session="$(basename "$(dirname "$fg_db")")"
-      fg_q="from check_runs r join checks c on c.run_id = r.id
-        where (r.check_id = '$fg_safe_name' or r.check_id like '%/$fg_safe_name')
-          and r.session_id = '$fg_session'
-          and json_extract(r.metadata, '\$.state') = 'complete'
-          and r.head_ref in ($fg_heads)
-          and exists (select 1 from checks f where f.run_id = r.id and f.subject = '$fg_safe_file')
-          and c.kind like 'check[%]:judge:%'"
-      n="$(sqlite3 "$fg_db" "select count(*) $fg_q and c.status in ('pass','fail')" 2>/dev/null || echo 0)"
-      s="$(sqlite3 "$fg_db" "select count(*) $fg_q and c.status = 'skip'" 2>/dev/null || echo 0)"
-      fg_n=$((fg_n + n))
-      fg_skipped=$((fg_skipped + s))
-    done
-    [ "$fg_found" = "yes" ] && break
+  fg_sel='[.[]? | select((.rule == $n or (.rule | endswith("/" + $n))) and (.kind | test("^check\\[[0-9]+\\]:judge:"))'
+  for fg_base in $fg_bases; do
+    fg_cs="$(cd "$fg_proj" && PATH="$fg_path" sr-checks changeset --rule "$fg_name" --base "$fg_base" --head HEAD 2>/dev/null)" || continue
+    fg_in="$(printf '%s' "$fg_cs" | jq --arg f "$fg_file" '[.payload.changeset.files[]? | select(.path == $f)] | length' 2>/dev/null)" || continue
+    fg_show="$(cd "$fg_proj" && PATH="$fg_path" sr-checks show --base "$fg_base" --head HEAD --json 2>/dev/null)" || continue
+    fg_read="yes"
+    [ "${fg_in:-0}" -gt 0 ] || continue
+    n="$(printf '%s' "$fg_show" | jq --arg n "file-guard/$fg_name" "$fg_sel"' and (.status == "pass" or .status == "fail"))] | length' 2>/dev/null || echo 0)"
+    s="$(printf '%s' "$fg_show" | jq --arg n "file-guard/$fg_name" "$fg_sel"' and .status == "skipped")] | length' 2>/dev/null || echo 0)"
+    fg_n=$((fg_n + n))
+    fg_skipped=$((fg_skipped + s))
   done
-  [ "$fg_found" = "yes" ] || return 0
+  [ "$fg_read" = "yes" ] || return 0
   if [ "$fg_n" -gt 0 ]; then
     JUDGE_RAN="yes"
-    JUDGE_DETAIL="$fg_name's judge reached a verdict on $fg_file $fg_n time(s)"
+    JUDGE_DETAIL="$fg_name's judge reached a verdict on $fg_file"
   else
     JUDGE_RAN="no"
     JUDGE_DETAIL="$fg_name's judge never reached a verdict on $fg_file (skipped $fg_skipped time(s))"

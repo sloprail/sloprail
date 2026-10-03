@@ -216,7 +216,7 @@ func TestT045_07_UncitedEditOfAskRefused(t *testing.T) {
 // refused at Stop for the missing citation (before any judge), and the same ask
 // committed with the trailer passes.
 func TestT045_08_CommitMustCiteTheUsersWords(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)
@@ -230,7 +230,7 @@ func TestT045_08_CommitMustCiteTheUsersWords(t *testing.T) {
 		t.Fatalf("an uncited commit of ASK.md was not refused at Stop for its citation:\n%s", blocks)
 	}
 
-	seen := len(e.StopContinuations(proj, "s-045-08"))
+	seen := len(e.AllBlockingErrorsFrom(proj, "s-045-08", "Stop"))
 	if seen == 0 {
 		t.Fatalf("the refusal did not hold the turn")
 	}
@@ -238,7 +238,7 @@ func TestT045_08_CommitMustCiteTheUsersWords(t *testing.T) {
 	// the commit that changed the ask.
 	e.Run(proj, "s-045-08", "go on", Turns("done", harness.AmendLast("amend", "record the ask",
 		harness.CitesUser("migrate the auth module to the new token format"))))
-	if got := len(e.StopContinuations(proj, "s-045-08")); got != seen {
+	if got := len(e.AllBlockingErrorsFrom(proj, "s-045-08", "Stop")); got != seen {
 		t.Fatalf("a commit citing the user's words was still refused (%d refusals, had %d):\n%s", got, seen,
 			strings.Join(e.BlockingErrorsFrom(proj, "s-045-08", "Stop"), "\n"))
 	}

@@ -27,6 +27,12 @@ The full set of `SR_*` variables a script receives — `SR_GUARDRAIL`,
 They are cross-cutting (every guardrail script sees them, not only state ones), so
 they live there rather than here.
 
+`sr-session state` is the rules' own store. The session's folders and the ranges of
+commits it answers for are a different registry, kept by the engine and changed with
+`sr-session refs list|track|untrack` ([file-guard.md](file-guard.md#session-folders-and-tracked-ranges));
+a rule does not write it. File-guard verdicts are in neither: they live on the
+`sloprail/checks` branch, keyed by content, not by session.
+
 ## The two-halves pattern: a context records, a Stop gate judges
 
 A Stop gate has no subject of its own — `Stop` carries no fields, so a check

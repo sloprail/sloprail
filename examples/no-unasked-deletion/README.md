@@ -46,7 +46,7 @@ natural remedy, restore from git, is gone if the file was never committed.
 The plain **file-guard** (`file-guard/preserves-unasked-content`) is the
 after-check, and it holds the **judge**. It judges **commits**: at Stop, uncommitted
 changes to a `memories/` file refuse the turn with "commit these", and the rule then
-runs over the range from where it last passed to `HEAD`, as one squashed diff of every
+is judged by `sr-checks run` over the range `merge-base(base, HEAD)..HEAD`, as one squashed diff of every
 file it touched (the net diff is judged: a removal a later commit put back is not a removal), with the same
 `deletions: include` and `require`: it asks whether the removal is clean and asked
 for. The user's words come from the commits' `Sloprail-Cites-User: <quote>` trailers.
@@ -70,7 +70,7 @@ because deleting a memory file is the whole-file form of the same loss. A
 file-guard skips deleted files by default and a gate only sees what it triggers
 on; this rule opts in on both, so a deletion reaches it and needs a citation like
 any other removal: `rm memories/x.md` cites nothing and is refused; `sr-file
-delete memories/x.md --cite:user '<quote>'` passes the gate and is judged at Stop. The gate is asked
+delete memories/x.md --cite:user '<quote>'` passes the gate and is judged by `sr-checks run` and verified at Stop. The gate is asked
 about every file a command deletes, so `rm a.md b.md` is refused naming both.
 
 A delete whose bytes the engine did not read — `oldContentKnown: false`, for a

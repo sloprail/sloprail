@@ -3,8 +3,8 @@
 # session — a shipped guardrail sample has several pieces that must stay in sync
 # (config, README, e2e test, eval fixture; see
 # .claude/skills/document-example/SKILL.md), and nothing about a single file edit
-# makes that obvious without having read the skill first. The sibling file-guard
-# (.sloprail/file-guard/require-examples-skills/) is the Stop backstop.
+# makes that obvious without having read the skill first. There is no file-guard
+# backstop: a file-guard cannot see which skills the session loaded.
 #
 # run-eval is required alongside document-example, not left to be discovered from
 # document-example's own link to it, because a write under examples/*/eval/

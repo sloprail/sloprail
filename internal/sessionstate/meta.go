@@ -36,6 +36,17 @@ const (
 	// position rather than a state, because a record only grows.
 	MetaTranscriptRead = "transcript_read"
 
+	// MetaRefsAtStart is every branch tip (local and remote-tracking) the root folder had
+	// when the session began, as a JSON object of ref name to commit. What a branch
+	// already held then is not the session's work: a tip inside that history is never
+	// judged as one the session committed on.
+	MetaRefsAtStart = "refs_at_start"
+
+	// MetaRefsSchema is the version of what the recorded refs keep beside their rows (the
+	// pin of each owed tip, each ref's start, each worktree folder's home). A store written
+	// before it was kept has rows and none of that; the first hook that opens it migrates it.
+	MetaRefsSchema = "refs_schema"
+
 	// MetaTranscriptOffered is how far the record had been read out to something
 	// that could judge it, before any cycle confirmed having judged it.
 	//
@@ -101,6 +112,16 @@ const (
 	// turns, a branch switch, a file dirty when the session began) from one it
 	// made.
 	MetaCitedCycle = "cited_cycle"
+
+	// MetaRulesSeenInit marks that the first hook of the session recorded which rules were
+	// in force, and MetaRuleSeenPrefix+<qualified rule> is when each rule was first loaded
+	// by a hook: RuleSeenAtStart for a rule present at that first hook, else the Unix
+	// nanoseconds of the hook that first saw it (a plugin rule installed or enabled
+	// mid-session). A rule judges only commits made after it came into force, and for a rule
+	// that is in no commit's history this is the only record of when that was.
+	MetaRulesSeenInit  = "rules_seen_init"
+	MetaRuleSeenPrefix = "rule_seen:"
+	RuleSeenAtStart    = "start"
 )
 
 // Meta reads a session fact.

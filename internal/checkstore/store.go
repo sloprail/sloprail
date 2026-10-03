@@ -1,48 +1,41 @@
-// Package checkstore holds what file-guards concluded about commits.
+// Package checkstore holds what file-guards concluded about commits, in a10n's check-results
+// shape: a CheckRun (one rule evaluated once over one commit range: base_ref, head_ref,
+// exit_code, error, metadata) holds Checks (one per subject and kind: status pass | fail |
+// skip | error | interrupted, fingerprint, metadata) and each Check holds CheckItems (a
+// finding: a file a judge named, a prerequisite of `require:`). See schema.sql for what each
+// row means here.
 //
-// The tables — check_runs, checks, check_items — and their columns are a10n's
-// check-results store, so anything that reads one reads the other; only the
-// data inside is sloprail's. See schema.sql for what each row means here.
+// A file-guard is commit-based, so only file-guards write here. Gates and contexts are about
+// events and leave no rows; the session's own memory (baseline, guardrail state) stays in
+// sessionstate.
 //
-// A file-guard is commit-based, so only file-guards write here. Gates and
-// contexts are about events and leave no rows; the session's own memory
-// (baseline, guardrail state) stays in sessionstate.
+// A run is recorded as the engine goes (RecordRun, RecordCheck, FinishRun) and kept in memory;
+// Close writes the lot to the cache backend (internal/checkcache) as ONE segment, so a
+// `sr check run` is one write and one push however many rules it judged. The backend is the
+// only thing that knows where results live, and one cache serves the whole repository: a
+// check result is a statement about a rule, a subject and an input, whichever session, agent
+// or worktree recorded it. The identity on every run (repo, branch, session, agent) is
+// provenance, never part of a lookup.
 //
-// One database per session today, checks.db beside the session's state.db. The
-// identity columns on every run (repo, branch, session) are what let the same
-// rows move to one machine-wide database later without a change of shape.
-//
-// This is the only package that opens the file. The writer (the Stop
-// evaluation) opens it read-write; a reader (`sr-checks`, `sr-session
-// changeset`) opens it with OpenReadOnly, which cannot create it, migrate it or
-// write to it — reading what a session concluded must never be able to change it.
+// What makes a check reusable is its key: (rule, rule hash, subject, kind, fingerprint). That
+// is a10n's QueryChecks probe, and CachedCheck is a10n's CacheHit, extended to read a fail
+// as well as a pass. The queries over runs (PassedHeads, RunRefs, ResolveStale, CheckStatus,
+// Query) read the cache's run history as the check_runs, checks and check_items tables of
+// schema.sql, built in memory for the call: nothing is ever written to a database.
 package checkstore
 
 import (
 	"database/sql"
-	_ "embed"
 	"errors"
-	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
+	"sync"
 
-	// The database is this package's resource, so the driver is its import.
-	_ "modernc.org/sqlite"
+	"github.com/sloprail/sloprail/internal/checkcache"
 )
-
-//go:embed schema.sql
-var schema string
 
 // ErrClosed is returned by every method once the store has been closed.
 var ErrClosed = errors.New("checkstore: store is closed")
 
-// ErrNoStore reports that there is no check-results database to read: nothing
-// has been checked in this session yet. A sentinel because the two readers
-// treat it differently — a status listing shows nothing, a SQL query cannot run.
-var ErrNoStore = errors.New("checkstore: no check results recorded for this session")
-
-// Store is one session's check results.
+// Store is the check results of a repository.
 type Store interface {
 	// RecordRun stores one rule's evaluation of one commit range and returns the
 	// run's id. See CheckRun.
@@ -53,103 +46,110 @@ type Store interface {
 	// RecordCheck stores one check of a run — replacing the same (subject, kind)
 	// of that run — with its findings, and returns the check's id.
 	RecordCheck(runID string, c CheckRecord) (string, error)
-	// CachedCheck finds a stored pass or fail for (subject, kind, fingerprint):
-	// the most recent one. A fail is returned like a pass — it is terminal and is
-	// replayed, never re-judged until the input changes. An empty fingerprint
-	// (a script) never hits.
-	CachedCheck(subject, kind, fingerprint string) (CachedCheck, bool, error)
-	// ResolveStale marks as skip every failing check of rule (at this rule hash, in COMPLETE runs)
-	// outside run liveRunID whose (subject, kind, fingerprint) is not one liveRunID
-	// holds: a failure whose input has left the range. Returns how many.
+	// CachedCheck finds a stored pass or fail of the rule at this definition (ruleHash) for
+	// (subject, kind, fingerprint): the most recent one. A fail is returned like a pass — it
+	// is terminal and is replayed, never re-judged until the input changes. An empty
+	// fingerprint (a script) never hits. The rule and its hash are part of the backend's key.
+	CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error)
+	// CachedByTrees finds, for a key that missed, a stored pass or fail of the same rule
+	// definition and subject from a complete run whose base and head trees equal these.
+	CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree string) (CachedCheck, bool, error)
+	// ResolveStale does nothing and returns 0: a stored fail is a fact about content that
+	// other branches share, so it is never marked stale (see the implementation).
 	ResolveStale(rule, ruleHash, liveRunID string) (int, error)
 	// PassedHeads lists, newest first, the head_ref of each of the rule's runs, at any
 	// rule hash, that passed: no engine error and no failing check. The
 	// caller picks the first still reachable — that is the rule's watermark.
 	PassedHeads(rule string) ([]string, error)
+	// EffectiveRuns is the input of a10n's GetEffectiveBase, newest first: the range (base and
+	// head) of each evaluation of the rule AT THIS DEFINITION (ruleHash) that passed as a whole.
+	// One evaluation is every run of one batch over one head (a guard has one run per
+	// subject), and it passed when each of them is complete, no engine failure and holds no
+	// failing, erroring or interrupted check: one subject's FAIL keeps the evaluation from
+	// advancing the base. The caller chains them: an evaluation covers its base..head, so it
+	// advances a base only when that base lies inside it.
+	EffectiveRuns(rule, ruleHash string) ([]RunRef, error)
 	// RunRefs lists, for one rule, the runs that were refused and the runs that
 	// passed, each with the commit range it judged and when it ran. See RunRefs.
 	RunRefs(rule string) (RunRefs, error)
-	// Path is the database file this store was opened on.
-	Path() string
 	// CheckStatus lists each rule's latest run and its checks. failingOnly keeps
 	// only what is failing: a failed engine run, or a fail/error/interrupted check.
 	// A non-empty rule keeps only that rule.
 	CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error)
 	// Query runs a read-only SELECT over the check tables and returns its rows.
 	Query(sql string) ([]map[string]any, error)
-	// Close releases the database.
+	// FlushRun writes one finished run to the backend now instead of at Close, so another
+	// process waiting for its verdict (judgelimit's in-flight lock) can read it. Close then
+	// leaves that run out. A run that is not complete is not flushed.
+	FlushRun(runID string) error
+	// Close writes what was recorded to the backend (one segment) and releases the store. A
+	// store opened read-only writes nothing.
 	Close() error
 }
 
 type store struct {
-	db   *sql.DB
-	path string
+	cache    checkcache.Cache
+	readOnly bool
+
+	mu      sync.Mutex
+	runs    []*checkcache.Run
+	byID    map[string]*checkcache.Run
+	closed  bool
+	flushed map[string]bool // runs FlushRun already wrote
+
+	viewMu   sync.Mutex
+	viewDB   *sql.DB // a read-only store's one view, built on first use
+	viewDone func()
 }
 
-// Open opens the check-results database at path read-write, creating it, its
-// directory and its tables when they are not there yet.
-func Open(path string) (Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("checkstore: mkdir %s: %w", filepath.Dir(path), err)
-	}
-	return open(path)
+// Open returns a store over a backend. readOnly: RecordRun refuses, Close writes nothing.
+func Open(cache checkcache.Cache, readOnly bool) Store {
+	return &store{cache: cache, readOnly: readOnly, byID: map[string]*checkcache.Run{}}
 }
-
-// OpenReadOnly opens an EXISTING database for reading. It never creates the file
-// and never writes: the connection is read-only at the driver, so even a bug
-// here could not alter what a session concluded. ErrNoStore when there is no
-// database.
-func OpenReadOnly(path string) (Store, error) {
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNoStore
-		}
-		return nil, fmt.Errorf("checkstore: %w", err)
-	}
-	dsn := "file:" + url.PathEscape(path) + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(ON)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("checkstore: open %s: %w", path, err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("checkstore: open %s: %w", path, err)
-	}
-	return &store{db: db, path: path}, nil
-}
-
-// open is Open without the directory, which is also what the tests use against
-// an in-memory database.
-func open(path string) (*store, error) {
-	dsn := path + "?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("checkstore: open %s: %w", path, err)
-	}
-	// Serialises this process's own writers; the cross-process half is busy_timeout's.
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("checkstore: apply schema: %w", err)
-	}
-	return &store{db: db, path: path}, nil
-}
-
-func (s *store) Path() string { return s.path }
 
 func (s *store) Close() error {
-	if s.db == nil {
+	// viewMu is taken before mu (as readView does), never inside it.
+	s.viewMu.Lock()
+	if s.viewDone != nil {
+		s.viewDone()
+		s.viewDB, s.viewDone = nil, nil
+	}
+	s.viewMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
 		return nil
 	}
-	err := s.db.Close()
-	s.db = nil
-	return err
+	s.closed = true
+	if s.readOnly || len(s.runs) == 0 {
+		return nil
+	}
+	runs := make([]checkcache.Run, 0, len(s.runs))
+	for _, r := range s.runs {
+		if s.flushed[r.ID] {
+			continue
+		}
+		runs = append(runs, *r) // a run still RUNNING stays so: it reads as interrupted, never as a pass
+	}
+	return s.cache.Put(runs)
 }
 
-func (s *store) conn() (*sql.DB, error) {
-	if s.db == nil {
-		return nil, ErrClosed
+func (s *store) FlushRun(runID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return err
 	}
-	return s.db, nil
+	run, ok := s.byID[runID]
+	if !ok || !run.Complete || s.flushed[runID] {
+		return nil
+	}
+	if err := s.cache.Put([]checkcache.Run{*run}); err != nil {
+		return err
+	}
+	if s.flushed == nil {
+		s.flushed = map[string]bool{}
+	}
+	s.flushed[runID] = true
+	return nil
 }

@@ -75,12 +75,12 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\n" +
 			"echo '{\"reason\":\"the sub-agent should not have created this\"}'\nexit 1\n",
 	})
-	initRepo(t, proj)
+	e.GitInit(proj)
 
 	// The delegated work: a file created in the shared tree, by Bash so that it
 	// actually lands.
-	subScript := filepath.Join(t.TempDir(), "sub.sh")
-	writeScenario(t, subScript, harness.Turns("sub done",
+	// SubagentScript ends with the judging a real sub-agent does before it stops.
+	subScript := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'delegated work' > from-sub.md"),
 	).ThenCommit("the sub-agent's work"))
 
@@ -149,10 +149,10 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	e.FileGuard(proj, "permitsubwork", refuseCreatedFiles, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\nexit 0\n",
 	})
-	initRepo(t, proj)
+	e.GitInit(proj)
 
-	subScript := filepath.Join(t.TempDir(), "sub.sh")
-	writeScenario(t, subScript, harness.Turns("sub done",
+	// SubagentScript ends with the judging a real sub-agent does before it stops.
+	subScript := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'delegated work' > from-sub.md"),
 	).ThenCommit("the sub-agent's work"))
 

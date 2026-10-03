@@ -279,6 +279,7 @@ REST_PKGS := \
   ./tests/e2e/context/... \
   ./tests/e2e/fileguard/... \
   ./tests/e2e/changeset/... \
+  ./tests/e2e/check/... \
   ./tests/e2e/checks/... \
   ./tests/e2e/grounding/... \
   ./tests/e2e/structure/... \
@@ -316,10 +317,12 @@ test-e2e-shard: mock
 	  examples4) scripts/e2e-shard.sh 4 6 run ./tests/e2e/examples/... ;; \
 	  examples5) scripts/e2e-shard.sh 5 6 run ./tests/e2e/examples/... ;; \
 	  examples6) scripts/e2e-shard.sh 6 6 run ./tests/e2e/examples/... ;; \
-	  rest)     scripts/e2e-shard.sh 1 2 run $(REST_PKGS) ;; \
-	  rest2)    scripts/e2e-shard.sh 2 2 run $(REST_PKGS) ;; \
+	  rest)     scripts/e2e-shard.sh 1 4 run $(REST_PKGS) ;; \
+	  rest2)    scripts/e2e-shard.sh 2 4 run $(REST_PKGS) ;; \
+	  rest3)    scripts/e2e-shard.sh 3 4 run $(REST_PKGS) ;; \
+	  rest4)    scripts/e2e-shard.sh 4 4 run $(REST_PKGS) ;; \
 	  plugins)  $(MAKE) test-plugins-e2e ;; \
-	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|examples2|examples3|examples4|examples5|examples6|rest|rest2|plugins)" >&2; exit 2 ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|examples2|examples3|examples4|examples5|examples6|rest|rest2|rest3|rest4|plugins)" >&2; exit 2 ;; \
 	esac
 
 # Plugin-local e2e modules. Each marketplace plugin that ships its own tests/ Go

@@ -21,19 +21,19 @@ fi
 exit 0
 `
 
-// T015_12: an isolated sub-agent begins its OWN session in its own worktree, so its
-// file-guard range starts at the HEAD that worktree had at its first tool call —
-// not at the commit its PARENT session began on.
+// T015_12: an isolated sub-agent's range is its OWN worktree's, tracked from where
+// that worktree began — not from the commit its PARENT session began on.
 //
 // The parent began at A, hours (here: commits) before the sub-agent was spawned.
-// Main gained B and C since, each violating the rule, and the sub-agent's worktree
-// was created at C. Judged from the parent's start, the sub-agent was refused for
-// B and C, files it never touched and cannot fix within its own change. Its own
-// work is D.
+// Main gained B and C since (landed: pushed to origin), each violating the rule, and
+// the sub-agent's worktree was created at C. Judged from the parent's start, the
+// sub-agent was refused for B and C, files it never touched and cannot fix within its
+// own change. Its own work is D. The sub-agent judges what it committed with
+// `sr-checks run` over the range its folder tracks, and its Stop verifies that range.
 //
-// The rule is a plugin's, which has no folder in this repository, so the session
-// start is the only floor of its range: a rule committed in the project is floored at
-// its own commit instead, whatever the start.
+// The rule is a plugin's, which has no folder in this repository, so the folder's
+// registered start is the only floor of its range: a rule committed in the project is
+// floored at its own commit instead, whatever the start.
 func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -48,17 +48,21 @@ func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T)
 
 	// D now; the fix only once the Stop has refused it (see refusedThenFixes).
 	sub := refusedThenFixes(t,
-		Turns("sub done", harness.CommitFile("sd", "docs/d.md", "FORBIDDEN in D", "D: the sub-agent's own change")),
-		Turns("sub fixed", harness.CommitFile("sf", "docs/d.md", "clean now", "D2: fix D")))
-	res := e.Run(proj, "s-015-12", "delegate", Turns("root done",
+		Turns("sub done", harness.CommitFile("sd", "docs/d.md", "FORBIDDEN in D", "D: the sub-agent's own change"), judgeOwnRange("sj")),
+		Turns("sub fixed", harness.CommitFile("sf", "docs/d.md", "clean now", "D2: fix D"), judgeOwnRange("sk")))
+	e.Run(proj, "s-015-12", "go", Turns("root done",
 		Bash("b0", "true"), // the parent's first tool call: its session start is A
 		harness.CommitFile("cb", "docs/b.md", "FORBIDDEN in B", "B: lands on main after A"),
 		harness.CommitFile("cc", "docs/c.md", "FORBIDDEN in C", "C: lands on main after A"),
-		Dispatch("d1", "make D", sub, "worktree"),
 	))
+	// B and C have landed on the default branch: really pushed to the harness origin (an agent's
+	// own push of them is refused by the push gate, so the harness does it between the turns).
+	e.PushBranch(proj, "main")
+	res := e.Run(proj, "s-015-12", "delegate", Turns("root done", Dispatch("d1", "make D", sub, "worktree")))
 
 	// Refuse first: the violation in D is judged, and only D.
-	if !res.SubagentStopBlocked("FORBIDDEN in: docs/d.md") {
+	// The refusal names the sub-agent's own worktree and the commit its range starts from.
+	if !res.SubagentStopBlocked("In ") || !strings.Contains(res.Output, "FORBIDDEN in: docs/d.md (file-guard") {
 		t.Fatalf("the sub-agent was not refused for its own violation in D, or was refused for more than D:\n%s", res.Output)
 	}
 	c := e.Git(proj, "rev-parse", "HEAD") // main as the sub-agent's worktree was cut from it
@@ -86,6 +90,12 @@ func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T)
 			t.Fatalf("the sub-agent was refused for commits that were not its own: %q", b)
 		}
 	}
+}
+
+// judgeOwnRange is the turn where a sub-agent judges what it committed: `sr-checks run`
+// over the range its folder tracks, the merge base with origin's default branch up to HEAD.
+func judgeOwnRange(id string) harness.Turn {
+	return Bash(id, "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base origin/main --head HEAD >/dev/null 2>&1; true")
 }
 
 // refusedThenFixes is a sub-agent that does `first`, and once its Stop has refused

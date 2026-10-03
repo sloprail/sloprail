@@ -144,7 +144,7 @@ func noteDegradedIdentity(stdout, stderr io.Writer, p HookPayload, id transcript
 		return
 	}
 	if session := harnessSessionID(p); session != "" {
-		if db, err := sessionDBPath(p.Cwd, id.ID); err == nil {
+		if db, err := sessionDBPath(p.stateCwd(), id.ID); err == nil {
 			marker := filepath.Join(filepath.Dir(db), degradedMarker+session)
 			if mkErr := os.MkdirAll(filepath.Dir(marker), 0o755); mkErr == nil {
 				f, openErr := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)

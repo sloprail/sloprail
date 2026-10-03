@@ -9,8 +9,14 @@
     "Stop": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh\" stop", "timeout": 3600 }] }
     ],
+    "SubagentStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh\" subagent-start", "timeout": 60 }] }
+    ],
     "SubagentStop": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh\" subagent-stop", "timeout": 3600 }] }
+    ],
+    "WorktreeRemove": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh\" worktree-remove", "timeout": 60 }] }
     ]
   }
 }

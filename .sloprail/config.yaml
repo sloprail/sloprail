@@ -1,0 +1,20 @@
+# TEMPORARY: the user asked to keep all 17 rules below disabled until #164 merges;
+# delete this file in a follow-up once the new checks run on main.
+disabled:
+  - sloprail/file-guard/authoring-slop
+  - sloprail/file-guard/grounded-rule-changes
+  - sloprail/gate/authoring-slop
+  - sloprail/gate/read-context-doc
+  - sloprail/gate/read-file-guard-doc
+  - sloprail/gate/read-gate-doc
+  - sloprail/gate/read-judge-checks-doc
+  - sloprail/gate/read-script-checks-doc
+  - sloprail/gate/read-structure-gate-doc
+  - file-guard/rule-quality
+  - file-guard/skill-quality
+  - gate/rule-quality
+  - gate/skill-quality
+  - file-guard/eval-prompt-no-hints
+  - file-guard/eval-score-reads-transcript
+  - gate/require-examples-skills
+  - gate/require-run-eval-skill

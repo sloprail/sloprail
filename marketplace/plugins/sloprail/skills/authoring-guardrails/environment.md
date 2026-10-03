@@ -21,9 +21,13 @@ its append/dedup). This doc mirrors it.
 | `SR_SESSION_ID` | the session id, so one session's state is not another's | on every check, prepare, enter, exit |
 | `SR_TRANSCRIPT` | the session record (same value as the payload's `transcriptPath`) | on every check, prepare, enter, exit |
 | `SR_TREE` | a **read-only snapshot of the range's `head`**, for a file-guard check to read files `match` did not select (a sibling spec, a test file) as committed, never the working tree | file-guard checks only |
-| `SR_BASE`, `SR_HEAD` | the range's two SHAs ([file-guard.md](file-guard.md)) | file-guard checks only |
-| `SR_SESSION_START` | the HEAD recorded when the session began (empty when none is), so a check can tell what stood before the agent worked | file-guard checks only |
+| `SR_BASE`, `SR_HEAD` | the range's two SHAs ([file-guard.md](file-guard.md)); `SR_BASE` is what stood before the work | file-guard checks only |
+| `SR_SESSION_START` | **deprecated** alias of `SR_BASE`, kept for rules written against it; it no longer means "HEAD when the session began". Write new rules against `SR_BASE` | file-guard checks only |
 | `SLOPRAIL_LAUNCHED_BY` | the guardrails whose checks are on the current call stack — the re-entry provenance | only when a check runs underneath a judging rule (see below) |
+
+A file-guard check runs under `sr-checks run|verify`, which may run outside any
+session (CI, a `pre-push` hook): there `SR_SESSION_ID` and `SR_TRANSCRIPT` are
+unset, so a check that needs the transcript must say so rather than pass.
 
 Each `SR_*` variable is **left unset when its value is empty**, deliberately —
 "unset is diagnosable" is a stance a rule can test for. Outside a hook there is no

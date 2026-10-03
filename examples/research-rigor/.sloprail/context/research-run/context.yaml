@@ -12,7 +12,7 @@ on:
   # A proposal written without a declaration is research that must have been
   # done too: NOTES.md's convention is research BEFORE proposing. A write that
   # added a "Proposed approach" section (gate/findings-need-depth/proposal.jq)
-  # opens the run, so depth-check judges it at Stop — the backstop for a
+  # opens the run, so depth-check (a Stop gate) judges it — the backstop for a
   # proposal the write-time gate could not see coming (a shell write whose
   # result was not known ahead). enter decides; the match only narrows.
   - event: PostFileWrite

@@ -16,7 +16,7 @@ func TestT001_13_TrailerCitationsResolveAgainstTheTranscript(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/a.md", "one\n")
-	e.CommitAll(proj, "before")
+	floor := e.CommitAll(proj, "before")
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
 	e.CommitAll(proj, "add the rule")
 	e.Run(proj, "s-001-13", prompt, Turns("done", Bash("b1", "true")))
@@ -26,7 +26,7 @@ func TestT001_13_TrailerCitationsResolveAgainstTheTranscript(t *testing.T) {
 	// output, ground nothing.
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	e.CommitAll(proj, "ungrounded", CitesUser("delete everything please"), CitesTool("oversized runner files"))
-	got, res := show(t, e, proj, env, "size")
+	got, res := show(t, e, proj, env, "size", floor)
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -41,7 +41,7 @@ func TestT001_13_TrailerCitationsResolveAgainstTheTranscript(t *testing.T) {
 	// accumulate over the range.
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\nthree\n")
 	e.CommitAll(proj, "grounded", CitesUser("oversized runner files"))
-	got, res = show(t, e, proj, env, "size")
+	got, res = show(t, e, proj, env, "size", floor)
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -56,11 +56,11 @@ func TestT001_13_TrailerCitationsResolveAgainstTheTranscript(t *testing.T) {
 // T001_14: outside any session there is no transcript to ground a quote in, so
 // nothing is resolved — and the command says so rather than inventing citations.
 func TestT001_14_NoSessionNoCitations(t *testing.T) {
-	e, proj, _, _ := repoWithRule(t, docsRule(""))
+	e, proj, floor, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	e.CommitAll(proj, "claims a quote", CitesUser("anything"))
 
-	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size", floor)
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}

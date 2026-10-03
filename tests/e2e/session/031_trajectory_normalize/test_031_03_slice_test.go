@@ -67,7 +67,7 @@ exit 0
 `
 
 func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T) {
-	e := New(t)
+	e := NewJudging(t)
 	proj := e.Project()
 	// A repository, so the cycle has a baseline and its Post file event fires the
 	// hook — the same setup 018 needs.

@@ -2,104 +2,90 @@ package e2e
 
 // file_guard_judge_ran (examples/_shared/eval/trajectory-health.sh): did the
 // file-guard's judge reach a verdict on THIS run's change to a file? The answer is
-// read from the run's checks.db, scoped to the project's own session, to a
-// complete run whose head is a commit of the project's history, and to the file;
-// and a scorer that needs the judgement (no-unasked-deletion/remove-on-request)
-// fails on anything but a found verdict. Each case writes the rows the engine
-// writes (the checkstore API) and runs the real shell.
+// read with `sr-checks show` from the project's results branch (the verdicts the
+// engine stored), over the range the run's work made, and only when the rule's own
+// changeset over that range holds the file; and a scorer that needs the judgement
+// (no-unasked-deletion/remove-on-request) fails on anything but a found verdict.
+// Each case has the real engine judge (the model is the mock's verdict) and runs
+// the real shell.
 
 import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/sloprail/sloprail/internal/checkstore"
-	"github.com/sloprail/sloprail/internal/sessionpath"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-const judgeKind = "check[0]:judge:./change-is-clean-and-absolute.md.j2"
-
-type judgeFixture struct {
-	t       *testing.T
-	proj    string // the project, a git repo with one commit
-	data    string // the data home the rows live under (XDG_DATA_HOME)
-	head    string // the project's HEAD
-	session string
+// TestMain removes the binary build dir when this package's tests finish.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	harness.Cleanup()
+	os.Exit(code)
 }
 
-func newJudgeFixture(t *testing.T, withRepo bool) *judgeFixture {
+const judgeSession = "s-052-05"
+
+type judgeFixture struct {
+	t    *testing.T
+	e    *harness.Env
+	proj string // the project, a git repo with an origin and the rule installed
+	data string // an empty data home: nothing the scorer reads lives there
+}
+
+// newJudgeFixture stands up a project with the file-guard preserves-unasked-content
+// (one judge, whose prompt renders the changed files — a verdict is keyed by the prompt
+// it was given, so a file that changed is a new question) installed and committed. skip makes the rule's prepare step abstain,
+// as the shipped one does for a pure addition. withRepo false leaves a directory
+// that is not a repository.
+func newJudgeFixture(t *testing.T, withRepo bool, skip bool) *judgeFixture {
 	t.Helper()
-	f := &judgeFixture{t: t, proj: t.TempDir(), data: t.TempDir(), session: "sess-1"}
 	if !withRepo {
-		return f
+		return &judgeFixture{t: t, proj: t.TempDir(), data: t.TempDir()}
 	}
-	git := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", f.proj, "-c", "user.email=e@e", "-c", "user.name=e"}, args...)...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
+	e := harness.New(t)
+	f := &judgeFixture{t: t, e: e, proj: e.Project(), data: t.TempDir()}
+	e.GitInit(f.proj)
+	dir := filepath.Join(".sloprail", "file-guard", "preserves-unasked-content")
+	e.WriteFile(f.proj, filepath.Join(dir, "file-guard.yaml"),
+		"match: 'path endsWith \".md\"'\nchecks:\n  - judge: ./rubric.md.j2\n    prepare: ./prepare.sh\n")
+	e.WriteFile(f.proj, filepath.Join(dir, "rubric.md.j2"), "Is the change clean?\n{% for f in changeset.files %}<file path=\"{{ f.path }}\">\n{{ f.newContent }}\n</file>\n{% endfor %}")
+	prepare := `printf '{"additionalContext": {}}\n'`
+	if skip {
+		prepare = `printf '{"skip": true}\n'`
 	}
-	git("init", "-q")
-	if err := os.WriteFile(filepath.Join(f.proj, "a.md"), []byte("a\n"), 0o644); err != nil {
+	e.WriteFile(f.proj, filepath.Join(dir, "prepare.sh"), "#!/bin/sh\ncat >/dev/null\n"+prepare+"\n")
+	if err := os.Chmod(filepath.Join(f.proj, dir, "prepare.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "-A")
-	git("commit", "-q", "-m", "one")
-	f.head = git("rev-parse", "HEAD")
+	e.CommitAll(f.proj, "install the rule")
+	e.WriteFile(f.proj, "a.md", "a\n")
+	e.CommitAll(f.proj, "one")
 	return f
 }
 
-// record writes one run of the rule with its checks, as the Stop evaluation does.
-// complete false leaves the run RUNNING.
-func (f *judgeFixture) record(session, head string, complete bool, checks ...checkstore.CheckRecord) {
+// judge has the engine judge the range origin/main..HEAD as a session does, the model
+// answering pass (or fail), and stores the verdict.
+func (f *judgeFixture) judge(pass bool) {
 	f.t.Helper()
-	dir := filepath.Join(f.data, "sloprail", "sessions", sessionpath.EncodeWorkspace(f.proj), session)
-	store, err := checkstore.Open(filepath.Join(dir, "checks.db"))
-	if err != nil {
-		f.t.Fatal(err)
+	verdict := `{"pass": true, "reasoning": "clean"}`
+	if !pass {
+		verdict = `{"pass": false, "reasoning": "not clean"}`
 	}
-	defer store.Close()
-	id, err := store.RecordRun(checkstore.CheckRun{
-		RunIdentity: checkstore.RunIdentity{RepoID: "r", Branch: "main", SessionID: session},
-		BatchID:     "b", CheckID: "file-guard/preserves-unasked-content", BaseRef: "base", HeadRef: head,
-		Metadata: map[string]any{"state": "x"},
-	})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	for _, c := range checks {
-		if _, err := store.RecordCheck(id, c); err != nil {
-			f.t.Fatal(err)
-		}
-	}
-	if complete {
-		if err := store.FinishRun(id); err != nil {
-			f.t.Fatal(err)
-		}
-	}
+	f.e.InstallJudgeClaude(verdict)
+	f.e.CheckRunRaw(f.proj, judgeSession, "origin/main", "HEAD")
 }
 
-func fileRow(file string) checkstore.CheckRecord {
-	return checkstore.CheckRecord{Subject: file, Kind: "require:citation", Status: "pass"}
-}
-
-func judgeRow(status string) checkstore.CheckRecord {
-	return checkstore.CheckRecord{Subject: "changeset", Kind: judgeKind, Status: status}
-}
-
-// ran runs file_guard_judge_ran for a.md and returns "<JUDGE_RAN>".
-func (f *judgeFixture) ran(path string) string {
+// ran runs file_guard_judge_ran for the file and returns "<JUDGE_RAN>". path is the
+// PATH the scorer's shell sees; binDir the SR_EVAL_BIN_DIR a caller prepends to it.
+func (f *judgeFixture) ran(file, path, binDir string) string {
 	f.t.Helper()
 	cmd := exec.Command("/bin/sh", "-c", `. "$SHARED/trajectory-health.sh"
-file_guard_judge_ran preserves-unasked-content a.md
+file_guard_judge_ran preserves-unasked-content "$FILE"
 printf '%s' "$JUDGE_RAN"`)
-	cmd.Env = []string{"PATH=" + path, "HOME=" + f.data, "SHARED=" + sharedEval(f.t),
-		"SR_EVAL_PROJECT_DIR=" + f.proj, "XDG_DATA_HOME=" + f.data}
+	cmd.Env = []string{"PATH=" + path, "HOME=" + f.data, "SHARED=" + sharedEval(f.t), "FILE=" + file,
+		"SR_EVAL_PROJECT_DIR=" + f.proj, "SR_EVAL_BIN_DIR=" + binDir}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		f.t.Fatalf("sh: %v\n%s", err, out)
@@ -107,84 +93,78 @@ printf '%s' "$JUDGE_RAN"`)
 	return string(out)
 }
 
+// bin is the SR_EVAL_BIN_DIR of a fixture with an engine: where sr-checks is built.
+func (f *judgeFixture) bin() string {
+	if f.e == nil {
+		return ""
+	}
+	return f.e.BinDir()
+}
+
 func TestT052_05_JudgeRan(t *testing.T) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skip("sqlite3 is not installed; the scorer reports unknown (a failure) without it")
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not installed; the scorer reports unknown (a failure) without it")
 	}
 	path := os.Getenv("PATH")
 	for name, tc := range map[string]struct {
+		skip bool
+		file string
 		run  func(f *judgeFixture)
 		want string
 	}{
-		"a judge that passed":               {func(f *judgeFixture) { f.record("sess-1", f.head, true, fileRow("a.md"), judgeRow("pass")) }, "yes"},
-		"a judge that failed was judged":    {func(f *judgeFixture) { f.record("sess-1", f.head, true, fileRow("a.md"), judgeRow("fail")) }, "yes"},
-		"a judge that was skipped":          {func(f *judgeFixture) { f.record("sess-1", f.head, true, fileRow("a.md"), judgeRow("skip")) }, "no"},
-		"no rows for the rule at all":       {func(f *judgeFixture) { f.record("sess-1", f.head, true, fileRow("a.md")) }, "no"},
-		"the verdict is about another file": {func(f *judgeFixture) { f.record("sess-1", f.head, true, fileRow("b.md"), judgeRow("pass")) }, "no"},
-		"the range is not this project's":   {func(f *judgeFixture) { f.record("sess-1", "deadbeef", true, fileRow("a.md"), judgeRow("pass")) }, "no"},
-		"the run never finished":            {func(f *judgeFixture) { f.record("sess-1", f.head, false, fileRow("a.md"), judgeRow("pass")) }, "no"},
-		"a run of a different session": {func(f *judgeFixture) {
-			f.record("sess-1", f.head, true, fileRow("a.md"), judgeRow("skip"))
-			f.recordForeign()
+		"a judge that passed":            {false, "a.md", func(f *judgeFixture) { f.judge(true) }, "yes"},
+		"a judge that failed was judged": {false, "a.md", func(f *judgeFixture) { f.judge(false) }, "yes"},
+		"a judge that was skipped":       {true, "a.md", func(f *judgeFixture) { f.judge(true) }, "no"},
+		"nothing was ever judged":        {false, "a.md", func(f *judgeFixture) {}, "no"},
+		"the verdict is about another file": {false, "b.md", func(f *judgeFixture) {
+			f.judge(true)
 		}, "no"},
-		"no check-results database": {func(f *judgeFixture) {}, "unknown"},
+		"the file changed after it was judged": {false, "a.md", func(f *judgeFixture) {
+			f.judge(true)
+			f.e.WriteFile(f.proj, "a.md", "a, then something else\n")
+			f.e.CommitAll(f.proj, "two")
+		}, "no"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := newJudgeFixture(t, true)
+			f := newJudgeFixture(t, true, tc.skip)
 			tc.run(f)
-			if got := f.ran(path); got != tc.want {
+			if got := f.ran(tc.file, path, f.bin()); got != tc.want {
 				t.Fatalf("JUDGE_RAN = %q, want %q", got, tc.want)
 			}
 		})
 	}
 
 	t.Run("no project directory", func(t *testing.T) {
-		f := newJudgeFixture(t, false)
+		f := newJudgeFixture(t, false, false)
 		if err := os.RemoveAll(f.proj); err != nil {
 			t.Fatal(err)
 		}
-		if got := f.ran(path); got != "unknown" {
+		if got := f.ran("a.md", path, ""); got != "unknown" {
 			t.Fatalf("JUDGE_RAN = %q, want unknown", got)
 		}
 	})
 	t.Run("no commit history", func(t *testing.T) {
-		f := newJudgeFixture(t, false)
-		if got := f.ran(path); got != "unknown" {
+		f := newJudgeFixture(t, false, false)
+		if got := f.ran("a.md", path, ""); got != "unknown" {
 			t.Fatalf("JUDGE_RAN = %q, want unknown", got)
 		}
 	})
-	t.Run("no sqlite3", func(t *testing.T) {
-		f := newJudgeFixture(t, true)
-		f.record("sess-1", f.head, true, fileRow("a.md"), judgeRow("pass"))
-		if got := f.ran("/nonexistent"); got != "unknown" {
+	t.Run("no sr-checks", func(t *testing.T) {
+		f := newJudgeFixture(t, true, false)
+		f.judge(true)
+		// A PATH holding only git and jq: the engine's binaries are not on it.
+		tools := t.TempDir()
+		for _, tool := range []string{"git", "jq"} {
+			p, err := exec.LookPath(tool)
+			if err != nil {
+				t.Skipf("%s is not installed", tool)
+			}
+			if err := os.Symlink(p, filepath.Join(tools, tool)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := f.ran("a.md", tools, ""); got != "unknown" {
 			t.Fatalf("JUDGE_RAN = %q, want unknown", got)
 		}
 	})
-}
-
-// recordForeign writes a passing, complete verdict for the file under a session
-// directory whose runs carry ANOTHER session id: not this run's.
-func (f *judgeFixture) recordForeign() {
-	f.t.Helper()
-	dir := filepath.Join(f.data, "sloprail", "sessions", sessionpath.EncodeWorkspace(f.proj), "sess-2")
-	store, err := checkstore.Open(filepath.Join(dir, "checks.db"))
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	defer store.Close()
-	id, err := store.RecordRun(checkstore.CheckRun{
-		RunIdentity: checkstore.RunIdentity{RepoID: "r", Branch: "main", SessionID: "someone-else"},
-		BatchID:     "b", CheckID: "file-guard/preserves-unasked-content", BaseRef: "base", HeadRef: f.head,
-	})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	for _, c := range []checkstore.CheckRecord{fileRow("a.md"), judgeRow("pass")} {
-		if _, err := store.RecordCheck(id, c); err != nil {
-			f.t.Fatal(err)
-		}
-	}
-	if err := store.FinishRun(id); err != nil {
-		f.t.Fatal(err)
-	}
 }

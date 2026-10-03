@@ -37,7 +37,6 @@ import (
 // trajectory reported as "not cloned", Markdown writes by letter case, and the
 // eval scorer's claim about gates that never ran.
 var (
-	New     = harness.New
 	Turns   = harness.Turns
 	Bash    = harness.Bash
 	Say     = harness.Say
@@ -48,6 +47,12 @@ var (
 func Read(id, path string) harness.Turn {
 	return harness.ToolUse(id, "Read", map[string]string{"file_path": path})
 }
+
+// New stands the environment up without the sloprail plugin's authoring file-guards:
+// this package is about another rule, and the commit that adds the example's rule puts
+// its own .sh/.md.j2 files in the range, which authoring-slop would judge (and, with no
+// model in the e2e, leave unjudged). WithoutShippedFileGuards is the sanctioned switch.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
 
 func TestMain(m *testing.M) {
 	code := m.Run()

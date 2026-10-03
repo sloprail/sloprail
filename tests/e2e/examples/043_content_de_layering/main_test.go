@@ -30,10 +30,14 @@ import (
 // new mock binary is on PATH; today the proven InstallJudgeClaude stub supplies
 // the model verdict.
 var (
-	New   = harness.New
 	Turns = harness.Turns
 	Write = harness.Write
 )
+
+// New stands the environment up without the sloprail plugin's authoring file-guards:
+// this package is about another rule, and the commit that adds the example's rule puts
+// its own .sh/.md.j2 files in the range, which authoring-slop would judge in its place.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
 
 func TestMain(m *testing.M) {
 	code := m.Run()

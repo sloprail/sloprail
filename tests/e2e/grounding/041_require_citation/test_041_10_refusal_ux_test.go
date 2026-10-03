@@ -24,7 +24,7 @@ require:
 func TestT041_60_TheRefusalHandsBackTheQuoteAlreadyRecorded(t *testing.T) {
 	const ask = "adopt a decision log"
 	const sess = "s-041-60"
-	e, proj := guarded(t, userCiteGuard)
+	e, proj := guardedUncited(t, userCiteGuard)
 
 	e.Run(proj, sess, ask, Turns("done",
 		Bash("w1", "sr-file write memories/a.md --cite:user 'adopt a decision log' <<'EOF'\n# a\nEOF"),
@@ -47,11 +47,11 @@ func TestT041_60_TheRefusalHandsBackTheQuoteAlreadyRecorded(t *testing.T) {
 	if strings.Contains(refusal, "-m 'Sloprail-Cites-User: <exact quote>'") || strings.Contains(refusal, "--trailer 'Sloprail-Cites-User: <exact quote>'") {
 		t.Errorf("a command still leaves a placeholder where the recorded quote belongs:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	// The line as printed, with nothing filled in by the agent.
 	e.Run(proj, sess, "go on", Turns("done", harness.RefusalCommand(t, "fix", refusal, "git commit --amend", "")))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the refusal's own command did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
@@ -64,7 +64,7 @@ require:
   - citation: {source_types: [tool_result]}
 `
 	const sess = "s-041-61"
-	e, proj := guarded(t, guard)
+	e, proj := guardedUncited(t, guard)
 	sub := subagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'build finished: CITEUX-7310 green'"),
 		Bash("sb2", "sr-file write memories/a.md --cite:tool_result 'CITEUX-7310 green' <<'EOF'\n# a\nEOF"),
@@ -78,10 +78,10 @@ require:
 	if want := "memories/a.md: Sloprail-Cites-Tool: CITEUX-7310 green"; !strings.Contains(refusal, want) {
 		t.Fatalf("the refusal does not list the quote the sub-agent recorded (%q):\n%s", want, refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	e.Run(proj, sess, "go on", Turns("done", harness.RefusalCommand(t, "fix", refusal, "git commit --amend", "")))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("the refusal's own command did not ground the file (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }
@@ -91,7 +91,7 @@ require:
 // ground. A range whose net change is nil is not refused, however uncited its commits.
 func TestT041_62_RevertingTheRangeNeedsNoCitation(t *testing.T) {
 	const sess = "s-041-62"
-	e, proj := guarded(t, userCiteGuard)
+	e, proj := guardedUncited(t, userCiteGuard)
 	e.WriteFile(proj, "memories/a.md", "# a\nkeep this\n")
 	e.CommitAll(proj, "baseline file")
 
@@ -108,10 +108,10 @@ func TestT041_62_RevertingTheRangeNeedsNoCitation(t *testing.T) {
 	if !strings.Contains(refusal, "git revert --no-commit ") || !strings.Contains(refusal, "..HEAD && git commit --no-edit") {
 		t.Fatalf("the refusal does not give the one command that undoes the range:\n%s", refusal)
 	}
-	refused := len(e.StopContinuations(proj, sess))
+	refused := stopRefusals(e, proj, sess)
 
 	e.Run(proj, sess, "undo it", Turns("done", harness.RefusalCommand(t, "undo", refusal, "git revert --no-commit", "")))
-	if got := len(e.StopContinuations(proj, sess)); got != refused {
+	if got := stopRefusals(e, proj, sess); got != refused {
 		t.Fatalf("a range whose net change is nil was refused (%d refusals, had %d):\n%s", got, refused, stopRefusal(e, proj, sess))
 	}
 }

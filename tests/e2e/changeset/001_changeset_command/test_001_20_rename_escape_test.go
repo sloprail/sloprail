@@ -10,14 +10,14 @@ import (
 // left. Moving a file out of a guarded path is a change to it: the rule is asked about
 // it, with the old path's content as oldContent.
 func TestT001_20_ARenameOutOfAGuardedPathIsSelected(t *testing.T) {
-	e, proj, _, _ := repoWithRule(t, docsRule(""))
+	e, proj, floor, _ := repoWithRule(t, docsRule(""))
 	if err := os.MkdirAll(filepath.Join(proj, "archive"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	e.Git(proj, "mv", "docs/a.md", "archive/a.md")
 	e.Git(proj, "commit", "-m", "archive the doc")
 
-	got, res := show(t, e, proj, e.SessionEnv("s-001-20"), "size")
+	got, res := show(t, e, proj, e.SessionEnv("s-001-20"), "size", floor)
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}

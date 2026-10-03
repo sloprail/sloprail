@@ -138,3 +138,11 @@ func fileGuardLedger(t *testing.T, projDir, guardName, file string) int {
 	}
 	return n
 }
+
+// newEnvUncited is newEnv with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
+// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
+// the gate on, the agent could not make that commit at all. The gate is exercised in
+// tests/e2e/gate/058_cite_before_commit.
+func newEnvUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit"))
+}

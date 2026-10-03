@@ -16,6 +16,7 @@ import (
 func TestT002_05_LoopBreakerReleasesAfterTheCapForTheSameSet(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, ".sloprail/config.yaml", "stop_hook_block_cap: 2\n")
+	e.DisablePluginGuardrail(proj, "sloprail/gate/ci-verify-required") // the line above replaced the config the harness wrote it into
 	e.CommitAll(proj, "cap the refusal loop at two")
 	e.Run(proj, "s-002-05", "hello", Turns("done", Bash("b1", "true")))
 
@@ -45,7 +46,7 @@ func TestT002_05_LoopBreakerReleasesAfterTheCapForTheSameSet(t *testing.T) {
 
 	// Committing ends it: nothing is owed, and the count is gone.
 	e.CommitAll(proj, "commit what was owed")
-	if r := e.StopNow(proj, "s-002-05", false); harness.Blocked(r) {
+	if r := e.StopJudged(proj, "s-002-05", false); harness.Blocked(r) {
 		t.Fatalf("a clean tree was refused:\n%s", r.Output)
 	}
 	e.WriteFile(proj, "docs/c.md", "c\n")

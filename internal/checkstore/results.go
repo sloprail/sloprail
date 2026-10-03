@@ -1,51 +1,56 @@
 package checkstore
 
 import (
-	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/checkcache"
 )
 
-// Check statuses, as the checks table spells them.
+// Check statuses.
 const (
-	StatusPass        = "pass"
-	StatusFail        = "fail"
-	StatusSkip        = "skip"
-	StatusError       = "error"
-	StatusInterrupted = "interrupted"
+	StatusPass        = checkcache.StatusPass
+	StatusFail        = checkcache.StatusFail
+	StatusSkip        = checkcache.StatusSkip
+	StatusError       = checkcache.StatusError
+	StatusInterrupted = checkcache.StatusInterrupted
 )
 
-// RunIdentity says whose run it is. Filled although the database is per session
-// today, so rows can move to a global store unchanged.
+// RunIdentity says whose run it is: provenance, never part of a lookup.
 type RunIdentity struct {
-	// RepoID is the repository's root-commit SHA: it survives worktrees and branches.
+	// RepoID is gitrepo.RepoID: the normalized remote and the initial commit (the git common dir
+	// without a remote); it survives worktrees, branches and clones.
 	RepoID    string
 	Branch    string
 	SessionID string
+	// AgentID is the sub-agent that ran it, "" for the root session itself.
+	AgentID string
 }
 
 // CheckRun is one rule evaluated once, over one commit range.
 type CheckRun struct {
 	RunIdentity
-	// BatchID groups the runs of one Stop.
+	// BatchID groups the runs of one `sr check run`.
 	BatchID string
 	// CheckID is the rule's qualified name (<plugin>/file-guard/<name>).
 	CheckID string
-	BaseRef string
-	HeadRef string
-	// ExitCode and Error record an ENGINE failure — a git error, a range that
-	// could not be computed. Such a run passes nothing and moves nothing: it is
-	// never read as an empty range.
+	// RuleHash is the rule's definition hash (changeset.RuleHash): how a run is tied to the
+	// rule definition it ran under. Left empty, Metadata["ruleHash"] is read instead.
+	RuleHash string
+	BaseRef  string
+	HeadRef  string
+	// BaseTree and HeadTree are the tree ids of BaseRef and HeadRef ("" when unknown).
+	BaseTree string
+	HeadTree string
+	// ExitCode and Error record an ENGINE failure — a git error, a range that could not be
+	// computed. Such a run passes nothing: it is never read as an empty range.
 	ExitCode int
 	Error    string
-	// Metadata is {ruleHash, eventKind, baseOrigin, droppedWatermark}. ruleHash is
-	// how a run is tied to the rule definition it ran under.
+	// Metadata is {eventKind, baseOrigin, droppedWatermark, ...}; ruleHash may be here too
+	// (see RuleHash).
 	Metadata map[string]any
 	// Complete says the run is already finished when it is recorded: an engine
 	// failure, or a range where `match` selected nothing. Any other run is
@@ -61,15 +66,14 @@ type CheckRun struct {
 // CheckRecord is one check of a run.
 type CheckRecord struct {
 	Subject string
-	// Kind names the check inside the rule: check[0]:script:./x.sh,
-	// check[1]:judge:./rubric.md.j2, require:citation.
+	// Kind names the check inside the rule: check[0]:script:./x.sh, check[1]:judge:./r.md.j2,
+	// require:citation.
 	Kind   string
 	Status string
-	// Fingerprint is the cache key; "" is stored as NULL and always re-runs.
+	// Fingerprint is the cache key part; only a guard's verdict carries one.
 	Fingerprint string
-	// Metadata is {reasoning, files, model, prompt, ...}.
-	Metadata map[string]any
-	Items    []CheckItem
+	Metadata    map[string]any
+	Items       []CheckItem
 }
 
 // CheckItem is one finding inside a check.
@@ -79,10 +83,11 @@ type CheckItem struct {
 	Metadata map[string]any
 }
 
-// CachedCheck is a stored pass or fail found by fingerprint.
+// CachedCheck is a stored pass or fail found by fingerprint, with the run that recorded it.
 type CachedCheck struct {
 	Status   string
 	Metadata map[string]any
+	Run      CheckRun
 }
 
 // CheckStatusRow is one check of a rule's latest run — or, for a run that failed
@@ -100,221 +105,8 @@ type CheckStatusRow struct {
 	Metadata    map[string]any `json:"metadata"`
 }
 
-func newID(prefix string) string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		panic(err) // the system's randomness failing is not a state to carry on in
-	}
-	return prefix + "_" + hex.EncodeToString(b)
-}
-
-// stamp is a sortable UTC timestamp.
-func stamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
-
-func encode(m map[string]any) (string, error) {
-	if m == nil {
-		m = map[string]any{}
-	}
-	b, err := json.Marshal(m)
-	return string(b), err
-}
-
-func decode(s string) map[string]any {
-	m := map[string]any{}
-	_ = json.Unmarshal([]byte(s), &m)
-	return m
-}
-
-func (s *store) RecordRun(r CheckRun) (string, error) {
-	db, err := s.conn()
-	if err != nil {
-		return "", err
-	}
-	state := map[string]any{"state": runRunning}
-	if r.Complete {
-		state["state"] = runComplete
-	}
-	for k, v := range r.Metadata {
-		state[k] = v
-	}
-	meta, err := encode(state)
-	if err != nil {
-		return "", fmt.Errorf("checkstore: encode run metadata: %w", err)
-	}
-	var runErr any
-	if r.Error != "" {
-		runErr = r.Error
-	}
-	id := newID("run")
-	_, err = db.Exec(`
-		INSERT INTO check_runs (id, run_batch_id, run_at, check_id, repo_id, branch, session_id,
-		                        base_ref, head_ref, exit_code, error, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.BatchID, stamp(), r.CheckID, r.RepoID, r.Branch, r.SessionID,
-		r.BaseRef, r.HeadRef, r.ExitCode, runErr, meta)
-	if err != nil {
-		return "", fmt.Errorf("checkstore: record run of %q: %w", r.CheckID, err)
-	}
-	return id, nil
-}
-
-// Run states, in a run's metadata.
-const (
-	runRunning  = "running"
-	runComplete = "complete"
-)
-
-// FinishRun marks a run complete: every check it was going to run is stored.
-func (s *store) FinishRun(runID string) error {
-	db, err := s.conn()
-	if err != nil {
-		return err
-	}
-	res, err := db.Exec(`UPDATE check_runs SET metadata = json_set(metadata, '$.state', ?) WHERE id = ?`, runComplete, runID)
-	if err != nil {
-		return fmt.Errorf("checkstore: finish run: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return fmt.Errorf("checkstore: finish run: no run %q", runID)
-	}
-	return nil
-}
-
-func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
-	if !validStatus(c.Status) {
-		return "", fmt.Errorf("checkstore: %q is not a check status", c.Status)
-	}
-	db, err := s.conn()
-	if err != nil {
-		return "", err
-	}
-	meta, err := encode(c.Metadata)
-	if err != nil {
-		return "", fmt.Errorf("checkstore: encode check metadata: %w", err)
-	}
-	var fp any
-	if c.Fingerprint != "" {
-		fp = c.Fingerprint
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	id := newID("chk")
-	if _, err := tx.Exec(`
-		INSERT INTO checks (id, run_id, subject, kind, status, fingerprint, metadata, checked_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (run_id, subject, kind) DO UPDATE SET
-			status = excluded.status, fingerprint = excluded.fingerprint,
-			metadata = excluded.metadata, checked_at = excluded.checked_at`,
-		id, runID, c.Subject, c.Kind, c.Status, fp, meta, stamp()); err != nil {
-		return "", fmt.Errorf("checkstore: record check %q: %w", c.Kind, err)
-	}
-	// On a conflict the row kept its own id; the items belong to that one.
-	if err := tx.QueryRow(`SELECT id FROM checks WHERE run_id = ? AND subject = ? AND kind = ?`,
-		runID, c.Subject, c.Kind).Scan(&id); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(`DELETE FROM check_items WHERE check_id = ?`, id); err != nil {
-		return "", err
-	}
-	for _, it := range c.Items {
-		imeta, err := encode(it.Metadata)
-		if err != nil {
-			return "", fmt.Errorf("checkstore: encode item metadata: %w", err)
-		}
-		var key any
-		if it.Key != "" {
-			key = it.Key
-		}
-		if _, err := tx.Exec(`
-			INSERT INTO check_items (id, check_id, key, passed, metadata, checked_at)
-			VALUES (?, ?, ?, ?, ?, ?)`, newID("itm"), id, key, it.Passed, imeta, stamp()); err != nil {
-			return "", fmt.Errorf("checkstore: record item of %q: %w", c.Kind, err)
-		}
-	}
-	return id, tx.Commit()
-}
-
-func validStatus(s string) bool {
-	switch s {
-	case StatusPass, StatusFail, StatusSkip, StatusError, StatusInterrupted:
-		return true
-	}
-	return false
-}
-
-// CachedCheck is a10n's CacheHit on (subject, kind, fingerprint), extended to
-// read a fail as well as a pass: a fail is terminal, and replaying it is what
-// keeps a judge from being asked again about input that has not changed.
-func (s *store) CachedCheck(subject, kind, fingerprint string) (CachedCheck, bool, error) {
-	if fingerprint == "" {
-		return CachedCheck{}, false, nil
-	}
-	db, err := s.conn()
-	if err != nil {
-		return CachedCheck{}, false, err
-	}
-	var c CachedCheck
-	var meta string
-	err = db.QueryRow(`
-		SELECT status, metadata FROM checks
-		WHERE subject = ? AND kind = ? AND fingerprint = ? AND status IN ('pass', 'fail')
-		ORDER BY checked_at DESC, rowid DESC LIMIT 1`, subject, kind, fingerprint).Scan(&c.Status, &meta)
-	if errors.Is(err, sql.ErrNoRows) {
-		return CachedCheck{}, false, nil
-	}
-	if err != nil {
-		return CachedCheck{}, false, fmt.Errorf("checkstore: cache lookup: %w", err)
-	}
-	c.Metadata = decode(meta)
-	return c, true, nil
-}
-
-// ResolveStale is a10n's ResolveStale for a rule (only COMPLETE runs: another Stop's
-// run still in flight is not this evaluation's to clear): a failing check whose input is
-// no longer one the live run holds is an orphan — the files it judged have left
-// the range — and stays a failure forever unless it is cleared. It becomes skip,
-// with the reason, and is no longer outstanding.
-//
-// A check without a fingerprint (a requirement, a script) has no input identity to
-// compare, so its identity is (subject, kind): it stays failing while the live run
-// refuses it again, or has not evaluated that kind at all (an earlier check
-// refused first); it is stale once the live run passes it, or evaluates the kind
-// for other subjects only (its subject left the range).
-func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
-	db, err := s.conn()
-	if err != nil {
-		return 0, err
-	}
-	res, err := db.Exec(`
-		UPDATE checks
-		SET status = 'skip',
-		    metadata = json_set(metadata, '$.reason', 'stale: its input is no longer in the range', '$.staleFrom', 'fail'),
-		    checked_at = ?
-		WHERE status = 'fail'
-		  AND run_id IN (SELECT id FROM check_runs
-		                 WHERE check_id = ? AND json_extract(metadata, '$.ruleHash') = ? AND id <> ?
-		                   AND json_extract(metadata, '$.state') = 'complete')
-		  AND NOT EXISTS (SELECT 1 FROM checks live
-		                  WHERE live.run_id = ? AND live.subject = checks.subject
-		                    AND live.kind = checks.kind AND live.fingerprint = checks.fingerprint)
-		  AND NOT (checks.fingerprint IS NULL AND (
-		        EXISTS (SELECT 1 FROM checks live
-		                WHERE live.run_id = ? AND live.subject = checks.subject AND live.kind = checks.kind
-		                  AND live.status IN ('fail', 'error', 'interrupted'))
-		        OR NOT EXISTS (SELECT 1 FROM checks live WHERE live.run_id = ? AND live.kind = checks.kind)))`,
-		stamp(), rule, ruleHash, liveRunID, liveRunID, liveRunID, liveRunID)
-	if err != nil {
-		return 0, fmt.Errorf("checkstore: resolve stale for %q: %w", rule, err)
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
-}
-
 // RunRef is one run's range and when it ran (RunAt is a fixed-width UTC stamp, so
-// stamps from different databases compare as strings).
+// stamps from different stores compare as strings).
 type RunRef struct {
 	Base, Head, RunAt string
 }
@@ -327,170 +119,200 @@ type RunRefs struct {
 	Failed, Passed []RunRef
 }
 
-func (s *store) RunRefs(rule string) (RunRefs, error) {
-	db, err := s.conn()
-	if err != nil {
-		return RunRefs{}, err
+func newID(prefix string) string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // the system's randomness failing is not a state to carry on in
 	}
-	var out RunRefs
-	collect := func(query string, into *[]RunRef) error {
-		rows, err := db.Query(query, rule)
+	return prefix + "_" + hex.EncodeToString(b)
+}
+
+// stamp is a sortable UTC timestamp.
+func stamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
+
+func (s *store) RecordRun(r CheckRun) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return "", err
+	}
+	ruleHash := r.RuleHash
+	if h, ok := r.Metadata["ruleHash"].(string); ruleHash == "" && ok {
+		ruleHash = h
+	}
+	run := &checkcache.Run{
+		ID: newID("run"), RunAt: stamp(), BatchID: r.BatchID, Rule: r.CheckID, RuleHash: ruleHash,
+		BaseRef: r.BaseRef, HeadRef: r.HeadRef, BaseTree: r.BaseTree, HeadTree: r.HeadTree, ExitCode: r.ExitCode, Error: r.Error, Complete: r.Complete,
+		Metadata: r.Metadata, RepoID: r.RepoID, Branch: r.Branch, SessionID: r.SessionID, AgentID: r.AgentID,
+	}
+	s.runs = append(s.runs, run)
+	s.byID[run.ID] = run
+	return run.ID, nil
+}
+
+// FinishRun marks a run complete: every check it was going to run is stored.
+func (s *store) FinishRun(runID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return err
+	}
+	run, ok := s.byID[runID]
+	if !ok {
+		return fmt.Errorf("checkstore: finish run: no run %q", runID)
+	}
+	run.Complete = true
+	return nil
+}
+
+func validStatus(st string) bool {
+	switch st {
+	case StatusPass, StatusFail, StatusSkip, StatusError, StatusInterrupted:
+		return true
+	}
+	return false
+}
+
+func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
+	if !validStatus(c.Status) {
+		return "", fmt.Errorf("checkstore: %q is not a check status", c.Status)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return "", err
+	}
+	run, ok := s.byID[runID]
+	if !ok {
+		return "", fmt.Errorf("checkstore: record check %q: no run %q", c.Kind, runID)
+	}
+	check := checkcache.Check{Subject: c.Subject, Kind: c.Kind, Status: c.Status, Fingerprint: c.Fingerprint, Metadata: c.Metadata}
+	for _, it := range c.Items {
+		check.Items = append(check.Items, checkcache.Item{Key: it.Key, Passed: it.Passed, Metadata: it.Metadata})
+	}
+	for i, prev := range run.Checks {
+		if prev.Subject == c.Subject && prev.Kind == c.Kind {
+			run.Checks[i] = check
+			return run.ID + "/" + c.Subject + "/" + c.Kind, nil
+		}
+	}
+	run.Checks = append(run.Checks, check)
+	return run.ID + "/" + c.Subject + "/" + c.Kind, nil
+}
+
+// CachedCheck is a10n's CacheHit on (rule, rule hash, subject, kind, fingerprint), extended to
+// read a fail as well as a pass: a fail is terminal, and replaying it is what keeps a judge
+// from being asked again about input that has not changed.
+func (s *store) CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error) {
+	if fingerprint == "" {
+		return CachedCheck{}, false, nil
+	}
+	if err := s.live(); err != nil {
+		return CachedCheck{}, false, err
+	}
+	key := checkcache.Key{Rule: rule, RuleHash: ruleHash, Kind: kind, Subject: subject, Fingerprint: fingerprint}
+	// What this process recorded first: it is newer than anything the backend holds.
+	s.mu.Lock()
+	var best *checkcache.Found
+	for _, run := range s.runs {
+		for _, c := range run.Checks {
+			if !checkcache.Findable(c) || run.CheckKey(c) != key {
+				continue
+			}
+			f := checkcache.Found{Run: *run, Check: c}
+			if best == nil || checkcache.Newer(f, *best) {
+				best = &f
+			}
+		}
+	}
+	s.mu.Unlock()
+	if best == nil {
+		found, err := s.cache.Lookup([]checkcache.Key{key})
 		if err != nil {
-			return fmt.Errorf("checkstore: run refs for %q: %w", rule, err)
+			return CachedCheck{}, false, fmt.Errorf("checkstore: result lookup: %w", err)
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var r RunRef
-			if err := rows.Scan(&r.Base, &r.Head, &r.RunAt); err != nil {
-				return err
+		f, ok := found[key.ID()]
+		if !ok {
+			return CachedCheck{}, false, nil
+		}
+		best = &f
+	}
+	if best.Check.Status != StatusPass && best.Check.Status != StatusFail {
+		return CachedCheck{}, false, nil // a fail resolved as stale: its input is not in any range now
+	}
+	return CachedCheck{Status: best.Check.Status, Metadata: best.Check.Metadata, Run: CheckRun{
+		CheckID: best.Run.Rule, RuleHash: best.Run.RuleHash, BaseRef: best.Run.BaseRef, HeadRef: best.Run.HeadRef,
+		RunIdentity: RunIdentity{RepoID: best.Run.RepoID, Branch: best.Run.Branch, SessionID: best.Run.SessionID, AgentID: best.Run.AgentID},
+	}}, true, nil
+}
+
+// CachedByTrees reads, when a key misses, the verdict of a COMPLETE run of the same rule at
+// the same definition whose base and head TREES equal these: identical trees are an identical
+// net change, whichever commits (a squash of a judged branch) carry it. The newest such pass
+// or fail wins; a run without trees, or with an engine error, never matches.
+func (s *store) CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree string) (CachedCheck, bool, error) {
+	if baseTree == "" || headTree == "" {
+		return CachedCheck{}, false, nil
+	}
+	if err := s.live(); err != nil {
+		return CachedCheck{}, false, err
+	}
+	var best *checkcache.Found
+	consider := func(run checkcache.Run) {
+		if !run.Complete || run.ExitCode != 0 || run.Error != "" || run.Rule != rule || run.RuleHash != ruleHash ||
+			run.BaseTree != baseTree || run.HeadTree != headTree {
+			return
+		}
+		for _, c := range run.Checks {
+			if c.Subject != subject || c.Kind != kind || c.Fingerprint == "" || (c.Status != StatusPass && c.Status != StatusFail) {
+				continue
 			}
-			*into = append(*into, r)
-		}
-		return rows.Err()
-	}
-	if err := collect(`
-		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM check_runs cr
-		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''
-		  AND (cr.error IS NOT NULL OR cr.exit_code <> 0
-		       OR EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
-		                  AND c.status IN ('fail', 'error', 'interrupted')))
-		ORDER BY cr.run_at`, &out.Failed); err != nil {
-		return RunRefs{}, err
-	}
-	if err := collect(`
-		SELECT cr.base_ref, cr.head_ref, cr.run_at FROM check_runs cr
-		WHERE cr.check_id = ? AND cr.base_ref <> '' AND cr.head_ref <> ''
-		  AND cr.exit_code = 0 AND cr.error IS NULL
-		  AND json_extract(cr.metadata, '$.state') = 'complete'
-		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
-		                  AND (c.status IN ('fail', 'error', 'interrupted')
-		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
-		ORDER BY cr.run_at`, &out.Passed); err != nil {
-		return RunRefs{}, err
-	}
-	return out, nil
-}
-
-// PassedHeads is a10n's EffectiveBase, kept as a list so the caller can skip the
-// heads a rebase has orphaned. A run passed when it is not an engine failure and
-// holds no failing check — including one whose failure was later resolved as
-// stale: it failed, and clearing the orphan must not turn it into a pass; a run with no checks at all (`match` selected nothing)
-// passed too, which is what lets an empty selection advance the watermark.
-func (s *store) PassedHeads(rule string) ([]string, error) {
-	db, err := s.conn()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.Query(`
-		SELECT cr.head_ref FROM check_runs cr
-		WHERE cr.check_id = ?
-		  AND cr.head_ref <> '' AND cr.exit_code = 0 AND cr.error IS NULL
-		  AND json_extract(cr.metadata, '$.state') = 'complete'
-		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
-		                  AND (c.status IN ('fail', 'error', 'interrupted')
-		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
-		ORDER BY cr.run_at DESC, cr.rowid DESC`, rule)
-	if err != nil {
-		return nil, fmt.Errorf("checkstore: passed heads for %q: %w", rule, err)
-	}
-	defer rows.Close()
-	var heads []string
-	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err != nil {
-			return nil, err
-		}
-		heads = append(heads, h)
-	}
-	return heads, rows.Err()
-}
-
-func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error) {
-	db, err := s.conn()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.Query(`
-		SELECT cr.check_id, COALESCE(c.subject, ''), COALESCE(c.kind, ''),
-		       CASE WHEN cr.exit_code <> 0 OR cr.error IS NOT NULL THEN COALESCE(c.status, 'error')
-		            WHEN json_extract(cr.metadata, '$.state') <> 'complete' THEN 'interrupted'
-		            WHEN c.id IS NULL THEN 'pass'
-		            ELSE c.status END,
-		       cr.base_ref, cr.head_ref, cr.run_at, COALESCE(c.fingerprint, ''), COALESCE(cr.error, ''),
-		       COALESCE(c.metadata, cr.metadata)
-		FROM check_runs cr
-		LEFT JOIN checks c ON c.run_id = cr.id
-		WHERE cr.id = (SELECT l.id FROM check_runs l WHERE l.check_id = cr.check_id
-		               ORDER BY l.run_at DESC, l.rowid DESC LIMIT 1)
-		  AND (? = '' OR cr.check_id = ? OR cr.check_id LIKE '%/' || ?)
-		ORDER BY cr.check_id, c.subject, c.kind`, rule, rule, rule)
-	if err != nil {
-		return nil, fmt.Errorf("checkstore: check status: %w", err)
-	}
-	defer rows.Close()
-	var out []CheckStatusRow
-	for rows.Next() {
-		var r CheckStatusRow
-		var meta string
-		if err := rows.Scan(&r.Rule, &r.Subject, &r.Kind, &r.Status, &r.BaseRef, &r.HeadRef, &r.RunAt, &r.Fingerprint, &r.Error, &meta); err != nil {
-			return nil, err
-		}
-		r.Metadata = decode(meta)
-		if failingOnly && r.Status != StatusFail && r.Status != StatusError && r.Status != StatusInterrupted {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// Query runs a SELECT on a connection that cannot write, so the statement's own
-// text is not what stands between a caller and the session's record.
-func (s *store) Query(query string) ([]map[string]any, error) {
-	trimmed := strings.TrimSpace(query)
-	if head := strings.ToLower(trimmed); !strings.HasPrefix(head, "select") && !strings.HasPrefix(head, "with") {
-		return nil, fmt.Errorf("checkstore: only a SELECT can be run here")
-	}
-	db, err := s.conn()
-	if err != nil {
-		return nil, err
-	}
-	conn, err := db.Conn(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(context.Background(), `PRAGMA query_only = ON`); err != nil {
-		return nil, err
-	}
-	defer conn.ExecContext(context.Background(), `PRAGMA query_only = OFF`)
-	rows, err := conn.QueryContext(context.Background(), trimmed)
-	if err != nil {
-		return nil, fmt.Errorf("checkstore: query: %w", err)
-	}
-	defer rows.Close()
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	out := []map[string]any{}
-	for rows.Next() {
-		vals := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-		row := make(map[string]any, len(cols))
-		for i, c := range cols {
-			if b, ok := vals[i].([]byte); ok {
-				vals[i] = string(b)
+			f := checkcache.Found{Run: run, Check: c}
+			if best == nil || checkcache.Newer(f, *best) {
+				best = &f
 			}
-			row[c] = vals[i]
 		}
-		out = append(out, row)
 	}
-	return out, rows.Err()
+	s.mu.Lock()
+	for _, run := range s.runs {
+		consider(*run)
+	}
+	s.mu.Unlock()
+	runs, err := s.cache.Runs()
+	if err != nil {
+		return CachedCheck{}, false, fmt.Errorf("checkstore: result lookup: %w", err)
+	}
+	for _, run := range runs {
+		consider(run)
+	}
+	if best == nil {
+		return CachedCheck{}, false, nil
+	}
+	return CachedCheck{Status: best.Check.Status, Metadata: best.Check.Metadata, Run: CheckRun{
+		CheckID: best.Run.Rule, RuleHash: best.Run.RuleHash, BaseRef: best.Run.BaseRef, HeadRef: best.Run.HeadRef,
+		BaseTree: best.Run.BaseTree, HeadTree: best.Run.HeadTree,
+		RunIdentity: RunIdentity{RepoID: best.Run.RepoID, Branch: best.Run.Branch, SessionID: best.Run.SessionID, AgentID: best.Run.AgentID},
+	}}, true, nil
+}
+
+// writable is the guard of every method that records: a closed store is ErrClosed, a
+// read-only one refuses. The caller holds s.mu.
+func (s *store) writable() error {
+	if s.closed {
+		return ErrClosed
+	}
+	if s.readOnly {
+		return errors.New("checkstore: this store is read-only")
+	}
+	return nil
+}
+
+// live is the guard of every method that reads: ErrClosed once the store is closed.
+func (s *store) live() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
+	return nil
 }

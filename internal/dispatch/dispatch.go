@@ -102,6 +102,12 @@ type Request struct {
 	// refuses, because a precondition it cannot check has not passed.
 	TranscriptPath string
 
+	// Subagent is true when the agent being judged is a sub-agent — decided by
+	// the hook that fired (SubagentStop), never read from a record. A refusal for
+	// want of the user's words then tells it to hand the change back to its
+	// parent, which can ask the user, rather than to ask the user itself.
+	Subagent bool
+
 	// Context is every declared context by name, at parity with the nature's match
 	// scope — what a check reads as `context[<name>]`, and what a `{context}`
 	// prerequisite consults. Nil is an empty map.
@@ -128,6 +134,13 @@ type Request struct {
 	// caller resolves it (the payload's cwd, git-rooted); the runner only forwards
 	// it. Empty leaves SR_WORKSPACE unset.
 	Workspace string
+
+	// ProjectRoot is the tree a JUDGE reads as the project, when it differs from
+	// Workspace: a changeset's read-only snapshot of the tip being judged (SR_TREE).
+	// A file-guard judges commits, so the judge must see the committed tree of that
+	// tip, never the folder's checked-out working tree (another branch, or
+	// uncommitted edits). Empty falls back to Workspace.
+	ProjectRoot string
 
 	// SessionID is the conversation's identity, passed as SR_SESSION_ID so a
 	// check's own `sr-session state` lands in this session's keyspace. Empty leaves
@@ -219,6 +232,13 @@ type Verdict struct {
 	// count nothing", and Run never surfaces it (an all-abstain chain permits, the
 	// same as reaching the end with no refusal).
 	Abstained bool
+
+	// NoVerdict reports that a judge refused for want of any parseable answer (it
+	// produced nothing the verifier could read, timed out, could not start, or the model's
+	// transport failed), not as a verdict on the content.
+	// Only with Refused. Set by the judge call itself, so callers need not read
+	// the Reason text.
+	NoVerdict bool
 }
 
 // pass is the clean verdict.

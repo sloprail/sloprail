@@ -18,14 +18,13 @@ import (
 func TestT003_26_TouchingSloprailAfterAViolationDoesNotSkipIt(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	e.Run(proj, "s-003-26", "hello", Turns("done", Bash("b1", "true")))
-	e.RemoveCheckResults(proj, "s-003-26") // no pass recorded: the base is the floor / session start
 
 	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
 	e.CommitAll(proj, "X: the violation")
 	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 	e.CommitAll(proj, "Y: touch .sloprail")
 
-	r := e.StopNow(proj, "s-003-26", false)
+	r := e.StopJudged(proj, "s-003-26", false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 		t.Fatalf("a violation followed by a commit under .sloprail was not refused:\n%s", r.Output)
 	}
@@ -65,7 +64,6 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 			e, proj, led := project(t, docsRule)
 			sess := "s-003-29-" + strings.ReplaceAll(name, " ", "-")
 			e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
-			e.RemoveCheckResults(proj, sess)
 			start := e.Git(proj, "rev-parse", "HEAD")
 
 			rewrite(e, proj)
@@ -77,7 +75,7 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 			e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# touched\n")
 			e.CommitAll(proj, "Y: touch .sloprail")
 
-			r := e.StopNow(proj, sess, false)
+			r := e.StopJudged(proj, sess, false)
 			if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") {
 				t.Fatalf("a violation after a rewritten session start (%s) and a .sloprail touch was not refused:\n%s", name, r.Output)
 			}
@@ -94,7 +92,7 @@ func TestT003_29_ARewrittenSessionStartDoesNotLetAViolationPastTheFloor(t *testi
 
 			// Fixed by a follow-up revert of the violation, the same range passes.
 			e.Git(proj, "revert", "--no-edit", violation)
-			if r := e.StopNow(proj, sess, false); harness.Blocked(r) {
+			if r := e.StopJudged(proj, sess, false); harness.Blocked(r) {
 				t.Fatalf("the range with the violation reverted was still refused (%s):\n%s", name, r.Output)
 			}
 		})
@@ -117,61 +115,14 @@ func TestT003_31_AnAmendedRootCommitIsJudgedInFull(t *testing.T) {
 
 	const sess = "s-003-31"
 	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
-	e.RemoveCheckResults(proj, sess)
 
 	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
 	e.Git(proj, "add", "docs/bad.md")
 	e.Git(proj, "commit", "-q", "--amend", "--no-edit")
 
-	r := e.StopNow(proj, sess, false)
+	r := e.StopJudged(proj, sess, false)
 	if !strings.Contains(r.Output, "FORBIDDEN text in the changeset") || !strings.Contains(r.Output, "docs/bad.md") {
 		t.Fatalf("a violation inside an amended root commit was not refused:\n%s", r.Output)
-	}
-}
-
-// T003_27: a rule edited after a pass keeps its watermark: only the commits after the
-// pass are judged (by the new rule), not what was approved before it.
-func TestT003_27_ARuleEditedAfterAPassJudgesOnlyWhatComesAfter(t *testing.T) {
-	e, proj, led := project(t, docsRule)
-	e.Run(proj, "s-003-27", "write a", Turns("done", harness.CommitFile("c1", "docs/a.md", "clean\n", "add a")))
-	if errs := e.BlockingErrorsFrom(proj, "s-003-27", "Stop"); len(errs) != 0 {
-		t.Fatalf("the clean range was refused: %q", errs)
-	}
-	passed := e.Git(proj, "rev-parse", "HEAD")
-
-	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led) + "# the rule, edited\n"})
-	e.CommitAll(proj, "edit the rule")
-	e.Run(proj, "s-003-27", "write b", Turns("done", harness.CommitFile("c2", "docs/b.md", "clean\n", "add b")))
-
-	runs := ledger(t, led)
-	last := runs[len(runs)-1]
-	if last.Base != passed {
-		t.Fatalf("the edited rule was judged from %s, want from the pass at %s", last.Base, passed)
-	}
-	if got := paths(last.Files); len(got) != 1 || got[0] != "docs/b.md" {
-		t.Fatalf("files = %v, want only docs/b.md (docs/a.md was approved before the edit)", got)
-	}
-}
-
-// T003_28: a rule added mid-session applies from its own add commit: the work the
-// session did before the rule existed is grandfathered (see T003_34 for the refusal side).
-func TestT003_28_ARuleAddedMidSessionDoesNotJudgeTheSessionsEarlierWork(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	e.WriteFile(proj, "docs/seed.md", "seed\n")
-	e.CommitAll(proj, "the project before the rule")
-	e.Run(proj, "s-003-28", "hello", Turns("done", Bash("b1", "true")))
-
-	e.WriteFile(proj, "docs/bad.md", "FORBIDDEN words\n")
-	e.CommitAll(proj, "work before the rule exists")
-	led := filepath.Join(t.TempDir(), "ledger.jsonl")
-	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)})
-	e.CommitAll(proj, "add the rule")
-
-	r := e.StopNow(proj, "s-003-28", false)
-	if harness.Blocked(r) {
-		t.Fatalf("work made before the rule existed was judged by it:\n%s", r.Output)
 	}
 }
 
@@ -180,9 +131,9 @@ func TestT003_28_ARuleAddedMidSessionDoesNotJudgeTheSessionsEarlierWork(t *testi
 // git's empty tree), not taken for where the session began. The first Stop refuses the
 // violation; reverting it passes.
 func TestT003_32_ASessionThatBeganBeforeTheFirstCommitJudgesItsFirstTurn(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
-	e.GitInit(proj)
+	e.GitInitUnborn(proj)
 	led := filepath.Join(t.TempDir(), "ledger.jsonl")
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder(led)}) // not committed
 
@@ -198,23 +149,5 @@ func TestT003_32_ASessionThatBeganBeforeTheFirstCommitJudgesItsFirstTurn(t *test
 	e.Run(proj, sess, "fix it", Turns("done", Bash("rv", "git revert --no-edit HEAD")))
 	if n := len(e.StopContinuations(proj, sess)); n != seen {
 		t.Fatalf("the reverted range was still refused:\n%s", strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
-	}
-}
-
-// T003_33: a session recorded by an older engine (a baseline, but no kept first start) can
-// not say where it began, and the re-taken baseline would reopen the floor hole: the range
-// fails closed, with a message that says why. A new session passes.
-func TestT003_33_ASessionWithoutAKeptStartFailsClosed(t *testing.T) {
-	e, proj, _ := project(t, docsRule)
-	const sess = "s-003-33"
-	e.Run(proj, sess, "hello", Turns("done", Bash("b1", "true")))
-	e.RemoveCheckResults(proj, sess)
-	e.DeleteMeta(proj, sess, "session_start_commit")
-	e.WriteFile(proj, "docs/a.md", "clean\n")
-	e.CommitAll(proj, "add a")
-
-	r := e.StopNow(proj, sess, false)
-	if !harness.Blocked(r) || !strings.Contains(r.Output, "did not keep the commit it began at") || !strings.Contains(r.Output, "docs/a.md") {
-		t.Fatalf("a session without a kept start did not fail closed with its reason:\n%s", r.Output)
 	}
 }

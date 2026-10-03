@@ -1,7 +1,7 @@
 package e2e
 
 // The file-guard's DEFINING property on the commit-based model: a not-fine change is
-// judged over the RANGE of commits since the rule last passed. So a not-fine
+// judged over the RANGE of commits (merge-base..HEAD). So a not-fine
 // endpoint keeps blocking the turn at Stop — even after an unrelated commit, which
 // joins the range instead of moving its base — until a commit fixes it; from then
 // on the passed range is behind and an unrelated commit is not held to it. The
@@ -50,7 +50,7 @@ func TestT048_06_NotFineEndpointBlocksUntilFixed(t *testing.T) {
 	harness.CommitInstalled(t, proj)
 
 	sess := "s-048-06"
-	refusals := func() int { return len(e.StopContinuations(proj, sess)) }
+	refusals := func() int { return len(e.AllBlockingErrorsFrom(proj, sess, "Stop")) }
 
 	e.Run(proj, sess, "add a forbidden endpoint", Turns("done",
 		Write("w1", "get-users.ts", "// sr:endpoint users.list\nFORBIDDEN construct here\n"),

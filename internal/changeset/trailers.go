@@ -61,6 +61,19 @@ func addBodyCitations(trailers map[string][]string, body string) {
 	}
 }
 
+// CiteLine is one Sloprail-Cites-* line of a message: the canonical trailer key and its quote.
+type CiteLine struct{ Key, Quote string }
+
+// CiteLines is every citation line of a commit message not yet made, in order, read as
+// addBodyCitations reads a made one.
+func CiteLines(msg string) []CiteLine {
+	var out []CiteLine
+	for _, m := range citeLine.FindAllStringSubmatch(msg, -1) {
+		out = append(out, CiteLine{Key: textproto.CanonicalMIMEHeaderKey(m[1]), Quote: strings.TrimSpace(m[2])})
+	}
+	return out
+}
+
 // continuesAny reports whether one of the values is value or continues it (a folded
 // trailer's first line is value, git having unfolded the rest onto it).
 func continuesAny(values []string, value string) bool {

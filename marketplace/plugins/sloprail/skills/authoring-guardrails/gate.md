@@ -73,7 +73,7 @@ The gate refuses **before** the action, preventing it. Examples:
 ### Preventing a write or a delete — `PreFileWrite` and `PreFileDelete`
 
 This is where writes and deletes are **prevented**. A file-guard judges only what
-settled at Stop; the gate is the one that refuses before the bytes land or the
+was committed (`sr-checks run`); the gate is the one that refuses before the bytes land or the
 file goes. (A `preventive:` key on a file-guard no longer exists — such a
 declaration is refused at load. Split it into a gate like the ones below plus a
 plain file-guard for the settled result; see [file-guard.md](file-guard.md).)
@@ -120,7 +120,7 @@ checks:
   (see [file-guard.md](file-guard.md), "The resultKnown discipline"). A
   `PreFileWrite` or `PreFileDelete` gate holds only cheap checks — a `require`, a
   script; the judge belongs to the file-guard of the same name, which judges the
-  settled file at Stop. The exception is a gate whose judge is not about a file
+  committed file (`sr-checks run`). The exception is a gate whose judge is not about a file
   write: a `Stop` gate or a `PreCommandInvoke` gate may keep its judge
   (`examples/action-proof` `screenshot-proves-fields`, `examples/no-unasked-commit`
   `require-live-ask-for-commit`).
@@ -192,6 +192,53 @@ map (verified against nothing, so a mistyped flag evaluates false forever — ca
 the command and watch it fire before trusting one) — are set out in full in
 [events.md](events.md). The gate-specific point is only that you match against the
 flattened list.
+
+### Example: a shipped command gate
+
+The plugin's `sloprail/gate/verify-before-push` is a command gate with its policy in YAML
+and one script. It matches any `git ... push`, and a single `checks:` script asks git
+itself which refs the push would update (`git push --dry-run --porcelain`), then runs
+`sr-checks verify` over each one's range. A push whose commits all have stored passes is
+untouched; one with a failing or unjudged range is refused with the exact `sr-checks run`
+that judges it. It fails closed: a ref, folder or default branch that cannot be resolved,
+or a push in the same line as a command that moves refs first, is refused. No user
+citation lifts it: a gate that guards what leaves the machine must not be unlockable by a
+quote (an agent can wash an old, generic instruction into one).
+`sloprail/gate/checks-ref-sr-only` is built the same way to keep the `sloprail/checks`
+results branch writable by `sr-checks` alone (it reads the command's argv, so it stops an agent's accidental write, not a determined forger: a ref name the shell builds at run time never appears in it).
+
+`sloprail/gate/cite-before-commit` is the prevention half of a file-guard's `require:
+citation`, which is otherwise caught only after the commit (Stop, `sr-checks verify` in CI).
+It matches any `git commit` (`--amend` included) and its `require: citation` carries a `when:
+./staged.sh when` that asks the engine `sr-checks staged --needs citation [--amend]`: which
+staged files (the index against HEAD, or against HEAD's parent for an amend; git's empty tree
+when there is no commit) a file-guard selects and whose citation requirement's `when` applies.
+No such file, no requirement. Otherwise the commit must carry a citation: the trailer in its own
+message (`git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'`; `-F <file>`,
+`--trailer` and, for `--amend` without a new message, HEAD's message count too), each quote
+resolved against the session by `sr-checks staged --trailers`, the resolver `sr-file --cite` uses
+(`-User` in the user's words, `-Tool` in a tool's output); no separate cite is needed, though one
+chained in front also works. A commit concluding a merge is judged as the merge: only the files its
+resolution changed (differing from every parent's version) need a citation, since the rest came in
+with the merged branches' own commits. A quote that does not resolve
+grounds nothing and is named in the refusal, with the quotes `sr-file --cite` already recorded for
+the files (`sr-checks staged --recorded`). The gate never replays the agent's `git -c`,
+`--config-env` or `--exec-path` options. `git add`/`git rm`, `-a` and pathspecs on the same line are replayed on a throwaway index; any
+other index-moving command on the line is refused, as is a commit whose folder or file-guards
+cannot be read (fail closed). Files the same line creates before the commit are not seen: CI's
+verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.
+
+All three ship **on**: a project turns one off
+with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
+
+`sloprail/gate/ci-verify-required` is the `Stop` gate that closes the loop on the CI side: a
+file-guard's verdict is only enforced where `sr-checks verify` runs, so a project with at
+least one file-guard of its own (a committed file under `.sloprail/file-guard/`) may not end a turn until the *committed* tree
+(`git grep HEAD`) has a line containing `sr-mark: ci-verify`, a comment beside the CI step that runs
+`sr-checks verify` on pull requests (`--base` the target branch, `--head` the PR head sha) and on pushes to the default branch (`--base` the push's before sha, `--head` its after sha). A marker, not a provider's file
+path, so any CI (GitHub Actions, GitLab, Azure Pipelines, Bitbucket, Jenkins) is the same. The
+refusal carries copy-paste snippets. It fails closed on a git error and ships **on**:
+`disabled: [sloprail/gate/ci-verify-required]` turns it off.
 
 ### The resolution floor
 
@@ -282,6 +329,14 @@ name (the same mechanism that disables a plugin's gate):
 ```yaml
 disabled:
   - <plugin-or-project>/gate/<name>
+```
+
+A gate can also **ship off**: `enabled: false` in its `gate.yaml` makes it inert until the
+project switches it on, by qualified name, in the same config:
+
+```yaml
+enabled:
+  - <plugin>/gate/<name>
 ```
 
 The nature is part of the key — `.../gate/<name>` — because a gate and a context

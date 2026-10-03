@@ -32,11 +32,15 @@ import (
 type Turn = harness.Turn
 
 var (
-	New   = harness.New
 	Turns = harness.Turns
 	Write = harness.Write
 	Bash  = harness.Bash
 )
+
+// New stands the environment up without the sloprail plugin's authoring file-guards:
+// this package is about another rule, and the commit that adds the example's rule puts
+// its own .sh/.md.j2 files in the range, which authoring-slop would judge in its place.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -116,4 +120,12 @@ func containsStr(haystack, needle string) bool { return strings.Contains(haystac
 func readProj(proj, rel string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(proj, rel))
 	return string(b), err
+}
+
+// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
+// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
+// the gate on, the agent could not make that commit at all. The gate is exercised in
+// tests/e2e/gate/058_cite_before_commit.
+func NewUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
 }

@@ -70,8 +70,12 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 		problems = append(problems, prob(ErrMissingField, "match",
 			"a file-guard must say which files it covers"))
 	} else if _, err := guardrail.CompileFileMatch(g.Match); err != nil {
-		problems = append(problems, prob(ErrBadMatch, "match",
-			"%s — a file-guard's match reads a file's own facts (path, markers, oldMarkers, context)", oneLine(err.Error())))
+		if strings.Contains(err.Error(), "unknown name context ") {
+			problems = append(problems, prob(ErrRetiredKey, "match", contextInFileGuardMatch))
+		} else {
+			problems = append(problems, prob(ErrBadMatch, "match",
+				"%s — a file-guard's match reads a file's own facts (path, status, markers, oldMarkers, trailers)", oneLine(err.Error())))
+		}
 	}
 
 	// `preventive:` is gone. A file-guard judges the settled result at Stop;
@@ -94,6 +98,7 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	}
 
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
+	problems = append(problems, validateNoTranscriptRequire(g)...)
 	problems = append(problems, validateChecks(g.Checks)...)
 
 	// The at-least-one rule, identical to the gate's. Both are optional
@@ -401,8 +406,8 @@ func badFilesEntry(f string) string {
 	return ""
 }
 
-// validateChecks checks a checks list: each is exactly-one-of script/judge, and
-// a prepare appears only alongside a judge.
+// validateChecks checks a checks list: each is exactly-one-of script/judge (a prepare
+// may precede either).
 func validateChecks(checks []Check) []Problem {
 	var problems []Problem
 	for i, c := range checks {
@@ -414,13 +419,6 @@ func validateChecks(checks []Check) []Problem {
 		case c.isScript() && c.isJudge():
 			problems = append(problems, prob(ErrExactlyOne, where,
 				"a check must set exactly one of script or judge, but sets both"))
-		}
-		// A prepare adds to a judge's prompt, so it is only meaningful with a
-		// judge. On a script-only check it can only be a mistake — refused rather
-		// than ignored, so the author learns the prepare they wrote does nothing.
-		if c.hasPrepare() && !c.isJudge() {
-			problems = append(problems, prob(ErrStrayPrepare, where,
-				"sets prepare without a judge — prepare adds to a judge's prompt, and a script check has nothing to prepare for"))
 		}
 		problems = append(problems, validateJudgeTuning(c, where)...)
 	}
@@ -434,7 +432,7 @@ func validateChecks(checks []Check) []Problem {
 // the timeout parses to a positive duration, and every allowed-tools entry is
 // non-empty.
 //
-// The stray-on-script rules mirror ErrStrayPrepare exactly — a judge-only field on
+// The stray-on-script rules are the rule — a judge-only field on
 // a script-only check can only be a mistake, and is refused rather than ignored so
 // the author learns the field does nothing. The format checks are done here too so
 // a value that would fail at the judge is caught at load, the same place a bad

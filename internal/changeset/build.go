@@ -44,6 +44,18 @@ type Options struct {
 	// Select is the rule's `match`. Required. An error is the caller's to fail
 	// closed on; nothing here treats it as "not selected".
 	Select func(Scope) (bool, error)
+	// Lean builds only what a verdict KEY is over, which is the files' git blob ids and paths:
+	// no file is read, no patch made, no marker scanned (a `match` that reads markers is not
+	// lean). It is what `verify` uses: it executes nothing, so nothing needs the bytes.
+	Lean bool
+	// NoPatch leaves each file's patch (Diff) out: not part of any key, and a verify never shows it.
+	NoPatch bool
+	// RawBlobs reads file text by blob id, in one long-lived git process, without attribute
+	// filters: for a caller that only scans it (markers), never hands it to a check.
+	RawBlobs bool
+	// SkipHistory leaves out which commits changed each file; only a citation requirement
+	// reads it.
+	SkipHistory bool
 }
 
 // Build reads the range and returns the changeset a rule is judged on.
@@ -82,7 +94,7 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 			cs.Others = append(cs.Others, Other{Path: d.Path, Status: status})
 			continue
 		}
-		f, err := readFile(dir, r, d, o.Scan)
+		f, err := readFile(dir, r, d, o.Scan, o.Lean, o.RawBlobs)
 		if err != nil {
 			return Changeset{}, err
 		}
@@ -100,13 +112,17 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 			cs.Others = append(cs.Others, Other{Path: d.Path, Status: status})
 			continue
 		}
-		if f.Diff, err = gitrepo.PatchOf(dir, r.Base, r.Head, d); err != nil {
-			return Changeset{}, err
+		if !o.Lean && !o.NoPatch {
+			if f.Diff, err = gitrepo.PatchOf(dir, r.Base, r.Head, d); err != nil {
+				return Changeset{}, err
+			}
 		}
 		cs.Files = append(cs.Files, f)
 	}
-	if err := attachCommits(dir, r, &cs); err != nil {
-		return Changeset{}, err
+	if !o.SkipHistory {
+		if err := attachCommits(dir, r, &cs); err != nil {
+			return Changeset{}, err
+		}
 	}
 	return cs, nil
 }
@@ -127,7 +143,12 @@ func attachCommits(dir string, r gitrepo.Range, cs *Changeset) error {
 	if err != nil {
 		return err
 	}
+	substantive, err := gitrepo.SubstantiveFileCommits(dir, r.Base, r.Head, refs)
+	if err != nil {
+		return err
+	}
 	for i := range cs.Files {
+		cs.Files[i].Substantive = substantive[cs.Files[i].Path]
 		commits := byPath[cs.Files[i].Path]
 		if len(commits) == 0 {
 			return fmt.Errorf("changeset: no commit of the range is found to have changed %q", cs.Files[i].Path)
@@ -169,14 +190,17 @@ func Admits(mode DeletionMode, status byte) bool {
 }
 
 // readFile reads a delta's two sides from the commits.
-func readFile(dir string, r gitrepo.Range, d gitrepo.Delta, scan Scanner) (File, error) {
-	f := File{Path: d.Path, Status: string(d.Status), OldPath: d.OldPath, OldMarkers: []Marker{}, NewMarkers: []Marker{}}
+func readFile(dir string, r gitrepo.Range, d gitrepo.Delta, scan Scanner, lean, raw bool) (File, error) {
+	f := File{Path: d.Path, Status: string(d.Status), OldPath: d.OldPath, OldBlob: d.OldBlob, NewBlob: d.NewBlob, OldMarkers: []Marker{}, NewMarkers: []Marker{}}
+	if lean {
+		return f, nil
+	}
 	oldPath := d.Path
 	if d.OldPath != "" {
 		oldPath = d.OldPath
 	}
 	if d.Status != 'A' && !d.Gitlink {
-		content, err := gitrepo.BlobAt(dir, r.Base, oldPath)
+		content, err := blobOf(dir, r.Base, oldPath, d.OldBlob, raw)
 		if err != nil {
 			return File{}, err
 		}
@@ -184,7 +208,7 @@ func readFile(dir string, r gitrepo.Range, d gitrepo.Delta, scan Scanner) (File,
 		f.OldMarkers = markersOf(scan, content)
 	}
 	if d.Status != 'D' && !d.Gitlink {
-		content, err := gitrepo.BlobAt(dir, r.Head, d.Path)
+		content, err := blobOf(dir, r.Head, d.Path, d.NewBlob, raw)
 		if err != nil {
 			return File{}, err
 		}
@@ -201,4 +225,11 @@ func markersOf(scan Scanner, text string) []Marker {
 		return m
 	}
 	return []Marker{}
+}
+
+func blobOf(dir, commit, path, oid string, raw bool) (string, error) {
+	if raw && oid != "" {
+		return gitrepo.BlobByID(dir, oid)
+	}
+	return gitrepo.BlobAt(dir, commit, path)
 }

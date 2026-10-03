@@ -1,0 +1,29 @@
+# Commits leave the machine at `git push`, and a pull request merges what was pushed. This
+# gate refuses an agent's push until every commit it would send passes the file-guards:
+# for each ref the push would update it runs, in the folder the push runs in,
+#
+#   sr-checks verify --base <merge-base(<remote>/<default branch>, sha)> --head <sha>
+#
+# which is deterministic (asks no model, writes nothing) and reads the verdicts that
+# `sr-checks run` stored on the sloprail/checks branch. A red verify names the exact
+# `sr-checks run --base ... --head ...` to judge the range, then push again.
+#
+# What a push would update is asked of git itself (`git push --dry-run --porcelain` with the
+# same global options and arguments), so every remote, refspec, --all/--tags/--mirror and
+# default-push form reads the way git reads it. It fails closed: a push whose refs, folder or
+# default branch cannot be resolved is refused, as is a push in the same line as a command
+# that moves refs first (the gate runs before the line, so it would judge the wrong commits).
+# Pushing the results branch sloprail/checks is refused here too: only `sr-checks run`
+# writes it.
+#
+# Limit: this gate sees the command line the agent runs, not the commands inside a script it
+# runs (`sh ship.sh` that pushes). CI verify is the backstop for those.
+#
+# On by default, like every shipped rule, and switched off by listing
+# `sloprail/gate/verify-before-push` under `disabled:` in .sloprail/config.yaml.
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, .bin == "git" and any(.argv, # == "push"))
+checks:
+  - script: ./verify.sh

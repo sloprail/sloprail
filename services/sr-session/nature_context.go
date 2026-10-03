@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
@@ -67,58 +68,16 @@ import (
 
 // contextsGuardrailKey is the reserved sessionstate keyspace the context[] map is
 // persisted under — symmetric to gatesGuardrailKey.
-const contextsGuardrailKey = "!sloprail:contexts"
+const contextsGuardrailKey = checkrun.ContextsGuardrailKey
 
 // contextStatePrefix keys each context's state under the reserved keyspace, so
 // ListState with this prefix reads the whole map back.
-const contextStatePrefix = "context:"
+const contextStatePrefix = checkrun.ContextStatePrefix
 
-// loadContextMap reads the context[] state map from the session store, seeded so
-// EVERY declared context has an entry (inactive by default).
-//
-// This REPLACES the nature_dispatch.go slice's stub, which returned an empty map
-// because the context lifecycle did not yet write one. Now it reads the persisted
-// contexts and — critically — seeds an inactive `{active:false, payload:{}}` for
-// every declared context that has no stored state yet. The seeding is what makes
-// `not context["x"].active` a usable match: a declared-but-never-entered context
-// must read as present-and-inactive, not as absent, because an absent key makes
-// the expression error (fetching `.active` from nil). Every reader — a gate's
-// require, a file-guard's match, a context's own enter — sees the same complete
-// map.
-//
-// A store that cannot be read yields the seeded-inactive map (contexts default
-// off) rather than failing the dispatch: a rule reading a context before any
-// entered sees it inactive, which is the truthful reading, and losing the store
-// costs the cross-cycle memory, not the gating.
+// loadContextMap reads the context[] state map from the session store, seeded so EVERY
+// declared context has an entry (inactive by default): see checkrun.LoadContextMap.
 func loadContextMap(cmd *cobra.Command, store sessionstate.Store, contexts []declaration.Context) map[string]natures.ContextState {
-	out := map[string]natures.ContextState{}
-	// Seed every declared context inactive first, so an unstored one is present
-	// (and false) rather than absent (and an error to index).
-	for _, c := range contexts {
-		out[c.Name] = natures.ContextState{Active: false, Payload: map[string]any{}}
-	}
-	if store == nil {
-		return out
-	}
-	entries, err := store.ListState(contextsGuardrailKey, contextStatePrefix)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context state unavailable, treating all contexts as inactive: %v\n", err)
-		return out
-	}
-	for _, e := range entries {
-		name := e.Key[len(contextStatePrefix):]
-		var st natures.ContextState
-		if json.Unmarshal([]byte(e.Value), &st) != nil {
-			continue
-		}
-		// A stored payload of null unmarshals to a nil map; keep it a non-nil map so
-		// a reader indexing `.payload.<key>` gets a clean miss, not an error.
-		if st.Payload == nil {
-			st.Payload = map[string]any{}
-		}
-		out[name] = st
-	}
-	return out
+	return checkrun.LoadContextMap(cmd.ErrOrStderr(), store, contexts)
 }
 
 // recordContextState writes one context's state to the store and updates the
@@ -438,16 +397,5 @@ func contextMatchEvent(e event.Event, contextMap map[string]natures.ContextState
 // tags produce the same lowercase keys there. This conversion is for the matcher
 // env only, which reads Go values through reflection.)
 func contextMatchValue(contextMap map[string]natures.ContextState) map[string]any {
-	out := make(map[string]any, len(contextMap))
-	for name, st := range contextMap {
-		payload := st.Payload
-		if payload == nil {
-			payload = map[string]any{}
-		}
-		out[name] = map[string]any{
-			"active":  st.Active,
-			"payload": payload,
-		}
-	}
-	return out
+	return checkrun.ContextMatchValue(contextMap)
 }

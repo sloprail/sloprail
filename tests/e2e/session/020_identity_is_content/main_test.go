@@ -43,3 +43,9 @@ func TestMain(m *testing.M) {
 // New is harness.New with the plugin's authoring file-guards switched off: this package
 // is about other rules, and the authoring guards would judge the rules' own files.
 func New(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
+
+// NewJudgingEachRun is New for a test that states each Run's range itself
+// (changesetkit.JudgeRun) instead of the harness checking the whole session's.
+func NewJudgingEachRun(t *testing.T) *Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
+}

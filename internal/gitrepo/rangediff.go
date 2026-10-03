@@ -2,7 +2,9 @@ package gitrepo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 )
 
 // What changed between two commits, read as data.
@@ -26,13 +28,16 @@ type Delta struct {
 	// Gitlink marks a submodule pointer at either end. It has no readable content,
 	// only a commit name in its diff.
 	Gitlink bool
+	// OldBlob and NewBlob are the object ids git names for the two sides (all zeros for an absent
+	// side): the content hash, with no read of the content.
+	OldBlob, NewBlob string
 }
 
 // Deltas lists every path that differs between base and head, with renames
 // detected (`-M`). The list is complete or it is an error: a git failure or a
 // line this does not understand returns no partial answer.
 func Deltas(dir, base, head string) ([]Delta, error) {
-	out, err := run(dir, "diff", "-M", "--raw", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv", base, head)
+	out, err := runImmutable(dir, []string{base, head}, "diff", "-M", "--raw", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv", base, head)
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: diff %s..%s: %w", short(base), short(head), err)
 	}
@@ -56,7 +61,7 @@ func parseRaw(out string) ([]Delta, error) {
 		if len(parts) != 5 || !strings.HasPrefix(parts[0], ":") {
 			return nil, fmt.Errorf("gitrepo: unreadable diff header %q", header)
 		}
-		d := Delta{Gitlink: parts[0] == ":160000" || parts[1] == "160000"}
+		d := Delta{Gitlink: parts[0] == ":160000" || parts[1] == "160000", OldBlob: parts[2], NewBlob: parts[3]}
 		switch parts[4][0] {
 		case 'A', 'M', 'D':
 			d.Status = parts[4][0]
@@ -92,6 +97,14 @@ func parseRaw(out string) ([]Delta, error) {
 // detection on so a rename reads as a rename rather than a deletion plus an
 // addition. The old path is named as well as the new one for exactly that reason.
 func PatchOf(dir, base, head string, d Delta) (string, error) {
+	if immutableRev.MatchString(base) && immutableRev.MatchString(head) {
+		// Every file-guard of the range asks for the same patches: one git process each, not one per guard.
+		return memoGit(blobKey{"patch", dir, base + ".." + head, d.Path + "\x00" + d.OldPath}, func() (string, error) { return patchOf(dir, base, head, d) })
+	}
+	return patchOf(dir, base, head, d)
+}
+
+func patchOf(dir, base, head string, d Delta) (string, error) {
 	args := []string{"diff", "-M", "--no-ext-diff", "--no-textconv", "--no-color", base, head, "--", d.Path}
 	if d.OldPath != "" {
 		args = append(args, d.OldPath)
@@ -109,6 +122,66 @@ func PatchOf(dir, base, head string, d Delta) (string, error) {
 // exist at that commit (it is in a delta), so a failure to read it is a fault
 // and not an absence.
 func BlobAt(dir, commit, path string) (string, error) {
+	if !immutableRev.MatchString(commit) {
+		return blobAt(dir, commit, path)
+	}
+	// A commit named by its sha never changes, and every file-guard of a range reads the same
+	// blobs: one git process per (commit, path), not one per guard.
+	return memoGit(blobKey{"blob", dir, commit, path}, func() (string, error) { return blobAt(dir, commit, path) })
+}
+
+// immutableRev is a revision that names one commit forever: a sha, or one of its parents.
+var immutableRev = regexp.MustCompile(`^[0-9a-f]{40}(\^[0-9]*)?$`)
+
+type blobKey struct{ kind, dir, a, b string }
+
+type blobEntry struct {
+	mu      sync.Mutex
+	done    bool
+	content string
+	err     error
+}
+
+var blobMemo sync.Map
+
+// runImmutable is run, remembered for the process when every revision in revs is a full object
+// id (whose answer cannot change): the file-guards of a range ask the same questions of history.
+func runImmutable(dir string, revs []string, args ...string) (string, error) {
+	for _, r := range revs {
+		if !immutableRev.MatchString(r) && r != EmptyTree {
+			return run(dir, args...)
+		}
+	}
+	key := blobKey{"run", dir, strings.Join(args, "\x00"), ""}
+	v, _ := blobMemo.LoadOrStore(key, &blobEntry{})
+	e := v.(*blobEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.done {
+		e.content, e.err = run(dir, args...) // a failure of an immutable question is as final as an answer
+		e.done = true
+	}
+	return e.content, e.err
+}
+
+// memoGit runs read once per key, concurrent askers waiting for the one run; a failure is not kept.
+func memoGit(key blobKey, read func() (string, error)) (string, error) {
+	v, _ := blobMemo.LoadOrStore(key, &blobEntry{})
+	e := v.(*blobEntry)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.done {
+		return e.content, nil
+	}
+	content, err := read()
+	if err != nil {
+		return "", err
+	}
+	e.content, e.done = content, true
+	return content, nil
+}
+
+func blobAt(dir, commit, path string) (string, error) {
 	out, err := run(dir, "cat-file", "--filters", fmt.Sprintf("%s:%s", commit, path))
 	if err != nil {
 		return "", fmt.Errorf("gitrepo: read %q at %s: %w", path, short(commit), err)

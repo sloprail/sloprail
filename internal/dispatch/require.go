@@ -607,6 +607,9 @@ func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
 func (r Runner) checkCitation(req Request, p declaration.Prerequisite, hint string) (Verdict, error) {
 	pools := p.Citation.Pools()
 	if !citedIn(req.Event, pools) {
+		if req.Subagent && req.Event.Kind == changeset.Kind && slices.Contains(pools, transcript.SourceUser) {
+			return refuse(subagentHandback(citationSubject(req.Event.Fields, pools), req)), nil
+		}
 		return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools, hint) + subagentCitationNote(req.TranscriptPath, pools)), nil
 	}
 	if req.History == nil {
@@ -628,6 +631,16 @@ func (r Runner) checkCitation(req Request, p declaration.Prerequisite, hint stri
 		return refuse(uncitedRemedy(req.Event.Fields, pools, u)), nil
 	}
 	return pass(), nil
+}
+
+// citationSubject is the first line of a changeset's citation refusal: what
+// must cite, and that no commit's trailer does.
+func citationSubject(fields map[string]any, pools []transcript.SourceType) string {
+	what := citedWhat(pools)
+	if path, _ := fields["path"].(string); path != "" {
+		return path + " must cite " + what + " in the commit that last changed it, and that commit carries none that resolves."
+	}
+	return "this change must cite " + what + ", and no commit in its range carries a citation that resolves."
 }
 
 // citedIn reports whether e carries a citation that resolved in one of pools.
@@ -780,10 +793,16 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 	case declaration.KindPreCommandInvoke:
 		how := fmt.Sprintf("Chain a cite in front of it, quoting the exact words:\n"+
 			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>", strings.Join(names, ","))
-		how = withHint(how, hint, citeCommand)
-		return fmt.Sprintf("this command must cite %s, and it carries none that resolves.\n%s\n"+
-			"The quote must match exactly one entry of this session; run the cite part alone first to check it.",
-			what, how)
+		tail := "The quote must match exactly one entry of this session; run the cite part alone first to check it."
+		if hintHasCommand(hint, trailerCommand) {
+			// The rule reads the citation off the command itself (a commit trailer): nothing is
+			// chained, and the rule resolves the quote.
+			how = hint
+			tail = "The quote must match exactly one entry of this session; the rule checks it."
+		} else {
+			how = withHint(how, hint, citeCommand)
+		}
+		return fmt.Sprintf("this command must cite %s, and it carries none that resolves.\n%s\n%s", what, how, tail)
 	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
 		how := withHint("Redo the change with sr-file, citing what it rests on:\n"+sfFileForms(kind, path, flag, hint != ""), hint, fileCommand)
 		return fmt.Sprintf("%s was changed without citing %s (%s).\n%s\n%s", path, what, flag, how, runOnItsOwn)
@@ -806,12 +825,20 @@ func withHint(form, hint string, command *regexp.Regexp) string {
 	if hint == "" {
 		return form
 	}
-	for _, line := range strings.Split(hint, "\n") {
-		if command.MatchString(strings.TrimSpace(line)) {
-			return hint
-		}
+	if hintHasCommand(hint, command) {
+		return hint
 	}
 	return form + "\n" + hint
+}
+
+// hintHasCommand reports whether one of the hint's lines is the runnable command.
+func hintHasCommand(hint string, command *regexp.Regexp) bool {
+	for _, line := range strings.Split(hint, "\n") {
+		if command.MatchString(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -819,6 +846,8 @@ var (
 	fileCommand = regexp.MustCompile(`^sr-file (write|edit|delete) `)
 	// citeCommand is a line that runs a cite chain.
 	citeCommand = regexp.MustCompile(`^sr-session trajectory cite `)
+	// trailerCommand is a line that runs a command carrying its citation as a trailer.
+	trailerCommand = regexp.MustCompile(`^git (-C \S+ )?commit `)
 )
 
 // sfFileForms is the sr-file command lines that make a change of this kind to

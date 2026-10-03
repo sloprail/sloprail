@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/cyclemod"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
-	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -33,9 +34,9 @@ import (
 //	1. commit required
 //	     — uncommitted work on a path some file-guard selects (its match may read
 //	       context[]) is refused first.
-//	2. file-guards: each rule evaluated over its changeset of commits
-//	     — every run recorded in the check results, a failing judge replayed
-//	       until its input changes; refusals block the turn.
+//	2. tracked ranges: file-guards are VERIFIED (never judged) over each range of commits this
+//	   agent's folders track (session_ranges.go): a range with no stored verdict is refused with
+//	   the `sr-checks run` that produces it.
 //	3. Stop GATES
 //	     — a gate bound to Stop reads context[]/gates[] and blocks the turn on a
 //	       refusal. It must see the contexts from step 0 already active.
@@ -54,13 +55,20 @@ import (
 // text to block the turn with (or "" to let it end).
 //
 // It computes the cycle's Post events itself (postEvents), which the contexts'
-// enters read; a file-guard does not — it judges the commits of its own range, and
-// its verdicts are recorded in the session's check results (changeset_eval.go),
-// where a refusal stays until a run passes.
+// enters read. A file-guard is not evaluated here: it judges the explicit range
+// `sr check run` is given (changeset_eval.go).
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
+	defer debugTiming(cmd, "stop", time.Now())
+	if store == nil {
+		return dispatchNatureStopStoreless(cmd, p, reg, scope)
+	}
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
-	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
+	// An unreadable folder registry is not "no folders": it falls through to the steps that refuse.
+	registered, foldersErr := sessionFolders(p)
+	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 && len(registered) == 0 && foldersErr == nil && !hasTrackedRanges(p) {
+		// No rule here, no other folder whose rules commit-required covers, and no range of the
+		// session (a sub-agent's worktree, another repository) the root's Stop would verify.
 		return ""
 	}
 
@@ -114,22 +122,23 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
 	commitOwed := false
-	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap)); reason != "" {
+	tCR := time.Now()
+	reasonCR := commitRequired(cmd, p, loaded.FileGuards, store, reg)
+	debugTiming(cmd, "commit-required", tCR)
+	if reason := reasonCR; reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
-		commitOwed = true
+		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
 	}
 
-	// 2. file-guards: each rule is evaluated once, over the changeset of commits it
-	//    has not yet passed, and every run is recorded (changeset_eval.go). Not while
-	//    work is owed a commit: judging HEAD would judge an incomplete set, and the
-	//    agent has a commit to make first. And only for an agent that owns the
-	//    tree: a sub-agent working in the session's own tree leaves its commits
-	//    where the root's Stop judges them, and refusing the sub-agent for the
-	//    root's work is a10n's "blocked 17 times in a row".
+	// 2. tracked ranges: each range of commits this agent's folders track is VERIFIED against
+	//    the stored check results — never judged: no model is asked, nothing is written. A range
+	//    whose judges have not been asked is refused with the `sr-checks run` that asks them.
+	//    Not while work is owed a commit (judging HEAD would judge an incomplete set), and only
+	//    for an agent that owns the tree.
 	if !commitOwed && ownsTree(p) {
-		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, store) {
-			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
-		}
+		t0 := time.Now()
+		refusals = append(refusals, verifyTrackedRanges(cmd, p, reg, store)...)
+		debugTiming(cmd, "stop/verify-ranges", t0)
 	}
 
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
@@ -150,6 +159,34 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// refused: a refused reply is exactly what the retry re-sends.
 	recordStopSeen(cmd, store, fileSnapshot, recordEnd)
 
+	return joinRefusals(refusals)
+}
+
+// dispatchNatureStopStoreless is the Stop dispatch when the session's state cannot be
+// opened. Commit-required runs exactly as usual, and Stop gates run over empty context and gate maps. What is lost is
+// bookkeeping only (context enter/exit, seen marks, cited-change history), none of which
+// is read here. The caller says the state was unavailable; this never skips a rule.
+func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope) string {
+	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
+	contextMap := map[string]natures.ContextState{}
+	gatesMap := map[string]natures.GateState{}
+	var refusals []string
+
+	commitOwed := false
+	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, reg); reason != "" {
+		refusals = append(refusals, reason+" (commit required)")
+		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
+	}
+	// The tracked ranges are still verified: the verification opens the root session's registry
+	// itself, and one it cannot read is a refusal, never "nothing to judge".
+	if !commitOwed && ownsTree(p) {
+		refusals = append(refusals, verifyTrackedRanges(cmd, p, reg, nil)...)
+	}
+	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{cyclemod.Event()}, scope, nil, contextMap, gatesMap, resolveNotes{}) {
+		if r.Refused {
+			refusals = append(refusals, r.Reason+" (gate "+r.Attribution+")")
+		}
+	}
 	return joinRefusals(refusals)
 }
 
@@ -178,35 +215,35 @@ func natureStopBoundKinds(loaded declaration.Loaded) []string {
 // Every refusal, not just the first: the agent is about to spend a turn on this,
 // and one at a time turns one correction into as many turns as there are rules
 // (the same reason the old Post dispatch collects all its objections).
+//
+// The header is printed once. A range that several rules refused is one item with its rules as
+// sub-items (see rangeRefusal), so it counts as a list and wears the header even when alone.
 func joinRefusals(refusals []string) string {
 	if len(refusals) == 0 {
 		return ""
 	}
-	if len(refusals) == 1 {
+	if len(refusals) == 1 && !strings.Contains(refusals[0], subItem) {
 		return refusals[0]
 	}
 	return "the following rules refused this turn's work:\n  - " + strings.Join(refusals, "\n  - ")
 }
 
-// evaluateStopChangesets opens what a changeset evaluation needs — the repository
-// and the session's check results — and evaluates every file-guard. A tree that
-// is not a repository has no commits to judge; a repository that cannot be read
-// refuses, since a state that could not be read must not be read as clean.
-func evaluateStopChangesets(cmd *cobra.Command, p HookPayload, scope hookScope, guards []declaration.FileGuard,
-	contextMap map[string]natures.ContextState, state sessionstate.Store) []fileGuardResult {
-	if len(guards) == 0 {
-		return nil
+// subItem starts a line of a refusal's own list, one level in from joinRefusals's.
+const subItem = "\n    - "
+
+// rangeRefusal is one tracked range's refusal: where it is, and what refused it. Several parts are
+// listed as sub-items, never under a header of their own: the Stop's one header covers them.
+func rangeRefusal(where string, parts []string) string {
+	if len(parts) == 1 {
+		return where + ": " + parts[0]
 	}
-	root, err := gitrepo.Root(p.Cwd)
-	if err != nil {
-		if isNotARepo(err) {
-			return nil
-		}
-		return []fileGuardResult{{Name: "file-guards", Attribution: "file-guards", Refused: true, Reason: failClosed(err)}}
+	return where + ":" + subItem + strings.Join(parts, subItem)
+}
+
+// debugTiming prints how long a step took on stderr, only when SLOPRAIL_DEBUG_TIMING=1.
+func debugTiming(cmd *cobra.Command, what string, since time.Time) {
+	if os.Getenv("SLOPRAIL_DEBUG_TIMING") != "1" {
+		return
 	}
-	results := openChecksStore(cmd, p, scope)
-	if results != nil {
-		defer results.Close()
-	}
-	return evaluateChangesets(cmd, guards, p, scope, root, contextMap, state, results)
+	fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: timing %s %s\n", what, time.Since(since).Round(time.Millisecond))
 }

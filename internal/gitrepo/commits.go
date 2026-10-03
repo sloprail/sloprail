@@ -40,7 +40,7 @@ func CommitsIn(dir, base, head string) ([]Commit, error) {
 	if base == EmptyTree {
 		rng = head // a range from before the first commit: every commit head reaches
 	}
-	out, err := run(dir, "log", "--reverse", "-z", "--format="+commitFormat, rng)
+	out, err := runImmutable(dir, []string{base, head}, "log", "--reverse", "-z", "--format="+commitFormat, rng)
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: log %s..%s: %w", short(base), short(head), err)
 	}

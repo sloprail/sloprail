@@ -51,14 +51,16 @@ func commitSpec(t *testing.T, e *env, proj, path, body, msg string) string {
 	return e.CommitSeedThenRules(proj, msg)
 }
 
-// settleBaseline is the session's first turn, doing nothing: its Stop passes what
-// the test seeded, which moves every rule's base past the seed. A test about what a
-// LATER change does to something seeded needs it, because a rule judges the whole
-// range since it last passed, and a file created and then deleted (or reworded)
-// inside one range nets to nothing. The prompt is the session's first user message:
+// settleBaseline puts the seed behind the session: it is pushed, so origin/main (the
+// base of the range the session tracks) is the seed and the range holds only what the
+// session commits after it. PushBranch is what isolates the seed: a rule judges the
+// whole range from the merge base, and a file created and then deleted (or reworded)
+// inside one range nets to nothing, so a test about what a LATER change does to something
+// seeded needs the seed behind origin/main. The first turn does nothing. The prompt is the session's first user message:
 // what a later command cites must be said once. It fails the test if the seed itself is refused.
 func settleBaseline(t *testing.T, e *env, proj, sess, prompt string) {
 	t.Helper()
+	e.PushBranch(proj, "main")
 	e.Run(proj, sess, prompt, Turns("done"))
 	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
 		t.Fatalf("the seeded state was refused before the test changed anything:\n%s", joinBlocks(blocks))

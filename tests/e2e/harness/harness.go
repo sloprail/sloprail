@@ -70,6 +70,8 @@ type Env struct {
 	mock            string
 	withoutShipped  []string // GitInit disables these shipped rules (WithoutShipped)
 	onlyShipped     string   // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
+	enabledShipped  []string // GitInit enables these opt-in shipped rules (WithEnabledShipped)
+	ciVerifyGate    bool     // GitInit leaves sloprail/gate/ci-verify-required ON (WithCIVerifyRequired); every other package has it disabled
 	noShippedGuards bool     // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
 	shimDir         string   // a `claude` that is really the mock, ahead of the real one on PATH
 
@@ -109,6 +111,15 @@ type Env struct {
 	// build a genuine multi-human-turn transcript by Running the same session id twice.
 	// Keyed by sessionID; the value is unused (presence is the fact).
 	seenSessions map[string]bool
+
+	// runBase and noAutoCheck: see checkrun.go.
+	runBase      map[string]string
+	origins      map[string]string // project -> its local bare origin
+	published    map[string]bool   // project -> origin/main already moved up to its pre-session HEAD
+	preStopRuns  int               // numbers the appended pre-Stop turns, which fire once each
+	noAutoCheck  bool
+	keepOrigin   bool
+	subagentStop bool
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
@@ -272,12 +283,29 @@ type Option func(*Env)
 // exist to judge. A package about authoring must not use it.
 func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards = true } }
 
+// WithSubagentStopCheck writes `enable_subagent_stop_check: true` into every project the Env
+// initialises, for a package that tests a sub-agent's own Stop. Without it the default (off:
+// sub-agent ranges are verified at the root's Stop) is what runs.
+func WithSubagentStopCheck() Option { return func(e *Env) { e.subagentStop = true } }
+
 // WithoutShipped switches off the named shipped rules (qualified names, a file-guard or a
 // gate) in the initial commit, for a package whose setup commits `.sloprail/` files inside
 // the session, which the plugin's grounded-rule-changes judges. The rest stay in force.
 func WithoutShipped(qualified ...string) Option {
 	return func(e *Env) { e.withoutShipped = append(e.withoutShipped, qualified...) }
 }
+
+// WithEnabledShipped switches on the named shipped rules that ship OFF (`enabled: false`,
+// e.g. "sloprail/gate/no-merge-over-refusals"), the way a project does: an `enabled:`
+// entry in the initial commit's `.sloprail/config.yaml`.
+func WithEnabledShipped(qualified ...string) Option {
+	return func(e *Env) { e.enabledShipped = append(e.enabledShipped, qualified...) }
+}
+
+// WithCIVerifyRequired leaves the plugin's sloprail/gate/ci-verify-required in force. Every other
+// package has it switched off in the initial commit: it refuses a Stop in any repository with
+// file-guards and no committed `sr-mark: ci-verify`, which is no test's subject but its own.
+func WithCIVerifyRequired() Option { return func(e *Env) { e.ciVerifyGate = true } }
 
 // WithOnlyShippedFileGuard is WithoutShippedFileGuards for a package about ONE shipped
 // rule: every other authoring file-guard of the sloprail plugin is disabled in the
@@ -313,6 +341,9 @@ func New(t *testing.T, opts ...Option) *Env {
 		repoRoot:     repoRoot(t),
 		mock:         mock,
 		seenSessions: map[string]bool{},
+		runBase:      map[string]string{},
+		origins:      map[string]string{},
+		published:    map[string]bool{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -537,6 +568,15 @@ exit 0
 func (e *Env) InstallJudgeClaudeCapturing(projDir, relPromptFile, verdict string) {
 	e.t.Helper()
 	promptPath := filepath.Join(projDir, relPromptFile)
+	// The capture is the harness's, not the project's work: a prompt that quotes a marked file
+	// carries the marker itself, and left untracked it would be a guarded file with
+	// uncommitted changes — a commit-required refusal at the Stop. Excluded, git does not see it.
+	if exclude := filepath.Join(projDir, ".git", "info", "exclude"); os.MkdirAll(filepath.Dir(exclude), 0o755) == nil && fileExists(filepath.Join(projDir, ".git", "HEAD")) {
+		if f, err := os.OpenFile(exclude, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "/%s\n/%s.calls\n/%s.d/\n", relPromptFile, relPromptFile, relPromptFile)
+			f.Close()
+		}
+	}
 	// The prompt argument is the one sr-agent appends its answer-file line to and
 	// is the whole rendered template; the shim picks that argument and writes it
 	// out verbatim, then recovers the output path from it and writes the verdict —
@@ -554,6 +594,9 @@ for arg in "$@"; do
       # prompt is a single clean render.
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
       printf '%s' "$arg" > ` + shellQuote(promptPath) + `
+      # Every prompt, kept apart: judges run concurrently, so which one wrote the file above
+      # last is not known; a test that wants one judge's prompt asks for it by a marker.
+      mkdir -p ` + shellQuote(promptPath+".d") + ` && printf '%s' "$arg" > ` + shellQuote(promptPath+".d") + `/$$
       # One line per judge call — the prompt's heading — so a test can count how
       # often each judge was asked.
       printf '%s\n' "$arg" | head -1 >> ` + shellQuote(promptPath+".calls") + `
@@ -642,6 +685,20 @@ func (e *Env) JudgePrompt(projDir, relPromptFile string) string {
 		e.t.Fatalf("harness: read judge prompt %s: %v", relPromptFile, err)
 	}
 	return string(body)
+}
+
+// JudgePromptWith returns the captured judge prompt that contains marker (the one judge of
+// several that ran concurrently whose prompt carries it), or "" when none does.
+func (e *Env) JudgePromptWith(projDir, relPromptFile, marker string) string {
+	e.t.Helper()
+	entries, _ := os.ReadDir(filepath.Join(projDir, relPromptFile+".d"))
+	for _, ent := range entries {
+		body, err := os.ReadFile(filepath.Join(projDir, relPromptFile+".d", ent.Name()))
+		if err == nil && strings.Contains(string(body), marker) {
+			return string(body)
+		}
+	}
+	return ""
 }
 
 // InnerScenario is what the agent a hook LAUNCHES does once it is running.
@@ -1042,8 +1099,25 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 // depend on whatever the machine has configured.
 func (e *Env) GitInit(dir string) {
 	e.t.Helper()
+	e.GitInitUnborn(dir)
+	e.CommitAll(dir, "initial")
+	e.addOrigin(dir)
+}
+
+// GitInitUnborn is GitInit before the first commit: the repository, the config, the mock's
+// exclusions — and no commit, no origin: a session that begins in it begins before any history.
+func (e *Env) GitInitUnborn(dir string) {
+	e.t.Helper()
 	InitRepo(e.t, dir)
 	e.excludeMockFiles(dir)
+	// `enabled:` goes in first, so `disabled:` stays the config's last key: tests append
+	// list items to it with printf.
+	if len(e.enabledShipped) > 0 {
+		e.enableShipped(dir, e.enabledShipped)
+	}
+	if !e.ciVerifyGate {
+		e.DisablePluginGuardrail(dir, "sloprail/gate/ci-verify-required")
+	}
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
 		e.DisablePluginGuardrail(dir, shippedGates...)
@@ -1060,7 +1134,45 @@ func (e *Env) GitInit(dir string) {
 		}
 		e.DisablePluginGuardrail(dir, others...)
 	}
-	e.CommitAll(dir, "initial")
+	if e.subagentStop {
+		e.enableSubagentStopCheck(dir)
+	}
+}
+
+// enableSubagentStopCheck opts a project in to a sub-agent's own Stop verifying the tracked ranges
+// (`enable_subagent_stop_check: true`). The key goes first: `disabled:` stays the config's last key.
+func (e *Env) enableSubagentStopCheck(dir string) {
+	e.t.Helper()
+	cfgDir := filepath.Join(dir, ".sloprail")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	path := filepath.Join(cfgDir, "config.yaml")
+	body, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, append([]byte("enable_subagent_stop_check: true\n"), body...), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
+	}
+}
+
+// enableShipped merges names into the `enabled:` list of the project's config.
+func (e *Env) enableShipped(dir string, names []string) {
+	e.t.Helper()
+	cfgDir := filepath.Join(dir, ".sloprail")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	path := filepath.Join(cfgDir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	}
+	merged, err := mergeList(body, "enabled", names)
+	if err != nil {
+		e.t.Fatalf("harness: merge enabled rules into %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(merged), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
+	}
 }
 
 // excludeMockFiles keeps the mock's own scenario scripts out of every commit the test
@@ -1135,13 +1247,25 @@ func (e *Env) DeleteMeta(projDir, sessionID, key string) {
 	}
 }
 
-// sessionDBPath mirrors where the engine puts a session's state, having asked
-// the engine itself for the only part a test could get wrong: the conversation
-// identity, which is not the id the harness reports.
+// CorruptSessionState overwrites a session's state database with bytes that are not a
+// database: the registry of its tracked ranges and folders becomes unreadable, the way a
+// damaged or half-written file would.
+func (e *Env) CorruptSessionState(projDir, sessionID string) {
+	e.t.Helper()
+	path := e.sessionDBPath(projDir, sessionID)
+	if err := os.WriteFile(path, []byte("this is not a database, it is garbage that cannot be read\n"), 0o644); err != nil {
+		e.t.Fatalf("harness: corrupt session state: %v", err)
+	}
+	// A WAL or journal left beside it would be replayed over the garbage.
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		_ = os.Remove(path + suffix)
+	}
+}
+
 // SessionFolders is the folders the engine registered for a session — its own
-// repository and the worktrees its sub-agents were dispatched into — as the root
-// session's store holds them. The session's identity is the one `sr-session id`
-// resolved, which names the store's directory.
+// repository, the worktrees its sub-agents were dispatched into and the repositories a
+// command ran in — as the root session's store holds them. The session's identity is the one
+// `sr-session id` resolved, which names the store's directory.
 func (e *Env) SessionFolders(projDir, sessionID string) []sessionstate.Folder {
 	e.t.Helper()
 
@@ -1159,6 +1283,25 @@ func (e *Env) SessionFolders(projDir, sessionID string) []sessionstate.Folder {
 	return folders
 }
 
+// SessionRanges is the ranges the engine tracks for a session, as the root session's store holds them.
+func (e *Env) SessionRanges(projDir, sessionID string) []sessionstate.TrackedRange {
+	e.t.Helper()
+	path := e.sessionDBPath(projDir, sessionID)
+	db, err := sessionstate.Open(path)
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+	ranges, err := db.Ranges(filepath.Base(filepath.Dir(path)))
+	if err != nil {
+		e.t.Fatalf("harness: read session ranges: %v", err)
+	}
+	return ranges
+}
+
+// sessionDBPath mirrors where the engine puts a session's state, having asked
+// the engine itself for the only part a test could get wrong: the conversation
+// identity, which is not the id the harness reports.
 func (e *Env) sessionDBPath(projDir, sessionID string) string {
 	e.t.Helper()
 
@@ -1180,6 +1323,28 @@ func (e *Env) sessionDBPath(projDir, sessionID string) string {
 	// inside the sandbox.
 	return filepath.Join(dataHome(e.home), "sloprail", "sessions",
 		encodeProjectDir(resolveWorkDir(projDir)), stableID, "state.db")
+}
+
+// StateDBPath is where the engine keeps a session's state, for a test that damages it.
+func (e *Env) StateDBPath(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.sessionDBPath(projDir, sessionID)
+}
+
+// SessionStoreDirs is every per-workspace directory under the engine's sessions
+// directory that holds a store for the session's identity: one for a session keyed by
+// where it began, more when something keyed it by where a hook happened to stand.
+func (e *Env) SessionStoreDirs(projDir, sessionID string) []string {
+	e.t.Helper()
+	id := e.SessionIdentity(projDir, sessionID)
+	if id == "" {
+		e.t.Fatalf("harness: no identity for session %s", sessionID)
+	}
+	matches, err := filepath.Glob(filepath.Join(dataHome(e.home), "sloprail", "sessions", "*", id))
+	if err != nil {
+		e.t.Fatalf("harness: list session stores: %v", err)
+	}
+	return matches
 }
 
 // transcriptPath is where the harness's transcript for a session sits.
@@ -2064,7 +2229,10 @@ func (e *Env) AllBlockingErrorsFrom(projDir, sessionID, hookEvent string) []stri
 func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) []string {
 	e.t.Helper()
 
-	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
+	// Only what the hooks refused: the output of the harness's own pre-Stop `sr-checks run` is
+	// never read as a Stop refusal.
+	out := blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
+	return out
 }
 
 // StopContinuations returns the reason of every time a Stop hook refused to let
@@ -2386,7 +2554,10 @@ func (e *Env) RunForked(projDir, fromSessionID, newSessionID, prompt string, s S
 		e.t.Fatalf("harness: fork of %s: that session was never run, so there is nothing to fork", fromSessionID)
 	}
 	e.seenSessions[newSessionID] = true
-	return e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
+	e.noteRunBase(projDir, newSessionID)
+	s = e.withPreStopRun(projDir, newSessionID, s)
+	res := e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
+	return res
 }
 
 // DeleteTranscript removes a session's transcript, the way Claude Code's own
@@ -2562,7 +2733,10 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	if resume {
 		sessionFlag = "--resume"
 	}
-	return e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
+	e.noteRunBase(projDir, sessionID)
+	s = e.withPreStopRun(projDir, sessionID, s)
+	res := e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
+	return res
 }
 
 // drive runs the mock once with the given session flags — the part of run
@@ -2623,6 +2797,11 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 	// the mock's own default (8). See the stopBlockCap field's doc.
 	if e.stopBlockCap > 0 {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=%d", e.stopBlockCap))
+	}
+	// The session the mock stands in for, which a sub-agent's scenario (written before the
+	// session id is known) reads to export CLAUDE_CODE_SESSION_ID as its real Bash has.
+	if n := len(sessionFlags); n > 0 {
+		cmd.Env = append(cmd.Env, "SR_E2E_SESSION_ID="+sessionFlags[n-1])
 	}
 	// A test that lowered the check-execution timeout passes it through to the
 	// sr-session subprocess the mock launches for each hook. See the

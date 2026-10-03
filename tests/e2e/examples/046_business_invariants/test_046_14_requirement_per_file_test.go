@@ -53,7 +53,7 @@ func TestT046_30_AnUncitedEditOfMarkedCodeBesideACitedSpecChangePasses(t *testin
 // file edited beside it, and the refusal's own command (a follow-up commit that changes SPEC.md and
 // carries the quote) grounds it.
 func TestT046_31_AnUncitedSpecChangeIsRefusedNamingOnlyTheSpec(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := pinnedSpecProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to relax rule 2 for goodwill refunds"}`)
 
@@ -79,7 +79,7 @@ func TestT046_31_AnUncitedSpecChangeIsRefusedNamingOnlyTheSpec(t *testing.T) {
 		t.Fatalf("the refusal suggests squashing the range:\n%s", refusal)
 	}
 	e.Run(proj, sess, "go on", Turns("done",
-		Bash("touch", `printf '\n' >> SPEC.md`),
+		Bash("touch", `python3 -c "import pathlib; p=pathlib.Path('SPEC.md'); p.write_text(p.read_text().replace('goodwill refunds.', 'goodwill refunds (reviewed by hand).'))"`),
 		harness.RefusalCommand(t, "fix", refusal, "git add", changeRuleAsk),
 	))
 	refusals = e.AllBlockingErrorsFrom(proj, sess, "Stop")

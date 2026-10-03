@@ -27,10 +27,10 @@ Edit or Write that drops lines carries no citation and is refused before it
 lands."
 
 GUARDRAIL="A gate (preserves-unasked-content) blocks before the write, and a
-file-guard of the same name re-checks at Stop. An
+file-guard of the same name re-checks (\`sr-checks run\` judges, Stop verifies). An
 uncited removal is refused at pre-tool with a message naming the sr-file
 form; the agent switching to a cited sr-file edit in its next attempt is the
-system working as intended, not an anomaly. A cited removal is then judged at Stop, by the
+system working as intended, not an anomaly. A cited removal is then judged by \`sr-checks run\` (verified at Stop), by the
 file-guard, which checks the removal covers only what the cited words asked. What
 WOULD be unhealthy: the same refused change retried with no change in
 approach, the agent abandoning the task or editing the file some other way

@@ -158,7 +158,9 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	// Each cycle is identified by the file its tool call names, because that is
 	// what the query hands back. The prompts differ too, but they are user
 	// records and never appear in the span.
-	const first = "one.md"
+	// The turn is named by what it wrote, not by its path: a file-guard's refusal lists the
+	// files of the whole range, so "one.md" rides in the later cycles' refusal text.
+	const first = "cycle one"
 	const second = "bad-file.md"
 	const third = "three.md"
 

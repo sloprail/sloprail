@@ -204,4 +204,13 @@ func eventsOf(e normalized) []string {
 
 // New is harness.New with the plugin's authoring file-guards switched off: this package
 // is about other rules, and the authoring guards would judge the rules' own files.
-func New(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }
+// NoAutoCheck: these tests read the trajectory the scenario wrote, and the harness's
+// pre-Stop `sr-checks run` turn would be a second Bash entry they did not script.
+func New(t *testing.T) *Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
+}
+
+// NewJudging is New without NoAutoCheck: the harness's pre-Stop `sr-checks run` is what
+// runs a file-guard here, so a test whose subject is what the guard's check reads
+// needs it.
+func NewJudging(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

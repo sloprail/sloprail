@@ -82,7 +82,7 @@ func TestT046_29_CitedDeleteOfACurrentPinLands(t *testing.T) {
 // T046_30: a spec edit the engine cannot see ahead — a script rewriting the file —
 // lands, and is caught at Stop: the rule's line changed without the user's words.
 func TestT046_30_ShellRewriteOfAPinnedLineIsCaughtAtStop(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := pinnedSpecProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 

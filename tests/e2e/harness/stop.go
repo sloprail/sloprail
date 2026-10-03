@@ -3,6 +3,8 @@ package harness
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -46,21 +48,25 @@ func (e *Env) StopNow(projDir, sessionID string, active bool) Result {
 	return e.CLIDirectStdinEnv(projDir, string(payload), e.hookEnv(""), "sr-session", "stop")
 }
 
+// StopCmd is the command StopNow would run, built and not started, for a test that must
+// interrupt a Stop part-way (it owns the process: start it, kill it, wait for it).
+func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
+	e.t.Helper()
+	payload, _ := json.Marshal(map[string]any{
+		"session_id": sessionID, "transcript_path": e.TranscriptPath(projDir, sessionID),
+		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
+	})
+	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "stop")
+	cmd.Dir = projDir
+	cmd.Stdin = strings.NewReader(string(payload))
+	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(cmd.Env, e.hookEnv("")...)
+	return cmd
+}
+
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the
 // harness honours.
 func Blocked(r Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }
-
-// ChecksStatus is `sr-checks status` for a session, with the given flags.
-func (e *Env) ChecksStatus(projDir, sessionID string, args ...string) string {
-	e.t.Helper()
-	return e.CLIDirectEnv(projDir, e.SessionEnv(sessionID), "sr-checks", append([]string{"status"}, args...)...).Output
-}
-
-// ChecksSQL is `sr-checks sql` for a session.
-func (e *Env) ChecksSQL(projDir, sessionID, query string) Result {
-	e.t.Helper()
-	return e.CLIDirectEnv(projDir, e.SessionEnv(sessionID), "sr-checks", "sql", query)
-}
 
 // SubagentStopBlocked reports whether the run's stream shows a sub-agent's Stop
 // refused with a reason starting with the given text. The mock prints each as
@@ -68,6 +74,19 @@ func (e *Env) ChecksSQL(projDir, sessionID, query string) Result {
 // root's record, so BlockingErrorsFrom cannot see it.
 func (r Result) SubagentStopBlocked(reason string) bool {
 	return strings.Contains(r.Output, "SubagentStop blocked ("+reason)
+}
+
+// SubagentStopBlockedWith reports whether a sub-agent's Stop was refused with a
+// reason carrying text on the refusal's first line (the refusal now opens with the
+// folder and range, so the text is not at the start): the same message, not any
+// text elsewhere in the output.
+func (r Result) SubagentStopBlockedWith(text string) bool {
+	for _, line := range strings.Split(r.Output, "\n") {
+		if i := strings.Index(line, "SubagentStop blocked ("); i >= 0 && strings.Contains(line[i:], text) {
+			return true
+		}
+	}
+	return false
 }
 
 // AnySubagentStopBlocked reports whether any sub-agent's Stop was refused.

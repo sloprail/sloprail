@@ -13,7 +13,7 @@ import (
 // without protection it would take the plugin rule's name and judge nothing, so the same
 // commit could loosen a rule freely. The plugin's rule claims its name first.
 func TestT042_18_AProjectRuleCannotShadowIt(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	const sess = "s-042-18"
 	// Written by a script, which no pre-write gate models, in one commit.
@@ -52,7 +52,7 @@ func TestT042_19_ADisableCommittedBeforeTheSessionIsHonoured(t *testing.T) {
 	e.Run(proj, "s-042-19", "loosen the demo rule", Turns("done",
 		Bash("l1", `python3 -c "open('`+demoDir+`/check.sh','w').write('#!/bin/sh\ncat >/dev/null\nexit 0\n# loosened\n')"`),
 	).ThenCommit("loosen the demo"))
-	res := e.StopNow(proj, "s-042-19", false)
+	res := e.CheckRunRaw(proj, "s-042-19", e.RunBase("s-042-19"), "HEAD")
 	if strings.Contains(res.Output, "grounded-rule-changes") || strings.Contains(res.Output, "SR042") {
 		t.Fatalf("a rule disabled in the committed config was still enforced:\n%s", res.Output)
 	}

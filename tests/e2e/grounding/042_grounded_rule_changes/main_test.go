@@ -74,11 +74,11 @@ func editScript(t *testing.T, id, path, content string) []harness.Turn {
 	}
 }
 
-// blocked runs a Stop on the session as it stands and says whether this rule refused the
-// turn, with the refusal's text.
+// blocked runs `sr check run` over what the session committed and says whether this rule
+// refused it, with the refusal's text.
 func blocked(e *harness.Env, proj, sess string) (bool, string) {
-	res := e.StopNow(proj, sess, false)
-	return harness.Blocked(res) && strings.Contains(res.Output, "grounded-rule-changes"), res.Output
+	res := e.CheckRunRaw(proj, sess, e.RunBase(sess), "HEAD")
+	return res.Code != 0 && strings.Contains(res.Output, "grounded-rule-changes"), res.Output
 }
 
 // refuseThenPass is the shape of every case: the agent makes the change (`change`, which
@@ -102,4 +102,12 @@ func refuseThenPass(t *testing.T, e *harness.Env, proj, sess, ask string, change
 	if got, out := blocked(e, proj, sess); got {
 		t.Fatalf("the change was still refused once its commit carried the grounding:\n%s", out)
 	}
+}
+
+// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a
+// scenario whose subject is what Stop or `sr-checks run` does with a commit that carries no (or
+// no resolving) citation: with the gate on, the agent could not make that commit at all. The gate
+// itself is exercised in tests/e2e/gate/058_cite_before_commit.
+func NewUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithOnlyShippedFileGuard(ruleName), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
 }

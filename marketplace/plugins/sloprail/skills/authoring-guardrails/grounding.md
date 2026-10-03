@@ -47,6 +47,22 @@ messages in the main conversation, quoted exactly as the user wrote them. When
 dispatching work that must cite the user, paste the user's exact words into the
 sub-agent's prompt.
 
+A sub-agent that cannot cite the user cannot ask the user either, so it hands
+the change back to its parent instead of asking for a trailer to be added at
+merge (a trailer put on a whole squash grounds nothing). It saves the change as
+a patch **file** outside the repository
+(`git diff --binary <base>..HEAD -- <files> > "${TMPDIR:-/tmp}/handback.patch"`),
+reverts those files on its own branch in a real commit
+(`git apply -R --index "${TMPDIR:-/tmp}/handback.patch" && git commit -m '…'`),
+and tells the parent where the patch is and exactly what needs the user's
+approval. The backup is never a branch, a tag or a stash: every branch is
+judged at the sub-agent's Stop, so a backup branch would be refused again (a
+stash is not judged, but it is not a hand-back either, and the work is lost to
+the parent). The parent asks the user (AskUserQuestion), re-applies the patch
+(`git apply --index <patch>`), and commits it with
+`Sloprail-Cites-User: <the user's exact answer>`. The root's own refusal stays
+as it was: ask the user now.
+
 Run `sr-file` **on its own**, by its bare name, in the command line — it must
 be on PATH (`command -v sr-file`; if that fails, put sloprail's binaries on
 PATH, or name the engine's own `sr-file` by its full path, which is dry-run as
@@ -79,18 +95,24 @@ own call.
   as `Sloprail-Cites-User: <quote>` and `Sloprail-Cites-Tool: <quote>` trailers,
   resolved like `sr-file --cite:user` / `--cite:tool_result`: the quote must match
   exactly one real user message (or tool output), model text is never citable, and
-  a quote that resolves nowhere is not a citation (`sr-session changeset` lists it
+  a quote that resolves nowhere is not a citation (`sr-checks changeset` lists it
   under `unresolvedCitations`). The current session's transcript is searched
   first, then the project's other sessions newest to oldest; the first session
   containing the quote must match it exactly once. Outside a session (no
-  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. Each entry also says which
+  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. `sr-checks verify` (Stop shows its failures; CI)
+  has no transcript: there a `require: citation` counts the trailer on the commit
+  that last changed the file, and the quote was resolved when `sr-checks run`
+  judged it. Each entry also says which
   commits carried it (`commits`, SHAs) and which selected files those commits
   changed (`files`); the list as a whole stays the range's, for a judge. The rest
   of this list describes a gate's events. A `require: citation` on a file-guard is
   satisfied **per subject**, and the default subject is one selected file
   ([events.md](events.md#changeset--what-a-file-guards-checks-receive)): a file is
   grounded only by a citation whose trailer is in the commit that last changed THAT
-  file, so one commit citing one file grounds nothing else in the range, an uncited
+  file by more than whitespace (a whitespace-only or trailer-only commit grounds
+  nothing: it neither lends a citation to an earlier uncited change nor takes one
+  from a cited change; content is compared with whitespace stripped, and a file whose
+  every commit is whitespace-only is judged by its last commit), so one commit citing one file grounds nothing else in the range, an uncited
   change on top of a cited one leaves the file uncited, and a cited commit on top of
   an uncited one grounds the file as it now stands. Its `when` runs once per
   subject, on a payload whose `subject.files` is that file (the whole `Changeset`
@@ -98,9 +120,9 @@ own call.
   whose `when` applies. A refusal names every file that is not grounded and says how to
   ground them, in order. (1) **Recommended:** a follow-up commit that changes each file
   and carries the trailer (`git add <files> && git commit -m '<what changed>' -m
-  'Sloprail-Cites-User: <exact quote>'`); when no change is needed, restate the file's
-  content through a cited `sr-file write <file> --cite:user '<exact quote>'`, or touch
-  it minimally so the commit changes it. (2) An amend (`git commit --amend --no-edit
+  'Sloprail-Cites-User: <exact quote>'`); never wash a change through a whitespace-only
+  or restated-content commit just to carry a citation (amend your own unpushed commit,
+  or revert). (2) An amend (`git commit --amend --no-edit
   --trailer 'Sloprail-Cites-User: <exact quote>'`) is offered ONLY when every such
   file's last commit is HEAD, HEAD is unpushed (no remote branch contains it) and the
   tree is clean. `git reset --soft` is never suggested. When the session already recorded
@@ -134,7 +156,7 @@ own call.
   the agent's cycles by comparing each file with how the agent left it at its
   last Stop. A change made by something else WHILE the agent is working (an
   editor saving the file mid-turn) cannot be told from the agent's own and is
-  charged; restate the file with a cited `sr-file write` to settle it.
+  charged; amend your own unpushed commit with the trailer, or revert it.
 - Work the agent starts that can outlive the call that started it can land
   after its Stop, and a change that lands then is charged to the agent (the
   refusal says the file changed after its last Stop, and names the work),
@@ -175,7 +197,7 @@ require:
 ```
 
 Pair it with a plain file-guard of the same name (`match: 'path startsWith
-"memories/rules/"'` with the same `require`), which refuses at Stop commits that
+"memories/rules/"'` with the same `require`), which refuses (in `sr-checks run`, and so at Stop and in CI) commits that
 carry no citation trailer — a change a command made that the engine could not model, say.
 `preventive:` on the file-guard no longer exists; a declaration carrying it is
 refused at load.

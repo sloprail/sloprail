@@ -19,7 +19,7 @@ func TestT042_07_NewRuleNeedsNoGrounding(t *testing.T) {
 		Write("w2", ".sloprail/file-guard/invoices/check.sh", demoScript),
 		Write("w3", ".sloprail/file-guard/structure.yaml", "allow:\n  - glob: \".sloprail/**\"\n  - glob: \"src/**\"\n"),
 	).ThenCommit("rules first"))
-	res := e.StopNow(proj, "s-042-07", false)
+	res := e.CheckRunRaw(proj, "s-042-07", e.RunBase("s-042-07"), "HEAD")
 	if strings.Contains(res.Output, "grounded-rule-changes") || strings.Contains(res.Output, "SR042") {
 		t.Fatalf("adding rules was refused or judged:\n%s", res.Output)
 	}
@@ -37,9 +37,10 @@ func TestT042_08_NewConfigYamlStillNeedsGrounding(t *testing.T) {
 	e.Git(proj, "rm", "-q", ".sloprail/config.yaml")
 	e.CommitAll(proj, "no config")
 	// Written by a script, which no pre-write gate models: only the file-guard sees it,
-	// at Stop, in the commit.
+	// at Stop, in the commit. The commit-time cite gate is switched off in the same file, so the
+	// uncited commit reaches Stop (the gate's own package is 058).
 	e.Run(proj, "s-042-08", "turn off the invoices rule", Turns("done",
-		Bash("w1", `mkdir -p .sloprail && python3 -c "open('.sloprail/config.yaml','w').write('disabled:\\n  - sloprail/file-guard/invoices\\n')"`),
+		Bash("w1", `mkdir -p .sloprail && python3 -c "open('.sloprail/config.yaml','w').write('disabled:\\n  - sloprail/file-guard/invoices\\n  - sloprail/gate/cite-before-commit\\n')"`),
 	).ThenCommit("disable"))
 	if got, out := blocked(e, proj, "s-042-08"); !got {
 		t.Fatalf("a newly added config.yaml with a disabled: entry was not refused:\n%s", out)

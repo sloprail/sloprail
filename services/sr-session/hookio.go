@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -38,6 +39,9 @@ type HookPayload struct {
 	// reports the sub-agent without reporting where it wrote it.
 	AgentID string `json:"agent_id"`
 
+	// AgentType is the kind of sub-agent, on SubagentStart/SubagentStop (e.g. "Explore").
+	AgentType string `json:"agent_type"`
+
 	// SessionID is the id the harness currently reports. Never the identity
 	// anything is keyed on — Claude Code re-forks it mid-conversation — but it
 	// names the file the harness is writing, which is what makes it worth
@@ -50,6 +54,9 @@ type HookPayload struct {
 	// search for a record reported where it is not (transcript.RelocateRecord)
 	// must not run for one: see sessionRecord.
 	Source string `json:"source"`
+
+	// WorktreePath is the worktree a WorktreeRemove hook reports as being removed.
+	WorktreePath string `json:"worktree_path"`
 
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
@@ -258,6 +265,18 @@ func (p HookPayload) sessionRecord() (string, error) {
 // by the same fields, so nothing depends on this to find a transcript.
 func (p HookPayload) IsSubagent() bool {
 	return p.AgentTranscriptPath != "" || p.AgentID != ""
+}
+
+// stateCwd is the directory this payload's session stores are keyed by: for a root,
+// where its record says it began (so an agent that `cd`s into another worktree keeps
+// its verdicts, baseline and counters); for a sub-agent, its own cwd. See
+// sessionpath.StateCwd.
+func (p HookPayload) stateCwd() string {
+	record, err := p.record()
+	if err != nil {
+		return p.Cwd
+	}
+	return sessionpath.StateCwd(record, p.Cwd)
 }
 
 // Tool implements filemod.Pending: what the harness calls the tool it is about

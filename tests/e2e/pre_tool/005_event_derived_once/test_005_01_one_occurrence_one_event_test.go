@@ -3,6 +3,8 @@ package e2e
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // event_derived_once: the event a rule is matched against and the event its check
@@ -123,7 +125,9 @@ checks:
 // identical flattened invocation list — evidence the walk happened once and its
 // result was shared, not repeated per rule.
 func TestT005_02_OneCommandLineIsWalkedOnce(t *testing.T) {
-	e := New(t)
+	// The harness's own pre-Stop `sr-checks run` is itself a command line a gate on commands
+	// would be handed; this test counts only the command the scenario runs.
+	e := New(t, harness.NoAutoCheck())
 	proj := e.Project()
 	e.GitInit(proj)
 	for _, name := range []string{"first", "second", "third"} {

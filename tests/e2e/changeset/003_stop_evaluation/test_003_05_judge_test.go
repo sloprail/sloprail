@@ -36,6 +36,7 @@ func judgeProject(t *testing.T, verdict string) (*Env, string) {
 	e.CommitAll(proj, "the project")
 	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
 	e.CommitAll(proj, "the judged rule")
+	e.PushBranch(proj, "main")
 	e.InstallJudgeClaudeCapturing(proj, promptFile, verdict)
 	return e, proj
 }
@@ -94,8 +95,8 @@ func TestT003_06_AFailIsReplayedUntilTheInputChanges(t *testing.T) {
 	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
 		t.Fatalf("a Stop over unchanged input asked the judge again (%d calls)", n)
 	}
-	if out := e.ChecksStatus(proj, "s-003-06", "--failing"); !strings.Contains(out, "fail") || !strings.Contains(out, "JUDGE-SAYS-NO") {
-		t.Fatalf("the failure is not outstanding in the check results:\n%s", out)
+	if out := e.CheckVerify(proj, "s-003-06", "origin/main", "HEAD"); out.Code == 0 || !strings.Contains(out.Output, "fail") || !strings.Contains(out.Output, "JUDGE-SAYS-NO") {
+		t.Fatalf("the failure is not outstanding in the check results:\n%s", out.Output)
 	}
 
 	// A fix changes the input: judged again — over the whole squashed range — and
@@ -110,13 +111,9 @@ func TestT003_06_AFailIsReplayedUntilTheInputChanges(t *testing.T) {
 		t.Fatalf("the fix was judged without the original commit in the range:\n%s", prompt)
 	}
 
-	// The old failure is cleared as stale, not left standing forever.
-	if out := e.ChecksStatus(proj, "s-003-06", "--failing"); strings.TrimSpace(out) != "" {
-		t.Fatalf("a stale failure is still outstanding:\n%s", out)
-	}
-	sql := e.ChecksSQL(proj, "s-003-06", "select status, json_extract(metadata, '$.reason') as reason from checks where json_extract(metadata, '$.reasoning') like '%JUDGE-SAYS-NO%'")
-	if !strings.Contains(sql.Output, `"skip"`) || !strings.Contains(sql.Output, "stale") {
-		t.Fatalf("the superseded failure should be a stale skip:\n%s", sql.Output)
+	// The old failure no longer holds the range: what is stored for the new input passes.
+	if out := e.CheckVerify(proj, "s-003-06", "origin/main", "HEAD"); out.Code != 0 {
+		t.Fatalf("a superseded failure still holds the range:\n%s", out.Output)
 	}
 
 	// And it passed at a head: the watermark moved, nothing new is judged.

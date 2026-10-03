@@ -34,9 +34,8 @@ type Payload struct {
 	// Subject is what is being judged as one unit. Without `subjects:` it is the
 	// whole changeset; with it, one entry the rule's script returned. Carried
 	// from the start so `subjects:` adds a producer, not a field.
-	Subject        Subject        `json:"subject"`
-	TranscriptPath string         `json:"transcriptPath"`
-	Context        map[string]any `json:"context"`
+	Subject        Subject `json:"subject"`
+	TranscriptPath string  `json:"transcriptPath"`
 }
 
 // Event is the fixed event a changeset evaluation presents.
@@ -89,7 +88,10 @@ type File struct {
 	// Status is A, M, D or R.
 	Status string `json:"status"`
 	// OldPath is where a renamed file came from; empty otherwise.
-	OldPath    string   `json:"oldPath"`
+	OldPath string `json:"oldPath"`
+	// OldBlob and NewBlob are git's object ids of the two sides: what a verdict key is over.
+	OldBlob    string   `json:"oldBlob,omitempty"`
+	NewBlob    string   `json:"newBlob,omitempty"`
 	OldContent string   `json:"oldContent"`
 	NewContent string   `json:"newContent"`
 	OldMarkers []Marker `json:"oldMarkers"`
@@ -99,6 +101,10 @@ type File struct {
 	// Commits are the SHAs of the range's commits that changed this file, oldest
 	// first, a rename followed back to the name the file had before it.
 	Commits []string `json:"commits"`
+	// Substantive is the subset of Commits whose change to this file is more than
+	// whitespace. Not part of the wire form: it decides which commits must carry a
+	// citation (ForFile).
+	Substantive []string `json:"-"`
 }
 
 // Other is a file of the range the rule did not select.
@@ -117,17 +123,19 @@ type Marker struct {
 // Subject is one unit of evaluation and caching.
 //
 // Subjects (by Role) produces them: one file per requirement, the whole changeset
-// per check. The shape is here so that `subjects:` — a script returning several,
-// each fingerprinted and judged on its own, possibly over a per-commit sub-range —
-// replaces that producer and changes neither this type nor the verdict key, which
-// already carries a subject id.
+// per check. A rule's `subjects:` script (ParseSubjects) returns several instead, each
+// fingerprinted and judged on its own; the verdict key already carries a subject id.
 type Subject struct {
 	ID    string   `json:"id"`
 	Files []string `json:"files"`
 	// Range, when set, narrows the subject to a sub-range of the changeset (a
-	// single commit's, for example). Unused until `subjects:` exists.
+	// single commit's, for example). Not produced yet.
 	Range   *SubRange      `json:"range,omitempty"`
 	Context map[string]any `json:"context"`
+	// Fingerprint is what the `subjects:` script says the subject's verdict depends on
+	// besides its files' content (a file the checks open with their own tools): added to the
+	// verdict's cache key. Session-independent; empty for the default subject.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // SubRange is a sub-range of the changeset, as commit names.
@@ -175,10 +183,7 @@ func Subjects(cs Changeset, role Role) []Subject {
 }
 
 // NewPayload assembles what a check receives for one subject of a changeset.
-func NewPayload(cs Changeset, subject Subject, transcriptPath string, context map[string]any) Payload {
-	if context == nil {
-		context = map[string]any{}
-	}
+func NewPayload(cs Changeset, subject Subject, transcriptPath string) Payload {
 	if subject.Context == nil {
 		subject.Context = map[string]any{}
 	}
@@ -187,7 +192,6 @@ func NewPayload(cs Changeset, subject Subject, transcriptPath string, context ma
 		Changeset:      cs,
 		Subject:        subject,
 		TranscriptPath: transcriptPath,
-		Context:        context,
 	}
 }
 
@@ -204,16 +208,22 @@ func (cs Changeset) Change() string {
 	return b.String()
 }
 
-// ForFile is the citations that ground a file: those quoted by the commit that
-// last changed it. A citation grounds the change it rode on, so an uncited change
-// on top of a cited one leaves the file uncited, while a cited commit on top of an
-// uncited one grounds the file as it now stands — the same way `sr-file` cited the
-// whole file. A file no commit is known to have changed has no citations.
+// ForFile is the citations that ground a file: those quoted by the last commit of the
+// range that changed its content by more than whitespace. A citation grounds the
+// change it rode on, so an uncited real change on top of a cited one leaves the file
+// uncited, while a cited real change on top of an uncited one grounds the file as it
+// now stands. A whitespace-only commit (or an empty trailer-only one) grounds nothing
+// and is skipped: it can neither lend a citation to an earlier uncited change nor
+// take one away. A file whose every commit is whitespace-only is judged by the commit
+// that last changed it. A file no commit is known to have changed has no citations.
 func (cs Changeset) ForFile(f File) []Citation {
 	if len(f.Commits) == 0 {
 		return nil
 	}
 	tip := f.Commits[len(f.Commits)-1]
+	if len(f.Substantive) > 0 {
+		tip = f.Substantive[len(f.Substantive)-1]
+	}
 	var out []Citation
 	for _, c := range cs.Citations {
 		if slices.Contains(c.Commits, tip) {
