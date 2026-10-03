@@ -603,7 +603,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	tSerial := time.Now()
 	var due []sessionstate.TrackedRange
 	memo := newCoverMemo()
-	vmemo := &verifyMemo{store: store}
+	vmemo := &verifyMemo{store: store, plugins: func(folder string) []string { return pluginRuleHashes(quiet, folder, reg) }}
 	recorded := lazyRecordedCitations(p, store)
 	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
 	oneEach := collapseByRepo(ranges, p.AgentID, memo)
@@ -879,7 +879,9 @@ type verifyMemo struct {
 
 	hashMu sync.Mutex
 	facts  map[string]string
-	hashes map[string][]string // (folder, its rules) -> their hashes, read once per Stop
+	// plugins is the sorted hashes of the plugin rules a folder loads (nil: none).
+	plugins func(folder string) []string
+	hashes  map[string][]string // (folder, its rules) -> their hashes, read once per Stop
 }
 
 // ruleHashes is the hash of every guard's rule, read from disk once per (folder, rule set) for
@@ -998,6 +1000,24 @@ func (m *verifyMemo) quickKey(r sessionstate.TrackedRange, p HookPayload, cm *co
 	return verifyMemoPrefix + hex.EncodeToString(h.Sum(nil))
 }
 
+// pluginRuleHashes is the hash of every plugin rule the folder loads, sorted: a plugin lives
+// outside the repository, so an update to it is not seen in the hash of the .sloprail.
+func pluginRuleHashes(quiet *cobra.Command, folder string, reg *module.Registry) []string {
+	var out []string
+	for _, g := range newNatureDeclarations(quiet, folder, reg).FileGuards {
+		if !g.Origin.FromPlugin() {
+			continue
+		}
+		h, err := changeset.RuleHashAt(folder, g.Dir, true)
+		if err != nil {
+			h = "unreadable"
+		}
+		out = append(out, g.Qualified()+"="+h)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // folderFacts is what, besides commits, a folder's verify answer rests on: the hash of its
 // .sloprail (every rule, as on disk) and the tip of its results ref. "" when either cannot be
 // read. Read once per folder per Stop.
@@ -1011,6 +1031,9 @@ func (m *verifyMemo) folderFacts(folder string) string {
 	if h, err := changeset.RuleHashAt(folder, filepath.Join(folder, ".sloprail"), false); err == nil {
 		if cache, err := checkrun.OpenLocalCache(folder); err == nil {
 			v = h + "@" + cache.Tip()
+			if m.plugins != nil {
+				v += "@" + strings.Join(m.plugins(folder), ",")
+			}
 		}
 	}
 	if m.facts == nil {

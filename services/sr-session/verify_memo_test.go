@@ -150,3 +150,26 @@ func TestQuickKeyInvalidations(t *testing.T) {
 	m := &verifyMemo{store: openStore(t)}
 	assert.Empty(t, m.quickKey(explicit, HookPayload{}, newCoverMemo()), "a moving base name is resolved in full")
 }
+
+// A plugin lives outside the repository: a change to one of its rules must name another answer.
+func TestQuickKeyPluginRuleChangeInvalidates(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, ".sloprail"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, ".sloprail", "x.yaml"), []byte("a: b\n"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "commit", "-m", "a")
+	runGit(t, proj, "branch", "feat")
+	r := sessionstate.TrackedRange{Folder: proj, Head: "feat", AddedBy: sessionstate.RangeAuto}
+	hashes := []string{"plug/g=h1"}
+	key := func() string {
+		m := &verifyMemo{store: openStore(t), plugins: func(string) []string { return hashes }}
+		return m.quickKey(r, HookPayload{}, newCoverMemo())
+	}
+	k := key()
+	require.NotEmpty(t, k)
+	assert.Equal(t, k, key())
+	hashes = []string{"plug/g=h2"}
+	assert.NotEqual(t, k, key(), "a plugin rule changed")
+	hashes = []string{"plug/g=h1", "plug/h=h3"}
+	assert.NotEqual(t, k, key(), "a plugin rule added")
+}
