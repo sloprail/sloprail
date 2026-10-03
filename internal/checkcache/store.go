@@ -70,6 +70,9 @@ type Store struct {
 	frozenTip string
 	frozenSn  *snapshot
 
+	forkTip string    // the overlay PullFrom fetched ("" = none); consulted after the local ref
+	forkSn  *snapshot //
+
 	beforeGcPush func() // test seam: runs after Gc committed locally, before it pushes
 
 	pushErr error // why the last push of local results failed; they are retried on the next sync or put
@@ -210,11 +213,18 @@ func (s *Store) sync() error {
 	return s.reconcile(old, s.track())
 }
 
-// PullFrom merges the results branch of another repository (a URL or a remote name: a fork's
-// clone URL) into the local ref, read-only: nothing is pushed and the remote is never written.
-// Its records join the lookup; a missing branch is not an error, an unreachable repository is.
+// PullFrom fetches the results branch of another repository (a URL or a remote name: a fork's
+// clone URL) as a read-only overlay for Lookup: nothing is pushed, nothing is written to the
+// remote or to the local results ref. A missing branch is not an error, an unreachable
+// repository is.
+//
 // Trust: the other repository's author wrote those records, so they can say PASS for anything.
-// The caller decides that is acceptable (see sr-checks verify --fork-url).
+// For now that is accepted: fork verdicts are trusted and human code review is the safeguard
+// (the decision on issue #189; see sr-checks verify --fork-url).
+//
+// Precedence: the base repository's own records always win. A fork record is consulted only for
+// a key the local ref has no record for at all, whatever the timestamps, so a fork can never
+// mask a FAIL (or a PASS) the base repository holds for the same key.
 func (s *Store) PullFrom(remote string) error {
 	if remote == "" {
 		return nil
@@ -222,11 +232,12 @@ func (s *Store) PullFrom(remote string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	track := s.opt.Ref + "-fork"
-	old := s.rev(track)
 	if err := s.fetchFrom(remote, track); err != nil {
 		return err
 	}
-	return s.reconcile(old, track)
+	s.forkTip = s.rev(track)
+	s.forkSn = nil
+	return nil
 }
 
 // reconcile makes the local ref hold everything the tracking ref does, and keeps what only
@@ -626,6 +637,36 @@ func (s *Store) Lookup(keys []Key) (map[string]Found, error) {
 	if err != nil {
 		return nil, err
 	}
+	out, err := s.lookupIn(sn, keys)
+	if err != nil || s.forkTip == "" {
+		return out, err
+	}
+	var rest []Key
+	for _, k := range keys {
+		if _, ok := out[k.ID()]; !ok {
+			rest = append(rest, k)
+		}
+	}
+	if len(rest) == 0 {
+		return out, nil
+	}
+	if s.forkSn == nil {
+		if s.forkSn, err = s.readSnapshotAt(s.forkTip); err != nil {
+			return nil, err
+		}
+	}
+	fk, err := s.lookupIn(s.forkSn, rest)
+	if err != nil {
+		return nil, err
+	}
+	for id, r := range fk {
+		out[id] = r
+	}
+	return out, nil
+}
+
+// lookupIn is Lookup over one snapshot.
+func (s *Store) lookupIn(sn *snapshot, keys []Key) (map[string]Found, error) {
 	out := make(map[string]Found, len(keys))
 	if len(sn.Segs) == 0 || len(keys) == 0 {
 		return out, nil

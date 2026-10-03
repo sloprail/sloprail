@@ -28,6 +28,11 @@ func TestT001_07_GitHubNativeResults(t *testing.T) {
 	}
 	contains(t, res.Output, "::error file=docs/a.md,title=file-guard/docs::", "To fix: run `sr-checks run --base "+base+" --head HEAD`")
 
+	contains(t, res.Output, "::stop-commands::")
+	if i, j := strings.Index(res.Output, "::stop-commands::"), strings.Index(res.Output, "::error file="); j < 0 || i < 0 {
+		t.Fatalf("annotations and guarded text both expected:\n%s", res.Output)
+	}
+
 	md, err := os.ReadFile(summary)
 	if err != nil {
 		t.Fatal(err)

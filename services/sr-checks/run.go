@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -270,9 +271,15 @@ func execute(cmd *cobra.Command, m mode) error {
 	if m == modeShow {
 		outcomes = filterShown(cmd, outcomes)
 	}
+	gh := m == modeVerify && githubFormat(cmd)
+	listing := w
+	var listed bytes.Buffer
+	if gh {
+		listing = &listed // guarded below: see ghresults.Guard
+	}
 	if m != modeRun {
 		if asJSON {
-			enc := json.NewEncoder(w)
+			enc := json.NewEncoder(listing)
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(outcomes); err != nil {
 				return err
@@ -283,9 +290,12 @@ func execute(cmd *cobra.Command, m mode) error {
 				if o.Status == "skipped" && o.Reason != "" {
 					line += "  " + o.Reason
 				}
-				fmt.Fprintln(w, line)
+				fmt.Fprintln(listing, line)
 			}
 		}
+	}
+	if gh && listed.Len() > 0 {
+		fmt.Fprint(w, ghresults.Guard(listed.String()))
 	}
 	if m == modeShow {
 		return nil
@@ -294,7 +304,6 @@ func execute(cmd *cobra.Command, m mode) error {
 	for _, f := range refusals {
 		out = append(out, f.Reason+" (file-guard "+f.Attribution+")")
 	}
-	gh := m == modeVerify && githubFormat(cmd)
 	var fix string
 	if gh {
 		baseRev, _ := cmd.Flags().GetString("base")
@@ -315,9 +324,12 @@ func execute(cmd *cobra.Command, m mode) error {
 	if len(out) == 0 {
 		return nil
 	}
-	fmt.Fprintln(w, joinRefusals(out))
 	if gh {
-		fmt.Fprintln(w, fix)
+		// The reasons can quote attacker-controlled file content: no line of it may act as a
+		// workflow command. Only the escaped ::error lines above run as commands.
+		fmt.Fprint(w, ghresults.Guard(joinRefusals(out)+"\n"+fix))
+	} else {
+		fmt.Fprintln(w, joinRefusals(out))
 	}
 	os.Exit(1)
 	return nil

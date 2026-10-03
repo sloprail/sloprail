@@ -4,6 +4,8 @@
 package ghresults
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"sort"
@@ -261,4 +263,27 @@ func escapeData(s string) string {
 
 func escapeProp(s string) string {
 	return strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A", ":", "%3A", ",", "%2C").Replace(s)
+}
+
+// Guard wraps human-readable text in GitHub's ::stop-commands:: block so that no line of it is
+// run as a workflow command (::add-mask::, ::set-env:: ...). Judge reasons can quote content an
+// attacker controls, so everything that is not one of this package's own escaped lines goes
+// through here. The token is fresh and crypto-random per call: text cannot know it to close
+// the block early.
+func Guard(text string) string {
+	return GuardWith(newToken(), text)
+}
+
+// GuardWith is Guard with a given token (for tests).
+func GuardWith(token, text string) string {
+	text = strings.TrimSuffix(text, "\n")
+	return "::stop-commands::" + token + "\n" + text + "\n::" + token + "::\n"
+}
+
+func newToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("sloprail: no randomness for the stop-commands token: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }

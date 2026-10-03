@@ -81,3 +81,23 @@ func TestNoAnnotationsWhenGreen(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestGuardWrapsInjectedCommands(t *testing.T) {
+	text := "stale\n::add-mask::secret\n::set-env name=X::1"
+	out := Guard(text)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	tok := strings.TrimPrefix(lines[0], "::stop-commands::")
+	if len(tok) < 32 || lines[len(lines)-1] != "::"+tok+"::" {
+		t.Fatalf("not a stop-commands block:\n%s", out)
+	}
+	inner := strings.Join(lines[1:len(lines)-1], "\n")
+	if inner != text || !strings.Contains(out, "\n::add-mask::secret\n") {
+		t.Fatalf("the text must sit unchanged inside the block:\n%s", out)
+	}
+	if strings.Index(out, "::add-mask::") < strings.Index(out, "::stop-commands::") || strings.Index(out, "::add-mask::") > strings.LastIndex(out, "::"+tok+"::") {
+		t.Fatal("::add-mask:: is outside the block")
+	}
+	if Guard(text) == out {
+		t.Fatal("the token must be fresh per call")
+	}
+}

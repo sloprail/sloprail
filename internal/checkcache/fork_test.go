@@ -60,3 +60,35 @@ func TestPullFromForkWithoutBranchIsNotAnError(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The base repository's record wins for a key both hold, whatever the timestamps: a fork cannot
+// mask a base FAIL with a newer PASS.
+func TestPullFromNeverMasksBaseRecord(t *testing.T) {
+	baseRemote, forkRemote := bareRemote(t), bareRemote(t)
+	r := genRuns(11, 1)[0]
+	baseFail := withCheck(r, StatusFail, "2026-01-01T00:00:00.000000000Z")
+	forkPass := withCheck(r, StatusPass, "2027-01-01T00:00:00.000000000Z")
+	forkPass.ID = "run_zzzz"
+
+	if err := newRepo(t, baseRemote).Put([]Run{baseFail}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newRepo(t, forkRemote).Put([]Run{forkPass}); err != nil {
+		t.Fatal(err)
+	}
+	ci := newRepo(t, baseRemote)
+	if err := ci.Pull(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ci.PullFrom(forkRemote); err != nil {
+		t.Fatal(err)
+	}
+	found, err := ci.Lookup([]Key{keyOf(r)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := found[keyOf(r).ID()]
+	if !ok || got.Check.Status != StatusFail {
+		t.Fatalf("the base FAIL must win over a newer fork PASS, got %+v", got)
+	}
+}
