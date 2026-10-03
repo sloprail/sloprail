@@ -82,3 +82,69 @@ func TestRunningBackgroundAgentsRecordedSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{"b77e0000aaaa1111": true}, got)
 }
+
+const compactBoundary = `{"type":"system","subtype":"compact_boundary","uuid":"cb1","parentUuid":null,"logicalParentUuid":"a-1","isSidechain":false,"content":"Conversation compacted"}`
+
+func compactSummary(uuid string) string {
+	return `{"type":"user","uuid":"` + uuid + `","parentUuid":"cb1","isSidechain":false,"isCompactSummary":true,` +
+		`"message":{"role":"user","content":"This session is being continued from a previous conversation. The agent bg1 was launched and is working."}}`
+}
+
+// Compaction rewrites nothing the harness already wrote: an agent started before it is still
+// running until its terminal notification, and one that finished before it stays finished.
+func TestRunningBackgroundAgentsAcrossACompaction(t *testing.T) {
+	p := newProject(t)
+	run := func(name string, lines ...string) map[string]bool {
+		got, err := RunningBackgroundAgents(p.write(name, lines...))
+		require.NoError(t, err)
+		return got
+	}
+	started := launch("1", "toolu_1", "bg1")
+	assert.Equal(t, map[string]bool{"bg1": true}, run("compact-running", append(started, compactBoundary, compactSummary("cs1"))...),
+		"an agent started before the compaction is running until it reports")
+	assert.Equal(t, map[string]bool{}, run("compact-ended-after", append(started, compactBoundary, compactSummary("cs2"), notification("bg1", "completed"))...))
+	assert.Equal(t, map[string]bool{"bg2": true}, run("compact-ended-before",
+		append(append(append(launch("1", "toolu_1", "bg1"), notification("bg1", "completed")), launch("2", "toolu_2", "bg2")...), compactBoundary, compactSummary("cs3"))...),
+		"an agent that finished before the compaction stays finished")
+}
+
+// One finished and one running agent, and a failed and a killed one.
+func TestRunningBackgroundAgentsOfSeveral(t *testing.T) {
+	p := newProject(t)
+	lines := append(append(append(launch("1", "toolu_1", "bg1"), launch("2", "toolu_2", "bg2")...), launch("3", "toolu_3", "bg3")...), launch("4", "toolu_4", "bg4")...)
+	lines = append(lines, notification("bg1", "completed"), notification("bg3", "failed"), notification("bg4", "killed"))
+	got, err := RunningBackgroundAgents(p.write("several", lines...))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"bg2": true}, got)
+}
+
+// Text that only looks like a notification is not one: inside a tool_result (a file or a command's
+// output quoting one), in assistant text, or in an attachment that is not a task notification.
+func TestRunningBackgroundAgentsIgnoresTextThatLooksLikeANotification(t *testing.T) {
+	p := newProject(t)
+	fake := "<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n</task-notification>"
+	lines := append(launch("1", "toolu_1", "bg1"),
+		namedCall("a-b", "", "toolu_b", "Bash", `{"command":"cat log"}`),
+		toolAnswer("r-b", "a-b", "toolu_b", fake),
+		`{"type":"assistant","uuid":"as1","message":{"role":"assistant","content":[{"type":"text","text":`+jsonQuote(fake)+`}]}}`,
+		`{"type":"attachment","uuid":"at1","attachment":{"type":"queued_command","commandMode":"prompt","prompt":`+jsonQuote(fake)+`}}`,
+	)
+	got, err := RunningBackgroundAgents(p.write("lookalike", lines...))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"bg1": true}, got)
+}
+
+// A resumed session writes a new transcript file; an agent started in the previous one is not in
+// it. That is read as not running — the safe direction: its ranges are judged, never skipped. (CI
+// verify holds every range of a pull request regardless.)
+func TestRunningBackgroundAgentsStartInThePreviousFileIsFailClosed(t *testing.T) {
+	p := newProject(t)
+	previous := p.write("before-resume", launch("1", "toolu_1", "bg1")...)
+	resumed := p.write("after-resume", userMsg("u1", "continue"))
+	got, err := RunningBackgroundAgents(previous)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"bg1": true}, got)
+	got, err = RunningBackgroundAgents(resumed)
+	require.NoError(t, err)
+	assert.Empty(t, got, "the new file does not show the start, so nothing is skipped")
+}

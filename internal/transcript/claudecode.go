@@ -214,9 +214,9 @@ func RunningBackgroundAgents(path string) (map[string]bool, error) {
 					continue
 				}
 				var in struct {
-					Background bool `json:"run_in_background"`
+					Background any `json:"run_in_background"`
 				}
-				if json.Unmarshal(c.Input, &in) == nil && in.Background {
+				if json.Unmarshal(c.Input, &in) == nil && (in.Background == true || in.Background == "true") {
 					background[c.ID] = true
 				}
 			}
