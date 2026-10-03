@@ -10,11 +10,13 @@
 # until the committed tree shows such a job.
 #
 # Detected by a MARKER, never by a provider's file path, so GitHub Actions, GitLab CI, Azure
-# Pipelines, Bitbucket, Jenkins and the rest are all the same: any committed file with a line
-# containing `sr-mark: ci-verify` (a comment next to the `sr-checks verify` step). It is looked up
-# in HEAD (`git grep ... HEAD`), the committed tree, so an uncommitted CI file does not count: a
-# pipeline that is not committed does not run on a pull request. The gate does not parse the CI
-# config; the marker is a promise the author makes, kept honest by review.
+# Pipelines, Bitbucket, Jenkins and the rest are all the same: any committed file carrying the
+# sloprail marker `sr:ci verify` (a comment next to the `sr-checks verify` step, written by
+# `sr-mark apply ci --verify=<path>:<line>`). It is looked up with `sr-mark find ci --fqn verify`,
+# which reads HEAD, the committed tree, with the engine's own marker reader, so an uncommitted CI
+# file does not count and neither does free text that merely resembles the marker. The gate does
+# not parse the CI config; the file-guard `sloprail/file-guard/ci-verify-step` checks that a marked
+# file really runs `sr-checks verify` on pull requests and pushes to the default branch.
 #
 # Applies only where the project has its OWN file-guards: a committed file under
 # `.sloprail/file-guard/`. Guards a plugin ships are not the project's to enforce in its CI, and a

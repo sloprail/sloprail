@@ -61,10 +61,14 @@ func TestT041_04_MissingTriggersRefused(t *testing.T) {
 	}
 }
 
-// T041_05: a marker in a file of a provider the guard cannot read is refused (unsure fails closed).
-func TestT041_05_UnknownProviderRefused(t *testing.T) {
-	got := refusalOf(t, map[string]string{"Jenkinsfile": "// sr:ci verify\nsh 'sr-checks verify --base a --head b'\n"})
-	if !strings.Contains(got, "not a CI file this guard can check") {
-		t.Fatalf("a marker in an unknown provider's file was not refused:\n%s", got)
+// T041_05: any other provider's file passes with the marker and an `sr-checks verify` line, and is
+// refused when no line runs it.
+func TestT041_05_OtherProviderNeedsOnlyTheVerifyLine(t *testing.T) {
+	if got := refusalOf(t, map[string]string{"Jenkinsfile": "// sr:ci verify\nsh 'sr-checks verify --base a --head b'\n"}); got != "" {
+		t.Fatalf("a Jenkinsfile with the marker and a verify line was refused:\n%s", got)
+	}
+	got := refusalOf(t, map[string]string{"Jenkinsfile": "// sr:ci verify\nsh 'make test'\n"})
+	if !strings.Contains(got, "sr-checks verify") {
+		t.Fatalf("a Jenkinsfile with the marker and no verify line was not refused:\n%s", got)
 	}
 }
