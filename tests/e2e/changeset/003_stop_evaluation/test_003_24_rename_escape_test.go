@@ -22,7 +22,7 @@ const memoriesRule = "match: \"memories/**\"\ndeletions: include\nchecks:\n  - s
 // committed after them (so the seed is the baseline, not part of the range).
 func movedProject(t *testing.T) (*Env, string) {
 	t.Helper()
-	e := New(t)
+	e := NewUncited(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	body := "a memory long enough to be seen as a rename\nsecond line\nthird line\n"

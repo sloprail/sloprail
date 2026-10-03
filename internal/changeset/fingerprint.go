@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -46,18 +47,32 @@ func CitationPart(p Payload) (string, error) {
 		Pool  []transcript.SourceType
 		Quote string
 	}
-	var quotes []quote
-	for _, c := range p.Changeset.ForSubject(p.Subject) {
-		quotes = append(quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
+	type grounded struct {
+		Path   string
+		Quotes []quote
 	}
-	sort.Slice(quotes, func(i, j int) bool {
-		a, b := quotes[i], quotes[j]
-		if a.Quote != b.Quote {
-			return a.Quote < b.Quote
+	// Per file, not per subject: which file a quote grounds is part of the verdict (a quote
+	// that grounds one file of a subject and not another is not the same grounding).
+	var out []grounded
+	for _, f := range p.Changeset.Files {
+		if len(p.Subject.Files) > 0 && !slices.Contains(p.Subject.Files, f.Path) {
+			continue
 		}
-		return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
-	})
-	body, err := json.Marshal(quotes)
+		g := grounded{Path: f.Path}
+		for _, c := range p.Changeset.ForFile(f) {
+			g.Quotes = append(g.Quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
+		}
+		sort.Slice(g.Quotes, func(i, j int) bool {
+			a, b := g.Quotes[i], g.Quotes[j]
+			if a.Quote != b.Quote {
+				return a.Quote < b.Quote
+			}
+			return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
+		})
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	body, err := json.Marshal(out)
 	return string(body), err
 }
 

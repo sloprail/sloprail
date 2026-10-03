@@ -27,7 +27,7 @@ import (
 // a `Sloprail-Cites-User` trailer on a commit, settles it: the range carries a
 // citation after that, and a rule that refused it passes.
 func TestT041_37_TheRemedySettlesAnUncitedChange(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-37", prompt, Turns("done",
 		Write("w1", "memories/a.md", "v1 nobody asked for"),
 	).ThenCommit("write a note"))
@@ -96,7 +96,7 @@ func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
 // the file. The controls: the cited change alone passes, and a cited commit ON TOP of
 // an uncited one grounds the file as it now stands.
 func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-34", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# log\n"),
 		harness.Commit("c1", "write the log", harness.CitesUser("adopt a decision log")),
@@ -132,7 +132,7 @@ func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
 // first — one citation in the range does not ground a file it did not ride on. Citing
 // the second file in a commit that changes it passes.
 func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-53", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# a\n"),
 		harness.Commit("c1", "write a", harness.CitesUser("adopt a decision log")),
@@ -163,7 +163,7 @@ func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
 // makes a REAL change and cites grounds it; a whitespace-only commit after a cited
 // change takes nothing away.
 func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-70", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# log\nthe decision\n"),
 		harness.Commit("x", "write the decision"),
@@ -175,7 +175,7 @@ func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
 		t.Fatalf("a whitespace-only commit with a trailer washed the earlier uncited change:\n%s", blocks)
 	}
 
-	e2, proj2 := guarded(t, afterCitationGuard)
+	e2, proj2 := guardedUncited(t, afterCitationGuard)
 	e2.Run(proj2, "s-041-70b", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# log\nthe decision\n"),
 		harness.Commit("x", "write the decision"),
@@ -186,7 +186,7 @@ func TestT041_70_AWhitespaceCommitWithATrailerGroundsNothing(t *testing.T) {
 		t.Errorf("a real follow-up change that cites did not ground the file:\n%s", blocks)
 	}
 
-	e3, proj3 := guarded(t, afterCitationGuard)
+	e3, proj3 := guardedUncited(t, afterCitationGuard)
 	e3.Run(proj3, "s-041-70c", prompt, Turns("done",
 		Write("w1", "memories/a.md", "# log\nthe decision\n"),
 		harness.Commit("x", "write the decision", harness.CitesUser("adopt a decision log")),

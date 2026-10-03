@@ -74,7 +74,7 @@ func TestT038_22_RemovingTheScannerFileRefused(t *testing.T) {
 // T038_23: a delete the user asked for, citing their words, is admitted — the
 // requirement is the user's words, not a ban.
 func TestT038_23_CitedScannerDeleteAdmits(t *testing.T) {
-	e, proj := keywordsProject(t)
+	e, proj := keywordsProjectUncited(t)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to remove the scanner"}`)
 	const ask = "remove the mine scanner, we no longer track it"
 	res := e.Run(proj, "s-038-23", ask, Turns("done",

@@ -41,7 +41,7 @@ func stopRefusals(e *harness.Env, proj, sess string) int {
 // uncited rewrite of the same file, committed with no trailer, is refused at Stop
 // for want of a citation (not merely for want of a commit).
 func TestT041_33_AFailedCitedCallGroundsNothing(t *testing.T) {
-	e, proj := guarded(t, afterCitationGuard)
+	e, proj := guardedUncited(t, afterCitationGuard)
 	e.WriteFile(proj, "memories/a.md", "# a\nkeep this\n")
 	e.CommitAll(proj, "baseline")
 
@@ -83,7 +83,7 @@ new="$(printf '%s' "$p" | jq -r '.changeset.files[0].newContent // ""' | tail -n
 exit 0
 `
 	run := func(id string, turns ...harness.Turn) string {
-		e := New(t)
+		e := NewUncited(t)
 		proj := e.Project()
 		e.GitInit(proj)
 		e.FileGuard(proj, "grounded-memories", whenGuard, map[string]string{"body-changed.sh": bodyChanged})

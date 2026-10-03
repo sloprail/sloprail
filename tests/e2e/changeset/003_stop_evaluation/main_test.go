@@ -111,7 +111,17 @@ func project(t *testing.T, ruleYAML string) (*Env, string, string) {
 // check's script given from the ledger path it records to (recorder is the usual one).
 func seededProject(t *testing.T, ruleYAML string, seed map[string]string, check func(ledger string) string) (*Env, string, string) {
 	t.Helper()
-	e := New(t)
+	return seededProjectOn(t, New(t), ruleYAML, seed, check)
+}
+
+// uncitedProject is project with the commit-time cite gate off (see NewUncited).
+func uncitedProject(t *testing.T, ruleYAML string) (*Env, string, string) {
+	t.Helper()
+	return seededProjectOn(t, NewUncited(t), ruleYAML, map[string]string{"docs/seed.md": "seed\n", "notes/scratch.md": "scratch\n"}, recorder)
+}
+
+func seededProjectOn(t *testing.T, e *Env, ruleYAML string, seed map[string]string, check func(ledger string) string) (*Env, string, string) {
+	t.Helper()
 	proj := e.Project()
 	e.GitInit(proj)
 	for path, content := range seed {
@@ -152,4 +162,12 @@ func lastRun(t *testing.T, path string) Run {
 		t.Fatal("the check never ran")
 	}
 	return runs[len(runs)-1]
+}
+
+// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
+// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
+// the gate on, the agent could not make that commit at all. The gate is exercised in
+// tests/e2e/gate/058_cite_before_commit.
+func NewUncited(t *testing.T) *Env {
+	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithSubagentStopCheck(), harness.WithEnabledShipped("sloprail/gate/no-merge-over-refusals"), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
 }

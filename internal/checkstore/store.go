@@ -50,6 +50,9 @@ type Store interface {
 	// is terminal and is replayed, never re-judged until the input changes. An empty
 	// fingerprint (a script) never hits. The rule and its hash are part of the backend's key.
 	CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error)
+	// CachedByTrees finds, for a key that missed, a stored pass or fail of the same rule
+	// definition and subject from a complete run whose base and head trees equal these.
+	CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree string) (CachedCheck, bool, error)
 	// ResolveStale does nothing and returns 0: a stored fail is a fact about content that
 	// other branches share, so it is never marked stale (see the implementation).
 	ResolveStale(rule, ruleHash, liveRunID string) (int, error)

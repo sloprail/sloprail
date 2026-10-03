@@ -188,7 +188,7 @@ func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
 // `Sloprail-Cites-User` trailer, is refused at Stop for the missing citation before
 // any judge; amending the commit that changed it to carry the trailer passes.
 func TestT046_61_CommitMustCiteTheUsersWords(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := pinnedSpecProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to reword rule 1"}`)
 

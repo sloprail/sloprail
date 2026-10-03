@@ -17,7 +17,7 @@ import (
 // todo.md beside them, which removes nothing and so needs no citation. Following the refusal's own command (a
 // follow-up commit that restates the deleted file and carries the quote) then passes.
 func TestT049_26_OnlyTheFileThatRemovedContentNeedsTheCitation(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to drop the notes"}`)
 	e.WriteFile(proj, "memories/notes.md", "a fact worth keeping\n")

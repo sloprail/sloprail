@@ -236,7 +236,7 @@ func TestT047_08_ShellRedirectIsRefused(t *testing.T) {
 // engine sees ahead, so the gate never asks; the file-guard of the same name asks
 // at Stop, and the change carries no citation, so it blocks the turn.
 func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := gcProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
@@ -280,7 +280,7 @@ func TestT047_11_UnknownResultIsRefused(t *testing.T) {
 // trailer is refused at Stop for the missing citation, before any judge; amending
 // the commit that changed the files to cite the source output passes.
 func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
-	e := newEnv(t)
+	e := newEnvUncited(t)
 	proj := gcProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the claim matches the cited output"}`)
 

@@ -88,3 +88,11 @@ func installExampleTree(t *testing.T, projDir, name string) {
 
 // (This package asserts on res.Refused()/res.Saw() and e.Exists(), so it needs no
 // blocking-error helpers; the gate refuses at pre-tool.)
+
+// newEnvUncited is newEnv with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
+// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
+// the gate on, the agent could not make that commit at all. The gate is exercised in
+// tests/e2e/gate/058_cite_before_commit.
+func newEnvUncited(t *testing.T) *harness.Env {
+	return harness.New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit"))
+}

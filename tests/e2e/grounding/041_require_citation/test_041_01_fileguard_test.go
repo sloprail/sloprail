@@ -82,7 +82,17 @@ func guardedPre(t *testing.T) (*harness.Env, string) {
 
 func guarded(t *testing.T, guard string) (*harness.Env, string) {
 	t.Helper()
-	e := New(t)
+	return guardedOn(t, New(t), guard)
+}
+
+// guardedUncited is guarded with the commit-time cite gate off (see NewUncited).
+func guardedUncited(t *testing.T, guard string) (*harness.Env, string) {
+	t.Helper()
+	return guardedOn(t, NewUncited(t), guard)
+}
+
+func guardedOn(t *testing.T, e *harness.Env, guard string) (*harness.Env, string) {
+	t.Helper()
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"record.sh": recordScript})
@@ -256,7 +266,7 @@ func TestT041_07_AfterCheckJudgesTheRangesCitations(t *testing.T) {
 require:
   - citation: {source_types: [user]}
 `
-	e, proj := guarded(t, afterGuard)
+	e, proj := guardedUncited(t, afterGuard)
 	e.Run(proj, "s-041-07", prompt, Turns("done", Write("w1", "memories/a.md", "# a")).ThenCommit("write a note"))
 	if blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-041-07", "Stop"), "\n"); !strings.Contains(blocks, noCitation) {
 		t.Errorf("an uncited commit was not refused at Stop for want of a citation:\n%s", blocks)

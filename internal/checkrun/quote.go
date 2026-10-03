@@ -23,6 +23,15 @@ type recordedQuote struct {
 // with sr-file has already found its quote, and what it lacks is only that the
 // quote has to ride on the COMMIT as a trailer.
 func (ev *changesetEvaluation) recordedQuotes(files []string, pools []transcript.SourceType) []recordedQuote {
+	return RecordedQuotes(ev.params.Recorded, files, pools)
+}
+
+// RecordedQuote is a recorded citation as the trailer that carries it and its quote.
+type RecordedQuote = recordedQuote
+
+// RecordedQuotes is recordedQuotes over a session's recorded citations, for a caller that has
+// no evaluation (the commit-time gate hands them back the same way a refusal after the commit does).
+func RecordedQuotes(recorded map[string][]transcript.Citation, files []string, pools []transcript.SourceType) []RecordedQuote {
 	var out []recordedQuote
 	seen := map[string]bool{}
 	recorded := ev.params.Recorded

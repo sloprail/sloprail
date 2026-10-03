@@ -916,3 +916,153 @@ func TestEvaluate_ASessionlessRunStoresNoFail(t *testing.T) {
 	require.False(t, refused)
 	require.Len(t, guardRows(t, g.results, g.guard), 1, "a pass is stored")
 }
+
+// A stored FAIL of an uncited change is never replayed once the same content is re-landed as
+// one cited commit on a fresh branch: the quotes that ground the file are part of the key.
+func TestEvaluate_ACitationFailIsNotReplayedOnceTheSameContentIsCitedOnAFreshBranch(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "old")
+	oldCommit := f.commitDoc(t, "docs/a.md", "clean")
+	r, refused := f.evaluateWith(t, session, "b1")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, oldCommit[:7], "the reason names the commit of this range")
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "fresh", fromRule)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "doc", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	r, refused = f.evaluateWith(t, session, "b2")
+	assert.False(t, refused, r.Reason)
+	for _, g := range f.verifyReasons(t) {
+		assert.Empty(t, g.Reason, "verify agrees")
+	}
+}
+
+// The report: two files, one cited commit on the old branch grounded b only, and the file a
+// was refused. Re-landed as one commit citing the same quote on a fresh branch (same content,
+// same quote set), a is grounded now: the verdict key is per file, so it is judged fresh.
+func TestEvaluate_AStoredCitationFailIsNotReplayedWhenTheQuoteNowGroundsAnotherFile(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+	write := func(name, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", name), []byte(body), 0o644))
+	}
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "old")
+	write("a.md", "clean a")
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "uncited")
+	write("b.md", "clean b")
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "cited", "-m", changeset.TrailerCitesUser+": the user said so")
+	oldA := runGit(t, f.repo, "rev-list", "--max-count=1", "HEAD~1")
+	r, refused := f.evaluateWith(t, session, "b1")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, oldA[:7])
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "fresh", fromRule)
+	write("a.md", "clean a")
+	write("b.md", "clean b")
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "both", "-m", changeset.TrailerCitesUser+": the user said so")
+
+	r, refused = f.evaluateWith(t, session, "b2")
+	assert.False(t, refused, r.Reason)
+	for _, g := range f.verifyReasons(t) {
+		assert.Empty(t, g.Reason, "verify agrees")
+	}
+}
+
+// A stored citation FAIL with the same key from another branch is judged again, so its
+// reason names the commit of the current range, not the old branch's.
+func TestEvaluate_ACitationFailReplayedAcrossBranchesNamesTheCurrentCommit(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(""), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+	runGit(t, f.repo, "checkout", "-q", "-b", "old")
+	oldC := f.commitDoc(t, "docs/a.md", "clean")
+	_, refused := f.evaluateWith(t, session, "b1")
+	require.True(t, refused)
+	runGit(t, f.repo, "checkout", "-q", "-b", "fresh", fromRule)
+	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("clean"), 0o644))
+	runGit(t, f.repo, "add", "-A")
+	runGit(t, f.repo, "commit", "-m", "re-landed")
+	newC := runGit(t, f.repo, "rev-parse", "HEAD")
+	r, refused := f.evaluateWith(t, session, "b2")
+	require.True(t, refused)
+	assert.Contains(t, r.Reason, newC[:7])
+	assert.NotContains(t, r.Reason, oldC[:7])
+}
+
+// verifyOver is `sr-checks verify --base base --head HEAD`.
+func (f *evalFixture) verifyOver(t *testing.T, base string) ([]FileGuardResult, []CheckOutcome) {
+	t.Helper()
+	p := f.params(t, f.results)
+	rng, err := gitrepo.ResolveRange(f.repo, base, "HEAD")
+	require.NoError(t, err)
+	p.Range, p.Verify = rng, true
+	return Evaluate(p)
+}
+
+// A squash merge lands the judged branch's net change in one commit with another message, so
+// the per-file citation quotes (and the verdict key) differ; the same base and head TREES are
+// the same change, judged already: verify reads the PR run's verdict. A base that moved is a
+// different change: not judged.
+func TestEvaluate_VerifyReusesAVerdictJudgedOverTheSameTrees(t *testing.T) {
+	f := newEvalFixture(t, func(g *declaration.FileGuard) {
+		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
+	})
+	session := filepath.Join(t.TempDir(), "session.jsonl")
+	require.NoError(t, os.WriteFile(session, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s1","cwd":"/x","message":{"role":"user","content":"please, the user said so today"}}`+"\n"), 0o644))
+	fromRule := runGit(t, f.repo, "rev-parse", "HEAD")
+	f.base = fromRule // the PR forks from main, where the rule already is
+
+	runGit(t, f.repo, "checkout", "-q", "-b", "pr")
+	for _, name := range []string{"docs/a.md", "docs/b.md"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(f.repo, name), []byte("clean"), 0o644))
+		runGit(t, f.repo, "add", "-A")
+		runGit(t, f.repo, "commit", "-m", name, "-m", changeset.TrailerCitesUser+": the user said so")
+	}
+	_, refused := f.evaluateWith(t, session, "b1")
+	require.False(t, refused)
+	assert.Empty(t, f.verifyReasons(t), "the PR's own verify is green")
+
+	// The squash onto an untouched main: another message, the same trees.
+	runGit(t, f.repo, "checkout", "-q", "-b", "land", fromRule)
+	runGit(t, f.repo, "merge", "--squash", "pr")
+	runGit(t, f.repo, "commit", "-m", "squash of pr")
+	got, outcomes := f.verifyOver(t, fromRule)
+	assert.Empty(t, got, "the PR run's verdict is reused")
+	require.NotEmpty(t, outcomes)
+	assert.Contains(t, outcomes[0].Source, "stored, same trees as")
+
+	// Main moved while the PR was open: the squash's base tree is not the PR's.
+	runGit(t, f.repo, "checkout", "-q", "-b", "moved", fromRule)
+	moved := f.commitDoc(t, "other.txt", "main moved")
+	runGit(t, f.repo, "merge", "--squash", "pr")
+	runGit(t, f.repo, "commit", "-m", "squash of pr, main moved")
+	got, _ = f.verifyOver(t, moved)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet")
+}

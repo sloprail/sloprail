@@ -41,6 +41,9 @@ type CheckRun struct {
 	RuleHash string
 	BaseRef  string
 	HeadRef  string
+	// BaseTree and HeadTree are the tree ids of BaseRef and HeadRef ("" when unknown).
+	BaseTree string
+	HeadTree string
 	// ExitCode and Error record an ENGINE failure — a git error, a range that could not be
 	// computed. Such a run passes nothing: it is never read as an empty range.
 	ExitCode int
@@ -138,7 +141,7 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 	}
 	run := &checkcache.Run{
 		ID: newID("run"), RunAt: stamp(), BatchID: r.BatchID, Rule: r.CheckID, RuleHash: ruleHash,
-		BaseRef: r.BaseRef, HeadRef: r.HeadRef, ExitCode: r.ExitCode, Error: r.Error, Complete: r.Complete,
+		BaseRef: r.BaseRef, HeadRef: r.HeadRef, BaseTree: r.BaseTree, HeadTree: r.HeadTree, ExitCode: r.ExitCode, Error: r.Error, Complete: r.Complete,
 		Metadata: r.Metadata, RepoID: r.RepoID, Branch: r.Branch, SessionID: r.SessionID, AgentID: r.AgentID,
 	}
 	s.runs = append(s.runs, run)
@@ -238,6 +241,55 @@ func (s *store) CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (
 	}
 	return CachedCheck{Status: best.Check.Status, Metadata: best.Check.Metadata, Run: CheckRun{
 		CheckID: best.Run.Rule, RuleHash: best.Run.RuleHash, BaseRef: best.Run.BaseRef, HeadRef: best.Run.HeadRef,
+		RunIdentity: RunIdentity{RepoID: best.Run.RepoID, Branch: best.Run.Branch, SessionID: best.Run.SessionID, AgentID: best.Run.AgentID},
+	}}, true, nil
+}
+
+// CachedByTrees reads, when a key misses, the verdict of a COMPLETE run of the same rule at
+// the same definition whose base and head TREES equal these: identical trees are an identical
+// net change, whichever commits (a squash of a judged branch) carry it. The newest such pass
+// or fail wins; a run without trees, or with an engine error, never matches.
+func (s *store) CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree string) (CachedCheck, bool, error) {
+	if baseTree == "" || headTree == "" {
+		return CachedCheck{}, false, nil
+	}
+	if err := s.live(); err != nil {
+		return CachedCheck{}, false, err
+	}
+	var best *checkcache.Found
+	consider := func(run checkcache.Run) {
+		if !run.Complete || run.ExitCode != 0 || run.Error != "" || run.Rule != rule || run.RuleHash != ruleHash ||
+			run.BaseTree != baseTree || run.HeadTree != headTree {
+			return
+		}
+		for _, c := range run.Checks {
+			if c.Subject != subject || c.Kind != kind || c.Fingerprint == "" || (c.Status != StatusPass && c.Status != StatusFail) {
+				continue
+			}
+			f := checkcache.Found{Run: run, Check: c}
+			if best == nil || checkcache.Newer(f, *best) {
+				best = &f
+			}
+		}
+	}
+	s.mu.Lock()
+	for _, run := range s.runs {
+		consider(*run)
+	}
+	s.mu.Unlock()
+	runs, err := s.cache.Runs()
+	if err != nil {
+		return CachedCheck{}, false, fmt.Errorf("checkstore: result lookup: %w", err)
+	}
+	for _, run := range runs {
+		consider(run)
+	}
+	if best == nil {
+		return CachedCheck{}, false, nil
+	}
+	return CachedCheck{Status: best.Check.Status, Metadata: best.Check.Metadata, Run: CheckRun{
+		CheckID: best.Run.Rule, RuleHash: best.Run.RuleHash, BaseRef: best.Run.BaseRef, HeadRef: best.Run.HeadRef,
+		BaseTree: best.Run.BaseTree, HeadTree: best.Run.HeadTree,
 		RunIdentity: RunIdentity{RepoID: best.Run.RepoID, Branch: best.Run.Branch, SessionID: best.Run.SessionID, AgentID: best.Run.AgentID},
 	}}, true, nil
 }

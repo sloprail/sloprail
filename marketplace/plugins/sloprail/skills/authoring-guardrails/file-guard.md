@@ -90,7 +90,12 @@ never the working tree.
   `sr-checks run` command that produces it.
 - **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below), and optionally a git `pre-push` hook.
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
-  backstop for anything a session did not track.
+  backstop for anything a session did not track. A squash merge keeps the PR's
+  verdict: `verify` reuses a stored verdict of the same rule judged over the same base
+  and head **trees** (`(stored, same trees as <base>..<head>)`), PASS or FAIL, never
+  across different trees. So squash-merge an **up-to-date** PR (merge main into it
+  first); if main moved while it was open the push to main reads "not judged yet" —
+  run `sr-checks run --base <before> --head <after>` for that push.
 
 ### Session folders and tracked ranges
 
@@ -172,13 +177,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }      # the merge base is needed
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+      # Go, not install.sh: no release tarball carries sr-checks yet. Pin a commit or main.
       - run: |
-          curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+          GOBIN="$HOME/.local/bin" go install github.com/sloprail/sloprail/services/sr-checks@main
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: sr-checks verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
 ```
 
-`verify` fetches `sloprail/checks` from `origin` and reads it; it never writes. Make
+`verify` fetches `sloprail/checks` from `origin` and reads it; it never writes. Plugins the project enables but CI has not installed are reported on stderr and their rules are not verified there (the exit status is unaffected). Make
 the job a required status check. Red means some subject has no stored pass: run
 `sr-checks run` over the same range and push.
 

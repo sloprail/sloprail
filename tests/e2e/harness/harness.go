@@ -71,6 +71,7 @@ type Env struct {
 	withoutShipped  []string // GitInit disables these shipped rules (WithoutShipped)
 	onlyShipped     string   // GitInit disables every shipped authoring file-guard but this one (WithOnlyShippedFileGuard)
 	enabledShipped  []string // GitInit enables these opt-in shipped rules (WithEnabledShipped)
+	ciVerifyGate    bool     // GitInit leaves sloprail/gate/ci-verify-required ON (WithCIVerifyRequired); every other package has it disabled
 	noShippedGuards bool     // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
 	shimDir         string   // a `claude` that is really the mock, ahead of the real one on PATH
 
@@ -300,6 +301,11 @@ func WithoutShipped(qualified ...string) Option {
 func WithEnabledShipped(qualified ...string) Option {
 	return func(e *Env) { e.enabledShipped = append(e.enabledShipped, qualified...) }
 }
+
+// WithCIVerifyRequired leaves the plugin's sloprail/gate/ci-verify-required in force. Every other
+// package has it switched off in the initial commit: it refuses a Stop in any repository with
+// file-guards and no committed `sr-mark: ci-verify`, which is no test's subject but its own.
+func WithCIVerifyRequired() Option { return func(e *Env) { e.ciVerifyGate = true } }
 
 // WithOnlyShippedFileGuard is WithoutShippedFileGuards for a package about ONE shipped
 // rule: every other authoring file-guard of the sloprail plugin is disabled in the
@@ -1108,6 +1114,9 @@ func (e *Env) GitInitUnborn(dir string) {
 	// list items to it with printf.
 	if len(e.enabledShipped) > 0 {
 		e.enableShipped(dir, e.enabledShipped)
+	}
+	if !e.ciVerifyGate {
+		e.DisablePluginGuardrail(dir, "sloprail/gate/ci-verify-required")
 	}
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)

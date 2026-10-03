@@ -549,3 +549,13 @@ func (req Request) judgeProject() string {
 	}
 	return req.Workspace
 }
+
+// PrerequisiteApplies reports whether a prerequisite applies to the request: true when it has
+// no `when`, else what its `when` script says (see prerequisiteApplies: only exit 1 waives).
+func (r Runner) PrerequisiteApplies(req Request, p declaration.Prerequisite) (bool, error) {
+	if p.When == "" {
+		return true, nil
+	}
+	applies, _, err := r.withDefaults().prerequisiteApplies(req, p.When)
+	return applies, err
+}

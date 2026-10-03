@@ -55,7 +55,7 @@ func TestT042_01_DisableViaConfigNeedsGrounding(t *testing.T) {
 // T042_02: editing a rule's script with no grounding is refused; the user's request does
 // pass it.
 func TestT042_02_EditRuleScriptNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	refuseThenPass(t, e, proj, "s-042-02", "loosen the demo rule so my notes land",
 		Turns("done", editScript(t, "w1", ".sloprail/file-guard/demo/check.sh", demoLoosened)...),
@@ -65,7 +65,7 @@ func TestT042_02_EditRuleScriptNeedsGrounding(t *testing.T) {
 // T042_03: deleting a rule's folder (what a stuck agent does with rm -rf) is refused; the
 // user asking for the rule's removal passes it.
 func TestT042_03_DeleteRuleFolderNeedsGrounding(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	refuseThenPass(t, e, proj, "s-042-03", "drop the demo rule, we no longer want it",
 		Turns("done", Bash("d1", "rm -rf .sloprail/file-guard/demo")),
@@ -78,7 +78,7 @@ func TestT042_03_DeleteRuleFolderNeedsGrounding(t *testing.T) {
 // T042_04: a real misfire, cited. A tool's output shows the rule refusing work that was
 // correct: the edit that fixes the rule is grounded in it.
 func TestT042_04_MisfireToolOutputGrounds(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	use, res := harness.CallWithOutput("t1", "Bash", map[string]string{"command": "./check-notes.sh"},
 		"demo refused notes/ok.md although it holds its heading, a correct note, so the rule misfires")

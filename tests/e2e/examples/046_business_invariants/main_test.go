@@ -143,3 +143,15 @@ func containsAll(haystack string, needles ...string) bool {
 	}
 	return true
 }
+
+// newEnvUncited is newEnv with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
+// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
+// the gate on, the agent could not make that commit at all. The gate is exercised in
+// tests/e2e/gate/058_cite_before_commit.
+func newEnvUncited(t *testing.T) *env {
+	t.Helper()
+	if msg := pinnedMockMissing(repoRoot(t), os.Getenv("A10N_CLAUDE_MOCK")); msg != "" {
+		missingMock(t, os.Getenv("CI"), msg)
+	}
+	return harness.New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit"))
+}

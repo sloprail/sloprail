@@ -30,7 +30,17 @@ const (
 // one of the wrapped forms the gates must see through.
 func researchProject(t *testing.T) (*harness.Env, string) {
 	t.Helper()
-	e := New(t)
+	return researchProjectOn(t, New(t))
+}
+
+// researchProjectUncited is researchProject with the commit-time cite gate off (see NewUncited).
+func researchProjectUncited(t *testing.T) (*harness.Env, string) {
+	t.Helper()
+	return researchProjectOn(t, NewUncited(t))
+}
+
+func researchProjectOn(t *testing.T, e *harness.Env) (*harness.Env, string) {
+	t.Helper()
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)

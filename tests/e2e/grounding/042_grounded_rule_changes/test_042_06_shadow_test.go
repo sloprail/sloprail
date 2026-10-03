@@ -13,7 +13,7 @@ import (
 // without protection it would take the plugin rule's name and judge nothing, so the same
 // commit could loosen a rule freely. The plugin's rule claims its name first.
 func TestT042_18_AProjectRuleCannotShadowIt(t *testing.T) {
-	e := New(t)
+	e := NewUncited(t)
 	proj := project(t, e)
 	const sess = "s-042-18"
 	// Written by a script, which no pre-write gate models, in one commit.
