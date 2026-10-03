@@ -7,8 +7,8 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T060_01: a wait loop that pgreps its own command line never ends, so it is refused with the
-// way forward; a wait on the command's own PID and a pgrep that cannot match itself are not.
+// T060_01: pgrep/pkill -f naming a sloprail program is refused with the way forward; any other
+// pattern, a wait on the command's own PID and a pgrep without -f are not.
 func TestT060_01_SelfMatchingPgrepIsRefusedAndOthersAreNot(t *testing.T) {
 	e := harness.New(t, harness.WithoutShippedFileGuards())
 	proj := e.Project()
@@ -20,8 +20,8 @@ func TestT060_01_SelfMatchingPgrepIsRefusedAndOthersAreNot(t *testing.T) {
 		`until ! pgrep -f "sr-checks run" >/dev/null; do sleep 5; done; echo finished`,
 		`while pgrep -f "sr-checks run" >/dev/null; do sleep 5; done`,
 		`while true; do pkill -f "sr-checks run"; sleep 1; done`,
-		`pgrep -fl "wait-for-me" && echo wait-for-me`,
-		`pgrep --full "wait-for-me"; echo wait-for-me`,
+		`pkill -f "sr-session stop"`,
+		`pgrep -fl "sr-checks run"`,
 	}
 	for i, cmd := range refused {
 		res := e.Run(proj, "s-060-01", "wait", Turns("done", Bash(fmt.Sprintf("r%d", i), cmd)))
@@ -36,11 +36,13 @@ func TestT060_01_SelfMatchingPgrepIsRefusedAndOthersAreNot(t *testing.T) {
 		`pgrep -x nginx`,
 		`pgrep nginx`,
 		`pgrep -f nginx; echo done`,
+		`until ! pgrep -f "my-server"; do sleep 1; done`,
+		`pgrep --full "wait-for-me"; echo wait-for-me`,
 	}
 	for i, cmd := range allowed {
 		res := e.Run(proj, "s-060-01", "check", Turns("done", Bash(fmt.Sprintf("a%d", i), cmd)))
 		if res.Saw("no-self-matching-pgrep") {
-			t.Errorf("%q cannot match itself but was refused:\n%s", cmd, res.Output)
+			t.Errorf("%q does not name a sloprail program but was refused:\n%s", cmd, res.Output)
 		}
 	}
 }
