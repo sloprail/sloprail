@@ -9,6 +9,7 @@
 //
 //	sr-mark apply <kind> --<fqn>=<path>:<line> [--<fqn>=<path>:<line> ...]
 //	sr-mark delete <kind> <fqn> [<fqn> ...]
+//	sr-mark find <kind> [--fqn <fqn>] [--rev <rev>]      read-only: committed markers, exit 0 found / 1 none / 2 error
 //
 // Kind is DATA, not a subcommand. A kind is whatever a project needs to mark — the engine ships
 // no list of them (see the Marker model in the sloprail-service spec: "Not drawn from a fixed
@@ -49,8 +50,10 @@ import (
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		if err.Error() != "" {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -68,6 +71,7 @@ func newRoot() *cobra.Command {
 	cmd.PersistentFlags().String("root", "", "Impl tree root for relative paths (default: $SLOPRAIL_GIT_ROOT, else cwd)")
 	cmd.AddCommand(newApplyCmd())
 	cmd.AddCommand(newDeleteCmd())
+	cmd.AddCommand(newFindCmd())
 	return cmd
 }
 

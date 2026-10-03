@@ -386,6 +386,23 @@
         "use": "delete <kind> <fqn> [<fqn> ...]",
         "short": "Remove // sr:<kind> <fqn> marker comments for the given fqns, wherever found",
         "long": "Scan the impl tree (--root, default $SLOPRAIL_GIT_ROOT or cwd) for `// sr:<kind> <fqn>`\n(or `# …` / `-- …` for SQL) comments naming any of the given fqns, and remove each matching\ncomment LINE. A marker that also carries other text on the same line is left untouched\n(the scanner only matches lines that ARE a marker comment, mirroring how sr-mark writes\nthem on their own line). Silently no-ops for an fqn with no marker anywhere.\n\nKIND is the first argument and is free-form, same as for `apply`; the fqns follow.\n\nEXAMPLE:\n  sr-mark delete blueprint order.cancel_only_pending order.cancel_only_from_early_status"
+      },
+      {
+        "path": "sr-mark find",
+        "use": "find <kind> [--fqn <fqn>] [--rev <rev>]",
+        "short": "List the // sr:<kind> markers committed at a revision (read-only)",
+        "long": "Scan the COMMITTED tree at --rev (default HEAD) of the repository --root (default\n$SLOPRAIL_GIT_ROOT, else cwd) for `sr:<kind>` markers, reading each file with the engine's own\nmarker reader: the one a file-guard's `markers` field and `sr-mark apply` use, so what is\nfound here is exactly what a rule would see. The working tree is never read: an\nuncommitted marker is not found.\n\nPrints `<path>:<line> <kind> <fqn>` per marker. With --fqn only markers naming that fqn.\n\nEXIT STATUS: 0 a marker was found; 1 none was; 2 the tree could not be read (not a git\nrepository, unknown revision, git failed), with the reason on stderr. 2 is never \"none\".\n\nEXAMPLE:\n  sr-mark find ci --fqn verify",
+        "flags": [
+          {
+            "name": "fqn",
+            "usage": "Only markers naming this fqn"
+          },
+          {
+            "name": "rev",
+            "default": "HEAD",
+            "usage": "The revision whose committed tree is scanned"
+          }
+        ]
       }
     ]
   },

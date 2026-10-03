@@ -3,7 +3,7 @@
 # `sr-checks verify` is deterministic (asks no model, writes nothing): it reads the verdicts that
 # `sr-checks run` stored on the sloprail/checks branch and exits 1 on a commit nobody judged clean.
 # This is the enforcement the plugin's sloprail/gate/ci-verify-required asks every repository with
-# file-guards to have; the `sr-mark: ci-verify` line below is what that gate looks for.
+# file-guards to have; the `sr:ci verify` marker below is what that gate looks for.
 #
 # On a pull request it verifies the PR HEAD (github.event.pull_request.head.sha), not the merge
 # commit Actions would check out by default: the verdicts are keyed to what the author's commits
@@ -49,7 +49,7 @@ jobs:
           cache: true
       - name: build sr-checks
         run: make build
-      # sr-mark: ci-verify
+      # sr:ci verify
       - name: sr-checks verify
         env:
           EVENT: ${{ github.event_name }}

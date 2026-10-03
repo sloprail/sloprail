@@ -9,7 +9,7 @@ import (
 )
 
 // The plugin's sloprail/gate/ci-verify-required (on by default) refuses a Stop in a project that
-// loads file-guards until the committed tree carries a line containing `sr-mark: ci-verify`, the
+// loads file-guards until the committed tree carries the marker `sr:ci verify` (read by `sr-mark find`), the
 // marker for a CI job that runs `sr-checks verify`. Every other e2e package has it disabled in its
 // initial commit (harness.WithCIVerifyRequired is the opt-in used here).
 
@@ -23,7 +23,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-const marker = "sr-mark: ci-verify"
+const marker = "sr:ci verify"
 
 // passCheck is a file-guard check that accepts everything: this package is about whether the
 // file-guard exists, not what it judges.

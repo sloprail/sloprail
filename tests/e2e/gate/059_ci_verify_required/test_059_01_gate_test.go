@@ -81,3 +81,27 @@ func TestT059_06_PluginGuardsAloneNeedNoMarker(t *testing.T) {
 		t.Fatalf("plugin-shipped file-guards alone were asked for a CI marker:\n%s", got)
 	}
 }
+
+// T059_07: the old free-text form is no marker: the engine's reader does not read it, so a file
+// carrying it still leaves the gate refusing.
+func TestT059_07_OldTextFormIsRefused(t *testing.T) {
+	e, proj := project(t, true)
+	e.WriteFile(proj, "Jenkinsfile", "// sr-mark: ci-verify\nsh 'sr-checks verify --base origin/main --head $GIT_COMMIT'\n")
+	e.CommitAll(proj, "add CI with the old text")
+	if got := stop(e, proj, "s-059-07"); !strings.Contains(got, marker) {
+		t.Fatalf("the old text form satisfied the gate:\n%s", got)
+	}
+}
+
+// T059_08: a marker written by `sr-mark apply ci --verify=<path>:<line>` satisfies the gate.
+func TestT059_08_SrMarkApplyWrittenMarkerPasses(t *testing.T) {
+	e, proj := project(t, true)
+	e.WriteFile(proj, ".gitlab-ci.yml", "job:\n  script:\n    - sr-checks verify --base a --head b\n")
+	if res := e.CLIDirectEnv(proj, nil, "sr-mark", "apply", "ci", "--verify=.gitlab-ci.yml:3"); res.Code != 0 {
+		t.Fatalf("sr-mark apply failed:\n%s", res.Output)
+	}
+	e.CommitAll(proj, "add CI")
+	if got := stop(e, proj, "s-059-08"); strings.Contains(got, marker) {
+		t.Fatalf("a sr-mark-written marker did not satisfy the gate:\n%s", got)
+	}
+}
