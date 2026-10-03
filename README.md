@@ -39,13 +39,18 @@ binaries the hooks call, once: the release matching the plugin's version,
 checksum-verified, into `~/.local/bin`, and says so. From then on every tool
 call and turn-end runs through sloprail — you don't run anything by hand.
 
-Rather install the binaries yourself? Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
+<details>
+<summary>Rather install the binaries yourself?</summary>
+
+Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
 
 ```
 curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
 ```
 
 (or `go install ./services/...` from a checkout).
+
+</details>
 
 ## How it works
 
