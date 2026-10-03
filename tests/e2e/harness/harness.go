@@ -758,7 +758,7 @@ func (e *Env) writeSettings(dir string) {
 	enabled := map[string]any{pluginKey: true}
 	marketplaces := map[string]any{
 		marketplaceName: map[string]any{
-			"source": map[string]any{"source": "directory", "path": e.repoRoot},
+			"source": map[string]any{"source": "directory", "path": e.localMarketplace()},
 		},
 	}
 	// Extra plugins a test enabled — each a directory-sourced marketplace pointing
@@ -782,6 +782,53 @@ func (e *Env) writeSettings(dir string) {
 	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), body, 0o644); err != nil {
 		e.t.Fatalf("harness: write settings: %v", err)
 	}
+}
+
+// localMarketplace returns a directory that is this checkout's marketplace with
+// every plugin source made local. The shipped .claude-plugin/marketplace.json
+// pins each plugin to a release tag (an object source, for users installing
+// from GitHub); a directory-sourced marketplace must resolve plugins to this
+// working tree, and the mock reads only string (relative path) sources. So the
+// directory holds a rewritten manifest ("./marketplace/plugins/<name>") beside
+// a symlink to the checkout's marketplace/ — the plugin's files stay the
+// checkout's own, nothing is copied.
+func (e *Env) localMarketplace() string {
+	e.t.Helper()
+	dir, err := os.MkdirTemp("", "slop-mkt-")
+	if err != nil {
+		e.t.Fatalf("harness: temp marketplace: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(dir) })
+	raw, err := os.ReadFile(filepath.Join(e.repoRoot, ".claude-plugin", "marketplace.json"))
+	if err != nil {
+		e.t.Fatalf("harness: read marketplace.json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		e.t.Fatalf("harness: parse marketplace.json: %v", err)
+	}
+	plugins, _ := doc["plugins"].([]any)
+	for _, p := range plugins {
+		pm, _ := p.(map[string]any)
+		if _, isString := pm["source"].(string); isString {
+			continue
+		}
+		pm["source"] = "./marketplace/plugins/" + fmt.Sprint(pm["name"])
+	}
+	body, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		e.t.Fatalf("harness: encode marketplace.json: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude-plugin", "marketplace.json"), body, 0o644); err != nil {
+		e.t.Fatalf("harness: write marketplace.json: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(e.repoRoot, "marketplace"), filepath.Join(dir, "marketplace")); err != nil {
+		e.t.Fatalf("harness: link marketplace: %v", err)
+	}
+	return dir
 }
 
 // extraPlugin is one synthetic plugin a test installed alongside sloprail — its
