@@ -66,13 +66,13 @@ func TestT003_01_RefuseThenFixThenPassIsStored(t *testing.T) {
 		t.Fatalf("a bare Stop executed the check %d time(s); verify only reads stored verdicts", n-before)
 	}
 
-	// A later commit is judged with the range it belongs to: no watermark splits it off,
-	// the range is the whole session's work from its base.
+	// A later commit is judged over what is new since the last pass: the effective base is the
+	// head of the passing run (the fix), so the range is the new commit alone.
 	e.Run(proj, "s-003-01", "one more", Turns("more", harness.CommitFile("c3", "docs/b.md", "more clean words", "add b")))
 	runs = ledger(t, led)
 	next := runs[len(runs)-1]
-	if next.Base != floor || len(next.Commits) != 3 || next.Commits[2] != "add b" {
-		t.Fatalf("the next range was %+v; want the session's three commits, from %s", next, floor)
+	if next.Base != last.Head || len(next.Commits) != 1 || next.Commits[0] != "add b" {
+		t.Fatalf("the next range was %+v; want the new commit alone, from the passing run's head %s", next, last.Head)
 	}
 	if n := len(e.BlockingErrorsFrom(proj, "s-003-01", "Stop")); n != after {
 		t.Fatalf("a passing range was refused (%d blocking errors, had %d)", n, after)

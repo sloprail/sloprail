@@ -75,8 +75,10 @@ func TestT003_15_TwoConversationsKeepVerdictsAndWatermarksApart(t *testing.T) {
 		t.Fatalf("session two's range was not refused by the failing judge: %q", e.BlockingErrors(proj, "s-003-15-two"))
 	}
 	twoPrompt := e.JudgePrompt(proj, promptFile)
-	if !strings.Contains(twoPrompt, "docs/a.md") || !strings.Contains(twoPrompt, "docs/b.md") {
-		t.Fatalf("session two was judged without its whole range (both files):\n%s", twoPrompt)
+	// The shared store holds session one's pass of a.md at the earlier head, which is the
+	// effective base: session two is judged over what is new since (b.md), a.md is not re-examined.
+	if !strings.Contains(twoPrompt, "docs/b.md") || strings.Contains(twoPrompt, "docs/a.md") {
+		t.Fatalf("session two was not judged over what is new since the last pass (b.md only):\n%s", twoPrompt)
 	}
 	before := e.JudgeCalls(proj, promptFile, "")
 

@@ -237,13 +237,18 @@ run it, to compute the same keys). It prints a JSON array:
  {"id": "auth",    "files": ["specs/auth.md"]}]
 ```
 
-Each `id` is unique; each subject names at least one selected file; `fingerprint` is optional.
-The rule's requirements and checks then run once per subject, each handed that subject
+Each `id` is unique. A **file subject** names selected files (`files`), and its key is those
+files' content **plus** its `fingerprint` when it gave one (the two are additive). A subject
+that is not a file, an FQN say, names no `files`, and its `fingerprint` **is** the content part
+of its key: with neither files nor a fingerprint it is refused (a load error, never an empty
+key). The rule's requirements and checks then run once per subject, each handed that subject
 (`.subject`), and each subject has its own stored verdict. Without `subjects:` the rule has one
 subject, `changeset`, made of every selected file, and no fingerprint. A fingerprint names what
 that subject's verdict depends on **besides its files' content** (a file a check opens with its
 own tools, a version of an external spec): when it changes, only that subject is run again. It
-must be session-independent and cheap.
+must be session-independent and cheap. A rule with a `subjects:` script is always judged over
+the range it is asked about (no effective base, below): the diff cannot see what a fingerprint
+depends on. To judge each file on its own, have the script return one subject per file.
 
 A `Changeset` payload, shaped in [events.md](events.md#changeset--what-a-file-guards-checks-receive).
 A script loops over `.changeset.files[]` (a rule about one file at a time — size,
@@ -428,6 +433,17 @@ records each step's status and reason, so `sr-checks show` says which step faile
   judge): after a rebase, a squash, a revert, or by another session. A stored fail is replayed,
   terminal until the input changes. A miss runs the steps in order, first refusal ends it, and
   stores the verdict.
+- **The effective base advances on a pass** (a10n's `GetEffectiveBase`). A rule is judged over
+  `effective_base..head`. Starting at the base you asked for, the base moves to the head of a
+  stored COMPLETE PASSING evaluation (same rule hash, every subject of it passed) whose own base
+  lies at or before the base reached so far and whose head is after it and an ancestor of the
+  head being judged, and so on while one advances: passes over B1..H1 then H1..H2 reach H2, and a
+  pass over a narrower range B2..H (B2 after B1) advances nothing, since B1..B2 was never judged.
+  With none, the base you asked for. So only the change since the last pass is re-examined. A
+  fail never advances it, so a refused change stays in the range (and its stored fail is
+  replayed, not re-rolled) until it is fixed. It is computed from the stored runs alone, so
+  `verify` (in CI too) finds the same base `run` did. `sr-checks show` lists the whole range you
+  ask about instead.
 - **Changed input is run again.** Editing a tracked file under the rule's `.sloprail` root, or changing `model`,
   starts the verdicts over.
 - **A check that reads anything beyond its subject's files must declare it**, through that

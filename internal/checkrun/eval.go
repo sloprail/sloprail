@@ -73,6 +73,9 @@ type Params struct {
 	Store checkstore.Store
 	// Verify: a judge is looked up, never asked; nothing is recorded.
 	Verify bool
+	// WholeRange: do not advance each rule's base to its effective base; list every subject
+	// of the range asked about with its stored result (`sr-checks show`, a reader's view).
+	WholeRange bool
 	// Recorded is the citations the session already recorded per file (sr-file --cite),
 	// oldest first; a citation refusal hands them back as the trailer to paste.
 	Recorded map[string][]transcript.Citation
@@ -455,17 +458,20 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		return ev.fail(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
 	lean := ev.verify && g.Subjects == "" && !strings.Contains(g.Match, "arkers")
-	cs, err := changeset.Build(ev.root, r, changeset.Options{
-		Deletions: changeset.DeletionMode(g.Deletions),
-		Scan:      Markers,
-		Select:    Selector(match),
-		Lean:      lean,
-		// A `subjects:` script is handed the whole payload in run and in verify alike.
-		NoPatch:  ev.verify && g.Subjects == "",
-		RawBlobs: ev.verify && g.Subjects == "",
-		// Only a citation requirement reads which commits changed a file.
-		SkipHistory: lean && !requiresCitation(g),
-	})
+	build := func(r gitrepo.Range) (changeset.Changeset, error) {
+		return changeset.Build(ev.root, r, changeset.Options{
+			Deletions: changeset.DeletionMode(g.Deletions),
+			Scan:      Markers,
+			Select:    Selector(match),
+			Lean:      lean,
+			// A `subjects:` script is handed the whole payload in run and in verify alike.
+			NoPatch:  ev.verify && g.Subjects == "",
+			RawBlobs: ev.verify && g.Subjects == "",
+			// Only a citation requirement reads which commits changed a file.
+			SkipHistory: lean && !requiresCitation(g),
+		})
+	}
+	cs, err := build(r)
 	if err != nil {
 		return ev.fail(g, run, err)
 	}
@@ -482,6 +488,28 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			return ev.fail(g, run, err)
 		}
 		run.RuleHash = hash
+	}
+	// EFFECTIVE BASE (a10n's GetEffectiveBase): the head of the rule's latest complete passing
+	// evaluation at this definition that is an ancestor of the head and a descendant of the
+	// requested base. What passed once is not re-examined: only the change since it is. Computed
+	// from the stored runs alone, so `verify` (CI too) finds the base `run` did; a FAIL never
+	// advances it. Found only for a rule that selected something (verify hashes no other).
+	if eff := ev.effectiveBase(g, hash, r); eff.Base != r.Base {
+		r = eff
+		run.BaseRef = r.Base
+		run.BaseTree, run.HeadTree = rangeTrees(ev.root, r)
+		if cs, err = build(r); err != nil {
+			return ev.fail(g, run, err)
+		}
+		if len(cs.Files) == 0 {
+			ev.note(CheckOutcome{Rule: rule, Subject: changeset.DefaultSubjectID, Kind: guardKind, Status: checkstore.StatusPass, Source: "stored",
+				Reason: "nothing selected has changed since the last pass, at " + shortRev(r.Base)})
+			run.Complete = true
+			if _, err := ev.record(run); err != nil {
+				return ev.fail(g, run, err)
+			}
+			return nil, FileGuardResult{}, false
+		}
 	}
 
 	// Verify never consults the session: a citation counts when a commit trailer carries it
@@ -567,6 +595,70 @@ func (ev *changesetEvaluation) ruleRange(g declaration.FileGuard) (gitrepo.Range
 	return r, nil
 }
 
+// maxEffectiveCandidates bounds how many stored passing evaluations are chained for the base.
+const maxEffectiveCandidates = 200
+
+// effectiveBase is r advanced to the rule's effective base: see prepare. It CHAINS the stored
+// passing evaluations: one covers its own base..head, so it advances the base only when the
+// base lies inside it (its base is an ancestor-or-equal of the base reached so far, the empty
+// tree included) and its head is past that base and no later than the head being judged.
+// Starting at the requested base, the furthest such head becomes the base, and so on until
+// nothing advances: sequential passes B1..H1 then H1..H2 reach H2, while a pass over a narrow
+// range B2..H with B2 after B1 leaves the span B1..B2 unjudged and so advances nothing.
+func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, hash string, r gitrepo.Range) gitrepo.Range {
+	if ev.store == nil || hash == "" || g.Subjects != "" || ev.params.WholeRange {
+		// A `subjects:` script names units whose verdicts depend on more than the diff (the
+		// fingerprint it gives): a range narrowed to "what changed since" would never ask again.
+		return r
+	}
+	runs, err := ev.store.EffectiveRuns(g.Qualified(), hash)
+	if err != nil {
+		return r // no history is read as none: the requested base
+	}
+	if len(runs) > maxEffectiveCandidates {
+		runs = runs[:maxEffectiveCandidates]
+	}
+	type pair struct{ a, b string }
+	memo := map[pair]bool{}
+	anc := func(a, b string) bool { // a is an ancestor-or-equal of b
+		if a == b || a == gitrepo.EmptyTree {
+			return true
+		}
+		k := pair{a, b}
+		ok, seen := memo[k]
+		if !seen {
+			var err error
+			ok, err = gitrepo.IsAncestor(ev.root, a, b)
+			ok = ok && err == nil
+			memo[k] = ok
+		}
+		return ok
+	}
+	eb := r.Base
+	for range runs {
+		best := ""
+		for _, c := range runs {
+			if c.Head == eb || c.Head == best || !(c.Base == gitrepo.EmptyTree || anc(c.Base, eb)) {
+				continue
+			}
+			if !anc(eb, c.Head) || !anc(c.Head, r.Head) {
+				continue
+			}
+			if best == "" || anc(best, c.Head) {
+				best = c.Head
+			}
+		}
+		if best == "" {
+			break
+		}
+		eb = best
+	}
+	if eb == r.Base {
+		return r
+	}
+	return gitrepo.Range{Base: eb, Head: r.Head}
+}
+
 // Shown is what `sr-checks changeset` prints for a rule: the range the engine would judge it
 // over, and what each subject's checks would be handed.
 type Shown struct {
@@ -587,7 +679,7 @@ type ShownSubject struct {
 // same raised range, the same match and the same `subjects:` script (run here, as in `run`).
 // Nothing is judged or recorded.
 func Show(p Params, g declaration.FileGuard) (Shown, error) {
-	ev := &changesetEvaluation{errw: io.Discard, diags: map[string]*bytes.Buffer{}, root: p.Root, params: p, verify: p.Verify, rng: p.Range}
+	ev := &changesetEvaluation{errw: io.Discard, diags: map[string]*bytes.Buffer{}, root: p.Root, params: p, store: p.Store, verify: p.Verify, rng: p.Range}
 	r, err := ev.ruleRange(g)
 	if err != nil {
 		return Shown{}, fmt.Errorf("its range is not computable: %w", err)
@@ -596,6 +688,8 @@ func Show(p Params, g declaration.FileGuard) (Shown, error) {
 	if out.RuleHash, err = changeset.RuleHashAt(p.Root, g.Dir, g.Origin.FromPlugin()); err != nil {
 		return out, err
 	}
+	out.Range = ev.effectiveBase(g, out.RuleHash, r)
+	r = out.Range
 	match, err := guardrail.CompileFileMatch(g.Match)
 	if err != nil {
 		return out, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err)
@@ -1364,6 +1458,12 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 		// the transcript, which this run does not have, so the author's real `run` must judge
 		// fresh. Passes are stored (a pass without the transcript holds for every session).
 		if rr.volatile || ev.params.Transcript == "" {
+			// Still a refusal of THIS run: its run holds a failing row (under no fingerprint, so
+			// no lookup finds it), or the run would read as a pass and advance the effective base.
+			rec.Kind, rec.Status, rec.Fingerprint, meta["reasoning"] = guardKind+":unstored", checkstore.StatusFail, "", verdict.Reason
+			if err := ev.recordCheck(rr.runID, rec); err != nil {
+				fmt.Fprintln(ev.log(rr.g), "sloprail:", err)
+			}
 			return
 		}
 		rec.Status, meta["reasoning"] = checkstore.StatusFail, verdict.Reason

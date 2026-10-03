@@ -466,3 +466,29 @@ func TestCheckResults_ClosedStoreRefusesEveryMethod(t *testing.T) {
 	_, err = s.Query(`select 1`)
 	assert.ErrorIs(t, err, ErrClosed)
 }
+
+// EffectiveRuns is the input of a10n's GetEffectiveBase over evaluations: the runs of one batch
+// over one head are one evaluation (a run per subject), and it passed only when every one did.
+func TestEffectiveRuns_AnEvaluationPassesOnlyWhenEverySubjectDid(t *testing.T) {
+	s := openTestStore(t)
+	a := func(head, batch string) CheckRun { r := run(head); r.BatchID = batch; r.RuleHash = "h1"; return r }
+	record(t, s, a("h0", "b0"), script("pass"))
+	record(t, s, a("h1", "b1"), script("pass"))
+	record(t, s, a("h1", "b1"), script("fail")) // one subject of h1's evaluation failed
+	record(t, s, a("h2", "b2"), script("pass"))
+	other := a("h3", "b3")
+	other.RuleHash = "h2" // another definition of the rule
+	record(t, s, other, script("pass"))
+	unfinished, err := s.RecordRun(a("h4", "b4"))
+	require.NoError(t, err)
+	_ = unfinished
+
+	runs, err := s.EffectiveRuns(rule, "h1")
+	require.NoError(t, err)
+	var heads []string
+	for _, r := range runs {
+		assert.Equal(t, "base0", r.Base, "each carries the range it covered")
+		heads = append(heads, r.Head)
+	}
+	assert.Equal(t, []string{"h2", "h0"}, heads, "newest first; a failed subject, an unfinished run and another rule hash are no base")
+}

@@ -55,7 +55,7 @@ func CitationPart(p Payload) (string, error) {
 	// that grounds one file of a subject and not another is not the same grounding).
 	var out []grounded
 	for _, f := range p.Changeset.Files {
-		if len(p.Subject.Files) > 0 && !slices.Contains(p.Subject.Files, f.Path) {
+		if !slices.Contains(p.Subject.Files, f.Path) {
 			continue
 		}
 		g := grounded{Path: f.Path}
@@ -85,14 +85,9 @@ func FilesPart(p Payload) string {
 	for _, f := range p.Changeset.Files {
 		byPath[f.Path] = f
 	}
-	paths := p.Subject.Files
-	if len(paths) == 0 {
-		for _, f := range p.Changeset.Files {
-			paths = append(paths, f.Path)
-		}
-	}
+	// A subject naming no file (an FQN) has no files part: its fingerprint is its content.
 	var buf []byte
-	for _, path := range paths {
+	for _, path := range p.Subject.Files {
 		f := byPath[path]
 		content := f.NewContent
 		if f.NewBlob != "" {
