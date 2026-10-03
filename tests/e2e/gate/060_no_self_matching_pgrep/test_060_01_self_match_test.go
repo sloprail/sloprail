@@ -36,7 +36,9 @@ func TestT060_01_SelfMatchingPgrepIsRefusedAndOthersAreNot(t *testing.T) {
 		`pgrep -x nginx`,
 		`pgrep nginx`,
 		`pgrep -f nginx; echo done`,
-		`until ! pgrep -f "my-server"; do sleep 1; done`,
+		// A self-matching wait on a program that is not sloprail's passes the gate. The mock runs
+		// it, so it must end: a bounded loop, with the pattern repeated so it still self-matches.
+		`for i in 1 2; do pgrep -f "my-server" >/dev/null; done; echo my-server`,
 		`pgrep --full "wait-for-me"; echo wait-for-me`,
 	}
 	for i, cmd := range allowed {
