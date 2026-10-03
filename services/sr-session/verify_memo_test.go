@@ -173,3 +173,56 @@ func TestQuickKeyPluginRuleChangeInvalidates(t *testing.T) {
 	hashes = []string{"plug/g=h1", "plug/h=h3"}
 	assert.NotEqual(t, k, key(), "a plugin rule added")
 }
+
+// Clones of one remote are one repository, but a ref at another tip is another range: each tip
+// is verified, and no range is keyed on another clone's tip.
+func TestCollapseByRepoKeepsDifferentTipsOfOneRefApart(t *testing.T) {
+	origin := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(origin, "a"), []byte("a"), 0o644))
+	runGit(t, origin, "add", "-A")
+	runGit(t, origin, "commit", "-m", "a")
+	var rows []sessionstate.TrackedRange
+	for i, name := range []string{"c1", "c2", "c3"} {
+		c := filepath.Join(t.TempDir(), name)
+		runGit(t, origin, "clone", "-q", origin, c)
+		runGit(t, c, "config", "user.email", "t@example.invalid")
+		runGit(t, c, "config", "user.name", "T")
+		runGit(t, c, "checkout", "-q", "-b", "feat")
+		if i == 1 {
+			runGit(t, c, "commit", "-q", "--allow-empty", "-m", "more")
+		}
+		rows = append(rows, sessionstate.TrackedRange{Folder: c, Head: "feat", AddedBy: sessionstate.RangeAuto})
+	}
+	got := collapseByRepo(rows, "", newCoverMemo())
+	n := 0
+	for _, g := range got {
+		if g {
+			n++
+		}
+	}
+	assert.Equal(t, 2, n, "c1 and c3 share a tip, c2 stands elsewhere")
+}
+
+// A new untracked rule file under .sloprail changes the quick key (a full verify would load it).
+func TestQuickKeyUntrackedRuleFileInvalidates(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, ".sloprail"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, ".sloprail", "x.yaml"), []byte("a: b\n"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "commit", "-m", "a")
+	runGit(t, proj, "branch", "feat")
+	r := sessionstate.TrackedRange{Folder: proj, Head: "feat", AddedBy: sessionstate.RangeAuto}
+	key := func() string {
+		m := &verifyMemo{store: openStore(t)}
+		return m.quickKey(r, HookPayload{}, newCoverMemo())
+	}
+	k := key()
+	require.NotEmpty(t, k)
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, ".sloprail", "file-guard", "new"), 0o755))
+	f := filepath.Join(proj, ".sloprail", "file-guard", "new", "guard.yaml")
+	require.NoError(t, os.WriteFile(f, []byte("match: '*'\n"), 0o644))
+	k2 := key()
+	assert.NotEqual(t, k, k2, "a new untracked rule")
+	require.NoError(t, os.WriteFile(f, []byte("match: '*.md'\n"), 0o644))
+	assert.NotEqual(t, k2, key(), "an edited untracked rule")
+}

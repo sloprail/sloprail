@@ -745,7 +745,22 @@ func verifyRange(cmd *cobra.Command, p HookPayload, reg *module.Registry, store 
 	return verifyRangeWith(cmd, p, reg, quiet, r, lazyRecordedCitations(p, store), nil, nil, "")
 }
 
-var repoOfMemo, repoIDMemo sync.Map
+var repoOfMemo, repoIDMemo, commonOfMemo sync.Map
+
+// commonOf is the git directory (the object store and refs) a folder's repository keeps: what
+// a branch tip is read from. Worktrees share it; clones of one remote (one RepoID) do not, and
+// their refs may stand at different commits.
+func commonOf(folder string) string {
+	if v, ok := commonOfMemo.Load(folder); ok {
+		return v.(string)
+	}
+	c, err := gitrepo.CommonDir(folder)
+	if err != nil {
+		c = folder
+	}
+	commonOfMemo.Store(folder, c)
+	return c
+}
 
 // repoOf names the repository a folder belongs to: its git common dir, shared by every worktree
 // of it (the folder itself when git cannot say). Worktrees of one repository track the same
@@ -799,7 +814,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	r.Base = effectiveBase(r, head)
 	if seen != nil {
 		// Rows that name the same commits of the same folder are one range: verified once.
-		key := repoOf(r.Folder) + "\x00" + head + "\x00" + r.Base
+		key := commonOf(r.Folder) + "\x00" + head + "\x00" + r.Base
 		if !seen.first(key) {
 			return ""
 		}
@@ -984,10 +999,11 @@ func (m *verifyMemo) quickKey(r sessionstate.TrackedRange, p HookPayload, cm *co
 		return ""
 	}
 	repo := repoOf(r.Folder)
-	def, ok := cm.defaultTips[repo]
+	common := commonOf(r.Folder)
+	def, ok := cm.defaultTips[common]
 	if !ok {
 		def, _ = gitrepo.RemoteDefaultTip(r.Folder)
-		cm.defaultTips[repo] = def
+		cm.defaultTips[common] = def
 	}
 	folder := m.folderFacts(r.Folder)
 	if folder == "" {
@@ -998,6 +1014,26 @@ func (m *verifyMemo) quickKey(r sessionstate.TrackedRange, p HookPayload, cm *co
 		fmt.Fprintf(h, "%d:%s;", len(x), x)
 	}
 	return verifyMemoPrefix + hex.EncodeToString(h.Sum(nil))
+}
+
+// untrackedRules fingerprints the files under .sloprail that git neither tracks nor ignores
+// (path and content): the rules a full verify loads from disk and the tracked-files hash misses.
+func untrackedRules(folder string) string {
+	files, err := gitrepo.UnignoredFiles(folder, ".sloprail")
+	if err != nil {
+		return "unreadable"
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, f := range files {
+		body, err := os.ReadFile(filepath.Join(folder, f))
+		if err != nil {
+			body = []byte("unreadable")
+		}
+		fmt.Fprintf(h, "%d:%s%d:", len(f), f, len(body))
+		h.Write(body)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // pluginRuleHashes is the hash of every plugin rule the folder loads, sorted: a plugin lives
@@ -1030,7 +1066,7 @@ func (m *verifyMemo) folderFacts(folder string) string {
 	v := ""
 	if h, err := changeset.RuleHashAt(folder, filepath.Join(folder, ".sloprail"), false); err == nil {
 		if cache, err := checkrun.OpenLocalCache(folder); err == nil {
-			v = h + "@" + cache.Tip()
+			v = h + "@" + cache.Tip() + "@" + untrackedRules(folder)
 			if m.plugins != nil {
 				v += "@" + strings.Join(m.plugins(folder), ",")
 			}
@@ -1494,7 +1530,13 @@ func collapseByRepo(ranges []sessionstate.TrackedRange, agentID string, m *cover
 			continue
 		}
 		head := strings.TrimPrefix(r.Head, "refs/heads/")
-		key := repoOf(r.Folder) + "\x00" + r.AgentID + "\x00" + head
+		// One range per (repository, ref, tip): clones of one remote are one repository, but the
+		// same ref at another tip is another range, verified where its commit is.
+		tip := m.branches(r.Folder)[head]
+		if tip == "" {
+			tip = r.HeadSHA
+		}
+		key := repoOf(r.Folder) + "\x00" + r.AgentID + "\x00" + head + "\x00" + tip
 		if j, ok := best[key]; !ok || rank(r) >= rank(ranges[j]) {
 			best[key] = i
 		}
@@ -1524,7 +1566,7 @@ func newCoverMemo() *coverMemo {
 // branchesHolding is the local branches whose tip has commit among its ancestors, one git call
 // per (repository, commit).
 func (m *coverMemo) branchesHolding(folder, commit string) map[string]bool {
-	k := repoOf(folder) + "\x00" + commit
+	k := commonOf(folder) + "\x00" + commit
 	if v, ok := m.holding[k]; ok {
 		return v
 	}
@@ -1553,7 +1595,7 @@ func (m *coverMemo) isCommitHead(folder, head string) bool {
 // branches is the local branches of the repository folder belongs to and the commits they stand
 // at, one git call each.
 func (m *coverMemo) branches(folder string) map[string]string {
-	k := repoOf(folder)
+	k := commonOf(folder) // this clone's refs, never another's
 	if v, ok := m.branchSets[k]; ok {
 		return v
 	}
