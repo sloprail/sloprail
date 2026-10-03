@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ci-verify-step: every changed file carrying `sr:ci verify` must run `sr-checks verify` and
-# trigger on pull requests and on pushes to the default branch. Contract: stdin is the Changeset
+# trigger on pull requests. Contract: stdin is the Changeset
 # payload; exit 1 with {"reason": ...} refuses. Fails closed: whatever cannot be judged is refused.
 set -uo pipefail
 payload="$(cat)"
@@ -12,19 +12,6 @@ refuse() {
 
 n="$(printf '%s' "$payload" | jq -r '.changeset.files | length')" || n=""
 case "$n" in '' | *[!0-9]*) refuse "ci-verify-step could not read the changeset on stdin, so the CI files marked 'sr:ci verify' could not be checked" ;; esac
-
-# push_has_branches: does the `on:` block carry a `push:` mapping with `branches`? (stdin: the file)
-push_has_branches() {
-  awk '
-    function indent(s) { match(s, /^ */); return RLENGTH }
-    inblock && NF && indent($0) <= pind { inblock = 0 }
-    inblock && /branches[[:space:]]*:/ { found = 1 }
-    /^[[:space:]]*push[[:space:]]*:/ {
-      pind = indent($0); inblock = 1
-      if ($0 ~ /branches[[:space:]]*:/) found = 1
-    }
-    END { exit found ? 0 : 1 }'
-}
 
 for i in $(seq 0 $((n - 1))); do
   f="$(printf '%s' "$payload" | jq -c --argjson i "$i" '.changeset.files[$i]')" || refuse "ci-verify-step could not read file $i of the changeset"
@@ -47,27 +34,21 @@ for i in $(seq 0 $((n - 1))); do
     .github/workflows/*.yml | .github/workflows/*.yaml)
       printf '%s\n' "$body" | grep -q -E '^(on:.*[[:space:],{[]pull_request([[:space:],}:]|\]|$)|[[:space:]]*(-[[:space:]]*)?pull_request[[:space:]]*(:|$))' \
         || missing="${missing:+$missing; }a 'pull_request' trigger under 'on:'"
-      printf '%s\n' "$body" | push_has_branches \
-        || missing="${missing:+$missing; }a 'push:' trigger with 'branches:' (the default branch) under 'on:'"
       ;;
     *.gitlab-ci.yml | *.gitlab-ci.yaml)
       printf '%s\n' "$body" | grep -q -E '^[[:space:]]*(-[[:space:]]*)?if:.*merge_request_event' \
         || missing="${missing:+$missing; }a rule '- if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"'"
-      printf '%s\n' "$body" | grep -q -E '^[[:space:]]*(-[[:space:]]*)?if:.*CI_DEFAULT_BRANCH' \
-        || missing="${missing:+$missing; }a rule '- if: \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH'"
       ;;
     *)
       case "$base" in
         azure-pipelines*.yml | azure-pipelines*.yaml)
           printf '%s\n' "$body" | grep -q -E '^pr[[:space:]]*:' \
             || missing="${missing:+$missing; }a top-level 'pr:' trigger (for example 'pr: [main]')"
-          printf '%s\n' "$body" | grep -q -E '^trigger[[:space:]]*:' \
-            || missing="${missing:+$missing; }a top-level 'trigger:' (the default branch, for example 'trigger: [main]')"
           ;;
         *) : ;; # any other provider: only the verify step (checked above) can be required
       esac
       ;;
   esac
-  [ -z "$missing" ] || refuse "$path carries 'sr:ci verify' but lacks: $missing. $how The job must run 'sr-checks verify' on every pull request and on every push to the default branch."
+  [ -z "$missing" ] || refuse "$path carries 'sr:ci verify' but lacks: $missing. $how The job must run 'sr-checks verify' on every pull request."
 done
 exit 0

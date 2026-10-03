@@ -1,7 +1,7 @@
 # A CI file that carries the `sr:ci verify` marker (the one `sloprail/gate/ci-verify-required`
-# looks for) is a promise that CI runs `sr-checks verify` on pull requests and on pushes to the
-# default branch. The gate only finds the marker; this guard checks the promise on what was
-# committed: the file runs `sr-checks verify`, and its triggers cover both events.
+# looks for) is a promise that CI runs `sr-checks verify` on pull requests (the default branch is protected, so
+# that is what lands). The gate only finds the marker; this guard checks the promise on what was
+# committed: the file runs `sr-checks verify` and triggers on pull requests.
 # Provider-aware and deliberately simple (GitHub Actions, GitLab CI, Azure Pipelines); a file it
 # cannot judge is refused, never passed.
 match: 'any(markers, .kind == "ci")'

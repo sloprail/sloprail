@@ -4,9 +4,10 @@
 # team can rely on is a CI job that runs
 #
 #   pull request:  sr-checks verify --base <target branch> --head <PR head sha>
-#   push to the default branch:  sr-checks verify --base <push before sha> --head <push after sha>
 #
-# on every pull request AND on every push to the default branch (a direct push has no PR to gate it). This gate refuses the end of a turn in a project that loads file-guards
+# on every pull request only. The default branch is protected (PRs required, branches up to date, no
+# direct pushes), so the PR's range is exactly what lands and a verify on pushes would only add
+# false reds. This gate refuses the end of a turn in a project that loads file-guards
 # until the committed tree shows such a job.
 #
 # Detected by a MARKER, never by a provider's file path, so GitHub Actions, GitLab CI, Azure
@@ -16,7 +17,7 @@
 # which reads HEAD, the committed tree, with the engine's own marker reader, so an uncommitted CI
 # file does not count and neither does free text that merely resembles the marker. The gate does
 # not parse the CI config; the file-guard `sloprail/file-guard/ci-verify-step` checks that a marked
-# file really runs `sr-checks verify` on pull requests and pushes to the default branch.
+# file really runs `sr-checks verify` on pull requests.
 #
 # Applies only where the project has its OWN file-guards: a committed file under
 # `.sloprail/file-guard/`. Guards a plugin ships are not the project's to enforce in its CI, and a
