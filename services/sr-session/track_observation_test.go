@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"errors"
 	"os"
 	"path/filepath"
@@ -312,4 +313,81 @@ func TestPruneUnmovedAuto(t *testing.T) {
 	assert.Equal(t, prunedReason, reason["stale"])
 	assert.True(t, tracked["moved"], "a row that moved was pruned")
 	assert.True(t, tracked["stated"], "an explicit row was pruned")
+}
+
+// N sub-agent worktrees of one repository, each on its own branch: every worktree answers for its
+// own branch only. A branch visible in the shared ref namespace is not every folder's work (it was
+// N x N rows, and the parent's Stop refused with hundreds of "not judged yet" lines).
+func TestTrackMissing_AWorktreeTracksItsOwnBranchNotEveryVisibleOne(t *testing.T) {
+	const n = 4
+	proj, reg, rs := ruledAndObserved(t, nil)
+	base := runGit(t, proj, "rev-parse", "HEAD")
+	dirs := make([]string, n)
+	for i := range dirs {
+		dirs[i] = filepath.Join(t.TempDir(), fmt.Sprintf("wt%d", i))
+		runGit(t, proj, "worktree", "add", "-q", "-b", fmt.Sprintf("worktree-agent-%d", i), dirs[i])
+		_, err := reg.RegisterFolder(sessionstate.Folder{SessionID: rs.ID, Path: dirs[i], Role: sessionstate.FolderSubagentWorktree, GitRoot: dirs[i], BaseRef: base, AgentID: fmt.Sprintf("agent-%d", i)})
+		require.NoError(t, err)
+	}
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	for i, d := range dirs {
+		commitFile(t, d, fmt.Sprintf("f%d.md", i), "work")
+	}
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+	rows, err := reg.Ranges(rs.ID)
+	require.NoError(t, err)
+	tracked := 0
+	for _, r := range rows {
+		if !r.Tracked() {
+			continue
+		}
+		tracked++
+		for i, d := range dirs {
+			if filepath.Clean(r.Folder) == resolved(t, d) {
+				assert.Equal(t, fmt.Sprintf("worktree-agent-%d", i), r.Head, "a worktree tracked a branch that is not its own")
+				assert.Equal(t, fmt.Sprintf("agent-%d", i), r.AgentID)
+			}
+		}
+	}
+	assert.LessOrEqual(t, tracked, n+1, "N worktrees x N branches must yield N rows, not N x N (+ the root's)")
+}
+
+// Rows an older engine made for a branch checked out in another worktree are pruned once; the
+// worktree standing on the branch keeps its own row, and an explicit row is kept.
+func TestPruneForeignAuto(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, nil)
+	base := runGit(t, proj, "rev-parse", "HEAD")
+	a, b := filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")
+	runGit(t, proj, "worktree", "add", "-q", "-b", "br-a", a)
+	runGit(t, proj, "worktree", "add", "-q", "-b", "br-b", b)
+	row := func(folder, head, by string) sessionstate.TrackedRange {
+		return sessionstate.TrackedRange{SessionID: rs.ID, Folder: resolved(t, folder), Head: head, HeadSHA: base, Base: base, AddedBy: by}
+	}
+	for _, r := range []sessionstate.TrackedRange{
+		row(a, "br-a", sessionstate.RangeAuto), row(a, "br-b", sessionstate.RangeAuto), row(a, "main", sessionstate.RangeAuto),
+		row(b, "br-b", sessionstate.RangeAuto), row(b, "br-a", sessionstate.RangeAgent),
+	} {
+		require.NoError(t, reg.TrackRange(r))
+	}
+	require.NoError(t, pruneForeignAuto(reg, rs.ID))
+	require.NoError(t, pruneForeignAuto(reg, rs.ID)) // idempotent
+	rows, err := reg.Ranges(rs.ID)
+	require.NoError(t, err)
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[filepath.Base(r.Folder)+":"+r.Head] = r.Tracked()
+	}
+	assert.True(t, got["a:br-a"], "a worktree's own branch was pruned")
+	assert.False(t, got["a:br-b"], "another worktree's branch stayed tracked")
+	assert.False(t, got["a:main"], "the main checkout's branch stayed tracked in a worktree")
+	assert.True(t, got["b:br-b"])
+	assert.True(t, got["b:br-a"], "an explicit row was pruned")
+}
+
+func resolved(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	require.NoError(t, err)
+	return filepath.Clean(r)
 }
