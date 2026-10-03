@@ -89,6 +89,11 @@ type Run struct {
 	RuleHash string `json:"ruleHash"`
 	BaseRef  string `json:"base_ref"`
 	HeadRef  string `json:"head_ref"`
+	// BaseTree and HeadTree are the tree ids of BaseRef and HeadRef when the run was made
+	// (absent on a run recorded before they existed): equal trees are an equal net change,
+	// so a range over the same two trees can read this run's verdict (Store.CachedByTrees).
+	BaseTree string `json:"base_tree,omitempty"`
+	HeadTree string `json:"head_tree,omitempty"`
 	// ExitCode and Error record an ENGINE failure (git, a range that could not be read):
 	// such a run passes nothing.
 	ExitCode int            `json:"exit_code,omitempty"`

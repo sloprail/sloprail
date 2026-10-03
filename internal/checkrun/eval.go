@@ -173,6 +173,9 @@ type ruleRun struct {
 	unresolved []changeset.Unresolved
 	tree       *gitrepo.Snapshot
 	head       string
+	base       string // the range's base, and the trees of base and head ("" when unreadable)
+	baseTree   string
+	headTree   string
 	runID      string
 	next       int // index of the first check not yet run
 
@@ -368,6 +371,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		return ev.fail(g, checkstore.CheckRun{CheckID: rule, BaseRef: ev.rng.Base, HeadRef: ev.rng.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}, fmt.Errorf("its range is not computable: %w", err))
 	}
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
+	run.BaseTree, run.HeadTree = rangeTrees(ev.root, r)
 
 	hash, err := changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin())
 	if err != nil {
@@ -452,7 +456,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			dropAll()
 			return ev.fail(g, run, err)
 		}
-		rrs = append(rrs, &ruleRun{g: g, hash: hash, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head})
+		rrs = append(rrs, &ruleRun{g: g, hash: hash, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head, base: r.Base, baseTree: run.BaseTree, headTree: run.HeadTree})
 	}
 	return rrs, FileGuardResult{}, false
 }
@@ -1158,6 +1162,17 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if err != nil {
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
+	reused := ""
+	if ev.verify && !have {
+		// A squash merge carries the judged branch's net change in a commit of another message
+		// (so another citation key): the same two trees are the same change, judged already.
+		if byTrees, ok, err := ev.store.CachedByTrees(g.Qualified(), rr.hash, rr.subject.ID, guardKind, rr.baseTree, rr.headTree); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err), true
+		} else if ok {
+			cached, have = byTrees, true
+			reused = fmt.Sprintf("stored, same trees as %s..%s", shortRev(byTrees.Run.BaseRef), shortRev(byTrees.Run.HeadRef))
+		}
+	}
 	if ev.verify && !have {
 		why := ""
 		if inc := ev.incompleteReason(rr); inc != "" {
@@ -1189,6 +1204,9 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		src := "cached"
 		if ev.verify && st.Status == checkstore.StatusFail {
 			src = "stored"
+		}
+		if reused != "" {
+			src = reused
 		}
 		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: ev.currentAdvice(st.Reason)}
 		ev.note(o)
@@ -1381,4 +1399,22 @@ func BrokenFileGuards(l declaration.Loaded) []string {
 		}
 	}
 	return out
+}
+
+// rangeTrees are the tree ids of a range's base and head, "" when either cannot be read (such
+// a run is never matched by trees).
+func rangeTrees(root string, r gitrepo.Range) (base, head string) {
+	b, err1 := gitrepo.TreeOf(root, r.Base)
+	h, err2 := gitrepo.TreeOf(root, r.Head)
+	if err1 != nil || err2 != nil {
+		return "", ""
+	}
+	return b, h
+}
+
+func shortRev(rev string) string {
+	if len(rev) > 8 {
+		return rev[:8]
+	}
+	return rev
 }
