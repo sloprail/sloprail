@@ -679,7 +679,7 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 	if r.HeadSHA != "" {
 		_ = gitrepo.PinRef(home.Path, "refs/sloprail/pins/"+r.HeadSHA, r.HeadSHA)
 	}
-	if r.HeadSHA == "" || !commitReadable(home.Path, r.HeadSHA) {
+	if r.HeadSHA == "" || commitMissing(home.Path, r.HeadSHA) {
 		// The branch is gone and its last tip is not in the repository either: nothing to verify.
 		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone, its last tip %s is not in the repository; nothing left to verify locally, CI is the backstop", r.Head, shortRev(r.HeadSHA)), r.AgentID, removedTip(r))
 		return
@@ -692,10 +692,13 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 	}
 }
 
-// commitReadable reports whether rev resolves to a commit in folder's repository.
-func commitReadable(folder, rev string) bool {
-	_, err := gitrepo.ResolveRange(folder, "HEAD", rev)
-	return err == nil
+// commitMissing reports that rev is definitely not a commit in folder's repository: git
+// answers "no such object" (exit 1). Any other failure (a repository git cannot read, a
+// malformed name) is not a claim that the commit is gone, so the range stays tracked.
+func commitMissing(folder, rev string) bool {
+	err := exec.Command("git", "-C", folder, "rev-parse", "--verify", "-q", rev+"^{commit}").Run()
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1
 }
 
 // removedTip is the tip an untrack of a range in a removed folder is recorded against: that

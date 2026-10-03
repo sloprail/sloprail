@@ -718,3 +718,45 @@ func TestUntrackGone_BranchGoneAndTipMissingUntracks(t *testing.T) {
 		assert.False(t, r.Tracked(), "%s must not stay tracked", r.Head)
 	}
 }
+
+// A deleted branch whose tip is still readable, even on a history unrelated to the root's, is
+// not released: its commits may be unverified, so the range moves to the root, pinned.
+func TestUntrackGone_ABranchGoneButTipReadableStaysTracked(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "a.md"), []byte("a"), 0o644))
+	runGit(t, proj, "add", "a.md")
+	runGit(t, proj, "commit", "-m", "init")
+	repoID, err := gitrepo.RootCommit(proj)
+	require.NoError(t, err)
+	orig := runGit(t, proj, "branch", "--show-current")
+	runGit(t, proj, "switch", "-q", "--orphan", "doomed")
+	runGit(t, proj, "commit", "-q", "--allow-empty", "-m", "unrelated")
+	tip := runGit(t, proj, "rev-parse", "HEAD")
+	runGit(t, proj, "switch", "-q", "-f", orig)
+	runGit(t, proj, "branch", "-D", "doomed")
+	wt := filepath.Join(t.TempDir(), "wt")
+	reg := openStore(t)
+	for _, f := range []sessionstate.Folder{
+		{SessionID: "s1", Path: proj, Role: sessionstate.FolderRoot, GitRoot: proj, RepoID: repoID},
+		{SessionID: "s1", Path: wt, Role: sessionstate.FolderSubagentWorktree, GitRoot: wt, RepoID: repoID, AgentID: "sub"},
+	} {
+		_, err := reg.RegisterFolder(f)
+		require.NoError(t, err)
+	}
+	require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: "s1", Folder: wt, Head: "doomed", HeadSHA: tip, Base: tip, AgentID: "sub"}))
+
+	ranges, err := reg.Ranges("s1")
+	require.NoError(t, err)
+	untrackGone(reg, "s1", ranges)
+
+	ranges, err = reg.Ranges("s1")
+	require.NoError(t, err)
+	tracked := 0
+	for _, r := range ranges {
+		if r.Tracked() {
+			tracked++
+			assert.Equal(t, filepath.Clean(proj), r.Folder)
+		}
+	}
+	assert.Equal(t, 1, tracked)
+}
