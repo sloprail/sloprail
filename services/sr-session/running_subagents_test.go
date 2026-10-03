@@ -92,15 +92,25 @@ func TestRunningSubagents(t *testing.T) {
 
 // stageStop sets up a session whose registry tracks three ranges of one repository, none judged:
 // feature-bg (agent bg1), feature-fg (agent bg2) and feature-root (no agent). The session's record is lines.
+// brokenRule is a file-guard that cannot load: the one refusal a Stop reports with no stored
+// verdict (a key nobody has judged is not reported at Stop, so it cannot stand in for one).
+const brokenRule = "match: no_such_field == \"x.md\"\nchecks:\n  - script: ./c.sh\n"
+
+const validRule = "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n"
+
 func stageStop(t *testing.T, lines ...string) (HookPayload, string) {
+	t.Helper()
+	return stageStopRule(t, brokenRule, lines...)
+}
+
+func stageStopRule(t *testing.T, rule string, lines ...string) (HookPayload, string) {
 	t.Helper()
 	proj := initRepo(t)
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "README"), []byte("r"), 0o644))
 	runGit(t, proj, "add", "README")
 	runGit(t, proj, "commit", "-m", "init")
-	writeFileGuardYAML(t, proj, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
-		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	writeFileGuardYAML(t, proj, "g", rule, map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
 	base := runGit(t, proj, "rev-parse", "HEAD")
 	tips := map[string]string{}
 	for _, b := range []string{"feature-bg", "feature-fg", "feature-root"} {
@@ -150,8 +160,16 @@ func TestVerifyTrackedRanges_ARunningAgentsRangeIsSkippedAndListed(t *testing.T)
 	assert.NotContains(t, all, "feature-bg", "the running agent's range was judged")
 	assert.Contains(t, all, "feature-fg", "the finished agent's range was not judged")
 	assert.Contains(t, all, "feature-root", "a row with no agent_id must always be judged")
-	assert.Equal(t, 1, strings.Count(notice, "not judged yet: sub-agent bg1 still running"), notice)
-	assert.NotContains(t, notice, "bg2")
+	assert.Empty(t, notice, "a running agent's range is skipped without a note: unjudged ranges are not reported at Stop")
+}
+
+// The Stop shows failures only: ranges nobody has judged pass it, with no refusal and no note.
+func TestVerifyTrackedRanges_UnjudgedRangesAreNotReported(t *testing.T) {
+	lines := append([]string{rsOrigin}, rsLaunch("bg1")...)
+	p, _ := stageStopRule(t, validRule, lines...)
+	refusals, notice := stopOver(t, p)
+	assert.Empty(t, refusals)
+	assert.Empty(t, notice)
 }
 
 // Once the agent's terminal notification is in the record, its range is judged.
@@ -160,7 +178,7 @@ func TestVerifyTrackedRanges_AFinishedAgentsRangeIsJudgedAtTheNextStop(t *testin
 	p, _ := stageStop(t, lines...)
 	refusals, notice := stopOver(t, p)
 	assert.NotContains(t, joined(refusals), "feature-bg")
-	assert.Contains(t, notice, "bg1")
+	assert.Empty(t, notice)
 
 	f, err := os.OpenFile(p.TranscriptPath, os.O_APPEND|os.O_WRONLY, 0o644)
 	require.NoError(t, err)

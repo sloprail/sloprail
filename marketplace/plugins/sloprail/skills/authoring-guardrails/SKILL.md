@@ -15,7 +15,9 @@ keys, what is in scope for its match, and when it fires.
   carries frontmatter." It judges the *committed* result: `sr-checks run --base
   --head` hands it `merge-base(base, head)..head` as one changeset and stores the
   verdicts on the `sloprail/checks` branch; Stop and CI only verify them (no
-  model). It never acts before a write — prevention is a
+  model). Stop shows failures only (a stored FAIL, a rule that does not load, an
+  error), never "not judged yet": run `sr-checks run` before pushing, the pre-push
+  gate and CI require it. It never acts before a write — prevention is a
   gate's job. `deletions: include`/`only` when losing the file is the rule's
   business too (by default a deleted file is skipped).
   → [file-guard.md](file-guard.md)

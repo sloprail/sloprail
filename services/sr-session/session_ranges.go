@@ -42,7 +42,7 @@ import (
 //
 // At Stop each tracked range is VERIFIED, never judged: the same deterministic logic as
 // `sr-checks verify`, which calls no model and writes nothing. A range whose judges have not
-// been asked is refused with the command that asks them.
+// been asked is not reported (the pre-push gate and CI refuse it): the Stop shows failures only.
 
 // trackedHead is the head a folder's current line of work is tracked under: its branch, or the
 // commit for a detached HEAD. ok is false for a repository with no commit.
@@ -812,8 +812,6 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 					silentSaid[agent] = true
 					waiting = append(waiting, msg)
 				}
-			} else {
-				waiting = append(waiting, fmt.Sprintf("not judged yet: sub-agent %s still running (%s %s)", agent, r.Folder, r.Head))
 			}
 			continue // half-finished work of a background agent that has not reported back: judged at the first Stop after its terminal notification
 		}
@@ -1083,8 +1081,11 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
-		Store: results, Verify: true, RecordedFn: recorded,
+		Store: results, Verify: true, FailuresOnly: true, RecordedFn: recorded,
 	})
+	// The Stop reports failures: a stored FAIL, a rule that does not load, an error. A key with
+	// no stored verdict is not one; the pre-push gate and CI `sr-checks verify` refuse it.
+	refusals = withoutUnjudged(refusals)
 	if len(refusals) == 0 && len(broken) == 0 {
 		vm.put(memoKey, "")
 		vm.put(qkey, "")
@@ -1099,6 +1100,17 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	vm.put(memoKey, out)
 	vm.put(qkey, out)
 	return out
+}
+
+// withoutUnjudged drops the refusals that only say a key has no stored verdict yet.
+func withoutUnjudged(refusals []checkrun.FileGuardResult) []checkrun.FileGuardResult {
+	kept := refusals[:0:0]
+	for _, f := range refusals {
+		if !strings.HasPrefix(f.Reason, "not judged yet") {
+			kept = append(kept, f)
+		}
+	}
+	return kept
 }
 
 // verifyMemo keeps, in the session's store, what verifying a range answered, so a Stop pays
@@ -1159,7 +1171,7 @@ func (m *verifyMemo) key(r sessionstate.TrackedRange, p HookPayload, where strin
 	}
 	sort.Strings(hashes)
 	h := sha256.New()
-	for _, part := range [][]string{{repoOf(r.Folder), rng.Base, rng.Head, p.AgentID, fmt.Sprint(p.IsSubagent()), where, r.Head, resultsTip}, hashes, broken} {
+	for _, part := range [][]string{{"failures-only", repoOf(r.Folder), rng.Base, rng.Head, p.AgentID, fmt.Sprint(p.IsSubagent()), where, r.Head, resultsTip}, hashes, broken} {
 		for _, x := range part {
 			fmt.Fprintf(h, "%d:%s;", len(x), x)
 		}
@@ -1226,7 +1238,7 @@ func (m *verifyMemo) quickKey(r sessionstate.TrackedRange, p HookPayload, cm *co
 		return ""
 	}
 	h := sha256.New()
-	for _, x := range []string{"quick", repo, r.Folder, r.Head, sha, base, def, p.AgentID, fmt.Sprint(p.IsSubagent()), folder} {
+	for _, x := range []string{"quick-failures-only", repo, r.Folder, r.Head, sha, base, def, p.AgentID, fmt.Sprint(p.IsSubagent()), folder} {
 		fmt.Fprintf(h, "%d:%s;", len(x), x)
 	}
 	return verifyMemoPrefix + hex.EncodeToString(h.Sum(nil))
