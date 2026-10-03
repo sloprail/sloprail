@@ -39,7 +39,7 @@ func TestT058_12_DashCCommitIsCheckedInTheTargetRepo(t *testing.T) {
 		t.Fatalf("an uncited -C commit of a guarded file was not refused:\n%s", res.Output)
 	}
 	has(t, res.Output, "docs/a.md")
-	has(t, res.Output, "sr-session trajectory cite")
+	has(t, res.Output, "Sloprail-Cites-User")
 	if strings.Contains(res.Output, "could not check") {
 		t.Fatalf("the gate could not check a -C commit:\n%s", res.Output)
 	}

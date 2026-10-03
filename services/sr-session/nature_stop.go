@@ -215,14 +215,29 @@ func natureStopBoundKinds(loaded declaration.Loaded) []string {
 // Every refusal, not just the first: the agent is about to spend a turn on this,
 // and one at a time turns one correction into as many turns as there are rules
 // (the same reason the old Post dispatch collects all its objections).
+//
+// The header is printed once. A range that several rules refused is one item with its rules as
+// sub-items (see rangeRefusal), so it counts as a list and wears the header even when alone.
 func joinRefusals(refusals []string) string {
 	if len(refusals) == 0 {
 		return ""
 	}
-	if len(refusals) == 1 {
+	if len(refusals) == 1 && !strings.Contains(refusals[0], subItem) {
 		return refusals[0]
 	}
 	return "the following rules refused this turn's work:\n  - " + strings.Join(refusals, "\n  - ")
+}
+
+// subItem starts a line of a refusal's own list, one level in from joinRefusals's.
+const subItem = "\n    - "
+
+// rangeRefusal is one tracked range's refusal: where it is, and what refused it. Several parts are
+// listed as sub-items, never under a header of their own: the Stop's one header covers them.
+func rangeRefusal(where string, parts []string) string {
+	if len(parts) == 1 {
+		return where + ": " + parts[0]
+	}
+	return where + ":" + subItem + strings.Join(parts, subItem)
 }
 
 // debugTiming prints how long a step took on stderr, only when SLOPRAIL_DEBUG_TIMING=1.

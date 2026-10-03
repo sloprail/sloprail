@@ -217,8 +217,10 @@ No such file, no requirement. Otherwise the commit must carry a citation: the tr
 message (`git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'`; `-F <file>`,
 `--trailer` and, for `--amend` without a new message, HEAD's message count too), each quote
 resolved against the session by `sr-checks staged --trailers`, the resolver `sr-file --cite` uses
-(`-User` in the user's words, `-Tool` in a tool's output), or a cite chained in front
-(`sr-session trajectory cite '<exact quote>' && git commit ...`). A quote that does not resolve
+(`-User` in the user's words, `-Tool` in a tool's output); no separate cite is needed, though one
+chained in front also works. A commit concluding a merge is judged as the merge: only the files its
+resolution changed (differing from every parent's version) need a citation, since the rest came in
+with the merged branches' own commits. A quote that does not resolve
 grounds nothing and is named in the refusal, with the quotes `sr-file --cite` already recorded for
 the files (`sr-checks staged --recorded`). The gate never replays the agent's `git -c`,
 `--config-env` or `--exec-path` options. `git add`/`git rm`, `-a` and pathspecs on the same line are replayed on a throwaway index; any
