@@ -7,8 +7,6 @@ touches a file or runs a command, and hold until met: files only where you
 allow, right skills loaded first, work proven by diff or logs. Not a
 suggestion in CLAUDE.md or AGENTS.md.
 
-<img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
-
 ## See it in action
 
 [![2-minute walkthrough of sloprail](https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif)](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d)
@@ -63,6 +61,8 @@ come first, and they stay.
 ## Docs → [sloprail.com/docs](https://sloprail.com/docs)
 
 ## How it works
+
+<img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
 
 A project declares guardrails under `.sloprail/`, one folder per rule, in the
 directory named for its kind: `file-guard/` (what a file must hold), `gate/`
