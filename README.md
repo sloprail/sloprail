@@ -1,4 +1,4 @@
-# <img src="docs/assets/logo.svg" alt="" width="28"> sloprail
+# <img src=".github/assets/sloprail-wordmark.png" alt="sloprail" width="320">
 
 Your agents slop. Take control.
 
@@ -9,7 +9,13 @@ suggestion in CLAUDE.md or AGENTS.md.
 
 <img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
 
-<!-- HERO GIF -->
+## See it in action
+
+[![2-minute walkthrough of sloprail](https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif)](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d)
+
+[`harness-mocks`](https://github.com/sloprail/harness-mocks) holds fake versions of Claude Code, Codex and Cursor, used to test agent tools without calling a real model. One Claude Code session got one prompt: make every capability real for every harness, backed by docs and recorded runs of the real harness, where a recording outranks the docs. It finished one capability end to end, then ran many agents in parallel, with sloprail checking every step.
+
+Replay the whole session, every refusal with the agent's fix right below it: [the demo](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/)
 
 ## Install
 
