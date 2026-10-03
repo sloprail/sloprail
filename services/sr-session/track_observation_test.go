@@ -278,7 +278,11 @@ func TestTrackMissing_ADetachedCheckoutOfARemoteCommitIsAnEmptyRange(t *testing.
 // Rows the removed first-sight rule left (auto, never moved) are pruned once; a row that moved,
 // or one the agent stated, is kept; a second hook prunes nothing more.
 func TestPruneUnmovedAuto(t *testing.T) {
-	proj, reg, rs := ruledAndObserved(t, nil)
+	_, reg, rs := ruledAndObserved(t, nil)
+	proj := initRepo(t) // a folder met late: not the session's root
+	commitFile(t, proj, "base.md", "base")
+	_, err := reg.RegisterFolder(sessionstate.Folder{SessionID: rs.ID, Path: proj, Role: sessionstate.FolderAdHoc, GitRoot: proj, BaseRef: runGit(t, proj, "rev-parse", "HEAD")})
+	require.NoError(t, err)
 	for _, b := range []string{"stale", "moved", "stated"} {
 		runGit(t, proj, "switch", "-q", "-c", b)
 		commitFile(t, proj, b+".md", b)

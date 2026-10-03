@@ -1187,12 +1187,23 @@ const prunedReason = "pruned: tracked at first sight, never moved"
 // pruneUnmovedAuto untracks, once (a pruned row is not touched again), every row the engine
 // tracked by itself that never moved: its recorded tip is the one it was registered at AND its
 // branch still stands there. The removed first-sight rule tracked every branch of a folder it
-// met late; those rows owe nothing. Explicit rows, moved rows, commit heads and rows whose
+// met late (a folder that is not the session's root); those rows owe nothing. The branch a folder
+// has checked out is kept: the session stands on it. Explicit rows, moved rows, commit heads and rows whose
 // branch cannot be read are kept. A branch that moves later is tracked again by the next hook.
 func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 	ranges, err := reg.Ranges(sessionID)
 	if err != nil {
 		return err
+	}
+	folders, err := reg.Folders(sessionID)
+	if err != nil {
+		return err
+	}
+	lateFolder := map[string]bool{} // a folder that is not the session's own root: where first sight over-tracked
+	for _, f := range folders {
+		if f.Role != sessionstate.FolderRoot {
+			lateFolder[filepath.Clean(f.Path)] = true
+		}
 	}
 	live := map[string]map[string]string{} // folder -> branch -> tip
 	liveTips := func(folder string) map[string]string {
@@ -1211,7 +1222,10 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 		return m
 	}
 	for _, r := range ranges {
-		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || r.FirstTip == "" || r.HeadSHA != r.FirstTip {
+		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || r.FirstTip == "" || r.HeadSHA != r.FirstTip || !lateFolder[filepath.Clean(r.Folder)] {
+			continue
+		}
+		if head, _, ok := trackedHead(r.Folder); ok && head == r.Head {
 			continue
 		}
 		if tip, ok := liveTips(r.Folder)[r.Head]; !ok || tip != r.HeadSHA {
