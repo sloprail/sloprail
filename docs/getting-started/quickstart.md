@@ -73,7 +73,7 @@ the PR head sha) and on every push to the default branch (`--base` the push's
 before sha, `--head` its after sha), and put a comment `sr-mark: ci-verify` beside that step (any provider:
 GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, ...). Until a committed file
 carries that marker, the shipped `sloprail/gate/ci-verify-required` refuses the
-end of the agent's turn and prints a snippet per provider; switch it off with
+end of the agent's turn and prints a snippet per provider (it installs `sr-checks` with `go install`, pinned to the revision the plugin was installed from, because no release carries it yet); switch it off with
 `disabled: [sloprail/gate/ci-verify-required]` in `.sloprail/config.yaml`.
 
 Now ask it to commit a `.ts` file *without* that marker. The run passes.
