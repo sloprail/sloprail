@@ -75,6 +75,9 @@ type Params struct {
 	Store checkstore.Store
 	// Verify: a judge is looked up, never asked; nothing is recorded.
 	Verify bool
+	// FailuresOnly: a Verify caller that drops every "not judged yet" (the Stop) does not
+	// look up why a key has no verdict: that explanation is only for a reader who sees it.
+	FailuresOnly bool
 	// WholeRange: do not advance each rule's base to its effective base; list every subject
 	// of the range asked about with its stored result (`sr-checks show`, a reader's view).
 	WholeRange bool
@@ -1423,8 +1426,10 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	}
 	if ev.verify && !have {
 		why := ""
-		if inc := ev.incompleteReason(rr); inc != "" {
-			why = " (" + inc + ")"
+		if !ev.params.FailuresOnly {
+			if inc := ev.incompleteReason(rr); inc != "" {
+				why = " (" + inc + ")"
+			}
 		}
 		return missing(fmt.Sprintf("not judged yet%s — run `sr-checks run --base %s --head %s` in %s", why, ev.rng.Base, ev.rng.Head, ev.root))
 	}

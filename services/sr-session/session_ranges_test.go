@@ -398,8 +398,7 @@ func TestDispatchStop_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T
 	base := runGit(t, proj, "rev-parse", "HEAD")
 	wt := filepath.Join(t.TempDir(), "wt")
 	runGit(t, proj, "worktree", "add", "-b", "sub", wt)
-	writeFileGuardYAML(t, wt, "g", "match: path == \"x.md\"\nchecks:\n  - script: ./c.sh\n",
-		map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
+	writeFileGuardYAML(t, wt, "g", brokenRule, map[string]string{"c.sh": "#!/bin/sh\nexit 0\n"})
 	require.NoError(t, os.WriteFile(filepath.Join(wt, "x.md"), []byte("x"), 0o644))
 	runGit(t, wt, "add", "x.md")
 	runGit(t, wt, "commit", "-m", "the sub-agent's work")
@@ -431,7 +430,7 @@ func TestDispatchStop_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetOut(&bytes.Buffer{})
 	got := dispatchNatureStop(cmd, p, modReg, hookScope{}, openStore(t))
-	assert.Contains(t, got, "not judged yet", "the sub-agent's tracked range went unverified at the root's Stop")
+	assert.Contains(t, got, "could not be loaded", "the sub-agent's tracked range went unverified at the root's Stop")
 }
 
 func TestAutoBase_NoRemoteDefaultBranchNeverMakesAnEmptyRange(t *testing.T) {
