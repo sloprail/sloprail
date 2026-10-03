@@ -166,14 +166,20 @@ for inv in "${invs[@]}"; do
   [ -z "$dry" ] || continue
   [ -z "$amend" ] || amending=1
 
-  dir="$(dir_of "$inv")" || fail "the folder the commit runs in could not be told from the command line (a cd to a variable, an eval)"
+  # The gate is early feedback; the file-guards' `require: citation` at Stop and in CI verify every
+  # committed range. A folder this gate cannot tell is allowed, with a note, never refused.
+  if ! dir="$(dir_of "$inv")"; then
+    echo "cite-before-commit: could not check this commit (its folder is a variable or eval); the file-guards will check the citation at Stop and in CI." >&2
+    continue
+  fi
   # `git -C <dir>` moves git (and so the index it reads) to <dir>: run everything there, never in the hook's cwd.
   git_redirected "$payload" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
   git_chdir "$dir"
   dir="$EDIR"
+  # A folder that does not exist yet (this command creates it) or is no repository has no rules to cite for.
+  [ -d "$dir" ] || continue
+  top="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || continue
   lastdir="$dir"
-  [ -d "$dir" ] || fail "the folder the commit runs in ($dir) does not exist"
-  top="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || fail "$dir is not inside a git repository"
 
   # The index the commit will build from, on a throwaway copy: the real one is never touched.
   tmp="$(mktemp -d)" || fail "a scratch folder could not be made"

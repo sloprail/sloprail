@@ -106,3 +106,16 @@ func TestT057_01_ARegistryBaseDoesNotNarrowThePushGate(t *testing.T) {
 		t.Fatal("an agent-recorded registry base narrowed the push gate: refused commits were pushed")
 	}
 }
+
+// T057_08: a push from a folder that does not exist, or whose folder is a variable, is allowed (the
+// file-guards at Stop and in CI are the guarantee); it is not a "could not check" refusal.
+func TestT057_08_PushFromNonExistentOrUnknownFolderIsAllowed(t *testing.T) {
+	e, proj, _ := pushSetup(t)
+	res := e.Run(proj, "s-057-08", "probe", Turns("done",
+		Bash("p1", "git -C "+proj+"/nope/repo push -q origin HEAD:refs/heads/x"),
+		Bash("p2", "d=.; cd $d && git push -q origin HEAD:refs/heads/x"),
+	))
+	if strings.Contains(res.Output, "could not be checked") {
+		t.Fatalf("a push from a missing/unknown folder was refused:\n%s", res.Output)
+	}
+}
