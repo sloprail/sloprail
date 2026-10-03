@@ -424,10 +424,15 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			return
 		}
 		*current = current.advance(target)
+	case *syntax.FuncDecl:
+		// A function body is its own scope, seeded with what is known where it
+		// is defined; nothing in it reaches the statements after the definition.
+		cwdForStmt(cfg, cmd.Body, ptr(*current), out)
 	case *syntax.DeclClause:
-		// `export NAME=value` is a declaration clause, not a call.
-		if cmd.Variant != nil && cmd.Variant.Value == "export" {
-			current.env = withEnv(current.env, exportsOf(cfg, cmd))
+		// `export NAME=value` is a declaration clause, not a call; so are
+		// `declare -x`, `typeset -x` and `local -x`.
+		if exp := exportsOf(cfg, cmd); exp != nil {
+			current.env = withEnv(current.env, exp)
 		}
 	case *syntax.Subshell:
 		// A fresh scope, seeded with a COPY of what the parent currently
@@ -809,11 +814,45 @@ func resolveAgainst(targets []FileTarget, at cwd) []FileTarget {
 	return out
 }
 
-// exportsOf reads an `export NAME=value ...` clause: the names it exports
-// (value "" when not literal, and for a bare `export NAME`, whose value is
-// whatever NAME already was).
+// redirectNames are the variables that move git to another repository. A
+// declaration this package cannot read (`declare $opt $name=x`) may export any
+// of them, so each is recorded with an unknown value: a consumer asking "is
+// GIT_DIR set" hears yes and fails closed.
+var redirectNames = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"}
+
+// exportsOf reads a declaration clause and returns what it exports (value ""
+// when not literal, and for a bare `export NAME`, whose value is whatever NAME
+// already was); nil when it exports nothing. `export` always exports;
+// `declare`, `typeset` and `local` do with a literal option containing `x`
+// (`-x`, `-gx`, `-rx`), and, because an option this package cannot evaluate
+// might be one, also with any non-literal bare word.
 func exportsOf(cfg *expand.Config, d *syntax.DeclClause) map[string]string {
+	if d.Variant == nil {
+		return nil
+	}
+	exports := d.Variant.Value == "export"
+	unreadable := false
+	for _, as := range d.Args {
+		if as.Name != nil || as.Value == nil {
+			continue
+		}
+		if !isLiteral(as.Value) {
+			unreadable = true
+			continue
+		}
+		if o, err := expand.Literal(cfg, as.Value); err == nil && strings.HasPrefix(o, "-") && !strings.HasPrefix(o, "--") && strings.Contains(o, "x") {
+			exports = true
+		}
+	}
+	if !exports && !unreadable {
+		return nil
+	}
 	out := map[string]string{}
+	if unreadable {
+		for _, n := range redirectNames {
+			out[n] = ""
+		}
+	}
 	for _, as := range d.Args {
 		if as.Name == nil {
 			continue

@@ -235,6 +235,11 @@ func TestT058_25_OtherRedirectionSpellingsStillRefused(t *testing.T) {
 		"env GIT_DIR=%s/.git git -C %s commit -q --allow-empty -m x",
 		"export GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
 		"git --git-dir=%s/.git -C %s commit -q --allow-empty -m x",
+		"declare -x GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
+		"typeset -x GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
+		"declare -gx GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
+		"f() { local -x GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x; }; f",
+		"declare $OPT GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
 	} {
 		e, proj := project(t)
 		oth := other(t, e)
