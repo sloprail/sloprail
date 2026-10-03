@@ -165,3 +165,14 @@ func TestGuardKey_FQNSubjectIsItsFingerprint(t *testing.T) {
 	assert.Equal(t, key("2", "v1"), key("other bytes", "v1"), "no file, so no file content in the key")
 	assert.NotEqual(t, key("2", "v1"), key("2", "v2"), "its fingerprint moved")
 }
+
+func TestRangeCitationPart_QuotesMoveItAndDuplicatesDoNot(t *testing.T) {
+	a, b := samplePayload(), samplePayload()
+	assert.Equal(t, RangeCitationPart(a.Changeset), RangeCitationPart(b.Changeset))
+	b.Changeset.Citations = append(b.Changeset.Citations, Citation{Citation: transcript.Citation{Quote: "better words", SourceTypes: []transcript.SourceType{transcript.SourceUser}}})
+	assert.NotEqual(t, RangeCitationPart(a.Changeset), RangeCitationPart(b.Changeset))
+	b.Changeset.Citations = append(b.Changeset.Citations, b.Changeset.Citations[0])
+	c := samplePayload()
+	c.Changeset.Citations = append(c.Changeset.Citations, b.Changeset.Citations[1])
+	assert.Equal(t, RangeCitationPart(c.Changeset), RangeCitationPart(b.Changeset))
+}

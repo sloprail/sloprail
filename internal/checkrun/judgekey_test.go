@@ -85,10 +85,9 @@ func TestGuardKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 	assert.NotEqual(t, key(t, g, c, keyPayload(), "/t1", ""), key(t, g, c, other, "/t1", ""))
 }
 
-// A citation reword is an input only for a rule that requires a citation (its prompt need not
-// render them); for any other rule it is not, and cached passes survive it. The volatile
+// A citation reword is an input for every rule (any check can read the range's citations). The volatile
 // Call field and SHAs never are.
-func TestGuardKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T) {
+func TestGuardKey_ACitationRewordChangesTheKey(t *testing.T) {
 	reword := func(p *changeset.Payload) {
 		p.Changeset.Commits[0].Trailers[changeset.TrailerCitesUser] = []string{"another"}
 		p.Changeset.Citations[0].Citation.Quote = "another"
@@ -108,11 +107,8 @@ func TestGuardKey_ACitationRewordChangesTheKeyOnlyForCitationRules(t *testing.T)
 		msg := keyPayload()
 		msg.Changeset.Commits[0].Subject, msg.Changeset.Commits[0].Body = "reworded", "and a body"
 		assert.Equal(t, base, key(t, g, c, msg, "/t1", ""), "a commit's subject and body are never input")
-		if citation {
-			assert.NotEqual(t, base, key(t, g, c, r, "/t1", ""))
-		} else {
-			assert.Equal(t, base, key(t, g, c, r, "/t1", ""))
-		}
+		// Every check can read changeset.citations, so a reword moves every guard's key.
+		assert.NotEqual(t, base, key(t, g, c, r, "/t1", ""))
 	}
 }
 

@@ -76,6 +76,24 @@ func CitationPart(p Payload) (string, error) {
 	return string(body), err
 }
 
+// RangeCitationPart is every quote of the range (with its pool), sorted and deduped: what any
+// check can read as `changeset.citations`, so new words in an amended commit move the key of a
+// judge or script that never asked for `require: citation`. No SHA, no transcript location.
+func RangeCitationPart(cs Changeset) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range cs.Citations {
+		k := fmt.Sprint(c.SourceTypes) + "\x00" + c.Quote
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	body, _ := json.Marshal(out)
+	return string(body)
+}
+
 // FilesPart is the path and content of the subject's matched files, in the subject's order:
 // the bytes the verdict is about, and where they are (the same bytes at a new path have never
 // been judged there: a rule's prompt and its match are about the path too), keyed whether or
