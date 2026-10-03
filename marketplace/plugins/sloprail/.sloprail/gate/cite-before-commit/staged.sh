@@ -10,13 +10,13 @@ set -uo pipefail
 mode="${1:-check}"
 payload="$(cat)"
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
-cmds="sr-session trajectory cite '<exact quote>' && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'"
+cmds="git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'"
 
 # fail MSG: `when` cannot refuse, so it lets the requirement apply (a cite is then asked for, and
 # `check` refuses the same fault once a cite is there); `check` refuses.
 fail() {
   if [ "$mode" = when ]; then
-    jq -n --arg h "cite-before-commit could not check this commit ($1). Run it as \`git -C <literal dir> commit ...\` (a literal folder, no variable or eval) so it can be checked; this commit may not need a citation at all. Only if it changes a file a file-guard requires a citation for, cite before you commit:
+    jq -n --arg h "cite-before-commit could not check this commit ($1). Run it as \`git -C <literal dir> commit ...\` (a literal folder, no variable or eval) so it can be checked; this commit may not need a citation at all. Only if it changes a file a file-guard requires a citation for, carry the quote as a trailer:
   $cmds" '{hint: $h}'
     exit 0
   fi
@@ -273,7 +273,7 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 if [ "$mode" != when ]; then
-  # A chained cite met the requirement, but a trailer on the commit that does not resolve is refused here:
+  # A trailer on the commit that does not resolve is refused here:
   # it would carry the commit past this gate and fail at Stop and in CI.
   if [ -n "$unresolved" ]; then
     jq -n --arg r "The citation trailers on this commit did not resolve against the session, so they ground nothing:
@@ -285,7 +285,7 @@ fi
 
 list="$(printf '%s\n' "${files[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')"
 if [ -n "$amending" ]; then
-  how="sr-session trajectory cite '<exact quote>' && git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
+  how="git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
 else
   how="$cmds"
 fi
@@ -301,9 +301,9 @@ if [ -n "${lastdir:-}" ] && rdir="$lastdir"; then
   rec="$(cd "$rdir" && sr-checks staged --recorded "${files[@]}" 2>/dev/null | jq -r '"  recorded for \(.path): -m \"\(.trailer): \(.quote)\"" ' 2>/dev/null)" || rec=""
 fi
 [ -z "$rec" ] || how="$how
-Quotes this session already recorded for these files (carry one as a trailer, still chained behind a cite):
+Quotes this session already recorded for these files (carry one as a trailer):
 $rec"
-jq -n --arg h "This commit changes files a file-guard requires a citation for: $list. Quote what grounds the change (the user's words, or a tool's output with --source-types tool_result) in front of the commit, and carry the same quote as a trailer on it: the file-guard checks the trailer at Stop and in CI.
+jq -n --arg h "This commit changes files a file-guard requires a citation for: $list. Carry the quote that grounds the change (the user's words, or a tool's output) as a trailer on the commit; the gate checks it against the session, as do the file-guards at Stop and in CI. No separate cite is needed.
   $how
 (Use Sloprail-Cites-Tool for a tool's output.)" '{hint: $h}'
 exit 0
