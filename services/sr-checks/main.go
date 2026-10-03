@@ -5,6 +5,7 @@
 //	sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (scripts, judges, requirements); writes the results
 //	sr-checks verify --base <rev> --head <rev>   only reads stored verdicts, runs nothing, writes nothing; exit 1 when red
 //	sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
+//	sr-checks log                                every stored verdict (the history, superseded fails too) as text or JSONL; read-only
 //	sr-checks changeset --rule X --base --head   what a rule would be handed, without running it
 //	sr-checks staged --needs citation            the staged files a commit must cite; read-only
 //
@@ -39,6 +40,7 @@ func newRoot() *cobra.Command {
   sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results
   sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged
   sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict
+  sr-checks log [--json] [--rule X] [--failing] [--since T]   every stored verdict, oldest first, superseded fails included; JSONL with --json; read-only
   sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
   sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
   sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)
@@ -56,6 +58,6 @@ origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newLogCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd())
 	return root
 }

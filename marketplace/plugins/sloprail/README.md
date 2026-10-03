@@ -124,6 +124,7 @@ File-guards are judged over an explicit range, never by the Stop hook:
 
     sr-checks run    --base origin/main --head HEAD   # runs what has no stored verdict; stores and pushes
     sr-checks verify --base origin/main --head HEAD   # only reads stored verdicts, runs nothing; exit 1 on anything failing or unjudged
+    sr-checks log                                     # every stored verdict, superseded fails included (--json: JSONL); read-only
 
 A verdict is also reused when a range's base and head trees equal those of a range already judged (a squash merge of a verified, up-to-date PR); if main moved under the PR, run `sr-checks run --base <before> --head <after>` for the push.
 
