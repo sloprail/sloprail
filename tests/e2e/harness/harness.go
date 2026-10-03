@@ -1283,6 +1283,22 @@ func (e *Env) SessionFolders(projDir, sessionID string) []sessionstate.Folder {
 	return folders
 }
 
+// SessionRanges is the ranges the engine tracks for a session, as the root session's store holds them.
+func (e *Env) SessionRanges(projDir, sessionID string) []sessionstate.TrackedRange {
+	e.t.Helper()
+	path := e.sessionDBPath(projDir, sessionID)
+	db, err := sessionstate.Open(path)
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+	ranges, err := db.Ranges(filepath.Base(filepath.Dir(path)))
+	if err != nil {
+		e.t.Fatalf("harness: read session ranges: %v", err)
+	}
+	return ranges
+}
+
 // sessionDBPath mirrors where the engine puts a session's state, having asked
 // the engine itself for the only part a test could get wrong: the conversation
 // identity, which is not the id the harness reports.

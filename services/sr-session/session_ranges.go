@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -609,12 +610,21 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	oneEach := collapseByRepo(ranges, p.AgentID, memo)
 	running := runningSubagents(p, ranges)
 	var waiting []string
+	// The root's own folder tracks the branch a sub-agent's worktree has checked out too, as a row
+	// with no agent_id: the SAME range (one repository, one branch) seen from the other folder.
+	// It belongs to the running agent as much as the agent's own row does.
+	runningBranch := map[string]string{} // repository + branch -> the running agent holding it
+	for _, r := range ranges {
+		if r.Tracked() && r.AgentID != "" && running[r.AgentID] {
+			runningBranch[repoOf(r.Folder)+"\x00"+r.Head] = r.AgentID
+		}
+	}
 	for i, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
 		}
-		if r.Tracked() && r.AgentID != "" && running[r.AgentID] {
-			waiting = append(waiting, fmt.Sprintf("not judged yet: sub-agent %s still running (%s %s)", r.AgentID, r.Folder, r.Head))
+		if agent := runningAgentOf(r, running, runningBranch); agent != "" {
+			waiting = append(waiting, fmt.Sprintf("not judged yet: sub-agent %s still running (%s %s)", agent, r.Folder, r.Head))
 			continue // half-finished work of a background agent that has not reported back: judged at the first Stop after its terminal notification
 		}
 		if r.Tracked() && !oneEach[i] {
@@ -692,9 +702,15 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		}
 	}
 	if len(waiting) > 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(waiting, "; "))
-		if len(out) > 0 {
-			out = append(out, strings.Join(waiting, "; ")+".")
+		waiting = uniqueLines(waiting)
+		// A skip never refuses the Stop: the Stop's caller shows the note (to the user when the
+		// Stop passes, in the refusal when it does not). Without a collector it goes to stderr,
+		// and into a refusal that exists anyway.
+		if !addStopNotice(cmd, waiting...) {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(waiting, "; "))
+			if len(out) > 0 {
+				out = append(out, strings.Join(waiting, "; ")+".")
+			}
 		}
 	}
 	if len(notes) > 0 {
@@ -874,7 +890,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	}
 	results := checkstore.Open(cache, true)
 	defer results.Close()
-	refusals, _ := checkrun.Evaluate(checkrun.Params{
+	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
 		Store: results, Verify: true, RecordedFn: recorded,
@@ -885,9 +901,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 		return ""
 	}
 	parts := append([]string(nil), broken...)
-	for _, f := range refusals {
-		parts = append(parts, f.Reason+" (file-guard "+f.Attribution+")")
-	}
+	parts = append(parts, groupRefusals(refusals, outcomes)...)
 	out := where + ": " + joinRefusals(parts) + goneNote
 	if len(r.Head) < 40 && !strings.HasPrefix(r.Head, "refs/") {
 		out += fmt.Sprintf("\nIf %s is not yours to answer for (the user said to drop it), stop answering for it: `sr-session refs untrack --head %s --reason '<why>'`, and `sr-session refs track --head %s` takes it back.", r.Head, r.Head, r.Head)
@@ -1807,4 +1821,108 @@ func runningSubagents(p HookPayload, ranges []sessionstate.TrackedRange) map[str
 		return nil
 	}
 	return running
+}
+
+// stopNoticesKey carries, in a command's context, the collector of a Stop's notices.
+type stopNoticesKey struct{}
+
+// stopNotices are what a Stop wants said without refusing: shown to the user when the Stop
+// passes, and appended to the refusal when it does not.
+type stopNotices struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// withStopNotices returns the command with a collector in its context, and the collector.
+func withStopNotices(cmd *cobra.Command) *stopNotices {
+	n := &stopNotices{}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd.SetContext(context.WithValue(ctx, stopNoticesKey{}, n))
+	return n
+}
+
+// addStopNotice records notices on the command's collector; false when it has none.
+func addStopNotice(cmd *cobra.Command, lines ...string) bool {
+	ctx := cmd.Context()
+	if ctx == nil {
+		return false
+	}
+	n, ok := ctx.Value(stopNoticesKey{}).(*stopNotices)
+	if !ok {
+		return false
+	}
+	n.mu.Lock()
+	n.lines = uniqueLines(append(n.lines, lines...))
+	n.mu.Unlock()
+	return true
+}
+
+func (n *stopNotices) text() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return strings.Join(n.lines, "\n")
+}
+
+// uniqueLines drops repeated lines, keeping the first of each, in order.
+func uniqueLines(lines []string) []string {
+	seen := map[string]bool{}
+	out := lines[:0:0]
+	for _, l := range lines {
+		if !seen[l] {
+			seen[l] = true
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// groupRefusals words a range's file-guard refusals, one line per distinct reason: rules that
+// refused for the same reason (the same "not judged yet — run ..." for the same range) are
+// named together, with the files of the subjects they could not judge, instead of the line
+// repeated once per rule.
+func groupRefusals(refusals []checkrun.FileGuardResult, outcomes []checkrun.CheckOutcome) []string {
+	var order []string
+	rules := map[string][]string{}
+	for _, f := range refusals {
+		if _, ok := rules[f.Reason]; !ok {
+			order = append(order, f.Reason)
+		}
+		rules[f.Reason] = append(rules[f.Reason], f.Attribution)
+	}
+	var out []string
+	for _, reason := range order {
+		names := uniqueLines(rules[reason])
+		line := reason + " (file-guard " + strings.Join(names, ", ")
+		if strings.HasPrefix(reason, "not judged yet") {
+			var files []string
+			for _, o := range outcomes {
+				if o.Status == "missing" && o.Subject != "" {
+					files = append(files, o.Subject)
+				}
+			}
+			if files = uniqueLines(files); len(files) > 0 && len(names) > 1 {
+				line += "; subjects: " + strings.Join(files, ", ")
+			}
+		}
+		out = append(out, line+")")
+	}
+	return out
+}
+
+// runningAgentOf is the still-running agent a tracked range belongs to: the agent its own row
+// names, or the one whose row holds the same branch of the same repository. "" when none.
+func runningAgentOf(r sessionstate.TrackedRange, running map[string]bool, branches map[string]string) string {
+	if !r.Tracked() {
+		return ""
+	}
+	if r.AgentID != "" {
+		if running[r.AgentID] {
+			return r.AgentID
+		}
+		return ""
+	}
+	return branches[repoOf(r.Folder)+"\x00"+r.Head]
 }
