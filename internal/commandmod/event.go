@@ -46,6 +46,15 @@ type Invocation struct {
 	// running where the line began — that is a guess, and a path resolved
 	// against it could name a file the command never touches.
 	Cwd string
+
+	// Env is the environment the line itself sets for this program, NAME to
+	// value: a prefix (`FOO=1 cmd`), a wrapper's assignments (`env FOO=1 cmd`,
+	// `sudo FOO=1 cmd`), and an `export FOO=1` earlier in the same shell scope
+	// (a subshell's export stays inside it). The value is "" when it is not a
+	// literal word (`FOO=$X`, `FOO=$(cmd)`): the name is certain, the value is
+	// not. Nil/empty when the line sets nothing. Only what the text says: the
+	// environment the harness started with is not in it.
+	Env map[string]string
 }
 
 // CommandEvent is what this module's own code passes around.
@@ -89,11 +98,16 @@ func (c CommandEvent) Event() event.Event {
 			}
 			flags[k] = arr
 		}
+		env := make(map[string]any, len(inv.Env))
+		for k, v := range inv.Env {
+			env[k] = v
+		}
 		invs = append(invs, map[string]any{
 			KeyBin:   inv.Bin,
 			KeyArgv:  argv,
 			KeyFlags: flags,
 			KeyCwd:   inv.Cwd,
+			KeyEnv:   env,
 		})
 	}
 
@@ -143,6 +157,16 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		}
 		if v, ok := m[KeyCwd].(string); ok {
 			inv.Cwd = v
+		}
+		if env, ok := m[KeyEnv].(map[string]any); ok {
+			for k, v := range env {
+				if s, ok := v.(string); ok {
+					if inv.Env == nil {
+						inv.Env = map[string]string{}
+					}
+					inv.Env[k] = s
+				}
+			}
 		}
 		if flags, ok := m[KeyFlags].(map[string]any); ok {
 			for k, v := range flags {

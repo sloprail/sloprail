@@ -99,6 +99,10 @@ type cwd struct {
 	// long as every `cd` since the start of the sequence was relative — composed
 	// onto each other, never onto a root this package does not have.
 	dir string
+	// env is what `export NAME=value` has set in this scope so far (value ""
+	// when not literal). Immutable once built: a scope copies it on write, so
+	// a subshell's copy and the parent's never alias.
+	env map[string]string
 }
 
 // startCwd is the effective directory nothing has yet moved out of: the empty,
@@ -134,15 +138,15 @@ func (c cwd) advance(target string) cwd {
 	if path.IsAbs(target) {
 		// An absolute cd names the directory outright, whatever an opaque
 		// eval before it may have done.
-		return cwd{dir: path.Clean(target)}
+		return cwd{dir: path.Clean(target), env: c.env}
 	}
 	if c.dir == "" {
 		// Relative, composed onto "wherever this sequence started" — which
 		// stays exactly that: still relative, one level deeper. Not resolved
 		// against any root, because this package has none.
-		return cwd{dir: path.Clean(target), opaque: c.opaque}
+		return cwd{dir: path.Clean(target), opaque: c.opaque, env: c.env}
 	}
-	return cwd{dir: path.Clean(path.Join(c.dir, target)), opaque: c.opaque}
+	return cwd{dir: path.Clean(path.Join(c.dir, target)), opaque: c.opaque, env: c.env}
 }
 
 // resolveTargetAt turns a path as a command line spelled it into the path it
@@ -420,6 +424,11 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			return
 		}
 		*current = current.advance(target)
+	case *syntax.DeclClause:
+		// `export NAME=value` is a declaration clause, not a call.
+		if cmd.Variant != nil && cmd.Variant.Value == "export" {
+			current.env = withEnv(current.env, exportsOf(cfg, cmd))
+		}
 	case *syntax.Subshell:
 		// A fresh scope, seeded with a COPY of what the parent currently
 		// knows. Whatever `cd`s happen inside are recorded for the statements
@@ -640,10 +649,43 @@ func cwdForIfChain(cfg *expand.Config, cmd *syntax.IfClause, entry cwd, out map[
 // honestly anyway rather than left to panic on branches[0]: no branches ran
 // is not evidence of a directory, known or otherwise.
 func mergeBranches(branches ...cwd) cwd {
+	out := mergeDirs(branches...)
+	out.env = mergeEnvs(branches...)
+	return out
+}
+
+// mergeEnvs is the union of what any path exported: a variable one path set
+// may be set at runtime, and a consumer asking "is GIT_DIR set" must hear
+// yes. The value survives only where every path agrees on it, else "".
+func mergeEnvs(branches ...cwd) map[string]string {
+	var out map[string]string
+	for _, b := range branches {
+		for k, v := range b.env {
+			if out == nil {
+				out = map[string]string{}
+			}
+			if old, seen := out[k]; seen && old != v {
+				v = ""
+			} else if !seen {
+				for _, o := range branches {
+					if ov, ok := o.env[k]; !ok || ov != v {
+						v = ""
+						break
+					}
+				}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func mergeDirs(branches ...cwd) cwd {
 	if len(branches) == 0 {
 		return cwd{unknown: true}
 	}
 	first := branches[0]
+	first.env = nil
 	if first.unknown {
 		return cwd{unknown: true}
 	}
@@ -763,6 +805,80 @@ func resolveAgainst(targets []FileTarget, at cwd) []FileTarget {
 		}
 
 		out = append(out, t)
+	}
+	return out
+}
+
+// exportsOf reads an `export NAME=value ...` clause: the names it exports
+// (value "" when not literal, and for a bare `export NAME`, whose value is
+// whatever NAME already was).
+func exportsOf(cfg *expand.Config, d *syntax.DeclClause) map[string]string {
+	out := map[string]string{}
+	for _, as := range d.Args {
+		if as.Name == nil {
+			continue
+		}
+		out[as.Name.Value] = ""
+		if as.Value != nil && !as.Append && as.Array == nil && isLiteral(as.Value) {
+			if v, err := expand.Literal(cfg, as.Value); err == nil {
+				out[as.Name.Value] = v
+			}
+		}
+	}
+	return out
+}
+
+// validEnvName reports whether s is a shell variable name.
+func validEnvName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// assignsOf reads the `NAME=value` prefix of one call.
+func assignsOf(cfg *expand.Config, call *syntax.CallExpr) map[string]string {
+	var out map[string]string
+	for _, as := range call.Assigns {
+		if as.Name == nil {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[as.Name.Value] = ""
+		if as.Value != nil && !as.Append && as.Array == nil && isLiteral(as.Value) {
+			if v, err := expand.Literal(cfg, as.Value); err == nil {
+				out[as.Name.Value] = v
+			}
+		}
+	}
+	return out
+}
+
+// underlay returns inv's own env with base beneath it: what the invocation
+// itself set wins over what its scope or its wrapper did.
+func underlay(inv map[string]string, base map[string]string) map[string]string {
+	if len(base) == 0 {
+		return inv
+	}
+	return withEnv(base, inv)
+}
+
+// withEnv returns a copy of base with add laid over it.
+func withEnv(base, add map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(add))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range add {
+		out[k] = v
 	}
 	return out
 }

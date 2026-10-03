@@ -53,6 +53,7 @@ const (
 	KeyArgv  = "argv"
 	KeyFlags = "flags"
 	KeyCwd   = "cwd"
+	KeyEnv   = "env"
 )
 
 // Module produces command events.
@@ -142,6 +143,11 @@ func (*Module) Kinds() []module.KindDecl {
 							// relative to that, an absolute path, or "" when a
 							// `cd` could not be resolved. See Invocation.Cwd.
 							{Name: KeyCwd, Type: module.TypeString},
+
+							// env is the environment the line sets for this
+							// program: NAME -> literal value, "" when the
+							// value is not literal. See Invocation.Env.
+							{Name: KeyEnv, Type: module.TypeMap, Elem: &module.FieldDecl{Type: module.TypeString}},
 						},
 					},
 				},
