@@ -94,8 +94,8 @@ func resolveRootSession(p HookPayload) (rootSession, error) {
 // no row the sub-agent's range fails closed.
 func folderToRegister(p HookPayload, rs rootSession) (path, role string, ok bool) {
 	tree, err := gitrepo.Root(p.Cwd)
-	if err != nil || tree == "" {
-		return "", "", false
+	if err != nil || tree == "" || gitrepo.IsSnapshot(tree) {
+		return "", "", false // a check's read-only snapshot is no folder of the session
 	}
 	rootTree, err := gitrepo.Root(rs.Cwd)
 	if err != nil || rootTree == "" {

@@ -35,6 +35,13 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	// The directory is named "tree" under the unique temporary root: callers (and the judge's
 	// --add-dir) rely on that shape. Git numbers colliding registration names itself.
 	s := &Snapshot{Path: filepath.Join(root, "tree"), repo: dir, root: root}
+	if err := writeOwner(root); err != nil {
+		os.RemoveAll(root)
+		return nil, fmt.Errorf("gitrepo: snapshot owner: %w", err)
+	}
+	// Snapshots a killed run left behind (their owner is dead) would otherwise stay registered
+	// as read-only detached worktrees for ever.
+	SweepStaleSnapshots(dir)
 	_, err = run(dir, "worktree", "add", "--detach", "--force", s.Path, commit)
 	if err != nil {
 		// A registration a dead process left behind (its directory gone), or a half-made one
@@ -53,6 +60,7 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 		// was promised; tear it down rather than hand it over.
 		return nil, errors.Join(fmt.Errorf("gitrepo: make snapshot read-only: %w", err), s.Remove())
 	}
+	track(s)
 	return s, nil
 }
 
@@ -61,6 +69,7 @@ func (s *Snapshot) Remove() error {
 	if s == nil || s.root == "" {
 		return nil
 	}
+	untrack(s)
 	var errs []error
 	if err := setWritable(s.Path, true); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, err)

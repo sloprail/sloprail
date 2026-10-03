@@ -168,6 +168,10 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 		if err != nil || tree == "" {
 			continue // not created (yet)
 		}
+		if gitrepo.IsSnapshot(tree) {
+			delete(pending, dir)
+			continue
+		}
 		tree = filepath.Clean(tree)
 		delete(pending, dir)
 		if _, found, err := reg.Folder(rs.ID, tree); err != nil || found {
@@ -207,7 +211,7 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 			continue
 		}
 		tree, err := gitrepo.Root(dir)
-		if err != nil || tree == "" {
+		if err != nil || tree == "" || gitrepo.IsSnapshot(tree) {
 			continue
 		}
 		if sameDir(tree, rootTree) || (ownTree != "" && sameDir(tree, ownTree)) {

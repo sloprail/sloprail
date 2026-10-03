@@ -197,6 +197,7 @@ func execute(cmd *cobra.Command, m mode) error {
 		return err
 	}
 	defer t.sess.close()
+	defer gitrepo.CleanupOnSignal()() // a killed run must not leak its read-only snapshots
 	broken := brokenFileGuards(t.loaded)
 	if len(t.loaded.FileGuards) == 0 {
 		if m != modeShow && len(broken) > 0 {
