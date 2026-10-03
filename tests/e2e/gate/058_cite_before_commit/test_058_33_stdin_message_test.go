@@ -28,15 +28,16 @@ func TestT058_34_HeredocMessageWithUnresolvingTrailerIsRefused(t *testing.T) {
 	has(t, res.Output, "did not resolve")
 }
 
-// T058_35: `--file=-` and a here-string read the message the same way.
-func TestT058_35_FileEqualsDashAndHereString(t *testing.T) {
+// T058_35: `--file=-` reads the message from the heredoc the same way. (A here-string is a bashism the
+// mock's /bin/sh, dash in CI, cannot run; commandmod's TestStdin covers it.)
+func TestT058_35_FileEqualsDash(t *testing.T) {
 	e, proj := project(t)
 	res := e.Run(proj, "s-058-35", prompt, Turns("done",
 		stage("a", "docs/a.md", "a"),
-		Bash("c", "git commit -q --file=- <<<$'add a\\n\\nSloprail-Cites-User: "+quote+"'"),
+		Bash("c", "git commit -q --file=- <<'EOF'\nadd a\n\nSloprail-Cites-User: "+quote+"\nEOF\n"),
 	))
 	if res.Refused() {
-		t.Fatalf("a commit with --file=- and a here-string trailer was refused:\n%s", res.Output)
+		t.Fatalf("a commit with --file=- heredoc trailer was refused:\n%s", res.Output)
 	}
 	has(t, subjects(e, proj), "add a")
 }
