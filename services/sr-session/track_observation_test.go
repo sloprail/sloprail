@@ -391,3 +391,43 @@ func resolved(t *testing.T, p string) string {
 	require.NoError(t, err)
 	return filepath.Clean(r)
 }
+
+// The parent committed on B (base X); a sub-agent later checked B out in its own worktree, its row
+// based at B's tip then. Pruning the parent's row would leave only the narrower range: the
+// parent's commits would escape. A surviving row that covers (its base is the pruned row's or
+// older) allows the prune; a narrower one forbids it.
+func TestPruneForeignAuto_OnlyWhereTheSurvivingRangeCoversIt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		narrow     bool
+		wantPruned bool
+	}{{"narrower surviving range keeps the row", true, false}, {"covering surviving range prunes the row", false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			proj, reg, rs := ruledAndObserved(t, nil)
+			x := runGit(t, proj, "rev-parse", "HEAD")
+			runGit(t, proj, "switch", "-q", "-c", "B")
+			commitFile(t, proj, "p.md", "parent work")
+			tip := runGit(t, proj, "rev-parse", "B")
+			runGit(t, proj, "switch", "-q", "main")
+			sub := filepath.Join(t.TempDir(), "sub")
+			runGit(t, proj, "worktree", "add", "-q", sub, "B") // the sub-agent checks B out
+			subBase := x
+			if tc.narrow {
+				subBase = tip
+			}
+			require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: rs.ID, Folder: resolved(t, proj), Head: "B", HeadSHA: tip, Base: x, AddedBy: sessionstate.RangeAuto}))
+			require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: rs.ID, Folder: resolved(t, sub), Head: "B", HeadSHA: tip, Base: subBase, AddedBy: sessionstate.RangeAgent, AgentID: "sub"}))
+			require.NoError(t, pruneForeignAuto(reg, rs.ID))
+			rows, err := reg.Ranges(rs.ID)
+			require.NoError(t, err)
+			for _, r := range rows {
+				if r.Folder == resolved(t, proj) && r.Head == "B" {
+					assert.Equal(t, !tc.wantPruned, r.Tracked())
+				}
+				if r.Folder == resolved(t, sub) {
+					assert.True(t, r.Tracked(), "the worktree standing on the branch lost its row")
+				}
+			}
+		})
+	}
+}

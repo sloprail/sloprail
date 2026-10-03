@@ -203,8 +203,18 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 		return nil, fmt.Errorf("read observations of %s: %w", folder, err)
 	}
 	elsewhere := checkedOutElsewhere(folder)
+	ownRows, err := reg.Ranges(f.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read the session's ranges: %w", err)
+	}
+	ownTracked := map[string]bool{} // branches this folder already answers for: its session moved them, whoever stands on them now
+	for _, r := range ownRows {
+		if r.Tracked() && filepath.Clean(r.Folder) == filepath.Clean(folder) {
+			ownTracked[r.Head] = true
+		}
+	}
 	for i, b := range branches {
-		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" {
+		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" && !ownTracked[b.name] {
 			branches[i].foreign = true
 		}
 		key := observedTipPrefix + b.name + ":" + folder
@@ -1855,18 +1865,20 @@ const foreignPrunedReason = "pruned: the branch is checked out in another worktr
 // branch visible in the shared ref namespace, so N sub-agent worktrees of one repository held N
 // rows each (N x N). The worktree standing on a branch keeps its own row; a branch a folder moved
 // and then left (checked out nowhere) is kept, as is a row whose other worktree holds no tracked
-// row for the branch (a removed folder's range moved to the root). Explicit rows and rows of vanished folders are kept.
+// row for the branch (a removed folder's range moved to the root) or one whose base is not the
+// pruned row's or older (a narrower range would let the pruned row's commits escape). Explicit rows and rows of vanished folders are kept.
 func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 	ranges, err := reg.Ranges(sessionID)
 	if err != nil {
 		return err
 	}
-	held := map[string]bool{} // folder\x00branch of every tracked row: the worktree that stands on a branch answers for it
+	held := map[string]sessionstate.TrackedRange{} // folder\x00branch -> the tracked row of the worktree that stands on it
 	for _, r := range ranges {
 		if r.Tracked() {
-			held[realPath(r.Folder)+"\x00"+r.Head] = true
+			held[realPath(r.Folder)+"\x00"+r.Head] = r
 		}
 	}
+	cover := newCoverMemo()
 	elsewhere := map[string]map[string]string{} // folder -> branch -> the other worktree on it, read once
 	for _, r := range ranges {
 		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || isCommitHead(r.Folder, r.Head) {
@@ -1880,8 +1892,20 @@ func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 			m = checkedOutElsewhere(r.Folder)
 			elsewhere[r.Folder] = m
 		}
-		if other := m[r.Head]; other == "" || !held[other+"\x00"+r.Head] {
-			continue // not on another worktree, or that worktree answers for nothing: the row may be all that holds the work
+		other := m[r.Head]
+		if other == "" {
+			continue
+		}
+		keep, ok := held[other+"\x00"+r.Head]
+		if !ok || repoOf(keep.Folder) != repoOf(r.Folder) {
+			continue // that worktree answers for nothing: this row may be all that holds the work
+		}
+		// The surviving row must cover everything this one does: its base is this base or older.
+		// A sub-agent that checked the branch out later has a narrower range; the commits before
+		// it would escape.
+		covers, err := cover.isAncestor(r.Folder, effectiveBase(keep, r.Head), effectiveBase(r, r.Head))
+		if err != nil || !covers {
+			continue
 		}
 		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, foreignPrunedReason, r.AgentID, r.HeadSHA); err != nil {
 			return err
