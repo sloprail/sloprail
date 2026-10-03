@@ -59,17 +59,16 @@ in `.sloprail/config.yaml`.
 Full docs, including how to write a guardrail:
 [sloprail.com/docs](https://sloprail.com/docs).
 
-## Rules first.
+## Harness hooks vs sloprail
 
-Usually the agent writes first and you fix it after. With sloprail the rules
-come first, and they stay.
-
-|   | Usually | With sloprail |
+| | Hooks, `CLAUDE.md`, skills, AI reviewers | sloprail |
 |---|---|---|
-| 1 | You ask | You ask |
-| 2 | Agent writes it all | **Agent writes the rules first** |
-| 3 | You correct it | Agent builds inside them |
-| 4 | Added to CLAUDE.md / SKILL.md, if you ask | Checked on every change; the rules stay |
+| **When rules appear** | **after** a mistake, if you add them | **first**: the agent sets them up before any change that will repeat, and they stay |
+| **The rule** | **text** the model reads, or a hook script you write | a check that **verifies** the work, run by code |
+| **Shell changes** | the hook sees the command, not which **files** it changed | checks **every file** the change touched |
+| **What gets judged** | **one** tool call at a time | **sliced** the way each rule needs: one file, a module, or the whole commit |
+| **Push and merge** | blocked only if your hook **pattern** matches | blocked until the checks **pass** |
+| **Review** | an AI reviewer re-reads it every time; what it checked is **opaque** | every verdict **saved** with its rule and reason, reused until the code changes |
 
 ## You've seen these happen
 
