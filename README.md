@@ -9,7 +9,7 @@ suggestion in CLAUDE.md or AGENTS.md.
 
 ## See it in action
 
-[![2-minute walkthrough of sloprail](https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif)](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d)
+<a href="https://www.loom.com/share/16f4d75005a44e699e6a770af136693d"><img src="https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif" alt="2-minute walkthrough of sloprail" width="512"></a>
 
 [`harness-mocks`](https://github.com/sloprail/harness-mocks) holds fake versions of Claude Code, Codex and Cursor, used to test agent tools without calling a real model. One Claude Code session got one prompt: make every capability real for every harness, backed by docs and recorded runs of the real harness, where a recording outranks the docs. It finished one capability end to end, then ran many agents in parallel, with sloprail checking every step.
 
