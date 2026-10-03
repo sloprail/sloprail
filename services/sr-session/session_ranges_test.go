@@ -760,3 +760,23 @@ func TestUntrackGone_ABranchGoneButTipReadableStaysTracked(t *testing.T) {
 	}
 	assert.Equal(t, 1, tracked)
 }
+
+// A tracked range whose branch is gone (folder kept) is untracked by the head it was stored under,
+// at its last tip; a head never stored is an error.
+func TestUntrackStored_NamesARangeByItsStoredHead(t *testing.T) {
+	reg := openStore(t)
+	for _, head := range []string{"pr201", "pr202"} {
+		require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: "s1", Folder: "/wt", Head: head, HeadSHA: "873c3d63352d", Base: "b", AgentID: "sub"}))
+	}
+	require.NoError(t, untrackStored(reg, "s1", "/wt", "pr201", "gone"))
+	require.NoError(t, untrackStored(reg, "s1", "/wt", "refs/heads/pr202", "gone"), "the refs/heads/ form names the same row")
+
+	ranges, err := reg.Ranges("s1")
+	require.NoError(t, err)
+	for _, r := range ranges {
+		assert.False(t, r.Tracked(), r.Head)
+		assert.Equal(t, "873c3d63352d", r.HeadSHA)
+	}
+	assert.ErrorIs(t, untrackStored(reg, "s1", "/wt", "never", "x"), errNoStoredRange)
+	assert.ErrorIs(t, untrackStored(reg, "s1", "/elsewhere", "pr201", "x"), errNoStoredRange)
+}
