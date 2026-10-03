@@ -502,6 +502,8 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			return ev.fail(g, run, err)
 		}
 		if len(cs.Files) == 0 {
+			ev.note(CheckOutcome{Rule: rule, Subject: changeset.DefaultSubjectID, Kind: guardKind, Status: checkstore.StatusPass, Source: "stored",
+				Reason: "nothing selected has changed since the last pass, at " + shortRev(r.Base)})
 			run.Complete = true
 			if _, err := ev.record(run); err != nil {
 				return ev.fail(g, run, err)
