@@ -73,8 +73,12 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			// What this call's programs inherit from the line: the scope's
 			// exports under the call's own prefix.
 			scope := withEnv(at.env, assignsOf(cfg, node))
+			stdin := stdinOf(stmt)
 			for _, inv := range resolve(cfg, node, depth) {
 				inv.Env = underlay(inv.Env, scope)
+				if inv.Stdin == nil {
+					inv.Stdin = stdin
+				}
 				// Every invocation resolve returns carries a Cwd relative to
 				// where ITS line started: "." for the call itself, and for an
 				// interpreter payload's programs whatever the payload's own
@@ -232,3 +236,74 @@ func safeConfig() *expand.Config {
 // the program a file descriptor path; nothing is opened here, and the value
 // exists only so the argument vector keeps its shape.
 const procSubstPath = "/dev/fd/63"
+
+// stdinOf is the literal text a statement's own redirects feed its command's standard
+// input: the last stdin redirect decides, and only a heredoc (a quoted delimiter, or an
+// unquoted one whose body has no expansion or escape) or a literal here-string yields
+// text. Any other stdin redirect (`< file`) makes it unknown, nil.
+func stdinOf(stmt *syntax.Stmt) *string {
+	if stmt == nil {
+		return nil
+	}
+	var out *string
+	for _, r := range stmt.Redirs {
+		if r.N != nil && r.N.Value != "0" {
+			continue
+		}
+		switch r.Op {
+		case syntax.Hdoc, syntax.DashHdoc:
+			out = nil
+			if r.Hdoc == nil {
+				continue
+			}
+			var b strings.Builder
+			ok := true
+			for _, part := range r.Hdoc.Parts {
+				l, isLit := part.(*syntax.Lit)
+				if !isLit || (isPlainLit(r.Word) && strings.Contains(l.Value, `\`)) {
+					ok = false
+					break
+				}
+				b.WriteString(l.Value)
+			}
+			if ok {
+				s := b.String()
+				if r.Op == syntax.DashHdoc {
+					lines := strings.Split(s, "\n")
+					for i, l := range lines {
+						lines[i] = strings.TrimLeft(l, "\t")
+					}
+					s = strings.Join(lines, "\n")
+				}
+				out = &s
+			}
+		case syntax.WordHdoc:
+			out = nil
+			if r.Word == nil || !isLiteral(r.Word) {
+				continue
+			}
+			if v, err := expand.Literal(newConfig(), r.Word); err == nil {
+				v += "\n"
+				out = &v
+			}
+		case syntax.RdrIn, syntax.RdrInOut:
+			out = nil
+		}
+	}
+	return out
+}
+
+// isPlainLit reports a word with no quoting at all: a heredoc delimiter written so, its
+// body is subject to expansion and escapes.
+func isPlainLit(w *syntax.Word) bool {
+	if w == nil {
+		return true
+	}
+	for _, p := range w.Parts {
+		l, ok := p.(*syntax.Lit)
+		if !ok || strings.Contains(l.Value, `\`) {
+			return false
+		}
+	}
+	return true
+}
