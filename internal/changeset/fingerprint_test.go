@@ -176,3 +176,13 @@ func TestRangeCitationPart_QuotesMoveItAndDuplicatesDoNot(t *testing.T) {
 	c.Changeset.Citations = append(c.Changeset.Citations, b.Changeset.Citations[1])
 	assert.Equal(t, RangeCitationPart(c.Changeset), RangeCitationPart(b.Changeset))
 }
+
+// A deletion is keyed by what was deleted: the same path deleted with other old content is another change.
+func TestFilesPart_DeletedFileKeyHasItsOldBlob(t *testing.T) {
+	mk := func(oldBlob, oldContent string) Payload {
+		return Payload{Subject: Subject{Files: []string{"a.md"}}, Changeset: Changeset{Files: []File{{Path: "a.md", Status: "D", OldBlob: oldBlob, OldContent: oldContent}}}}
+	}
+	assert.Equal(t, FilesPart(mk("b1", "")), FilesPart(mk("b1", "x")), "the blob id stands for the bytes")
+	assert.NotEqual(t, FilesPart(mk("b1", "")), FilesPart(mk("b2", "")), "another old blob is another deletion")
+	assert.NotEqual(t, FilesPart(mk("", "A")), FilesPart(mk("", "B")), "without a blob, the old bytes")
+}
