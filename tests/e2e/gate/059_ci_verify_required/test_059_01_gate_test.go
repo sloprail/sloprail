@@ -20,14 +20,14 @@ func TestT059_01_NoFileGuardsNeedsNoMarker(t *testing.T) {
 }
 
 // T059_02: file-guards and no committed marker refuses the Stop, and the refusal carries what the
-// agent needs: why, a snippet per major provider that verifies the PR head, the marker, how to disable.
+// agent needs: why, a pull-request-only snippet per major provider that verifies the PR head, the marker, how to disable.
 func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 	e, proj := project(t, true)
 	got := stop(e, proj, "s-059-02")
 	for _, want := range []string{
 		marker,
 		"GitHub Actions", "GitLab CI", "Azure Pipelines", "Jenkins",
-		"sr-checks verify", "push to the default branch", "github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion", "merge-base",
+		"sr-checks verify", "Protect the default branch",
 		"github.event.pull_request.head.sha", "CI_MERGE_REQUEST_DIFF_BASE_SHA", "System.PullRequest.SourceCommitId",
 		"sloprail/gate/ci-verify-required",
 		"/install.sh | SLOPRAIL_INSTALL_TAG=",
@@ -35,6 +35,11 @@ func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the refusal lacks %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("the snippets still carry a push-to-default-branch job (%q):\n%s", bad, got)
 		}
 	}
 	for _, bad := range []string{"actions/setup-go", "golang:1.25", "GoTool@0", "go install", "no sloprail release tarball"} {
@@ -161,6 +166,30 @@ func TestT059_10_MarkerAlwaysPasses(t *testing.T) {
 		if got := stop(e, proj, "s-059-10"); strings.Contains(got, marker) {
 			t.Fatalf("Stop %d with the marker was refused:\n%s", i, got)
 		}
+	}
+}
+
+// T059_11: the old free-text form is no marker: the engine's reader does not read it, so a file
+// carrying it still leaves the gate refusing.
+func TestT059_11_OldTextFormIsRefused(t *testing.T) {
+	e, proj := project(t, true)
+	e.WriteFile(proj, "Jenkinsfile", "// sr-mark: ci-verify\nsh 'sr-checks verify --base origin/main --head $GIT_COMMIT'\n")
+	e.CommitAll(proj, "add CI with the old text")
+	if got := stop(e, proj, "s-059-11"); !strings.Contains(got, marker) {
+		t.Fatalf("the old text form satisfied the gate:\n%s", got)
+	}
+}
+
+// T059_12: a marker written by `sr-mark apply ci --verify=<path>:<line>` satisfies the gate.
+func TestT059_12_SrMarkApplyWrittenMarkerPasses(t *testing.T) {
+	e, proj := project(t, true)
+	e.WriteFile(proj, ".gitlab-ci.yml", "job:\n  script:\n    - sr-checks verify --base a --head b\n")
+	if res := e.CLIDirectEnv(proj, nil, "sr-mark", "apply", "ci", "--verify=.gitlab-ci.yml:3"); res.Code != 0 {
+		t.Fatalf("sr-mark apply failed:\n%s", res.Output)
+	}
+	e.CommitAll(proj, "add CI")
+	if got := stop(e, proj, "s-059-12"); strings.Contains(got, marker) {
+		t.Fatalf("a sr-mark-written marker did not satisfy the gate:\n%s", got)
 	}
 }
 

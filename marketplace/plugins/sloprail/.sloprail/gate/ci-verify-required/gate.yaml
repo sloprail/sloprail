@@ -4,17 +4,20 @@
 # team can rely on is a CI job that runs
 #
 #   pull request:  sr-checks verify --base <target branch> --head <PR head sha>
-#   push to the default branch:  sr-checks verify --base <push before sha> --head <push after sha>
 #
-# on every pull request AND on every push to the default branch (a direct push has no PR to gate it). This gate refuses the end of a turn in a project that loads file-guards
+# on every pull request only. The default branch is protected (PRs required, branches up to date, no
+# direct pushes), so the PR's range is exactly what lands and a verify on pushes would only add
+# false reds. This gate refuses the end of a turn in a project that loads file-guards
 # until the committed tree shows such a job.
 #
 # Detected by a MARKER, never by a provider's file path, so GitHub Actions, GitLab CI, Azure
-# Pipelines, Bitbucket, Jenkins and the rest are all the same: any committed file with a line
-# containing `sr-mark: ci-verify` (a comment next to the `sr-checks verify` step). It is looked up
-# in HEAD (`git grep ... HEAD`), the committed tree, so an uncommitted CI file does not count: a
-# pipeline that is not committed does not run on a pull request. The gate does not parse the CI
-# config; the marker is a promise the author makes, kept honest by review.
+# Pipelines, Bitbucket, Jenkins and the rest are all the same: any committed file carrying the
+# sloprail marker `sr:ci verify` (a comment next to the `sr-checks verify` step, written by
+# `sr-mark apply ci --verify=<path>:<line>`). It is looked up with `sr-mark find ci --fqn verify`,
+# which reads HEAD, the committed tree, with the engine's own marker reader, so an uncommitted CI
+# file does not count and neither does free text that merely resembles the marker. The gate does
+# not parse the CI config; the file-guard `sloprail/file-guard/ci-verify-step` checks that a marked
+# file really runs `sr-checks verify` on pull requests.
 #
 # Applies only where the project has its OWN file-guards: a committed file under
 # `.sloprail/file-guard/`. Guards a plugin ships are not the project's to enforce in its CI, and a
