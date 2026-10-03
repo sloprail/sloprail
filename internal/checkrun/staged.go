@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 
@@ -97,21 +98,16 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 				}
 				continue
 			}
-			cache := newWhenCache(p.Root, g, req.When, rng)
-			results := make([]bool, len(subs))
-			errs := make([]error, len(subs))
-			var missed []int
-			for i, s := range subs {
-				if v, ok := cache.get(s.ID); ok {
-					results[i] = v
-				} else {
-					missed = append(missed, i)
-				}
-			}
-			if len(missed) > 0 && snapshot == nil {
+			if snapshot == nil {
 				if snapshot, err = gitrepo.AddSnapshot(p.Root, "", rng.Head); err != nil {
 					return nil, err
 				}
+			}
+			results := make([]bool, len(subs))
+			errs := make([]error, len(subs))
+			missed := make([]int, len(subs))
+			for i := range subs {
+				missed[i] = i
 			}
 			// A `when` script is run once per subject (its contract), so a change touching many files
 			// runs it many times: those runs are independent, so they run side by side.
@@ -136,7 +132,6 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 				if errs[i] != nil {
 					return nil, fmt.Errorf("file-guard %q: %w", g.Name, errs[i])
 				}
-				cache.put(subs[i].ID, results[i])
 			}
 			for i, s := range subs {
 				if results[i] {
@@ -148,3 +143,7 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 	slices.Sort(out)
 	return out, nil
 }
+
+// whenWorkers is how many `when` scripts run side by side. Verdicts are never kept between runs:
+// nothing an agent can write may stand in for a script's answer.
+func whenWorkers() int { return max(2, min(8, runtime.NumCPU())) }

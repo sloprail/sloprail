@@ -33,3 +33,17 @@ func TestT057_07_DashCPushIsVerifiedInTheTargetRepo(t *testing.T) {
 		t.Fatal("the refused commits were pushed")
 	}
 }
+
+// T057_08: GIT_DIR in front of git is not replayed: the push is refused, not judged in another repo.
+func TestT057_08_GitDirBeforePushFailsClosed(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	res := e.Run(proj, "s-057-08", "push", Turns("done",
+		Bash("p", "GIT_DIR="+proj+"/.git git push -q origin HEAD:refs/heads/work"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a push under GIT_DIR was not refused:\n%s", res.Output)
+	}
+	if !strings.Contains(res.Output, "GIT_DIR") {
+		t.Fatalf("the refusal does not name GIT_DIR:\n%s", res.Output)
+	}
+}

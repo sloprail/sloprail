@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -116,4 +118,45 @@ func TestT058_17_UnknownFolderAsksForALiteralDirFirst(t *testing.T) {
 	}
 	has(t, res.Output, "git -C <literal dir> commit")
 	has(t, res.Output, "may not need a citation")
+}
+
+// T058_18: `git -C link/..` with link -> <other>/docs/sub is the parent of the symlink's TARGET, the
+// way git resolves it: the commit is checked in <other>/docs, not in the lexical parent of link.
+func TestT058_18_DashCThroughASymlinkIsResolvedPhysically(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	e.WriteFile(oth, "docs/sub/.keep", "")
+	e.CommitAll(oth, "sub")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(oth, "docs", "sub"), link); err != nil {
+		t.Fatal(err)
+	}
+	res := e.Run(proj, "s-058-18", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "docs/a.md", "a")),
+		Bash("c", "git -C "+link+"/.. commit -q -m 'add a'"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a commit through a symlinked -C was not checked in the physical folder:\n%s", res.Output)
+	}
+	has(t, res.Output, "docs/a.md")
+	if strings.Contains(e.Git(oth, "log", "--format=%s"), "add a") {
+		t.Fatal("the refused commit was made")
+	}
+}
+
+// T058_19: GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE in front of git are not replayed: fail closed
+// with the could-not-check message rather than judging a different repository.
+func TestT058_19_GitEnvRedirectionFailsClosed(t *testing.T) {
+	for i, assign := range []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE="} {
+		e, proj := project(t)
+		oth := other(t, e)
+		res := e.Run(proj, "s-058-19-"+string(rune('a'+i)), prompt, Turns("done",
+			Bash("c", assign+oth+"/x git -C "+oth+" commit -q -m 'add x' --allow-empty"),
+		))
+		if !res.Refused() {
+			t.Fatalf("%s before git commit was not refused:\n%s", assign, res.Output)
+		}
+		has(t, res.Output, "could not check")
+		has(t, res.Output, "git -C <literal dir> commit")
+	}
 }

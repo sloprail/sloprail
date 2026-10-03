@@ -168,6 +168,7 @@ for inv in "${invs[@]}"; do
 
   dir="$(dir_of "$inv")" || fail "the folder the commit runs in could not be told from the command line (a cd to a variable, an eval)"
   # `git -C <dir>` moves git (and so the index it reads) to <dir>: run everything there, never in the hook's cwd.
+  git_redirected "$payload" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
   git_chdir "$dir"
   dir="$EDIR"
   lastdir="$dir"
