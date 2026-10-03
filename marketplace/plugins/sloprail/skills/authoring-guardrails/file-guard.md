@@ -189,10 +189,13 @@ jobs:
       - run: |
           GOBIN="$HOME/.local/bin" go install github.com/sloprail/sloprail/services/sr-checks@main
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: sr-checks verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
+      - env:
+          # a fork's contributor pushes verdicts to THEIR fork: read them too (empty for same-repo PRs)
+          FORK_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+        run: sr-checks verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }} --fork-url "$FORK_URL"
 ```
 
-`verify` fetches `sloprail/checks` from `origin` and reads it; it never writes. Plugins the project enables but CI has not installed are reported on stderr and their rules are not verified there (the exit status is unaffected). Make
+`verify` fetches `sloprail/checks` from `origin` and reads it; it never writes. With `--fork-url` (a pull request's `head.repo.clone_url`, public forks need no token) it also reads the results branch of that repository when it is not `origin`, and merges its records into the lookup. Fork verdicts are written by the contributor and are trusted for now: code review is the safeguard against a forged pass (decision on issue #189). In GitHub Actions (`GITHUB_ACTIONS=true`, or `--format github`) `verify` also emits an `::error` annotation per refused or not-judged file and rule (at most 50), a markdown job summary in `$GITHUB_STEP_SUMMARY` (rule x subject x status, reasons collapsed) and, last, the exact local fix (`sr-checks run --base <base> --head <head>`, then push the checks ref and re-run the job); `--format plain` turns it off and `--junit <file>` writes JUnit XML (testsuite = rule, testcase = subject). Outside Actions the output and exit code are unchanged. Plugins the project enables but CI has not installed are reported on stderr and their rules are not verified there (the exit status is unaffected). Make
 the job a required status check. Red means some subject has no stored pass: run
 `sr-checks run` over the same range and push.
 

@@ -1,0 +1,4 @@
+::error file=docs/b%2Cc.md,title=sloprail/file-guard/docs-fresh::b.md is stale: 100%25 of it%0Areads like the old design
+::error file=src/x.go,title=sloprail/file-guard/no-slop::not judged yet: no stored verdict; run sr-checks run
+::error file=src/z.go,title=sloprail/file-guard/no-slop::not judged yet: no stored verdict; run sr-checks run
+::error title=sloprail::file-guard broken: could not be read

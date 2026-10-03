@@ -204,6 +204,9 @@ type CheckOutcome struct {
 	Status  string `json:"status"` // pass | fail | missing
 	Source  string `json:"source"` // ran | cached | stored
 	Reason  string `json:"reason,omitempty"`
+	// Files are the files the subject covers (a subject that is the whole changeset covers
+	// several): what a CI annotation points at. Not part of the JSON listing.
+	Files []string `json:"-"`
 }
 
 func (ev *changesetEvaluation) note(o CheckOutcome) {
@@ -1399,7 +1402,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
 	missing := func(why string) (dispatchcore.Verdict, error, bool) {
-		o := CheckOutcome{Rule: g.Qualified(), Subject: rr.subject.ID, Kind: guardKind, Status: "missing", Source: "stored", Reason: why}
+		o := CheckOutcome{Rule: g.Qualified(), Subject: rr.subject.ID, Kind: guardKind, Status: "missing", Source: "stored", Reason: why, Files: rr.subject.Files}
 		ev.note(o)
 		return dispatchcore.Verdict{Refused: true, Reason: why}, nil, true
 	}
@@ -1461,7 +1464,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		if reused != "" {
 			src = reused
 		}
-		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: ev.currentAdvice(st.Reason)}
+		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: ev.currentAdvice(st.Reason), Files: rr.subject.Files}
 		ev.note(o)
 		if !ev.verify {
 			rec := checkstore.CheckRecord{Subject: st.Subject, Kind: st.Kind, Status: stepStatus(st.Status), Metadata: map[string]any{"replayed": true}}

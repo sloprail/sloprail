@@ -1,0 +1,38 @@
+## sloprail: sr-checks verify
+
+**3 red** of 5 checks (2 fail, 1 not judged).
+
+| Rule | Subject | Status |
+| --- | --- | --- |
+| sloprail/file-guard/docs-fresh | docs/a.md | cached |
+| sloprail/file-guard/docs-fresh | docs/b,c.md | fail |
+| sloprail/file-guard/no-slop | changeset (src/x.go, src/z.go) | not judged |
+| sloprail/file-guard/no-slop | src/x.go | pass |
+| sloprail/file-guard/no-slop | src/y.go | skipped |
+
+<details><summary>fail: docs/b,c.md (sloprail/file-guard/docs-fresh)</summary>
+
+```text
+b.md is stale: 100% of it
+reads like the old design
+```
+
+</details>
+
+<details><summary>not judged: changeset (src/x.go, src/z.go) (sloprail/file-guard/no-slop)</summary>
+
+```text
+no stored verdict; run sr-checks run
+```
+
+</details>
+
+<details><summary>fail: rule could not be loaded</summary>
+
+```text
+file-guard broken: could not be read
+```
+
+</details>
+
+To fix: run `sr-checks run --base origin/main --head abc123` locally, then re-run this job.
