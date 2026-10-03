@@ -47,8 +47,28 @@
     "path": "sr-session",
     "use": "sr-session",
     "short": "Session lifecycle — the hook points a harness calls",
-    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
     "children": [
+      {
+        "path": "sr-session agents",
+        "use": "agents",
+        "short": "The sub-agents this session dispatched: list",
+        "long": "The sub-agents this session dispatched, and whether each still runs.\n\n  sr-session agents list [--json]    the registry: status, times, transcript, the ranges each owns\n\nThe registry is kept in the session's own store, fed by the SubagentStart / SubagentStop hooks, a\nsub-agent's own tool calls and the dispatching transcript's task-notifications, and it survives a\ncompaction, /clear and resume. A background agent that is running has its ranges left for later at\nthe root's Stop; one silent for subagent_silent_after_minutes (default 10) is named there, and\nafter subagent_stale_after_minutes (default 60) it is stale and its ranges are judged.",
+        "children": [
+          {
+            "path": "sr-session agents list",
+            "use": "list",
+            "short": "The session's sub-agent registry",
+            "flags": [
+              {
+                "name": "json",
+                "default": "false",
+                "usage": "Print the registry as JSON"
+              }
+            ]
+          }
+        ]
+      },
       {
         "path": "sr-session id",
         "use": "id",
@@ -182,6 +202,11 @@
         "path": "sr-session stop",
         "use": "stop",
         "short": "End of a cycle: run the guardrails bound to what it changed"
+      },
+      {
+        "path": "sr-session subagent-start",
+        "use": "subagent-start",
+        "short": "A SUB-AGENT is starting: record it in the session's sub-agent registry"
       },
       {
         "path": "sr-session subagent-stop",
