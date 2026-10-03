@@ -386,26 +386,31 @@ exit 0
 //
 // The part of the subdirectory arrangement a file-guard's `run` cannot reach: the Stop
 // is a hook, its payload names the subdirectory, and the tracked range, the stored
-// verdicts and the registry all have to be found from there. Unjudged, the range is
-// refused as "not judged yet"; once judged from below, the same Stop is satisfied.
+// verdicts and the registry all have to be found from there. The Stop reports failures
+// only: unjudged, the range passes; once judged from below and refused, the same Stop
+// refuses it with the stored reason.
 func TestT025_06_AStopFromASubdirectoryVerifiesTheSessionsRange(t *testing.T) {
 	e, proj, sub, _ := subProject(t)
 	const sess = "s-025-06"
+	e.FileGuard(proj, "deny", "match: \"**/inner.md\"\nchecks:\n  - script: ./deny.sh\n",
+		map[string]string{"deny.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"inner.md is denied from below\"}'\nexit 1\n"})
+	e.CommitAll(proj, "a rule that refuses inner.md")
 
 	e.RunFrom(proj, "sub/deep", sess, "work from below", Turns("done",
 		Bash("b1", "printf 'written from the subdirectory\n' > inner.md"),
 	).ThenCommit("the agent's work"))
 
-	// Nothing has judged the range (the harness's own pre-Stop run is off here).
-	unjudged := e.BlockingErrorsFrom(sub, sess, "Stop")
-	if len(unjudged) == 0 || !strings.Contains(strings.Join(unjudged, "\n"), "not judged yet") {
-		t.Fatalf("a Stop from a subdirectory did not refuse a range nobody had judged (blocking: %v) "+
-			"— it never found the session's tracked range from below the root", unjudged)
+	// Nothing has judged the range (the harness's own pre-Stop run is off here): the Stop
+	// has no failure to report.
+	if res := e.StopNow(sub, sess, false); harness.Blocked(res) {
+		t.Fatalf("a Stop from a subdirectory refused a range nobody had judged:\n%s", res.Output)
 	}
 
-	// Judged from below, the Stop's verify finds the stored verdict.
+	// Judged from below, the Stop's verify finds the stored FAIL.
 	judgeFromBelow(e, sub, sess)
-	if res := e.StopNow(sub, sess, false); harness.Blocked(res) {
-		t.Fatalf("a Stop from a subdirectory refused a range that had been judged:\n%s", res.Output)
+	res := e.StopNow(sub, sess, false)
+	if !harness.Blocked(res) || !strings.Contains(res.Output, "inner.md is denied from below") {
+		t.Fatalf("a Stop from a subdirectory did not refuse a range with a stored FAIL "+
+			"— it never found the session's tracked range from below the root:\n%s", res.Output)
 	}
 }
