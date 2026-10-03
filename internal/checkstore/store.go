@@ -61,6 +61,14 @@ type Store interface {
 	// rule hash, that passed: no engine error and no failing check. The
 	// caller picks the first still reachable — that is the rule's watermark.
 	PassedHeads(rule string) ([]string, error)
+	// EffectiveHeads is a10n's GetEffectiveBase as a list, newest first: the head_ref of each
+	// evaluation of the rule AT THIS DEFINITION (ruleHash) that passed as a whole. One
+	// evaluation is every run of one batch over one head (a guard has one run per subject), and
+	// it passed when each of them is complete, no engine failure and holds no failing,
+	// erroring or interrupted check: one subject's FAIL keeps the head from advancing the
+	// base. The caller takes the first that is an ancestor of the head it judges and a
+	// descendant of the base it was asked for.
+	EffectiveHeads(rule, ruleHash string) ([]string, error)
 	// RunRefs lists, for one rule, the runs that were refused and the runs that
 	// passed, each with the commit range it judged and when it ran. See RunRefs.
 	RunRefs(rule string) (RunRefs, error)

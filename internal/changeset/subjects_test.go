@@ -29,3 +29,19 @@ func TestParseSubjects(t *testing.T) {
 		assert.Error(t, err, name)
 	}
 }
+
+// A subject naming no file (an FQN) is valid only with a fingerprint: it is all its key is made
+// of, and a subject with neither would be keyed by nothing.
+func TestParseSubjects_FQNSubjectNeedsAFingerprint(t *testing.T) {
+	cs := Changeset{Files: []File{{Path: "a.md"}}}
+
+	got, err := ParseSubjects([]byte(`[{"id":"Billing.Invoice","fingerprint":"v1"}]`), cs)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].Files)
+	assert.Equal(t, "v1", got[0].Fingerprint)
+
+	_, err = ParseSubjects([]byte(`[{"id":"Billing.Invoice"}]`), cs)
+	require.Error(t, err, "no files and no fingerprint is refused, never an empty key")
+	assert.Contains(t, err.Error(), "no fingerprint")
+}

@@ -66,7 +66,8 @@ func newShowCmd() *cobra.Command {
 		Use:   "show --base <rev> --head <rev>",
 		Short: "Each file-guard subject's latest stored result over the range, without a verdict",
 		Long: `Print each subject's latest result over merge-base(--base, --head)..--head, as verify reads it
-(nothing is asked of a model, nothing is written), and always exit 0: a reader's view, not a gate.
+(nothing is asked of a model, nothing is written), over the whole range asked about (verify
+starts from each rule's effective base instead), and always exit 0: a reader's view, not a gate.
 
 --failing keeps only what is not passing: a fail, a result still missing, or an error.
 --rule limits the listing to one file-guard, by folder name or qualified name.`,
@@ -213,7 +214,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: cmd.ErrOrStderr(), Guards: t.loaded.FileGuards, Root: t.root, Range: t.rng,
 		Cwd: t.root, Transcript: t.sess.record, Workspace: t.sess.workspace, SessionID: t.sess.id, AgentID: t.sess.agentID, Subagent: t.sess.subagent,
-		Store: results, Verify: m != modeRun, Recorded: recordedCitations(t.sess, t.root),
+		Store: results, Verify: m != modeRun, WholeRange: m == modeShow, Recorded: recordedCitations(t.sess, t.root),
 	})
 	if err := results.Close(); err != nil {
 		return fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)

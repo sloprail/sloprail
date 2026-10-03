@@ -323,6 +323,54 @@ func (s *store) PassedHeads(rule string) ([]string, error) {
 	return heads, rows.Err()
 }
 
+func (s *store) EffectiveHeads(rule, ruleHash string) ([]string, error) {
+	runs, err := s.allRuns() // oldest first
+	if err != nil {
+		return nil, err
+	}
+	type evaluation struct {
+		head   string
+		passed bool
+	}
+	byKey := map[string]*evaluation{}
+	var order []*evaluation
+	for _, r := range runs {
+		if r.Rule != rule || r.RuleHash != ruleHash || r.HeadRef == "" {
+			continue
+		}
+		if _, only := r.Metadata[resolvesKey]; only {
+			continue
+		}
+		batch := r.BatchID
+		if batch == "" {
+			batch = r.ID // a run recorded before batches is its own evaluation
+		}
+		key := batch + "\x00" + r.HeadRef
+		e := byKey[key]
+		if e == nil {
+			e = &evaluation{head: r.HeadRef, passed: true}
+			byKey[key] = e
+			order = append(order, e)
+		}
+		if !r.Complete || r.ExitCode != 0 || r.Error != "" {
+			e.passed = false
+		}
+		for _, c := range r.Checks {
+			switch c.Status {
+			case StatusFail, StatusError, StatusInterrupted:
+				e.passed = false
+			}
+		}
+	}
+	var heads []string
+	for i := len(order) - 1; i >= 0; i-- {
+		if order[i].passed {
+			heads = append(heads, order[i].head)
+		}
+	}
+	return heads, nil
+}
+
 func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error) {
 	db, done, err := s.readView()
 	if err != nil {

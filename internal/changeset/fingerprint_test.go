@@ -138,3 +138,30 @@ func TestFilesPart_FromBlobIDsNotBytes(t *testing.T) {
 	assert.Equal(t, FilesPart(mk("b1", "")), FilesPart(mk("b1", "x")))
 	assert.NotEqual(t, FilesPart(mk("b1", "")), FilesPart(mk("b2", "")))
 }
+
+// A FILE subject is keyed by its files' content AND by the fingerprint its `subjects:` script
+// gave (additive): either moving makes a new key.
+func TestGuardKey_FileSubjectPlusFingerprintIsAdditive(t *testing.T) {
+	key := func(content, fp string) string {
+		p := samplePayload()
+		p.Changeset.Files[0].NewContent = content
+		p.Subject = Subject{ID: "a", Files: []string{"a.go"}, Fingerprint: fp}
+		return GuardFingerprint(FilesPart(p), p.Subject.Fingerprint, "")
+	}
+	assert.Equal(t, key("2", "v1"), key("2", "v1"))
+	assert.NotEqual(t, key("2", "v1"), key("2", "v2"), "the script's fingerprint moved")
+	assert.NotEqual(t, key("2", "v1"), key("3", "v1"), "the content moved")
+	assert.NotEqual(t, key("2", ""), key("2", "v1"), "a fingerprint is added to the content, not instead of it")
+}
+
+// An FQN subject (no files) is keyed by its fingerprint alone, whatever the changeset holds.
+func TestGuardKey_FQNSubjectIsItsFingerprint(t *testing.T) {
+	key := func(content, fp string) string {
+		p := samplePayload()
+		p.Changeset.Files[0].NewContent = content
+		p.Subject = Subject{ID: "Billing.Invoice", Fingerprint: fp}
+		return GuardFingerprint(FilesPart(p), p.Subject.Fingerprint, "")
+	}
+	assert.Equal(t, key("2", "v1"), key("other bytes", "v1"), "no file, so no file content in the key")
+	assert.NotEqual(t, key("2", "v1"), key("2", "v2"), "its fingerprint moved")
+}
