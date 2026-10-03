@@ -607,9 +607,15 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	recorded := lazyRecordedCitations(p, store)
 	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
 	oneEach := collapseByRepo(ranges, p.AgentID, memo)
+	running := runningSubagents(p, ranges)
+	var waiting []string
 	for i, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
+		}
+		if r.Tracked() && r.AgentID != "" && running[r.AgentID] {
+			waiting = append(waiting, fmt.Sprintf("not judged yet: sub-agent %s still running (%s %s)", r.AgentID, r.Folder, r.Head))
+			continue // half-finished work of a background agent that has not reported back: judged at the first Stop after its terminal notification
 		}
 		if r.Tracked() && !oneEach[i] {
 			continue // the same branch of the same repository, tracked from another worktree: one range
@@ -683,6 +689,12 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	for _, reason := range reasons {
 		if reason != "" {
 			out = append(out, reason)
+		}
+	}
+	if len(waiting) > 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(waiting, "; "))
+		if len(out) > 0 {
+			out = append(out, strings.Join(waiting, "; ")+".")
 		}
 	}
 	if len(notes) > 0 {
@@ -1769,4 +1781,30 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 		}
 	}
 	return nil
+}
+
+// runningSubagents is the set of background sub-agents of this session that are still running,
+// read from the dispatching session's own record (transcript.RunningBackgroundAgents), for the
+// ROOT's Stop only: a range whose agent is in it is left for the first Stop after the agent's
+// terminal notification. Fails closed: with no record, an unreadable one or an unparseable one,
+// nothing is running and every range is judged. A session that ends with an agent that never
+// reported is no loophole: CI verifies every range of a pull request whatever the Stop did.
+func runningSubagents(p HookPayload, ranges []sessionstate.TrackedRange) map[string]bool {
+	if p.AgentID != "" || p.TranscriptPath == "" {
+		return nil
+	}
+	hasAgent := false
+	for _, r := range ranges {
+		if r.AgentID != "" {
+			hasAgent = true
+		}
+	}
+	if !hasAgent {
+		return nil
+	}
+	running, err := transcript.RunningBackgroundAgents(p.TranscriptPath)
+	if err != nil {
+		return nil
+	}
+	return running
 }

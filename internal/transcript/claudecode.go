@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 )
 
 // This file is the Claude Code adapter: the only place in sloprail that names
@@ -145,4 +147,137 @@ func scanFile(path string, visit func(claudeRecord) bool) error {
 	}
 	defer f.Close()
 	return scanRecords(f, path, visit)
+}
+
+// readStrict is Read for a caller that must not act on a partial picture: a line that will
+// not parse is an error, not skipped (a skipped line could be the very notification that ends
+// an agent's run), and a record without a uuid is kept.
+func readStrict(path string) ([]Entry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("transcript: open %s: %w", path, err)
+	}
+	defer f.Close()
+	var entries []Entry
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), maxRecordBytes)
+	for sc.Scan() {
+		if len(strings.TrimSpace(sc.Text())) == 0 {
+			continue
+		}
+		var rec claudeRecord
+		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
+			return nil, fmt.Errorf("transcript: parse %s: %w", path, err)
+		}
+		entries = append(entries, rec.entry())
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("transcript: read %s: %w", path, err)
+	}
+	return entries, nil
+}
+
+// agentLaunchedID matches the id in the receipt a background Agent launch returns:
+// "Async agent launched successfully. … agentId: <id> (…)".
+var agentLaunchedID = regexp.MustCompile(`agentId:\s*([A-Za-z0-9_-]+)`)
+
+// taskNotificationID and taskNotificationStatus read a <task-notification>'s task id
+// (the agent id) and status.
+var (
+	taskNotificationID     = regexp.MustCompile(`<task-id>\s*([^<\s]+)\s*</task-id>`)
+	taskNotificationStatus = regexp.MustCompile(`<status>\s*([a-z_]+)\s*</status>`)
+)
+
+// terminalTaskStatuses are the statuses after which a background agent is no longer running.
+var terminalTaskStatuses = map[string]bool{"completed": true, "failed": true, "killed": true, "stopped": true}
+
+// RunningBackgroundAgents returns the ids of the background sub-agents the transcript at path
+// shows as still running: an Agent tool_use with run_in_background whose result returned an agent
+// id, with no LATER <task-notification> for that id carrying a terminal status. Decided from
+// the dispatching session's own record, which the harness writes; no timestamp or activity is
+// consulted. A foreground sub-agent is never listed (its call returns only when it is done, so it
+// cannot overlap the dispatcher's Stop).
+//
+// An error means "unknown": a caller must read it as "nothing is running" and judge everything.
+func RunningBackgroundAgents(path string) (map[string]bool, error) {
+	entries, err := readStrict(path)
+	if err != nil {
+		return nil, err
+	}
+	background := map[string]bool{} // tool_use id of a run_in_background Agent call
+	running := map[string]bool{}
+	for _, e := range entries {
+		switch e.Type {
+		case EntryAssistant:
+			for _, c := range ToolCalls(e) {
+				if c.Name != "Agent" && c.Name != "Task" {
+					continue
+				}
+				var in struct {
+					Background bool `json:"run_in_background"`
+				}
+				if json.Unmarshal(c.Input, &in) == nil && in.Background {
+					background[c.ID] = true
+				}
+			}
+		case EntryUser:
+			if len(e.Message) == 0 {
+				continue
+			}
+			var msg assistantContent
+			if json.Unmarshal(e.Message, &msg) != nil || len(msg.Content) == 0 {
+				continue
+			}
+			var text string
+			if json.Unmarshal(msg.Content, &text) == nil {
+				noteTaskNotification(text, running)
+				continue
+			}
+			var blocks []struct {
+				Type      string          `json:"type"`
+				ToolUseID string          `json:"tool_use_id"`
+				IsError   bool            `json:"is_error"`
+				Content   json.RawMessage `json:"content"`
+				Text      string          `json:"text"`
+			}
+			if json.Unmarshal(msg.Content, &blocks) != nil {
+				continue
+			}
+			for _, b := range blocks {
+				switch {
+				case b.Type == "text":
+					noteTaskNotification(b.Text, running)
+				case b.Type == "tool_result" && background[b.ToolUseID] && !b.IsError:
+					for _, body := range resultBodies(b.Content) {
+						if m := agentLaunchedID.FindStringSubmatch(body); m != nil && strings.Contains(body, "launched") {
+							running[m[1]] = true
+							break
+						}
+					}
+				}
+			}
+		case EntryAttachment:
+			var a struct {
+				Type        string `json:"type"`
+				Prompt      string `json:"prompt"`
+				CommandMode string `json:"commandMode"`
+			}
+			if json.Unmarshal(e.Attachment, &a) == nil && a.Type == "queued_command" && a.CommandMode == "task-notification" {
+				noteTaskNotification(a.Prompt, running)
+			}
+		}
+	}
+	return running, nil
+}
+
+// noteTaskNotification ends the run of the agent a <task-notification> names, when its status is
+// terminal. Text that is not a notification, or whose status is not terminal, changes nothing.
+func noteTaskNotification(text string, running map[string]bool) {
+	if !strings.HasPrefix(strings.TrimSpace(text), "<task-notification>") {
+		return
+	}
+	id, status := taskNotificationID.FindStringSubmatch(text), taskNotificationStatus.FindStringSubmatch(text)
+	if id != nil && status != nil && terminalTaskStatuses[status[1]] {
+		delete(running, id[1])
+	}
 }
