@@ -81,3 +81,67 @@ func TestT059_06_PluginGuardsAloneNeedNoMarker(t *testing.T) {
 		t.Fatalf("plugin-shipped file-guards alone were asked for a CI marker:\n%s", got)
 	}
 }
+
+// T059_07: the refusal is a one-time notice: the agent cannot fix it alone (CI and config changes
+// need the user), so a second Stop in the same session is let through.
+func TestT059_07_RefusesOncePerSession(t *testing.T) {
+	e, proj := project(t, true)
+	if got := stop(e, proj, "s-059-07"); !strings.Contains(got, "ONE-TIME NOTICE") || !strings.Contains(got, marker) {
+		t.Fatalf("the first Stop was not refused with the notice:\n%s", got)
+	}
+	if got := stop(e, proj, "s-059-07"); strings.Contains(got, marker) {
+		t.Fatalf("the second Stop in the same session was refused again:\n%s", got)
+	}
+	if got := stop(e, proj, "s-059-07"); strings.Contains(got, marker) {
+		t.Fatalf("the third Stop in the same session was refused again:\n%s", got)
+	}
+}
+
+// T059_08: a new session is refused once again.
+func TestT059_08_NewSessionIsRefusedAgain(t *testing.T) {
+	e, proj := project(t, true)
+	stop(e, proj, "s-059-08a")
+	if got := stop(e, proj, "s-059-08b"); !strings.Contains(got, marker) {
+		t.Fatalf("a new session was not refused:\n%s", got)
+	}
+}
+
+// T059_09: a state change re-arms the notice: a project that had no file-guards (nothing said) and
+// then adds one is refused once, and the marker found then removed is refused once again.
+func TestT059_09_StateChangeRefusesAgain(t *testing.T) {
+	e, proj := project(t, false)
+	sess := "s-059-09"
+	if got := stop(e, proj, sess); strings.Contains(got, marker) {
+		t.Fatalf("a project without file-guards was refused:\n%s", got)
+	}
+	e.FileGuard(proj, "docs", "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n", map[string]string{"check.sh": passCheck})
+	e.CommitAll(proj, "the rule")
+	if got := stop(e, proj, sess); !strings.Contains(got, marker) {
+		t.Fatalf("a newly added file-guard was not refused:\n%s", got)
+	}
+	if got := stop(e, proj, sess); strings.Contains(got, marker) {
+		t.Fatalf("the same state was refused twice:\n%s", got)
+	}
+	e.WriteFile(proj, "Jenkinsfile", "// "+marker+"\n")
+	e.CommitAll(proj, "add CI")
+	if got := stop(e, proj, sess); strings.Contains(got, marker) {
+		t.Fatalf("a committed marker was refused:\n%s", got)
+	}
+	e.WriteFile(proj, "Jenkinsfile", "nothing\n")
+	e.CommitAll(proj, "drop CI")
+	if got := stop(e, proj, sess); !strings.Contains(got, marker) {
+		t.Fatalf("a removed marker was not refused again:\n%s", got)
+	}
+}
+
+// T059_10: a repository with the marker always passes, Stop after Stop.
+func TestT059_10_MarkerAlwaysPasses(t *testing.T) {
+	e, proj := project(t, true)
+	e.WriteFile(proj, "Jenkinsfile", "// "+marker+"\n")
+	e.CommitAll(proj, "add CI")
+	for i := 0; i < 3; i++ {
+		if got := stop(e, proj, "s-059-10"); strings.Contains(got, marker) {
+			t.Fatalf("Stop %d with the marker was refused:\n%s", i, got)
+		}
+	}
+}
