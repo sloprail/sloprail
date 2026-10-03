@@ -379,11 +379,11 @@ func refusal(g declaration.FileGuard, reason string) FileGuardResult {
 	return FileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason}
 }
 
-// runIdentity fills the provenance columns: the repository (its root commit), the branch and
+// runIdentity fills the provenance columns: the repository (gitrepo.RepoID), the branch and
 // the session. Best effort — an unreadable one is left empty rather than costing the run.
 func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
 	id := checkstore.RunIdentity{SessionID: ev.params.SessionID, AgentID: ev.params.AgentID}
-	if root, err := gitrepo.RootCommit(ev.root); err == nil {
+	if root, err := gitrepo.RepoID(ev.root); err == nil {
 		id.RepoID = root
 	}
 	if pos, err := gitrepo.Head(ev.root); err == nil {

@@ -122,7 +122,10 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	//    path some rule selects is refused before anything is judged. See
 	//    commit_required.go.
 	commitOwed := false
-	if reason := commitRequired(cmd, p, loaded.FileGuards, store, reg); reason != "" {
+	tCR := time.Now()
+	reasonCR := commitRequired(cmd, p, loaded.FileGuards, store, reg)
+	debugTiming(cmd, "commit-required", tCR)
+	if reason := reasonCR; reason != "" {
 		refusals = append(refusals, reason+" (commit required)")
 		commitOwed = !strings.HasPrefix(reason, unknownCommitState) // work owed, not a state that could not be read
 	}

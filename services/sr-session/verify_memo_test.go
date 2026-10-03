@@ -92,3 +92,61 @@ func TestCollapseByRepoPicksOneRowPerBranch(t *testing.T) {
 	assert.Equal(t, []bool{false, false, true, true}, got[:4], "one row per branch: feat's explicit row, then main")
 	assert.True(t, got[4], "a row of a branch that is gone is its own range")
 }
+
+// Two clones of one remote are one repository (one RepoID): a branch tracked in both is one range.
+func TestCollapseByRepoTreatsClonesOfOneRemoteAsOne(t *testing.T) {
+	origin := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(origin, "a"), []byte("a"), 0o644))
+	runGit(t, origin, "add", "-A")
+	runGit(t, origin, "commit", "-m", "a")
+	var rows []sessionstate.TrackedRange
+	for _, name := range []string{"c1", "c2"} {
+		c := filepath.Join(t.TempDir(), name)
+		runGit(t, origin, "clone", "-q", origin, c)
+		runGit(t, c, "branch", "feat")
+		rows = append(rows, sessionstate.TrackedRange{Folder: c, Head: "feat", AddedBy: sessionstate.RangeAuto})
+	}
+	got := collapseByRepo(rows, "", newCoverMemo())
+	n := 0
+	for _, g := range got {
+		if g {
+			n++
+		}
+	}
+	assert.Equal(t, 1, n)
+}
+
+// The quick key reads facts once per repository and folder: a moved branch tip, a moved
+// remote default, an edited rule, another agent each name another answer.
+func TestQuickKeyInvalidations(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, ".sloprail", "file-guard", "g"), 0o755))
+	rule := filepath.Join(proj, ".sloprail", "file-guard", "g", "guard.yaml")
+	require.NoError(t, os.WriteFile(rule, []byte("match: '*.md'\n"), 0o644))
+	runGit(t, proj, "add", "-A")
+	runGit(t, proj, "commit", "-m", "a")
+	runGit(t, proj, "branch", "feat")
+	r := sessionstate.TrackedRange{Folder: proj, Head: "feat", AddedBy: sessionstate.RangeAuto}
+	key := func(p HookPayload) string {
+		m := &verifyMemo{store: openStore(t)}
+		return m.quickKey(r, p, newCoverMemo())
+	}
+	k := key(HookPayload{})
+	require.NotEmpty(t, k)
+	assert.Equal(t, k, key(HookPayload{}), "a hit when nothing moved")
+	assert.NotEqual(t, k, key(HookPayload{AgentID: "x"}))
+
+	require.NoError(t, os.WriteFile(rule, []byte("match: '*.go'\n"), 0o644))
+	assert.NotEqual(t, k, key(HookPayload{}), "an edited rule")
+	runGit(t, proj, "checkout", "-q", "--", ".")
+	assert.Equal(t, k, key(HookPayload{}))
+
+	runGit(t, proj, "checkout", "-q", "feat")
+	runGit(t, proj, "commit", "-q", "--allow-empty", "-m", "more")
+	assert.NotEqual(t, k, key(HookPayload{}), "a moved branch tip")
+
+	explicit := r
+	explicit.AddedBy, explicit.Base = sessionstate.RangeAgent, "main"
+	m := &verifyMemo{store: openStore(t)}
+	assert.Empty(t, m.quickKey(explicit, HookPayload{}, newCoverMemo()), "a moving base name is resolved in full")
+}

@@ -32,7 +32,8 @@ type Folder struct {
 	// GitRoot is the repository's top level; equal to Path for the folders written
 	// today, kept apart because a folder need not be a whole repository.
 	GitRoot string
-	// RepoID is the repository's stable identity (its root commit), which survives a
+	// RepoID is gitrepo.RepoID, the repository's stable identity (normalized remote + initial
+	// commit; the git common dir without a remote), which survives a
 	// worktree being a different path. Empty when it could not be read.
 	RepoID string
 	Branch string

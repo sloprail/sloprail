@@ -202,7 +202,7 @@ func registerStartFolder(own sessionstate.Store, p HookPayload) error {
 	if headErr == nil {
 		f.Branch, f.HeadRef = pos.Branch, pos.Commit
 	}
-	if id, err := gitrepo.RootCommit(p.Cwd); err == nil {
+	if id, err := gitrepo.RepoID(p.Cwd); err == nil {
 		f.RepoID = id
 	}
 	wrote, err := reg.RegisterFolder(f)

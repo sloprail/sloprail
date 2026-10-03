@@ -125,8 +125,7 @@ func localRepoPath(normalized string) (string, bool) {
 // commit when it has a remote, else the real path of its git common directory (local-only
 // repos are told apart by where they live). Every worktree of one repository has the same one.
 //
-// The remote is origin's, else the first remote's. Two clones of one remote share an ID: a
-// caller that must tell clones apart pairs it with CommonDir.
+// The remote is origin's, else the first remote's. Two clones of one remote share an ID.
 func RepoID(dir string) (string, error) {
 	remoteURL, _ := gitOut(dir, "remote", "get-url", "origin")
 	if remoteURL == "" {

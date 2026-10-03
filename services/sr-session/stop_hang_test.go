@@ -57,7 +57,7 @@ func TestVerifyRangeWithoutRefusalNeverBuildsRecordedHint(t *testing.T) {
 	cmd := &cobra.Command{}
 	built := 0
 	got := verifyRangeWith(cmd, HookPayload{Cwd: proj}, nil, cmd, sessionstate.TrackedRange{Folder: proj, Head: head, Base: base},
-		func() map[string][]transcript.Citation { built++; return nil }, nil, nil)
+		func() map[string][]transcript.Citation { built++; return nil }, nil, nil, "")
 	_ = got
 	assert.Zero(t, built)
 }
