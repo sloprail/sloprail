@@ -492,3 +492,29 @@ func TestEffectiveRuns_AnEvaluationPassesOnlyWhenEverySubjectDid(t *testing.T) {
 	}
 	assert.Equal(t, []string{"h2", "h0"}, heads, "newest first; a failed subject, an unfinished run and another rule hash are no base")
 }
+
+// A process waiting on another's in-flight key reads the verdict the holder flushed before it
+// let go: a second store over the same backend finds it without the first having closed, and
+// Close does not write the flushed run twice.
+func TestFlushRun_AWaitingProcessReusesTheVerdict(t *testing.T) {
+	backend := checkcache.NewMemory()
+	first := Open(backend, false).(*store)
+	second := Open(backend, false).(*store)
+	t.Cleanup(func() { second.Close() })
+
+	id := record(t, first, run("h0"), judge("pass", "fp1"))
+	_, found, err := second.cached("changeset", "check[1]:judge:./rubric.md.j2", "fp1")
+	require.NoError(t, err)
+	assert.False(t, found, "not stored before the flush")
+
+	require.NoError(t, first.FlushRun(id))
+	c, found, err := second.cached("changeset", "check[1]:judge:./rubric.md.j2", "fp1")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, StatusPass, c.Status)
+
+	require.NoError(t, first.Close())
+	runs, err := backend.Runs()
+	require.NoError(t, err)
+	assert.Len(t, runs, 1)
+}

@@ -65,7 +65,11 @@ sr-checks run --base origin/main --head HEAD
 
 The rule **refuses**, and the reason you wrote is shown back to the agent.
 (A file-guard judges the committed result; the Stop hook and CI only verify the
-stored verdicts with `sr-checks verify`, without asking a model.)
+stored verdicts with `sr-checks verify`, without asking a model.) Run `sr-checks run`
+in the foreground and wait: it prints progress (a heartbeat every 30s) and is safe to run
+in parallel, in several worktrees at once. Judges share a machine-wide limit
+(`SLOPRAIL_JUDGE_SLOTS`, default 8), an identical check is judged once, and a second run
+of the same range waits and reuses the first's verdicts.
 
 A file-guard's verdict only binds where it is enforced. Add a CI job that runs
 `sr-checks verify` on every pull request (`--base` the target branch, `--head`
