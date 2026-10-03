@@ -157,6 +157,20 @@ func realPath(p string) string {
 	return filepath.Clean(p)
 }
 
+// coveredByWorktree reports whether the other worktree standing on branch b answers for everything
+// this folder would: it holds a tracked row for b in the same repository whose base is the base
+// this folder would track b from, or older. Otherwise the branch is tracked here as usual (a parent
+// that committed on b before a sub-agent checked it out must not lose those commits to the
+// sub-agent's narrower range).
+func coveredByWorktree(folder string, f sessionstate.Folder, b observedBranch, other string, held map[string]sessionstate.TrackedRange) bool {
+	row, ok := held[other+"\x00"+b.name]
+	if !ok || repoOf(row.Folder) != repoOf(folder) {
+		return false
+	}
+	in, err := gitrepo.IsAncestor(folder, effectiveBase(row, b.name), autoBase(folder, b.sha, f.BaseRef))
+	return err == nil && in
+}
+
 // checkedOutElsewhere maps each local branch checked out in a worktree of folder's
 // repository other than folder itself to that worktree's path. A branch visible in the shared ref namespace is not the
 // work of every folder that can see it: only the folder standing on it (or moving its tip) answers
@@ -207,14 +221,19 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 	if err != nil {
 		return nil, fmt.Errorf("read the session's ranges: %w", err)
 	}
-	ownTracked := map[string]bool{} // branches this folder already answers for: its session moved them, whoever stands on them now
+	ownTracked := map[string]bool{}                // branches this folder already answers for: its session moved them, whoever stands on them now
+	held := map[string]sessionstate.TrackedRange{} // folder\x00branch -> the tracked row of that worktree
 	for _, r := range ownRows {
-		if r.Tracked() && filepath.Clean(r.Folder) == filepath.Clean(folder) {
+		if !r.Tracked() {
+			continue
+		}
+		held[realPath(r.Folder)+"\x00"+r.Head] = r
+		if filepath.Clean(r.Folder) == filepath.Clean(folder) {
 			ownTracked[r.Head] = true
 		}
 	}
 	for i, b := range branches {
-		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" && !ownTracked[b.name] {
+		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" && !ownTracked[b.name] && coveredByWorktree(folder, f, b, elsewhere[b.name], held) {
 			branches[i].foreign = true
 		}
 		key := observedTipPrefix + b.name + ":" + folder

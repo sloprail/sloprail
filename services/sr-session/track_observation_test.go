@@ -431,3 +431,41 @@ func TestPruneForeignAuto_OnlyWhereTheSurvivingRangeCoversIt(t *testing.T) {
 		})
 	}
 }
+
+// The parent committed on B before its first observation; a sub-agent then checked B out with a
+// narrower explicit range. B is still tracked for the parent: the sub-agent's range does not cover
+// the parent's commits. With a covering range it is not (one row per branch).
+func TestObserveFolder_AForeignBranchIsSkippedOnlyWhereTheOtherRangeCoversIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		narrow bool
+	}{{"narrower range: tracked for the parent", true}, {"covering range: skipped", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			proj, reg, rs := ruledAndObserved(t, nil)
+			x := runGit(t, proj, "rev-parse", "HEAD")
+			runGit(t, proj, "switch", "-q", "-c", "B")
+			commitFile(t, proj, "p.md", "parent work")
+			tip := runGit(t, proj, "rev-parse", "B")
+			runGit(t, proj, "switch", "-q", "main")
+			commitFile(t, proj, "m.md", "main moves") // the parent is back on main, the sub-agent takes B
+			sub := filepath.Join(t.TempDir(), "sub")
+			runGit(t, proj, "worktree", "add", "-q", sub, "B")
+			subBase := x
+			if tc.narrow {
+				subBase = tip
+			}
+			require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{SessionID: rs.ID, Folder: resolved(t, sub), Head: "B", HeadSHA: tip, Base: subBase, AddedBy: sessionstate.RangeAgent, AgentID: "sub"}))
+			require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+			require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+			got := false
+			rows, err := reg.Ranges(rs.ID)
+			require.NoError(t, err)
+			for _, r := range rows {
+				if r.Folder == filepath.Clean(proj) || r.Folder == resolved(t, proj) {
+					got = got || (r.Head == "B" && r.Tracked())
+				}
+			}
+			assert.Equal(t, tc.narrow, got)
+		})
+	}
+}
