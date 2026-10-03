@@ -113,3 +113,60 @@ func TestIncremental_ASubjectsScriptRuleKeepsTheRequestedBase(t *testing.T) {
 	f.guard.Subjects = "./subjects.sh"
 	assert.Equal(t, f.base, f.baseAt(t, hash))
 }
+
+// Passes chain: B1..H1 then H1..H2 advance the base from B1 to H2, but a pass over a NARROW range
+// B2..H (B2 after B1) leaves B1..B2 unjudged and advances nothing; a FAIL anywhere is no pass.
+func TestIncremental_EffectiveBaseChainsPassesAndIgnoresNarrowOnes(t *testing.T) {
+	f := newEvalFixture(t, nil).withSession(t)
+	hash := f.hash(t)
+	c1 := f.commitDoc(t, "docs/a.md", "clean a")
+	f.commitDoc(t, "docs/b.md", "clean b")
+	c3 := f.commitDoc(t, "docs/c.md", "clean c")
+	over := func(base, head string) {
+		t.Helper()
+		got, _ := f.evaluateOver(t, base, head, false, false)
+		require.Empty(t, got)
+	}
+	baseFor := func(head string) string {
+		t.Helper()
+		rng, err := gitrepo.ResolveRange(f.repo, f.base, head)
+		require.NoError(t, err)
+		return f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base
+	}
+
+	over(c1, c3) // narrow: B2=c1 is after B1=f.base
+	assert.Equal(t, f.base, baseFor(c3), "a pass over B2..H does not cover B1..B2")
+}
+
+func TestIncremental_SequentialPassesChain(t *testing.T) {
+	f := newEvalFixture(t, nil).withSession(t)
+	hash := f.hash(t)
+	c1 := f.commitDoc(t, "docs/a.md", "clean a")
+	c2 := f.commitDoc(t, "docs/b.md", "clean b")
+	c3 := f.commitDoc(t, "docs/c.md", "clean c")
+	for _, span := range [][2]string{{f.base, c1}, {c1, c2}} {
+		got, _ := f.evaluateOver(t, span[0], span[1], false, false)
+		require.Empty(t, got)
+	}
+	rng, err := gitrepo.ResolveRange(f.repo, f.base, c3)
+	require.NoError(t, err)
+	assert.Equal(t, c2, f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base, "B1..H1 then H1..H2 reach H2")
+}
+
+func TestIncremental_AFailInTheChainStopsIt(t *testing.T) {
+	f := newEvalFixture(t, nil).withSession(t)
+	hash := f.hash(t)
+	c1 := f.commitDoc(t, "docs/a.md", "clean a")
+	c2 := f.commitDoc(t, "docs/b.md", "FORBIDDEN")
+	c3 := f.commitDoc(t, "docs/c.md", "clean c")
+	run := func(base, head string) bool {
+		t.Helper()
+		got, _ := f.evaluateOver(t, base, head, false, false)
+		return len(got) > 0
+	}
+	assert.False(t, run(f.base, c1))
+	assert.True(t, run(c1, c2), "the forbidden file is refused")
+	rng, err := gitrepo.ResolveRange(f.repo, f.base, c3)
+	require.NoError(t, err)
+	assert.Equal(t, c1, f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base, "the base reaches the last pass and stops at the fail")
+}

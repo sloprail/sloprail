@@ -434,13 +434,16 @@ records each step's status and reason, so `sr-checks show` says which step faile
   terminal until the input changes. A miss runs the steps in order, first refusal ends it, and
   stores the verdict.
 - **The effective base advances on a pass** (a10n's `GetEffectiveBase`). A rule is judged over
-  `effective_base..head`: the effective base is the head of the rule's latest stored COMPLETE
-  PASSING evaluation (same rule hash, every subject of it passed) that is an ancestor of the head
-  and a descendant-or-equal of the base you asked for; with none, the base you asked for. So only
-  the change since the last pass is re-examined. A fail never advances it, so a refused change
-  stays in the range (and its stored fail is replayed, not re-rolled) until it is fixed. It is
-  computed from the stored runs alone, so `verify` (in CI too) finds the same base `run` did.
-  `sr-checks show` lists the whole range you ask about instead.
+  `effective_base..head`. Starting at the base you asked for, the base moves to the head of a
+  stored COMPLETE PASSING evaluation (same rule hash, every subject of it passed) whose own base
+  lies at or before the base reached so far and whose head is after it and an ancestor of the
+  head being judged, and so on while one advances: passes over B1..H1 then H1..H2 reach H2, and a
+  pass over a narrower range B2..H (B2 after B1) advances nothing, since B1..B2 was never judged.
+  With none, the base you asked for. So only the change since the last pass is re-examined. A
+  fail never advances it, so a refused change stays in the range (and its stored fail is
+  replayed, not re-rolled) until it is fixed. It is computed from the stored runs alone, so
+  `verify` (in CI too) finds the same base `run` did. `sr-checks show` lists the whole range you
+  ask about instead.
 - **Changed input is run again.** Editing a tracked file under the rule's `.sloprail` root, or changing `model`,
   starts the verdicts over.
 - **A check that reads anything beyond its subject's files must declare it**, through that

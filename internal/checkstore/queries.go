@@ -323,14 +323,14 @@ func (s *store) PassedHeads(rule string) ([]string, error) {
 	return heads, rows.Err()
 }
 
-func (s *store) EffectiveHeads(rule, ruleHash string) ([]string, error) {
+func (s *store) EffectiveRuns(rule, ruleHash string) ([]RunRef, error) {
 	runs, err := s.allRuns() // oldest first
 	if err != nil {
 		return nil, err
 	}
 	type evaluation struct {
-		head   string
-		passed bool
+		base, head, at string
+		passed         bool
 	}
 	byKey := map[string]*evaluation{}
 	var order []*evaluation
@@ -348,7 +348,7 @@ func (s *store) EffectiveHeads(rule, ruleHash string) ([]string, error) {
 		key := batch + "\x00" + r.HeadRef
 		e := byKey[key]
 		if e == nil {
-			e = &evaluation{head: r.HeadRef, passed: true}
+			e = &evaluation{base: r.BaseRef, head: r.HeadRef, at: r.RunAt, passed: true}
 			byKey[key] = e
 			order = append(order, e)
 		}
@@ -362,13 +362,13 @@ func (s *store) EffectiveHeads(rule, ruleHash string) ([]string, error) {
 			}
 		}
 	}
-	var heads []string
+	var out []RunRef
 	for i := len(order) - 1; i >= 0; i-- {
-		if order[i].passed {
-			heads = append(heads, order[i].head)
+		if e := order[i]; e.passed && e.base != "" {
+			out = append(out, RunRef{Base: e.base, Head: e.head, RunAt: e.at})
 		}
 	}
-	return heads, nil
+	return out, nil
 }
 
 func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error) {

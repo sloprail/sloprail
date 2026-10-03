@@ -595,38 +595,68 @@ func (ev *changesetEvaluation) ruleRange(g declaration.FileGuard) (gitrepo.Range
 	return r, nil
 }
 
-// maxEffectiveCandidates bounds how many stored passing heads are tried for the base.
-const maxEffectiveCandidates = 50
+// maxEffectiveCandidates bounds how many stored passing evaluations are chained for the base.
+const maxEffectiveCandidates = 200
 
-// effectiveBase is r advanced to the rule's effective base: see prepare.
+// effectiveBase is r advanced to the rule's effective base: see prepare. It CHAINS the stored
+// passing evaluations: one covers its own base..head, so it advances the base only when the
+// base lies inside it (its base is an ancestor-or-equal of the base reached so far, the empty
+// tree included) and its head is past that base and no later than the head being judged.
+// Starting at the requested base, the furthest such head becomes the base, and so on until
+// nothing advances: sequential passes B1..H1 then H1..H2 reach H2, while a pass over a narrow
+// range B2..H with B2 after B1 leaves the span B1..B2 unjudged and so advances nothing.
 func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, hash string, r gitrepo.Range) gitrepo.Range {
 	if ev.store == nil || hash == "" || g.Subjects != "" || ev.params.WholeRange {
 		// A `subjects:` script names units whose verdicts depend on more than the diff (the
 		// fingerprint it gives): a range narrowed to "what changed since" would never ask again.
 		return r
 	}
-	heads, err := ev.store.EffectiveHeads(g.Qualified(), hash)
+	runs, err := ev.store.EffectiveRuns(g.Qualified(), hash)
 	if err != nil {
 		return r // no history is read as none: the requested base
 	}
-	for i, h := range heads {
-		if i >= maxEffectiveCandidates {
-			break
+	if len(runs) > maxEffectiveCandidates {
+		runs = runs[:maxEffectiveCandidates]
+	}
+	type pair struct{ a, b string }
+	memo := map[pair]bool{}
+	anc := func(a, b string) bool { // a is an ancestor-or-equal of b
+		if a == b || a == gitrepo.EmptyTree {
+			return true
 		}
-		if h == r.Base {
-			return r
+		k := pair{a, b}
+		ok, seen := memo[k]
+		if !seen {
+			var err error
+			ok, err = gitrepo.IsAncestor(ev.root, a, b)
+			ok = ok && err == nil
+			memo[k] = ok
 		}
-		if r.Base != gitrepo.EmptyTree {
-			if ok, err := gitrepo.IsAncestor(ev.root, r.Base, h); err != nil || !ok {
+		return ok
+	}
+	eb := r.Base
+	for range runs {
+		best := ""
+		for _, c := range runs {
+			if c.Head == eb || c.Head == best || !(c.Base == gitrepo.EmptyTree || anc(c.Base, eb)) {
 				continue
 			}
+			if !anc(eb, c.Head) || !anc(c.Head, r.Head) {
+				continue
+			}
+			if best == "" || anc(best, c.Head) {
+				best = c.Head
+			}
 		}
-		if ok, err := gitrepo.IsAncestor(ev.root, h, r.Head); err != nil || !ok {
-			continue
+		if best == "" {
+			break
 		}
-		return gitrepo.Range{Base: h, Head: r.Head}
+		eb = best
 	}
-	return r
+	if eb == r.Base {
+		return r
+	}
+	return gitrepo.Range{Base: eb, Head: r.Head}
 }
 
 // Shown is what `sr-checks changeset` prints for a rule: the range the engine would judge it
