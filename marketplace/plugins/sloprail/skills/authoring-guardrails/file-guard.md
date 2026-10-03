@@ -90,7 +90,12 @@ never the working tree.
   `sr-checks run` command that produces it.
 - **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below), and optionally a git `pre-push` hook.
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
-  backstop for anything a session did not track.
+  backstop for anything a session did not track. A squash merge keeps the PR's
+  verdict: `verify` reuses a stored verdict of the same rule judged over the same base
+  and head **trees** (`(stored, same trees as <base>..<head>)`), PASS or FAIL, never
+  across different trees. So squash-merge an **up-to-date** PR (merge main into it
+  first); if main moved while it was open the push to main reads "not judged yet" —
+  run `sr-checks run --base <before> --head <after>` for that push.
 
 ### Session folders and tracked ranges
 

@@ -56,6 +56,8 @@ Add a CI job that runs, on every pull request AND on every push to the default b
 
 Install sr-checks with Go, as below: no sloprail release tarball carries sr-checks yet, so install.sh would leave the job without it. The snippets pin ${ref}, the revision installed here. Plugins the project enables in .claude/settings.json but CI has not installed (such as sloprail itself) are reported on stderr and their rules are NOT verified there; verify checks the project's own rules only, and its exit status is not affected by the missing plugins.
 
+A squash merge needs no re-judging when the pull request was up to date: verify reuses a verdict judged over the same base and head TREES (identical trees are an identical change), so the push to main after squashing a verified PR passes. If main moved while the PR was open, the squash's base tree differs, nothing is reused and the push reads 'not judged yet': squash-merge an up-to-date PR (merge or rebase main into it first), or run 'sr-checks run --base <before sha> --head <after sha>' for that push.
+
 GitHub Actions (.github/workflows/sloprail.yml):
   on:
     pull_request:
@@ -83,6 +85,7 @@ GitHub Actions (.github/workflows/sloprail.yml):
             if [ \"\$EVENT\" = pull_request ]; then
               ~/.local/bin/sr-checks verify --base \"origin/\$BASE_REF\" --head \"\$PR_HEAD\"
             else
+              # a squash of an up-to-date, verified PR reuses the PR's verdict (same trees); if main moved under the PR it reads 'not judged yet': merge main into the PR before squashing, or run sr-checks run --base \"\$BEFORE\" --head \"\$GITHUB_SHA\"
               # new branch / force push: before is all zeros or a missing object -> merge-base with the default branch, else the root commit
               if [ -z \"\${BEFORE//0/}\" ] || ! git cat-file -e \"\$BEFORE^{commit}\" 2>/dev/null; then
                 BEFORE=\$(git merge-base origin/main \"\$GITHUB_SHA\" 2>/dev/null || git rev-list --max-parents=0 \"\$GITHUB_SHA\" | tail -1)
