@@ -56,24 +56,16 @@ curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh |
 
 <img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
 
-A project declares guardrails under `.sloprail/`, one folder per rule, in the
-directory named for its kind: `file-guard/` (what a file must hold), `gate/`
-(a checkpoint on an action), `context/` (a mode other rules depend on), plus
-one `file-guard/structure.yaml` listing where writes may land at all. The
-harness calls the session hook points, and the engine runs whichever
-guardrails bind to what is about to happen.
+Rules live under `.sloprail/`, one folder per rule:
 
-A file-guard's verdict only binds where it is enforced, so a project that has
-its own file-guards must also run `sr-checks verify` in CI: on pull requests
-(`--base` the target branch, `--head` the PR head sha) and on pushes to the
-default branch (the push's before..after). The shipped gate `sloprail/gate/ci-verify-required`
-refuses an agent's turn until the committed tree has a line containing
-`sr-mark: ci-verify` (a comment beside that CI step, on any provider) and hands
-back copy-paste snippets. Turn it off with `disabled: [sloprail/gate/ci-verify-required]`
-in `.sloprail/config.yaml`.
+- [`gate/`](https://sloprail.com/docs/guides/gate/) checks an action before it happens
+- [`file-guard/`](https://sloprail.com/docs/guides/file-guard/) checks what a file holds, on every commit
+- [`context/`](https://sloprail.com/docs/guides/context/) is a mode other rules depend on
+- [`file-guard/structure.yaml`](https://sloprail.com/docs/guides/structure-gate/) lists where files may go at all
 
-Full docs, including how to write a guardrail:
-[sloprail.com/docs](https://sloprail.com/docs).
+Your harness calls sloprail on every tool call and turn end, and sloprail runs the rules that apply.
+
+To make verdicts block merges, run `sr-checks verify` in CI: see the [Quickstart](https://sloprail.com/docs/getting-started/quickstart/).
 
 ## You've seen these happen
 
@@ -86,5 +78,6 @@ Full docs, including how to write a guardrail:
 - [It acted without loading what it needed first](https://sloprail.com/docs/use-cases/knowledge/acted-without-context)
 - [The "mechanical" refactor silently rewrote your code](https://sloprail.com/docs/use-cases/coding/refactor-regenerated)
 
-## Docs → [sloprail.com/docs](https://sloprail.com/docs)
+Website: [sloprail.com](https://sloprail.com)
 
+Docs, including how to write a guardrail: [sloprail.com/docs](https://sloprail.com/docs)
