@@ -149,30 +149,32 @@ type observedBranch struct {
 	foreign   bool // checked out in ANOTHER worktree of the repository: that worktree's line of work, never this folder's
 }
 
-// checkedOutElsewhere is the set of local branches checked out in a worktree of folder's
-// repository other than folder itself. A branch visible in the shared ref namespace is not the
+// realPath is a path with symlinks resolved, so two spellings of one folder compare equal.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
+}
+
+// checkedOutElsewhere maps each local branch checked out in a worktree of folder's
+// repository other than folder itself to that worktree's path. A branch visible in the shared ref namespace is not the
 // work of every folder that can see it: only the folder standing on it (or moving its tip) answers
 // for it. An unreadable listing is empty: over-track, never under-track.
-func checkedOutElsewhere(folder string) map[string]bool {
+func checkedOutElsewhere(folder string) map[string]string {
 	out, err := exec.Command("git", "-C", folder, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return nil
 	}
-	real := func(p string) string {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Clean(r)
-		}
-		return filepath.Clean(p)
-	}
-	self := real(folder)
-	elsewhere := map[string]bool{}
+	self := realPath(folder)
+	elsewhere := map[string]string{}
 	var path string
 	for _, ln := range strings.Split(string(out), "\n") {
 		switch {
 		case strings.HasPrefix(ln, "worktree "):
-			path = real(strings.TrimPrefix(ln, "worktree "))
+			path = realPath(strings.TrimPrefix(ln, "worktree "))
 		case strings.HasPrefix(ln, "branch refs/heads/") && path != self:
-			elsewhere[strings.TrimPrefix(ln, "branch refs/heads/")] = true
+			elsewhere[strings.TrimPrefix(ln, "branch refs/heads/")] = path
 		}
 	}
 	return elsewhere
@@ -202,7 +204,7 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 	}
 	elsewhere := checkedOutElsewhere(folder)
 	for i, b := range branches {
-		if b.name != detachedObserved && b.name != head && elsewhere[b.name] {
+		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" {
 			branches[i].foreign = true
 		}
 		key := observedTipPrefix + b.name + ":" + folder
@@ -1852,13 +1854,20 @@ const foreignPrunedReason = "pruned: the branch is checked out in another worktr
 // checked out in a DIFFERENT worktree than the row's folder. Observation used to track every
 // branch visible in the shared ref namespace, so N sub-agent worktrees of one repository held N
 // rows each (N x N). The worktree standing on a branch keeps its own row; a branch a folder moved
-// and then left (checked out nowhere) is kept. Explicit rows and rows of vanished folders are kept.
+// and then left (checked out nowhere) is kept, as is a row whose other worktree holds no tracked
+// row for the branch (a removed folder's range moved to the root). Explicit rows and rows of vanished folders are kept.
 func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 	ranges, err := reg.Ranges(sessionID)
 	if err != nil {
 		return err
 	}
-	elsewhere := map[string]map[string]bool{} // folder -> branches checked out in other worktrees, read once
+	held := map[string]bool{} // folder\x00branch of every tracked row: the worktree that stands on a branch answers for it
+	for _, r := range ranges {
+		if r.Tracked() {
+			held[realPath(r.Folder)+"\x00"+r.Head] = true
+		}
+	}
+	elsewhere := map[string]map[string]string{} // folder -> branch -> the other worktree on it, read once
 	for _, r := range ranges {
 		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || isCommitHead(r.Folder, r.Head) {
 			continue
@@ -1871,8 +1880,8 @@ func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 			m = checkedOutElsewhere(r.Folder)
 			elsewhere[r.Folder] = m
 		}
-		if !m[r.Head] {
-			continue
+		if other := m[r.Head]; other == "" || !held[other+"\x00"+r.Head] {
+			continue // not on another worktree, or that worktree answers for nothing: the row may be all that holds the work
 		}
 		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, foreignPrunedReason, r.AgentID, r.HeadSHA); err != nil {
 			return err
