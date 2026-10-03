@@ -7,6 +7,9 @@ cat >/dev/null
 
 MARKER='sr-mark: ci-verify'
 
+# The plugin's root, resolved before the cd below (the gate runs as ./check.sh from its own folder).
+plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)"
+
 refuse() {
   jq -n --arg r "$1" '{reason: $r}'
   exit 1
@@ -43,19 +46,27 @@ case $? in
   *) refuse "'git grep' failed in ${SR_WORKSPACE:-.}, so whether the committed tree carries a '$MARKER' CI marker could not be checked" ;;
 esac
 
-# The sloprail revision the CI job installs sr-checks from: the commit this plugin was installed
-# from (Claude Code records it in installed_plugins.json), so CI runs the engine that is installed
-# here; `main` when that cannot be read. No release tarball carries sr-checks yet, hence `go install`.
-ref=main
-plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)"
+# The release the CI job installs sloprail from: `v<version>` of the plugin installed here (this
+# project's entry in installed_plugins.json: its version field, else the plugin.json under its
+# installPath), else the version in this plugin's own plugin.json, so CI runs the engine installed here.
 installed="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
+ver=
 if [ -n "$plugin_root" ] && [ -r "$installed" ]; then
-  sha="$(jq -r --arg root "$plugin_root" '[.plugins[]?[]? | select((.installPath // "") == $root) | .gitCommitSha // empty][0] // empty' "$installed" 2>/dev/null)"
-  case "$sha" in
-    *[!0-9a-f]* | "") ;;
-    *) [ "${#sha}" -eq 40 ] && ref="$sha" ;;
-  esac
+  entry="$(jq -r --arg root "$plugin_root" '[.plugins[]?[]? | select((.installPath // "") == $root)][0] // empty | [.version // "", .installPath // ""] | @tsv' "$installed" 2>/dev/null)"
+  ver="${entry%%$'\t'*}"
+  ipath="${entry#*$'\t'}"
+  if [ -z "$ver" ] && [ -n "$ipath" ] && [ -r "$ipath/.claude-plugin/plugin.json" ]; then
+    ver="$(jq -r '.version // empty' "$ipath/.claude-plugin/plugin.json" 2>/dev/null)"
+  fi
 fi
+if [ -z "$ver" ] && [ -n "$plugin_root" ] && [ -r "$plugin_root/.claude-plugin/plugin.json" ]; then
+  ver="$(jq -r '.version // empty' "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null)"
+fi
+case "$ver" in
+  "" | *[!0-9A-Za-z.+-]*) refuse "ci-verify-required could not read the sloprail plugin version, so the CI job's install pin could not be computed" ;;
+esac
+tag="v${ver#v}"
+install="curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/${tag}/install.sh | SLOPRAIL_INSTALL_TAG=${tag} sh"
 
 msg="ONE-TIME NOTICE, shown once per session for this state of the repository; it will not be repeated, so do not loop on it. Stopping now is allowed. The USER must decide: ask them whether to add the CI job below, or to turn this rule off (list 'sloprail/gate/ci-verify-required' under 'disabled:' in .sloprail/config.yaml). Do not add CI or edit the config without their confirmation.
 
@@ -66,7 +77,7 @@ Add a CI job that runs, on every pull request AND on every push to the default b
   push to main:  sr-checks verify --base <the push's before sha> --head <the push's after sha>
 (the PR's own head, not the provider's merge commit), put the comment '$MARKER' next to that step, and COMMIT it: the check reads the committed tree, not your working copy. 'sr-checks verify' needs the history (a full clone); it fetches the verdicts that 'sr-checks run' stored on the sloprail/checks branch from origin itself and only reads them.
 
-Install sr-checks with Go, as below: no sloprail release tarball carries sr-checks yet, so install.sh would leave the job without it. The snippets pin ${ref}, the revision installed here. Plugins the project enables in .claude/settings.json but CI has not installed (such as sloprail itself) are reported on stderr and their rules are NOT verified there; verify checks the project's own rules only, and its exit status is not affected by the missing plugins.
+Install sr-checks with the release's install.sh, as below. The snippets pin ${tag}, the release installed here. Plugins the project enables in .claude/settings.json but CI has not installed (such as sloprail itself) are reported on stderr and their rules are NOT verified there; verify checks the project's own rules only, and its exit status is not affected by the missing plugins.
 
 A squash merge needs no re-judging when the pull request was up to date: verify reuses a verdict judged over the same base and head TREES (identical trees are an identical change), so the push to main after squashing a verified PR passes. If main moved while the PR was open, the squash's base tree differs, nothing is reused and the push reads 'not judged yet': squash-merge an up-to-date PR (merge or rebase main into it first), or run 'sr-checks run --base <before sha> --head <after sha>' for that push.
 
@@ -83,10 +94,9 @@ GitHub Actions (.github/workflows/sloprail.yml):
           with:
             fetch-depth: 0
             ref: \${{ github.event.pull_request.head.sha || github.sha }}
-        - uses: actions/setup-go@v5
-          with:
-            go-version: '1.25'
-        - run: GOBIN=\"\$HOME/.local/bin\" go install github.com/sloprail/sloprail/services/sr-checks@${ref}
+        - run: |
+            ${install}
+            echo \"\$HOME/.local/bin\" >> \"\$GITHUB_PATH\"
         # sr-mark: ci-verify
         - env:
             EVENT: \${{ github.event_name }}
@@ -112,9 +122,8 @@ GitLab CI (.gitlab-ci.yml):
       - if: \$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH
     variables:
       GIT_DEPTH: \"0\"
-    image: golang:1.25
     script:
-      - GOBIN=\"\$HOME/.local/bin\" go install github.com/sloprail/sloprail/services/sr-checks@${ref}
+      - ${install}
       # sr-mark: ci-verify
       - |
         if [ -n \"\$CI_MERGE_REQUEST_IID\" ]; then
@@ -135,10 +144,7 @@ Azure Pipelines (azure-pipelines.yml; add a build validation policy on the defau
   steps:
     - checkout: self
       fetchDepth: 0
-    - task: GoTool@0
-      inputs:
-        version: '1.25'
-    - script: GOBIN=\"\$HOME/.local/bin\" go install github.com/sloprail/sloprail/services/sr-checks@${ref}
+    - script: ${install}
     # sr-mark: ci-verify
     - script: |
         if [ \"\$(Build.Reason)\" = PullRequest ]; then
