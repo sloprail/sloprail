@@ -64,3 +64,5 @@ proves the shipped config fires against the mock. Only a real
 model — the e2e suite alone is not sufficient signal that an example is
 correct, only that it is not obviously broken against a scripted trajectory
 that already knows the expected shape.
+
+<!-- ci native results demo: unjudged change, do not merge -->
