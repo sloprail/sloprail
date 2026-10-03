@@ -663,7 +663,7 @@ func untrackGone(reg sessionstate.Store, sessionID string, ranges []sessionstate
 func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.TrackedRange) {
 	home, ok := homeFolder(reg, sessionID, r.Folder)
 	if !ok {
-		return
+		return // a deliberate refusal: the commits may be unverified; `refs untrack --folder <gone dir> --head <h> --reason` releases it
 	}
 	moved := r
 	moved.Folder = home.Path
@@ -676,16 +676,29 @@ func dropRemoved(reg sessionstate.Store, sessionID string, r sessionstate.Tracke
 		}
 		return
 	}
-	if r.HeadSHA == "" {
+	if r.HeadSHA != "" {
+		_ = gitrepo.PinRef(home.Path, "refs/sloprail/pins/"+r.HeadSHA, r.HeadSHA)
+	}
+	if r.HeadSHA == "" || commitMissing(home.Path, r.HeadSHA) {
+		// The branch is gone and its last tip is not in the repository either: nothing to verify.
+		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone, its last tip %s is not in the repository; nothing left to verify locally, CI is the backstop", r.Head, shortRev(r.HeadSHA)), r.AgentID, removedTip(r))
 		return
 	}
-	_ = gitrepo.PinRef(home.Path, "refs/sloprail/pins/"+r.HeadSHA, r.HeadSHA)
 	if err := reg.TrackRange(sessionstate.TrackedRange{
 		SessionID: sessionID, Folder: filepath.Clean(home.Path), Head: r.HeadSHA, HeadSHA: r.HeadSHA,
 		Base: r.Base, AddedBy: r.AddedBy, AgentID: home.AgentID,
 	}); err == nil {
 		_ = reg.UntrackRange(sessionID, r.Folder, r.Head, fmt.Sprintf("worktree removed and branch %s is gone; the range moved to %s, pinned at %s", r.Head, home.Path, shortRev(r.HeadSHA)), r.AgentID, removedTip(r))
 	}
+}
+
+// commitMissing reports that rev is definitely not a commit in folder's repository: git
+// answers "no such object" (exit 1). Any other failure (a repository git cannot read, a
+// malformed name) is not a claim that the commit is gone, so the range stays tracked.
+func commitMissing(folder, rev string) bool {
+	err := exec.Command("git", "-C", folder, "rev-parse", "--verify", "-q", rev+"^{commit}").Run()
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1
 }
 
 // removedTip is the tip an untrack of a range in a removed folder is recorded against: that
@@ -1045,7 +1058,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	}
 	rng, err := gitrepo.ResolveRange(r.Folder, r.Base, head)
 	if err != nil {
-		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack`).%s", where, err, goneNote)
+		return fmt.Sprintf("%s: the range cannot be read (%v). Re-track it (`sr-session refs track`) or untrack it with a reason (`sr-session refs untrack --folder %s --head %s --reason ...`; that works though the folder is gone).%s", where, err, r.Folder, r.Head, goneNote)
 	}
 	if rng.Base == rng.Head {
 		vm.put(qkey, "")
@@ -1574,14 +1587,43 @@ lists what was untracked with the reason you give, so say it plainly.`,
 				return fmt.Errorf("sloprail: --reason is required: say why the range is not yours to answer for")
 			}
 			dir, err := folderOrCwd(folder)
+			gone := false
 			if err != nil {
-				return err
+				// A folder that no longer exists is no git repository, yet its range is still
+				// tracked: it is named by the folder and head it was stored under, matched literally.
+				if _, statErr := os.Stat(folder); folder == "" || statErr == nil {
+					return err
+				}
+				abs, absErr := filepath.Abs(folder)
+				if absErr != nil {
+					return err
+				}
+				dir, gone = filepath.Clean(abs), true
+				if head == "" {
+					return fmt.Errorf("sloprail: %s no longer exists; name the range with --head", dir)
+				}
 			}
 			s, err := openRefsSession(cmd)
 			if err != nil {
 				return err
 			}
 			defer s.reg.Close()
+			if gone {
+				ranges, err := s.reg.Ranges(s.rs.ID)
+				if err != nil {
+					return err
+				}
+				for _, r := range ranges {
+					if r.Tracked() && r.Folder == dir && r.Head == head {
+						if err := s.reg.UntrackRange(s.rs.ID, dir, head, reason, r.AgentID, removedTip(r)); err != nil {
+							return err
+						}
+						fmt.Fprintf(cmd.OutOrStdout(), "untracked %s in %s: %s\n", head, dir, reason)
+						return nil
+					}
+				}
+				return fmt.Errorf("sloprail: %s no longer exists and no tracked range of this session is stored for %s there (see `sr-session refs list`)", dir, head)
+			}
 			if head == "" {
 				h, _, ok := trackedHead(dir)
 				if !ok {
