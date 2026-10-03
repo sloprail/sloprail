@@ -162,13 +162,54 @@ func realPath(p string) string {
 // this folder would track b from, or older. Otherwise the branch is tracked here as usual (a parent
 // that committed on b before a sub-agent checked it out must not lose those commits to the
 // sub-agent's narrower range).
-func coveredByWorktree(folder string, f sessionstate.Folder, b observedBranch, other string, held map[string]sessionstate.TrackedRange) bool {
+//
+// The registry is consulted before git: a branch whose other worktree holds no row is decided
+// without a process. A decision that needs git is remembered in the session store under the exact
+// inputs it was made from (this tip, the other row's base and tip, this folder's start, the remote
+// default's tip), so only a changed tip or base is asked again.
+func coveredByWorktree(reg sessionstate.Store, folder string, f sessionstate.Folder, b observedBranch, other string, held map[string]sessionstate.TrackedRange, memo *foreignMemo) bool {
 	row, ok := held[other+"\x00"+b.name]
-	if !ok || repoOf(row.Folder) != repoOf(folder) {
+	if !ok {
 		return false
 	}
-	in, err := gitrepo.IsAncestor(folder, effectiveBase(row, b.name), autoBase(folder, b.sha, f.BaseRef))
-	return err == nil && in
+	key := foreignCoverPrefix + b.name + ":" + folder
+	fingerprint := strings.Join([]string{b.sha, row.Folder, row.Base, row.HeadSHA, row.AddedBy, f.BaseRef, memo.defaultTip(folder)}, "|")
+	if v, seen, err := reg.Meta(key); err == nil && seen {
+		if fp, verdict, found := strings.Cut(v, "="); found && fp == fingerprint {
+			return verdict == "1"
+		}
+	}
+	covered := repoOf(row.Folder) == repoOf(folder)
+	if covered {
+		in, err := gitrepo.IsAncestor(folder, effectiveBase(row, b.name), autoBase(folder, b.sha, f.BaseRef))
+		covered = err == nil && in
+		if err != nil {
+			return false // not remembered: asked again
+		}
+	}
+	verdict := "0"
+	if covered {
+		verdict = "1"
+	}
+	_ = reg.SetMeta(key, fingerprint+"="+verdict)
+	return covered
+}
+
+const foreignCoverPrefix = "foreign-cover:" // foreign-cover:<branch>:<folder> -> inputs=verdict
+
+// foreignMemo holds what one hook reads once for every branch it decides.
+type foreignMemo struct{ tip map[string]string }
+
+func (m *foreignMemo) defaultTip(folder string) string {
+	if m.tip == nil {
+		m.tip = map[string]string{}
+	}
+	if v, ok := m.tip[folder]; ok {
+		return v
+	}
+	v, _ := gitrepo.RemoteDefaultTip(folder)
+	m.tip[folder] = v
+	return v
 }
 
 // checkedOutElsewhere maps each local branch checked out in a worktree of folder's
@@ -176,22 +217,75 @@ func coveredByWorktree(folder string, f sessionstate.Folder, b observedBranch, o
 // work of every folder that can see it: only the folder standing on it (or moving its tip) answers
 // for it. An unreadable listing is empty: over-track, never under-track.
 func checkedOutElsewhere(folder string) map[string]string {
-	out, err := exec.Command("git", "-C", folder, "worktree", "list", "--porcelain").Output()
-	if err != nil {
+	return newRepoViews().checkedOutElsewhere(folder)
+}
+
+// repoViews reads a repository's worktree list and branch tips once per hook, however many of its
+// worktrees ask: every worktree of a repository lists the same worktrees and shares the same refs,
+// so one `git worktree list` (and one `git for-each-ref`) answers for all of them.
+type repoViews struct{ byPath map[string]*repoView }
+
+type repoView struct {
+	worktrees []worktreeEntry // every worktree of the repository
+	listed    bool
+	branches  string // `for-each-ref` output, read lazily
+	haveRefs  bool
+	refsErr   error
+}
+
+type worktreeEntry struct{ path, branch string }
+
+func newRepoViews() *repoViews { return &repoViews{byPath: map[string]*repoView{}} }
+
+func (m *repoViews) view(folder string) *repoView {
+	self := realPath(folder)
+	if v, ok := m.byPath[self]; ok {
+		return v
+	}
+	v := &repoView{}
+	if out, err := exec.Command("git", "-C", folder, "worktree", "list", "--porcelain").Output(); err == nil {
+		v.listed = true
+		for _, ln := range strings.Split(string(out), "\n") {
+			switch {
+			case strings.HasPrefix(ln, "worktree "):
+				v.worktrees = append(v.worktrees, worktreeEntry{path: realPath(strings.TrimPrefix(ln, "worktree "))})
+			case strings.HasPrefix(ln, "branch refs/heads/") && len(v.worktrees) > 0:
+				v.worktrees[len(v.worktrees)-1].branch = strings.TrimPrefix(ln, "branch refs/heads/")
+			}
+		}
+		for _, w := range v.worktrees {
+			if _, ok := m.byPath[w.path]; !ok {
+				m.byPath[w.path] = v
+			}
+		}
+	}
+	m.byPath[self] = v
+	return v
+}
+
+func (m *repoViews) checkedOutElsewhere(folder string) map[string]string {
+	v := m.view(folder)
+	if !v.listed {
 		return nil
 	}
 	self := realPath(folder)
 	elsewhere := map[string]string{}
-	var path string
-	for _, ln := range strings.Split(string(out), "\n") {
-		switch {
-		case strings.HasPrefix(ln, "worktree "):
-			path = realPath(strings.TrimPrefix(ln, "worktree "))
-		case strings.HasPrefix(ln, "branch refs/heads/") && path != self:
-			elsewhere[strings.TrimPrefix(ln, "branch refs/heads/")] = path
+	for _, w := range v.worktrees {
+		if w.branch != "" && w.path != self {
+			elsewhere[w.branch] = w.path
 		}
 	}
 	return elsewhere
+}
+
+// localBranches is `for-each-ref refs/heads` of folder's repository, read once per repository.
+func (m *repoViews) localBranches(folder string) ([]byte, error) {
+	v := m.view(folder)
+	if !v.haveRefs {
+		out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
+		v.branches, v.refsErr, v.haveRefs = string(out), err, true
+	}
+	return []byte(v.branches), v.refsErr
 }
 
 // observeFolder records the folder's branch tips and reports which moved since the last hook.
@@ -199,7 +293,12 @@ func checkedOutElsewhere(folder string) map[string]string {
 // the registered branch, which started at the folder's BaseRef. Any git or store error is
 // returned: a tip that could not be observed must not be read as "did not move".
 func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string, siblings ...string) ([]observedBranch, error) {
-	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
+	return observeFolderIn(newRepoViews(), reg, folder, f, head, headSHA, siblings...)
+}
+
+// observeFolderIn is observeFolder reading the repository through views shared with the hook's other folders.
+func observeFolderIn(views *repoViews, reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string, siblings ...string) ([]observedBranch, error) {
+	out, err := views.localBranches(folder)
 	if err != nil {
 		return nil, fmt.Errorf("list branches of %s: %w", folder, err)
 	}
@@ -216,7 +315,7 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 	if err != nil {
 		return nil, fmt.Errorf("read observations of %s: %w", folder, err)
 	}
-	elsewhere := checkedOutElsewhere(folder)
+	elsewhere := views.checkedOutElsewhere(folder)
 	ownRows, err := reg.Ranges(f.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("read the session's ranges: %w", err)
@@ -232,8 +331,9 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 			ownTracked[r.Head] = true
 		}
 	}
+	var memo foreignMemo
 	for i, b := range branches {
-		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" && !ownTracked[b.name] && coveredByWorktree(folder, f, b, elsewhere[b.name], held) {
+		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" && !ownTracked[b.name] && coveredByWorktree(reg, folder, f, b, elsewhere[b.name], held, &memo) {
 			branches[i].foreign = true
 		}
 		key := observedTipPrefix + b.name + ":" + folder
@@ -312,6 +412,13 @@ func ahead(folder, sha, startedAt string) bool {
 // An error (git or the store) is returned, and the Stop refuses on it:
 // a branch that could not be observed is never "not tracked".
 func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+	return trackMissingOf(reg, rs, p, false)
+}
+
+// trackMissingOf is trackMissing; ownOnly (a tool call, not a Stop) leaves the sub-agents' worktrees to
+// the sub-agents themselves, which observe them at their own tool calls: a parent that walked all
+// of them at every call would pay for every worktree the session ever made. The Stop observes all.
+func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOnly bool) error {
 	if err := pruneUnmovedAuto(reg, rs.ID); err != nil {
 		return err
 	}
@@ -341,9 +448,13 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 		hasHead[r.Folder+"\x00"+r.Head] = true
 		lastTip[r.Folder+"\x00"+r.Head] = r.HeadSHA
 	}
+	views := newRepoViews()
 	var errs []error
 	for _, f := range folders {
 		if p.AgentID != "" && f.AgentID != p.AgentID { // the root observes every folder of the session; a sub-agent its own
+			continue
+		}
+		if ownOnly && f.Role == sessionstate.FolderSubagentWorktree && f.AgentID != p.AgentID {
 			continue
 		}
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
@@ -364,7 +475,7 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 				siblings = append(siblings, c)
 			}
 		}
-		observed, err := observeFolder(reg, folder, f, head, sha, siblings...)
+		observed, err := observeFolderIn(views, reg, folder, f, head, sha, siblings...)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -1898,6 +2009,7 @@ func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 		}
 	}
 	cover := newCoverMemo()
+	views := newRepoViews()
 	elsewhere := map[string]map[string]string{} // folder -> branch -> the other worktree on it, read once
 	for _, r := range ranges {
 		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || isCommitHead(r.Folder, r.Head) {
@@ -1908,7 +2020,7 @@ func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 		}
 		m, ok := elsewhere[r.Folder]
 		if !ok {
-			m = checkedOutElsewhere(r.Folder)
+			m = views.checkedOutElsewhere(r.Folder)
 			elsewhere[r.Folder] = m
 		}
 		other := m[r.Head]
