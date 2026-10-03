@@ -179,6 +179,14 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   started with. Read it instead of grepping `.raw` for `GIT_DIR`: a commit message
   that merely mentions `GIT_DIR` sets nothing.
 
+- `.stdin` and `.stdinKnown` — the text the line itself feeds the program: the body of a
+  heredoc (`<<EOF`, `<<'EOF'`, `<<-EOF`) or the word of a here-string (`<<<word`, newline
+  appended) attached to that command. `.stdinKnown` is `true` only when that text is literal;
+  then `.stdin` holds it. Otherwise (a pipe from another command, `< file`, a variable or
+  substitution in an unquoted heredoc body, no redirect at all) `.stdinKnown` is `false` and
+  `.stdin` is `""`: the message is unknowable, so a rule that needs it should let the command
+  through and leave the check to Stop and CI. `git commit -F -` is the case it exists for.
+
 ```
 "GIT_DIR" in .env
 any(event.invocations, .bin == "git" and "GIT_DIR" in .env)
@@ -191,7 +199,7 @@ len(event.invocations) > 1
 In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
-`.bin`, `.argv`, `.cwd` and `.env` have declared shapes, so a mistyped key inside a
+`.bin`, `.argv`, `.cwd`, `.env`, `.stdin` and `.stdinKnown` have declared shapes, so a mistyped key inside a
 predicate is refused at load; `.flags` is the one map whose keys are open. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a
