@@ -9,7 +9,8 @@ suggestion in CLAUDE.md or AGENTS.md.
 
 ## See it in action
 
-**[Watch the 2-min video →](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d)** · **[Claude Code session replay →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/)**
+| [Watch the 2-min video →](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d) | [Claude Code session replay →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/) |
+|---|---|
 
 <a href="https://www.loom.com/share/16f4d75005a44e699e6a770af136693d"><img src="https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif" alt="2-minute walkthrough of sloprail" width="512"></a>
 
