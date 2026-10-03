@@ -754,6 +754,13 @@ func fromArgv(argv []word, depth int) []Invocation {
 				inner[i].Cwd = chdirCwd(dir, known, inner[i].Cwd)
 			}
 		}
+		// `env FOO=1 cmd` / `sudo FOO=1 cmd`: the assignments are what the
+		// wrapped program runs with.
+		if set := wrapperEnv(argv[:len(argv)-len(nested)]); len(set) > 0 {
+			for i := range inner {
+				inner[i].Env = underlay(inner[i].Env, set)
+			}
+		}
 		invs = append(invs, inner...)
 	}
 
@@ -1032,4 +1039,36 @@ func parseFlags(args []string) map[string][]string {
 		flags[name] = append(flags[name], value)
 	}
 	return flags
+}
+
+// wrapperEnv reads the NAME=value words a wrapper (env, sudo) takes before the
+// program it runs; own is the wrapper's own words, program excluded.
+func wrapperEnv(own []word) map[string]string {
+	name := basename(own[0].value)
+	if name != "env" && name != "sudo" {
+		return nil
+	}
+	w := wrappers[name]
+	var out map[string]string
+	for i := 1; i < len(own); i++ {
+		a := own[i]
+		if strings.HasPrefix(a.value, "-") {
+			if w.consumesNextWord(a.value) && a.literal {
+				i++
+			}
+			continue
+		}
+		n, v, ok := strings.Cut(a.value, "=")
+		if !ok || !validEnvName(n) {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[n] = ""
+		if a.literal {
+			out[n] = v
+		}
+	}
+	return out
 }

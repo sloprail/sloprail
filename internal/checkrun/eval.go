@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sloprail/sloprail/internal/changeset"
@@ -23,6 +24,7 @@ import (
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -73,6 +75,9 @@ type Params struct {
 	Store checkstore.Store
 	// Verify: a judge is looked up, never asked; nothing is recorded.
 	Verify bool
+	// FailuresOnly: a Verify caller that drops every "not judged yet" (the Stop) does not
+	// look up why a key has no verdict: that explanation is only for a reader who sees it.
+	FailuresOnly bool
 	// WholeRange: do not advance each rule's base to its effective base; list every subject
 	// of the range asked about with its stored result (`sr-checks show`, a reader's view).
 	WholeRange bool
@@ -82,6 +87,9 @@ type Params struct {
 	// RecordedFn, when Recorded is nil, supplies it on first need: only a citation refusal reads
 	// it, and building it can be expensive (it reads every sub-agent's store).
 	RecordedFn func() map[string][]transcript.Citation
+	// Locks coordinates judges with the other `run`s of this machine (slots, in-flight keys).
+	// Nil: the machine's default under the user cache dir. Only a `run` (not Verify) uses it.
+	Locks *judgelimit.Limiter
 }
 
 // FileGuardResult is one file-guard's outcome: the guard's name, how a refusal should
@@ -121,6 +129,12 @@ type changesetEvaluation struct {
 	sharedMu   sync.Mutex
 	sharedTree *gitrepo.Snapshot
 	sharedHead string
+
+	// Coordination with parallel runs, and live progress (a `run` only).
+	locks             *judgelimit.Limiter
+	errMu             sync.Mutex // errw is written by the pool's goroutines and by the heartbeat
+	started           time.Time
+	total, done, busy atomic.Int32 // rules to settle, rules settled, judges in flight
 
 	statusMu   sync.Mutex
 	statusMemo map[string][]checkstore.CheckStatusRow // verify only: nothing is written, so a rule's rows hold
@@ -255,6 +269,9 @@ type ruleRun struct {
 	volatile bool
 	replayed bool // the verdict is a stored one, already recorded
 
+	lockKey        string // the in-flight lock held while its judges run, and how to let it go
+	unlockInflight func()
+
 	cheap, slow time.Duration // time spent before / at the first judge
 	result      FileGuardResult
 	refused     bool
@@ -298,6 +315,19 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 	}
 	ev.identity = ev.runIdentity()
 	defer ev.releaseShared()
+	ev.started = start
+	if !p.Verify && p.Store != nil {
+		l := p.Locks
+		if l == nil {
+			d := judgelimit.New(lockedWriter{&ev.errMu, errw})
+			l = &d
+		}
+		ev.locks = l
+		l.Prune()
+		stop := make(chan struct{})
+		defer close(stop)
+		go ev.heartbeat(stop)
+	}
 	limit := stopConcurrency()
 	for _, g := range guards {
 		ev.diags[g.Qualified()] = &bytes.Buffer{} // filled before the pool: read-only map after
@@ -329,6 +359,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		out = append(out, prepared[i]...)
 	}
 
+	ev.total.Store(int32(len(runs)))
 	// The cheap checks of every rule, before any judge.
 	forEach(len(runs), limit, func(i int) {
 		if runs[i] != nil {
@@ -357,11 +388,13 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 	}
 	// Each rule's diagnostics, in declaration order: concurrent rules must not make
 	// the log's order depend on who finished first.
+	ev.errMu.Lock()
 	for _, g := range guards {
 		if b := ev.diags[g.Qualified()]; b != nil {
 			errw.Write(b.Bytes())
 		}
 	}
+	ev.errMu.Unlock()
 	fmt.Fprintf(errw, "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
 		time.Since(start).Round(time.Millisecond), len(guards), limit)
 	sort.SliceStable(ev.outcomes, func(i, j int) bool {
@@ -829,6 +862,11 @@ func (ev *changesetEvaluation) runCheap(rr *ruleRun) {
 func (ev *changesetEvaluation) runRest(rr *ruleRun) {
 	t := time.Now()
 	defer func() { rr.slow = time.Since(t) }()
+	defer ev.releaseInflight(rr) // after finish: the verdict is stored before the key is let go
+	if v, err, settled := ev.claimInflight(rr); settled {
+		ev.finish(rr, v, err)
+		return
+	}
 	var v dispatchcore.Verdict
 	var err error
 	for ; rr.next < len(rr.g.Checks); rr.next++ {
@@ -862,7 +900,19 @@ func (ev *changesetEvaluation) skipDeferred(rr *ruleRun) {
 // error, which is a refusal and leaves the run unfinished).
 func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict, failed error) {
 	g := rr.g
-	defer func() { rr.settled = true }()
+	defer func() {
+		rr.settled = true
+		n := ev.done.Add(1)
+		if ev.locks != nil {
+			status := "ok"
+			if rr.refused {
+				status = "refused"
+			} else if rr.replayed {
+				status = "ok (stored verdict)"
+			}
+			ev.progressf("sloprail: file-guard %s %s: %s (%d/%d settled, %s)", g.Attribution(), rr.subject.ID, status, n, ev.total.Load(), ev.elapsed())
+		}
+	}()
 	ev.dropTree(rr.g, rr.tree, rr.head)
 	if failed != nil {
 		rr.result, rr.refused = refusal(g, namingFiles(failed.Error(), rr.payload.Changeset.Files)), true
@@ -1207,7 +1257,7 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		v, err = ev.runner.RunScript(req, c, prep)
 	} else {
 		meta["model"] = c.Model
-		v, err = ev.runner.Judge(req, c, prep)
+		v, err = ev.judgeInSlot(rr, c, func() (dispatchcore.Verdict, error) { return ev.runner.Judge(req, c, prep) })
 	}
 	if err != nil {
 		return fail(err)
@@ -1376,8 +1426,10 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	}
 	if ev.verify && !have {
 		why := ""
-		if inc := ev.incompleteReason(rr); inc != "" {
-			why = " (" + inc + ")"
+		if !ev.params.FailuresOnly {
+			if inc := ev.incompleteReason(rr); inc != "" {
+				why = " (" + inc + ")"
+			}
 		}
 		return missing(fmt.Sprintf("not judged yet%s — run `sr-checks run --base %s --head %s` in %s", why, ev.rng.Base, ev.rng.Head, ev.root))
 	}
@@ -1634,4 +1686,103 @@ func shortRev(rev string) string {
 		return rev[:8]
 	}
 	return rev
+}
+
+// lockedWriter serialises writes to a shared stderr.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (l lockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(b)
+}
+
+func (ev *changesetEvaluation) progressf(format string, a ...any) {
+	ev.errMu.Lock()
+	defer ev.errMu.Unlock()
+	fmt.Fprintf(ev.errw, format+"\n", a...)
+}
+
+func (ev *changesetEvaluation) elapsed() time.Duration {
+	return time.Since(ev.started).Round(time.Second)
+}
+
+// heartbeatEvery is how often a long `run` says it is alive.
+const heartbeatEvery = 30 * time.Second
+
+// heartbeat says, every 30s until stop closes, that the run is alive and how far it has got, so
+// a long run is never silent and nobody has to poll the process list to know.
+func (ev *changesetEvaluation) heartbeat(stop <-chan struct{}) {
+	t := time.NewTicker(heartbeatEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			ev.progressf("sloprail: sr-checks run still working: %d/%d checks settled, %d judging (%s elapsed)",
+				ev.done.Load(), ev.total.Load(), ev.busy.Load(), ev.elapsed())
+		}
+	}
+}
+
+// judgeInSlot runs one judge once the machine has a free judge slot (shared by every
+// parallel `sr-checks run`); it waits for one and never fails for want of it.
+func (ev *changesetEvaluation) judgeInSlot(rr *ruleRun, c declaration.Check, judge func() (dispatchcore.Verdict, error)) (dispatchcore.Verdict, error) {
+	if ev.locks == nil {
+		return judge()
+	}
+	release, err := ev.locks.AcquireSlot()
+	if err != nil {
+		fmt.Fprintln(ev.log(rr.g), "sloprail: judge slots unavailable, judging without a limit:", err)
+		return judge()
+	}
+	defer release()
+	ev.busy.Add(1)
+	defer ev.busy.Add(-1)
+	t := time.Now()
+	ev.progressf("sloprail: judging %s %s with %q", rr.g.Attribution(), rr.subject.ID, c.Judge)
+	defer func() {
+		ev.progressf("sloprail: judged %s %s in %s", rr.g.Attribution(), rr.subject.ID, time.Since(t).Round(time.Second))
+	}()
+	return judge()
+}
+
+// claimInflight takes the machine-wide in-flight lock of the rule's verdict key before its
+// judges run. When another process held it, that process has judged this very key meanwhile:
+// the cache is read again and a stored verdict settles the rule (settled), else it judges.
+func (ev *changesetEvaluation) claimInflight(rr *ruleRun) (v dispatchcore.Verdict, err error, settled bool) {
+	if ev.locks == nil || ev.store == nil || ev.verify || rr.key == "" {
+		return dispatchcore.Verdict{}, nil, false
+	}
+	rr.lockKey = judgelimit.Name(ev.identity.RepoID, rr.g.Qualified(), rr.hash, rr.subject.ID, rr.key)
+	release, waited, lerr := ev.locks.AcquireInflight(rr.lockKey, "another run judging the same check ("+rr.g.Attribution()+" "+rr.subject.ID+")")
+	if lerr != nil {
+		fmt.Fprintln(ev.log(rr.g), "sloprail: in-flight lock unavailable, judging anyway:", lerr)
+		return dispatchcore.Verdict{}, nil, false
+	}
+	rr.unlockInflight = release
+	if !waited {
+		return dispatchcore.Verdict{}, nil, false
+	}
+	return ev.lookup(rr)
+}
+
+// releaseInflight stores the verdict for a waiting process (when one left its marker), then
+// lets the key go.
+func (ev *changesetEvaluation) releaseInflight(rr *ruleRun) {
+	if rr.unlockInflight == nil {
+		return
+	}
+	if ev.locks.Contended(rr.lockKey) {
+		if err := ev.store.FlushRun(rr.runID); err != nil {
+			fmt.Fprintln(ev.log(rr.g), "sloprail: the verdict could not be stored for the run waiting on it:", err)
+		}
+		ev.locks.ClearContended(rr.lockKey)
+	}
+	rr.unlockInflight()
+	rr.unlockInflight = nil
 }

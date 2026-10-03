@@ -28,7 +28,7 @@
 // # What is assumed, and what happens when the assumption breaks
 //
 // Every Claude Code path, filename and schema assumption in sloprail is in this
-// file. There are exactly four, and each is named at its use:
+// file. There are exactly five, and each is named at its use:
 //
 //  1. `.claude/settings.json` and `.claude/settings.local.json` hold an
 //     `enabledPlugins` object, keyed `<plugin>@<marketplace>`.
@@ -36,6 +36,10 @@
 //  3. `installed_plugins.json` records which version is live, under `"version": 2`.
 //  4. A marketplace whose source is a local directory is loaded FROM that
 //     directory rather than from the cache.
+//  5. `<home>/.claude/sessions/<pid>.json` exists for each live Claude Code process, carrying
+//     `pid`, `sessionId` and `procStart` (see Process). Read only to tell that a session's
+//     process is GONE, so the sub-agents it dispatched cannot still run; a missing directory is
+//     "unknown", never "gone".
 //
 // The danger this design is built against is a schema move: `installed_plugins.json`
 // going to version 3, sloprail reading zero plugins, and every shipped guardrail
@@ -57,6 +61,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // SettingsFiles are the project-level settings files that can enable a plugin,
@@ -706,4 +711,75 @@ func atoiStrict(s string) (int, bool) {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// Process is a live Claude Code process as ~/.claude/sessions/<pid>.json records it: its pid and
+// the opaque start marker the harness wrote beside it, which tells a pid reused by another
+// process from the one that was recorded.
+type Process struct {
+	PID       int
+	ProcStart string
+}
+
+// sessionsDir is where the harness keeps one file per live process.
+func sessionsDir(home string) string { return filepath.Join(home, ".claude", "sessions") }
+
+type sessionFile struct {
+	PID       int             `json:"pid"`
+	SessionID string          `json:"sessionId"`
+	ProcStart json.RawMessage `json:"procStart"`
+}
+
+func (f sessionFile) procStart() string { return strings.Trim(string(f.ProcStart), `" `) }
+
+// ProcessOfSession finds the live process running the harness session id, or false when none is
+// recorded (or the directory cannot be read).
+func ProcessOfSession(home, sessionID string) (Process, bool) {
+	if sessionID == "" {
+		return Process{}, false
+	}
+	entries, err := os.ReadDir(sessionsDir(home))
+	if err != nil {
+		return Process{}, false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(sessionsDir(home), e.Name()))
+		if err != nil {
+			continue
+		}
+		var f sessionFile
+		if json.Unmarshal(data, &f) != nil || f.SessionID != sessionID || f.PID == 0 {
+			continue
+		}
+		return Process{PID: f.PID, ProcStart: f.procStart()}, true
+	}
+	return Process{}, false
+}
+
+// ProcessGone reports whether the process is no longer running: its file is not there, names
+// another start, or its pid is dead. known is false when that cannot be told (the harness keeps
+// no sessions directory), and the caller then decides nothing from it. A file that cannot be
+// read or parsed counts as gone: a format that moved fails toward judging, not toward waiting.
+func ProcessGone(home string, p Process) (gone, known bool) {
+	if p.PID == 0 {
+		return false, false
+	}
+	if _, err := os.Stat(sessionsDir(home)); err != nil {
+		return false, false
+	}
+	data, err := os.ReadFile(filepath.Join(sessionsDir(home), fmt.Sprintf("%d.json", p.PID)))
+	if err != nil {
+		return true, true
+	}
+	var f sessionFile
+	if json.Unmarshal(data, &f) != nil || f.PID != p.PID || f.procStart() != p.ProcStart {
+		return true, true
+	}
+	if err := syscall.Kill(p.PID, 0); err != nil && err != syscall.EPERM {
+		return true, true
+	}
+	return false, true
 }

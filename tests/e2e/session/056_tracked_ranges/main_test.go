@@ -66,3 +66,20 @@ func ranges(t *testing.T, e *Env, proj, sess string) []sessionstate.TrackedRange
 func refs(e *Env, proj, sess string, args ...string) harness.Result {
 	return e.CLIDirectEnv(proj, e.SessionEnv(sess), "sr-session", append([]string{"refs"}, args...)...)
 }
+
+// failingProject is project with the checks run before each Stop (the harness's default) and a
+// judge that refuses what it is asked about: the commit an agent makes in it ends up with a
+// stored FAIL, the one verdict the Stop reports. (A range nobody judged is not reported at Stop;
+// the pre-push gate and CI refuse it.)
+func failingProject(t *testing.T) (*Env, string) {
+	t.Helper()
+	e := harness.New(t, harness.WithoutShippedFileGuards())
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
+	e.CommitAll(proj, "the rule")
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": false, "reasoning": "the date is not in the sources"}`)
+	return e, proj
+}
+
+const failedText = "the date is not in the sources"

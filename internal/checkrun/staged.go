@@ -65,6 +65,13 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 		}
 	}()
 
+	// A merge needs a citation only for what its resolution changed: a file it took unchanged from
+	// one side was changed by that side's commits, which carry their own citations. The commits
+	// that changed a file include the merge only when it differs from what every parent had.
+	merging, err := gitrepo.IsMerge(p.Root, rng.Head)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, g := range guards {
 		match, err := guardrail.CompileFileMatch(g.Match)
@@ -85,6 +92,9 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 			}
 			var subs []changeset.Subject
 			for _, s := range changeset.Subjects(cs, changeset.Requirement) {
+				if merging && !changedBy(cs, s.ID, rng.Head) {
+					continue
+				}
 				if !slices.Contains(out, s.ID) {
 					subs = append(subs, s)
 				}
@@ -147,3 +157,13 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 // whenWorkers is how many `when` scripts run side by side. Verdicts are never kept between runs:
 // nothing an agent can write may stand in for a script's answer.
 func whenWorkers() int { return max(2, min(8, runtime.NumCPU())) }
+
+// changedBy reports whether the commit is among those that changed the file.
+func changedBy(cs changeset.Changeset, path, sha string) bool {
+	for _, f := range cs.Files {
+		if f.Path == path {
+			return slices.Contains(f.Commits, sha)
+		}
+	}
+	return false
+}

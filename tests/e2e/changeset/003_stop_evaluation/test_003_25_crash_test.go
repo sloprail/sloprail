@@ -64,10 +64,11 @@ func TestT003_25_ACrashThatLeftARunUnfinishedIsNotAWatermark(t *testing.T) {
 		}
 	}
 
-	// The Stop only reads stored verdicts: a crashed run left none, so it is refused as
-	// not judged — had the crash counted as a pass the range would be taken as approved.
-	if r := e.StopNow(proj, "s-003-25", false); !harness.Blocked(r) {
-		t.Fatalf("a crashed run was read as a pass:\n%s", r.Output)
+	// Verify only reads stored verdicts: a crashed run left none, so it is refused as not judged
+	// (the Stop reports failures only, so it is `verify`, run by the pre-push gate and CI, that
+	// refuses) — had the crash counted as a pass the range would be taken as approved.
+	if v := e.CheckVerify(proj, "s-003-25", e.RunBase("s-003-25"), "HEAD"); v.Code == 0 {
+		t.Fatalf("a crashed run was read as a pass:\n%s", v.Output)
 	}
 
 	// Asking again judges the range afresh, and the Stop then passes.

@@ -32,14 +32,14 @@ func TestT056_01_TheCurrentBranchIsTrackedFromTheMergeBase(t *testing.T) {
 
 // T056_09: what the branch holds that origin does not (commits made, never pushed, before the
 // session began: a resumed session) is in the session's range: the base is origin's position, not
-// the HEAD the session started at, and the Stop asks for those commits to be judged.
+// the HEAD the session started at, and the Stop reports a failure over those commits.
 func TestT056_09_UnpushedCommitsFromBeforeTheSessionAreInItsRange(t *testing.T) {
-	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck(), harness.KeepOrigin())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.KeepOrigin())
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
 	e.CommitAll(proj, "the rule")
-	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": true, "reasoning": "fine"}`)
+	e.InstallJudgeClaudeCapturing(proj, promptFile, `{"pass": false, "reasoning": "the date is not in the sources"}`)
 	const sess = "s-056-09"
 	origin := e.Git(proj, "rev-parse", "origin/main")
 	e.WriteFile(proj, "docs/old.md", "written before the session")
@@ -57,47 +57,72 @@ func TestT056_09_UnpushedCommitsFromBeforeTheSessionAreInItsRange(t *testing.T) 
 	if len(rs) != 1 || rs[0].Base != origin {
 		t.Fatalf("the range does not start at origin/main (%s), so the unpushed commit is outside it: %+v", origin, rs)
 	}
-	if joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(joined, "not judged yet") {
-		t.Fatalf("the Stop did not ask for the unpushed pre-session commit to be judged:\n%s", joined)
+	if joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(joined, failedText) {
+		t.Fatalf("the Stop did not report the failing verdict on the unpushed pre-session commit:\n%s", joined)
 	}
 }
 
-// T056_02: a range nobody has judged is refused at Stop with the command that judges it; once
-// `sr-checks run` has judged it, the same Stop passes — and the Stop asked no model.
-func TestT056_02_StopVerifiesATrackedRangeAndNamesTheRunThatJudgesIt(t *testing.T) {
+// T056_02: the Stop reports failures only. A range nobody has judged passes it, silently: it is
+// the pre-push gate's and CI's to refuse, and the Stop asked no model.
+func TestT056_02_AnUnjudgedRangePassesTheStopSilently(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-02"
 
-	e.Run(proj, sess, "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
+	res := e.Run(proj, sess, "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
 
-	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !strings.Contains(joined, "not judged yet") || !strings.Contains(joined, "sr-checks run --base") {
-		t.Fatalf("an unjudged tracked range was not refused with the run that judges it:\n%s", joined)
+	if got := e.AllBlockingErrorsFrom(proj, sess, "Stop"); len(got) != 0 {
+		t.Fatalf("an unjudged tracked range was refused at Stop:\n%s", strings.Join(got, "\n"))
+	}
+	if strings.Contains(res.Output, "not judged yet") {
+		t.Fatalf("an unjudged range was reported at Stop:\n%s", res.Output)
 	}
 	if n := e.JudgeCalls(proj, promptFile, ""); n != 0 {
 		t.Fatalf("the Stop asked the judge (%d calls): it must only verify", n)
 	}
+}
 
-	// The agent judges what it committed, as the refusal says.
-	base := e.Git(proj, "rev-parse", "origin/main")
-	if r := e.CheckRunRaw(proj, sess, base, "HEAD"); r.Code != 0 {
-		t.Fatalf("sr-checks run: exit %d:\n%s", r.Code, r.Output)
+// T056_02 (b): a stored FAIL is still refused at Stop, with its reason.
+func TestT056_02_AStoredFailStillRefusesTheStop(t *testing.T) {
+	e, proj := failingProject(t)
+	const sess = "s-056-02b"
+
+	e.Run(proj, sess, "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
+
+	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(joined, failedText) {
+		t.Fatalf("a range with a stored FAIL was not refused at Stop with its reason:\n%s", joined)
 	}
-	before := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
-	e.Run(proj, sess, "done?", Turns("yes", Bash("b2", "true")))
-	if after := len(e.AllBlockingErrorsFrom(proj, sess, "Stop")); after != before {
-		t.Fatalf("a judged range was still refused at Stop:\n%s", strings.Join(e.AllBlockingErrorsFrom(proj, sess, "Stop")[before:], "\n"))
+	if strings.Contains(joined, "not judged yet") {
+		t.Fatalf("the refusal reports an unjudged key:\n%s", joined)
+	}
+}
+
+// T056_02 (c): what the Stop lets through unjudged, the pre-push gate refuses.
+func TestT056_02_ThePrePushGateStillRefusesTheUnjudgedRange(t *testing.T) {
+	e, proj := project(t)
+	const sess = "s-056-02c"
+
+	e.Run(proj, sess, "write the doc and push it", Turns("done",
+		harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a"),
+		Bash("p1", "git push -q origin HEAD:refs/heads/work"),
+	))
+
+	if got := e.Git(proj, "ls-remote", "origin", "refs/heads/work"); strings.TrimSpace(got) != "" {
+		t.Fatalf("an unjudged range was pushed past the pre-push gate: %s", got)
+	}
+	if got := e.AllBlockingErrorsFrom(proj, sess, "Stop"); len(got) != 0 {
+		t.Fatalf("the Stop refused the unjudged range the gate refused:\n%s", strings.Join(got, "\n"))
 	}
 }
 
 // T056_03: a range the agent untracks, with a reason, is not verified; it stays listed with the
 // reason, and automatic tracking does not bring it back while its tip does not move.
 func TestT056_03_AnUntrackedRangeIsNotVerifiedAndStaysListed(t *testing.T) {
-	e, proj := project(t)
+	e, proj := failingProject(t)
 	const sess = "s-056-03"
 	e.Run(proj, sess, "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
-	if got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(got, "not judged yet") {
-		t.Fatalf("premise: the unjudged commit is not refused at Stop:\n%s", got)
+	if got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(got, failedText) {
+		t.Fatalf("premise: the failing commit is not refused at Stop:\n%s", got)
 	}
 
 	if r := refs(e, proj, sess, "untrack"); r.Code == 0 {
