@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sync"
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -81,28 +82,64 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 			if req.Citation == nil {
 				continue
 			}
+			var subs []changeset.Subject
 			for _, s := range changeset.Subjects(cs, changeset.Requirement) {
-				if slices.Contains(out, s.ID) {
-					continue
+				if !slices.Contains(out, s.ID) {
+					subs = append(subs, s)
 				}
-				if req.When != "" && snapshot == nil {
-					if snapshot, err = gitrepo.AddSnapshot(p.Root, "", rng.Head); err != nil {
-						return nil, err
+			}
+			if len(subs) == 0 {
+				continue
+			}
+			if req.When == "" {
+				for _, s := range subs {
+					out = append(out, s.ID)
+				}
+				continue
+			}
+			cache := newWhenCache(p.Root, g, req.When, rng)
+			results := make([]bool, len(subs))
+			errs := make([]error, len(subs))
+			var missed []int
+			for i, s := range subs {
+				if v, ok := cache.get(s.ID); ok {
+					results[i] = v
+				} else {
+					missed = append(missed, i)
+				}
+			}
+			if len(missed) > 0 && snapshot == nil {
+				if snapshot, err = gitrepo.AddSnapshot(p.Root, "", rng.Head); err != nil {
+					return nil, err
+				}
+			}
+			// A `when` script is run once per subject (its contract), so a change touching many files
+			// runs it many times: those runs are independent, so they run side by side.
+			var wg sync.WaitGroup
+			sem := make(chan struct{}, whenWorkers())
+			for _, i := range missed {
+				wg.Add(1)
+				sem <- struct{}{}
+				go func(i int) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					payload := changeset.NewPayload(cs, subs[i], "")
+					r := dispatchcore.Request{
+						Nature: dispatchcore.NatureFileGuard, Dir: g.Dir, GuardName: g.Name, Changeset: &payload,
+						ProjectRoot: snapshot.Path, Env: changeset.Env(snapshot.Path, rng.Base, rng.Head),
 					}
+					results[i], errs[i] = dispatchcore.Runner{}.PrerequisiteApplies(r, req)
+				}(i)
+			}
+			wg.Wait()
+			for _, i := range missed {
+				if errs[i] != nil {
+					return nil, fmt.Errorf("file-guard %q: %w", g.Name, errs[i])
 				}
-				payload := changeset.NewPayload(cs, s, "")
-				r := dispatchcore.Request{
-					Nature: dispatchcore.NatureFileGuard, Dir: g.Dir, GuardName: g.Name, Changeset: &payload,
-				}
-				if snapshot != nil {
-					r.ProjectRoot = snapshot.Path
-					r.Env = changeset.Env(snapshot.Path, rng.Base, rng.Head)
-				}
-				applies, err := dispatchcore.Runner{}.PrerequisiteApplies(r, req)
-				if err != nil {
-					return nil, fmt.Errorf("file-guard %q: %w", g.Name, err)
-				}
-				if applies {
+				cache.put(subs[i].ID, results[i])
+			}
+			for i, s := range subs {
+				if results[i] {
 					out = append(out, s.ID)
 				}
 			}

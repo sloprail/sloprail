@@ -1,0 +1,119 @@
+package e2e
+
+import (
+	"strings"
+	"testing"
+)
+
+// other makes a second repository with the same citation-guarded docs rule, beside the session's
+// own project: the target of a `git -C <other> commit` run from the project's cwd.
+func other(t *testing.T, e *Env) string {
+	t.Helper()
+	dir := e.Project()
+	e.GitInit(dir)
+	e.WriteFile(dir, "docs/seed.md", "seed\n")
+	e.WriteFile(dir, "src/seed.go", "package seed\n")
+	e.CommitAll(dir, "the other project")
+	e.FileGuard(dir, "cited-docs", citedDocs, map[string]string{"ok.sh": "#!/bin/sh\nexit 0\n"})
+	e.CommitAll(dir, "the rule")
+	return dir
+}
+
+func stageIn(id, dir, path, body string) string {
+	return "mkdir -p \"$(dirname " + dir + "/" + path + ")\" && printf '%s' '" + body + "' > " + dir + "/" + path + " && git -C " + dir + " add " + path
+}
+
+// T058_12: `git -C <other repo> commit` from a cwd in a different repo is checked against the OTHER
+// repo: a guarded file there needs a cite (the citation refusal, not "could not check").
+func TestT058_12_DashCCommitIsCheckedInTheTargetRepo(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-12", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "docs/a.md", "a")),
+		Bash("c", "git -C "+oth+" commit -q -m 'add a'"),
+	))
+	if !res.Refused() {
+		t.Fatalf("an uncited -C commit of a guarded file was not refused:\n%s", res.Output)
+	}
+	has(t, res.Output, "docs/a.md")
+	has(t, res.Output, "sr-session trajectory cite")
+	if strings.Contains(res.Output, "could not check") {
+		t.Fatalf("the gate could not check a -C commit:\n%s", res.Output)
+	}
+	if strings.Contains(e.Git(oth, "log", "--format=%s"), "add a") {
+		t.Fatal("the refused commit was made")
+	}
+}
+
+// T058_13: the same from a cwd in a different repo, committing nothing guarded: allowed.
+func TestT058_13_DashCCommitOfUnguardedFileIsAllowed(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-13", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "src/x.go", "package x")),
+		Bash("c", "git -C "+oth+" commit -q -m 'add x'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a -C commit of an unguarded file was refused:\n%s", res.Output)
+	}
+	has(t, e.Git(oth, "log", "--format=%s"), "add x")
+}
+
+// T058_14: a -C commit with a resolving trailer passes.
+func TestT058_14_DashCCitedCommitPasses(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-14", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "docs/a.md", "a")),
+		Bash("c", "git -C "+oth+" commit -q -m 'add a' -m 'Sloprail-Cites-User: "+quote+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a cited -C commit was refused:\n%s", res.Output)
+	}
+	has(t, e.Git(oth, "log", "--format=%s"), "add a")
+}
+
+// T058_15: `git -C <other> commit --amend` is judged in the other repo too.
+func TestT058_15_DashCAmendIsCheckedInTheTargetRepo(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-15", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "docs/seed.md", "changed")),
+		Bash("c", "git -C "+oth+" commit -q --amend --no-edit"),
+	))
+	if !res.Refused() {
+		t.Fatalf("an uncited -C amend touching a guarded file was not refused:\n%s", res.Output)
+	}
+	has(t, res.Output, "docs/seed.md")
+	if strings.Contains(res.Output, "could not check") {
+		t.Fatalf("the gate could not check a -C amend:\n%s", res.Output)
+	}
+}
+
+// T058_16: an amend of an unguarded file in the other repo is allowed.
+func TestT058_16_DashCAmendOfUnguardedFileIsAllowed(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-16", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "src/seed.go", "package seed2")),
+		Bash("c", "git -C "+oth+" commit -q --amend --no-edit"),
+	))
+	if res.Refused() {
+		t.Fatalf("a -C amend of an unguarded file was refused:\n%s", res.Output)
+	}
+}
+
+// T058_17: a folder that cannot be told (a cd to a variable) is a "could not check" that does not
+// demand a citation: it says to run it as `git -C <literal dir> commit` first.
+func TestT058_17_UnknownFolderAsksForALiteralDirFirst(t *testing.T) {
+	e, proj := project(t)
+	res := e.Run(proj, "s-058-17", prompt, Turns("done",
+		stage("a", "src/x.go", "package x"),
+		Bash("c", "d=.; cd $d && git commit -q -m 'add x'"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a commit in an unknowable folder was not refused:\n%s", res.Output)
+	}
+	has(t, res.Output, "git -C <literal dir> commit")
+	has(t, res.Output, "may not need a citation")
+}

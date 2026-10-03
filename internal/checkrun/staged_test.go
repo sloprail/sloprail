@@ -3,6 +3,7 @@ package checkrun
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,4 +172,32 @@ func TestStaged_ReadsTheIndexGitIndexFileNames(t *testing.T) {
 	t.Setenv("GIT_INDEX_FILE", "")
 	os.Unsetenv("GIT_INDEX_FILE")
 	assert.Empty(t, runGit(t, repo, "diff", "--cached", "--name-only"), "the real index is untouched")
+}
+
+// A second evaluation of the same candidate (the gate asks as `when` and again as `check`) reads the
+// `when` verdicts from the cache instead of running the script per subject again.
+func TestStaged_WhenVerdictsAreCachedAcrossEvaluations(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "seed.txt", "seed")
+	counter := filepath.Join(t.TempDir(), "runs")
+	when := "#!/bin/sh\ncat >/dev/null\necho x >> " + counter + "\ncase \"$(cat /dev/null)\" in *) exit 0 ;; esac\n"
+	g := citeGuard(t, repo, "docs/**", when)
+	for _, n := range []string{"a", "b", "c"} {
+		stage(t, repo, "docs/"+n+".md", n)
+	}
+	first, err := staged(t, repo, false, g)
+	require.NoError(t, err)
+	b, _ := os.ReadFile(counter)
+	assert.Equal(t, 3, strings.Count(string(b), "x"), "one run per subject")
+	second, err := staged(t, repo, false, g)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	b, _ = os.ReadFile(counter)
+	assert.Equal(t, 3, strings.Count(string(b), "x"), "the second evaluation ran no script")
+
+	stage(t, repo, "docs/d.md", "d")
+	_, err = staged(t, repo, false, g)
+	require.NoError(t, err)
+	b, _ = os.ReadFile(counter)
+	assert.Equal(t, 7, strings.Count(string(b), "x"), "a changed candidate is judged afresh")
 }

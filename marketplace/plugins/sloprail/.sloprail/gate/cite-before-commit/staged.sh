@@ -16,7 +16,7 @@ cmds="sr-session trajectory cite '<exact quote>' && git commit -m '<what changed
 # `check` refuses the same fault once a cite is there); `check` refuses.
 fail() {
   if [ "$mode" = when ]; then
-    jq -n --arg h "cite-before-commit could not check this commit ($1). Cite before you commit:
+    jq -n --arg h "cite-before-commit could not check this commit ($1). Run it as \`git -C <literal dir> commit ...\` (a literal folder, no variable or eval) so it can be checked; this commit may not need a citation at all. Only if it changes a file a file-guard requires a citation for, cite before you commit:
   $cmds" '{hint: $h}'
     exit 0
   fi
@@ -166,7 +166,11 @@ for inv in "${invs[@]}"; do
   [ -z "$dry" ] || continue
   [ -z "$amend" ] || amending=1
 
-  dir="$(dir_of "$inv")" || fail "the folder the commit runs in could not be told from the command line (a cd to a variable, an eval); run it as 'git -C <dir> commit ...' with a literal folder"
+  dir="$(dir_of "$inv")" || fail "the folder the commit runs in could not be told from the command line (a cd to a variable, an eval)"
+  # `git -C <dir>` moves git (and so the index it reads) to <dir>: run everything there, never in the hook's cwd.
+  git_chdir "$dir"
+  dir="$EDIR"
+  lastdir="$dir"
   [ -d "$dir" ] || fail "the folder the commit runs in ($dir) does not exist"
   top="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || fail "$dir is not inside a git repository"
 
@@ -193,6 +197,8 @@ for inv in "${invs[@]}"; do
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
     split_git "$prev"
     pdir="$(dir_of "$prev")" || continue
+    git_chdir "$pdir"
+    pdir="$EDIR"
     ptop="$(cd "$pdir" 2>/dev/null && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || continue
     [ "$ptop" = "$top" ] || continue
     if [ "$SUB" = add ]; then
@@ -206,6 +212,7 @@ for inv in "${invs[@]}"; do
     fi
   done
   split_git "$inv"
+  git_chdir "$(dir_of "$inv")"
 
   if [ -n "$all" ]; then
     (cd "$dir" && GIT_INDEX_FILE="$tmp/index" git "${GOPTS[@]+"${GOPTS[@]}"}" add -u </dev/null) >/dev/null 2>&1 || fail "'git commit -a' could not be replayed on a scratch index"
@@ -283,7 +290,7 @@ fi
 # Quotes the session already recorded for these files (sr-file --cite): the agent has found them; they
 # only need to ride on the commit. Best effort: a failure here leaves the hint without them.
 rec=""
-if [ "${#invs[@]}" -gt 0 ] && rdir="$(dir_of "${invs[0]}")"; then
+if [ -n "${lastdir:-}" ] && rdir="$lastdir"; then
   rec="$(cd "$rdir" && sr-checks staged --recorded "${files[@]}" 2>/dev/null | jq -r '"  recorded for \(.path): -m \"\(.trailer): \(.quote)\"" ' 2>/dev/null)" || rec=""
 fi
 [ -z "$rec" ] || how="$how
