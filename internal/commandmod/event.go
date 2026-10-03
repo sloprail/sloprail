@@ -55,6 +55,13 @@ type Invocation struct {
 	// not. Nil/empty when the line sets nothing. Only what the text says: the
 	// environment the harness started with is not in it.
 	Env map[string]string
+
+	// Stdin is the text the line itself feeds this program: the body of a heredoc
+	// (`<<EOF`, `<<'EOF'`, `<<-EOF`) or the word of a here-string (`<<<word`, newline
+	// appended) attached to its command. Nil unless that text is literal: a pipe from
+	// another command, a `< file`, a variable or substitution in an unquoted heredoc
+	// body all leave it nil, because what the program reads is then not knowable.
+	Stdin *string
 }
 
 // CommandEvent is what this module's own code passes around.
@@ -102,13 +109,20 @@ func (c CommandEvent) Event() event.Event {
 		for k, v := range inv.Env {
 			env[k] = v
 		}
-		invs = append(invs, map[string]any{
+		entry := map[string]any{
 			KeyBin:   inv.Bin,
 			KeyArgv:  argv,
 			KeyFlags: flags,
 			KeyCwd:   inv.Cwd,
 			KeyEnv:   env,
-		})
+			// "" with stdinKnown false when the text is not literal or absent.
+			KeyStdin:      "",
+			KeyStdinKnown: inv.Stdin != nil,
+		}
+		if inv.Stdin != nil {
+			entry[KeyStdin] = *inv.Stdin
+		}
+		invs = append(invs, entry)
 	}
 
 	return event.Event{
@@ -157,6 +171,11 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		}
 		if v, ok := m[KeyCwd].(string); ok {
 			inv.Cwd = v
+		}
+		if v, ok := m[KeyStdin].(string); ok {
+			if known, _ := m[KeyStdinKnown].(bool); known {
+				inv.Stdin = &v
+			}
 		}
 		if env, ok := m[KeyEnv].(map[string]any); ok {
 			for k, v := range env {

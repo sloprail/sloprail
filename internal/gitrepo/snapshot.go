@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // Snapshot is a read-only checkout of one commit, for checks to read.
@@ -42,14 +45,7 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	// Snapshots a killed run left behind (their owner is dead) would otherwise stay registered
 	// as read-only detached worktrees for ever.
 	SweepStaleSnapshots(dir)
-	_, err = run(dir, "worktree", "add", "--detach", "--force", s.Path, commit)
-	if err != nil {
-		// A registration a dead process left behind (its directory gone), or a half-made one
-		// from this very attempt, is what git trips over: prune, clear the attempt, once more.
-		_, _ = run(dir, "worktree", "prune")
-		_ = os.RemoveAll(s.Path)
-		_, err = run(dir, "worktree", "add", "--detach", "--force", s.Path, commit)
-	}
+	err = addWorktree(dir, s.Path, commit)
 	if err != nil {
 		os.RemoveAll(root)
 		_, _ = run(dir, "worktree", "prune") // the failed attempt must not leave its registration
@@ -62,6 +58,51 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	}
 	track(s)
 	return s, nil
+}
+
+// worktreeAddTries and the backoff bound how long concurrent `git worktree add` calls on one
+// repository (they share .git/worktrees and its locks) are retried: about ten seconds in all.
+const (
+	worktreeAddTries   = 8
+	worktreeAddBackoff = 100 * time.Millisecond
+	worktreeAddCeiling = 2 * time.Second
+)
+
+// addWorktree runs `git worktree add`, retrying with jittered, doubling backoff while git fails
+// with exit 128 (a collision on the shared registration or a lock). Between tries it prunes a
+// registration a dead process left behind and clears the half-made attempt. The last error
+// carries git's stderr.
+func addWorktree(dir, path, commit string) error {
+	var err error
+	delay := worktreeAddBackoff
+	for try := 0; try < worktreeAddTries; try++ {
+		if _, err = run(dir, "worktree", "add", "--detach", "--force", path, commit); err == nil {
+			return nil
+		}
+		if !retryableWorktreeAdd(err) {
+			return err
+		}
+		_, _ = run(dir, "worktree", "prune")
+		_ = os.RemoveAll(path)
+		if try == worktreeAddTries-1 {
+			break
+		}
+		time.Sleep(delay/2 + time.Duration(rand.Int63n(int64(delay))))
+		if delay *= 2; delay > worktreeAddCeiling {
+			delay = worktreeAddCeiling
+		}
+	}
+	return err
+}
+
+// retryableWorktreeAdd is true for any git exit error. Concurrent adds on one repository collide
+// in more than one way: exit 128 for a lock or registration ("could not lock", "File exists",
+// "is locked"), and other codes for a racing ref update ("update_ref failed for ref 'HEAD'").
+// The tries are bounded, so a real failure still surfaces with git's stderr. An error that is
+// not git exiting (the binary missing) is not retried.
+func retryableWorktreeAdd(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr)
 }
 
 // Remove deletes the snapshot and its worktree registration. Safe to call twice.

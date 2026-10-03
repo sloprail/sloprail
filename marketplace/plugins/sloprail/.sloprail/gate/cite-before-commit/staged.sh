@@ -240,6 +240,7 @@ for inv in "${invs[@]}"; do
   # against the session transcript by `sr-checks staged --trailers` (the resolver `sr-file --cite` and
   # `sr-session trajectory cite` use). A commit's resolving citation grounds every file it changes;
   # a quote that does not resolve grounds nothing and is named in the refusal.
+  stdin_unknown=""
   if [ -n "$out" ]; then
     msgtext=""
     if [ -n "$amend" ] && [ -z "$newmsg" ]; then
@@ -247,10 +248,25 @@ for inv in "${invs[@]}"; do
     else
       for m in ${msgs[@]+"${msgs[@]}"}; do msgtext="$msgtext$m"$'\n'; done
       for mf in ${msgfiles[@]+"${msgfiles[@]}"}; do
-        [ "$mf" != - ] || continue
+        if [ "$mf" = - ]; then
+          # `-F -` reads the message from the command's stdin: known only when the line itself
+          # feeds it literal text (a heredoc or here-string attached to this git invocation).
+          if [ "$(printf '%s' "$inv" | jq -r '.stdinKnown // false')" = true ]; then
+            msgtext="$msgtext$(printf '%s' "$inv" | jq -j '.stdin // ""')"$'\n'
+          else
+            stdin_unknown=1
+          fi
+          continue
+        fi
         case "$mf" in /*) ;; *) mf="$dir/$mf" ;; esac
         msgtext="$msgtext$(cat "$mf" 2>/dev/null)"$'\n'
       done
+    fi
+    if [ -n "$stdin_unknown" ]; then
+      # The message comes from a pipe or a variable: unknowable here. Early feedback only; the
+      # file-guards' `require: citation` at Stop and in CI check the committed message.
+      echo "cite-before-commit: could not check this commit (its message comes from stdin that is not a literal heredoc or here-string); the file-guards will check the citation at Stop and in CI." >&2
+      continue
     fi
     if printf '%s' "$msgtext" | grep -Eiq '^Sloprail-Cites-(User|Tool):'; then
       res="$(printf '%s' "$msgtext" | (cd "$dir" && sr-checks staged --trailers 2>"$tmp/err"))" ||
@@ -260,7 +276,15 @@ for inv in "${invs[@]}"; do
         out=""
       fi
       bad="$(printf '%s\n' "$res" | jq -rs '[.[] | select(.ok | not)] | map("  \(.trailer): \(.quote): \(.error)") | join("\n")' 2>/dev/null)" || fail "the resolved citations could not be read"
-      [ -z "$bad" ] || unresolved="$unresolved$bad"$'\n'
+      if [ -n "$bad" ]; then
+        # A trailer is one line: git does not read an unindented next line as its continuation, so a
+        # quote wrapped onto one is cut at the line end.
+        if printf '%s\n' "$msgtext" | awk 'prev && NF && $0 !~ /^[ \t]/ && $0 !~ /^[A-Za-z][A-Za-z0-9-]*:/ {f=1} {prev = (tolower($0) ~ /^sloprail-cites-(user|tool):/)} END {exit !f}'; then
+          bad="$bad
+  (a trailer line was followed by an unindented line, so only its first line was read. Keep a trailer on one line.)"
+        fi
+        unresolved="$unresolved$bad"$'\n'
+      fi
     fi
   fi
   while IFS= read -r f; do

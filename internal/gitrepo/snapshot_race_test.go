@@ -1,6 +1,7 @@
 package gitrepo
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,4 +69,37 @@ func TestSnapshot_StaleRegistrationIsPruned(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Remove())
 	assert.NotContains(t, git(t, dir, "worktree", "list"), gone)
+}
+
+// Twenty parallel agents snapshotting one repository (the shared .git/worktrees and its locks)
+// all get their snapshot: a collision is retried, not reported.
+func TestSnapshot_TwentyParallelSnapshotsOfOneRepoAllSucceed(t *testing.T) {
+	dir := initRepo(t)
+	head := commit(t, dir, "a.txt", "x")
+
+	const n = 20
+	type result struct {
+		s   *Snapshot
+		err error
+	}
+	results := make(chan result, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			<-start
+			s, err := AddSnapshot(dir, t.TempDir(), head)
+			results <- result{s, err}
+		}()
+	}
+	close(start)
+	for i := 0; i < n; i++ {
+		r := <-results
+		require.NoError(t, r.err)
+		assert.NoError(t, r.s.Remove())
+	}
+}
+
+// Only git's fatal exit (128) is worth retrying; any other failure is final.
+func TestRetryableWorktreeAdd(t *testing.T) {
+	assert.False(t, retryableWorktreeAdd(errors.New("boom")))
 }
