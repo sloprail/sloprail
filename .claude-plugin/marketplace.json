@@ -34,7 +34,12 @@
         "stop-hook"
       ],
       "version": "0.3.0",
-      "source": "./marketplace/plugins/sloprail",
+      "source": {
+        "source": "git-subdir",
+        "url": "sloprail/sloprail",
+        "path": "marketplace/plugins/sloprail",
+        "ref": "v0.3.0"
+      },
       "author": {
         "name": "sloprail",
         "email": "hello@sloprail.com"
@@ -51,7 +56,12 @@
         "code-quality"
       ],
       "version": "0.3.0",
-      "source": "./marketplace/plugins/sloprail-tasks",
+      "source": {
+        "source": "git-subdir",
+        "url": "sloprail/sloprail",
+        "path": "marketplace/plugins/sloprail-tasks",
+        "ref": "v0.3.0"
+      },
       "author": {
         "name": "sloprail",
         "email": "hello@sloprail.com"
@@ -68,7 +78,12 @@
         "code-quality"
       ],
       "version": "0.3.0",
-      "source": "./marketplace/plugins/sloprail-content",
+      "source": {
+        "source": "git-subdir",
+        "url": "sloprail/sloprail",
+        "path": "marketplace/plugins/sloprail-content",
+        "ref": "v0.3.0"
+      },
       "author": {
         "name": "sloprail",
         "email": "hello@sloprail.com"
