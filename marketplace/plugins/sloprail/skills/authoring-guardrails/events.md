@@ -168,7 +168,20 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   harness's working directory for that tool call — in a transcript, the record's
   own `cwd` — so a script joins a relative `.cwd` onto that.
 
+- `.env` — map of string to string, the environment the line itself sets for the
+  program: an assignment prefix (`GIT_DIR=x git ...`), a wrapper's assignments
+  (`env GIT_DIR=x git ...`, `sudo FOO=1 cmd`), and an `export NAME=v` earlier on
+  the line in the same shell scope (a subshell's export stays in the subshell; an
+  `if` branch that exports on one path only still names the variable, with value
+  `""`). The value is `""` when it is not a literal word (`FOO=$X`,
+  `FOO=$(cmd)`): the name is certain, the value is not. A program with nothing set
+  has an empty map. It is only what the text says, not the environment the harness
+  started with. Read it instead of grepping `.raw` for `GIT_DIR`: a commit message
+  that merely mentions `GIT_DIR` sets nothing.
+
 ```
+"GIT_DIR" in .env
+any(event.invocations, .bin == "git" and "GIT_DIR" in .env)
 any(event.invocations, .bin == "curl")
 any(event.invocations, .bin == "rm" and any(.argv, # == "-rf"))
 any(event.invocations, .bin == "npm" and "next" in .flags.tag)
@@ -178,7 +191,7 @@ len(event.invocations) > 1
 In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
-`.bin`, `.argv` and `.cwd` have declared shapes, so a mistyped key inside a
+`.bin`, `.argv`, `.cwd` and `.env` have declared shapes, so a mistyped key inside a
 predicate is refused at load; `.flags` is the one map whose keys are open. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a

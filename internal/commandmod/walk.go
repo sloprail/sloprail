@@ -70,7 +70,11 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			stmt = node
 		case *syntax.CallExpr:
 			at := stmtAt(cwds, stmt)
+			// What this call's programs inherit from the line: the scope's
+			// exports under the call's own prefix.
+			scope := withEnv(at.env, assignsOf(cfg, node))
 			for _, inv := range resolve(cfg, node, depth) {
+				inv.Env = underlay(inv.Env, scope)
 				// Every invocation resolve returns carries a Cwd relative to
 				// where ITS line started: "." for the call itself, and for an
 				// interpreter payload's programs whatever the payload's own
@@ -85,6 +89,7 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			// depth+1 against the same bound. eval itself is reported above.
 			if text, isEval, ok := evalPayloadText(cfg, node); isEval && ok && depth < maxUnwrapDepth {
 				for _, inv := range walkAt(text, depth+1) {
+					inv.Env = underlay(inv.Env, scope)
 					inv.Cwd = composeCwd(at, inv.Cwd)
 					invs = append(invs, inv)
 				}

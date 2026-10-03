@@ -173,7 +173,7 @@ for inv in "${invs[@]}"; do
     continue
   fi
   # `git -C <dir>` moves git (and so the index it reads) to <dir>: run everything there, never in the hook's cwd.
-  git_redirected "$payload" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
+  git_redirected "$inv" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
   git_chdir "$dir"
   dir="$EDIR"
   # A folder that does not exist yet (this command creates it) or is no repository has no rules to cite for.
@@ -203,6 +203,7 @@ for inv in "${invs[@]}"; do
     [ "$k" -lt "$idx" ] || break
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
     split_git "$prev"
+    git_redirected "$prev" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree) on a git command it runs before the commit, which moves git to a repository this gate does not replay"
     pdir="$(dir_of "$prev")" || continue
     git_chdir "$pdir"
     pdir="$EDIR"
