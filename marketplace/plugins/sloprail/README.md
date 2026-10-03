@@ -125,6 +125,8 @@ File-guards are judged over an explicit range, never by the Stop hook:
     sr-checks run    --base origin/main --head HEAD   # runs what has no stored verdict; stores and pushes
     sr-checks verify --base origin/main --head HEAD   # only reads stored verdicts, runs nothing; exit 1 on anything failing or unjudged
 
+In GitHub Actions `verify` also annotates each refused file (`::error`), writes a job summary and ends with the exact local fix; `--fork-url <clone url>` reads a fork PR's results branch too (trusted for now, code review is the safeguard); `--junit <file>` writes JUnit XML.
+
 A verdict is also reused when a range's base and head trees equal those of a range already judged (a squash merge of a verified, up-to-date PR); if main moved under the PR, run `sr-checks run --base <before> --head <after>` for the push.
 
 Every check (script, judge, requirement) is cached; a verdict per guard and subject is keyed by content (rule hash, subject, fingerprint), not by

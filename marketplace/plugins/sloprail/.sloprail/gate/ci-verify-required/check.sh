@@ -68,6 +68,8 @@ Add a CI job that runs, on every pull request AND on every push to the default b
 
 Install sr-checks with Go, as below: no sloprail release tarball carries sr-checks yet, so install.sh would leave the job without it. The snippets pin ${ref}, the revision installed here. Plugins the project enables in .claude/settings.json but CI has not installed (such as sloprail itself) are reported on stderr and their rules are NOT verified there; verify checks the project's own rules only, and its exit status is not affected by the missing plugins.
 
+On GitHub Actions 'sr-checks verify' also reports natively: an ::error annotation per refused or not-judged file, a job summary (rule x subject x status) and, last, the exact local fix ('sr-checks run --base <base> --head <head>', then push the checks ref and re-run the job). On a pull request from a fork, --fork-url (the snippet passes the PR head repository's clone URL; it is ignored for a same-repository PR) makes verify also read the results branch from the fork, which needs no token for a public fork. Fork verdicts are written by the contributor and trusted for now: code review is the safeguard.
+
 A squash merge needs no re-judging when the pull request was up to date: verify reuses a verdict judged over the same base and head TREES (identical trees are an identical change), so the push to main after squashing a verified PR passes. If main moved while the PR was open, the squash's base tree differs, nothing is reused and the push reads 'not judged yet': squash-merge an up-to-date PR (merge or rebase main into it first), or run 'sr-checks run --base <before sha> --head <after sha>' for that push.
 
 GitHub Actions (.github/workflows/sloprail.yml):
@@ -93,9 +95,11 @@ GitHub Actions (.github/workflows/sloprail.yml):
             BASE_REF: \${{ github.event.pull_request.base.ref }}
             PR_HEAD: \${{ github.event.pull_request.head.sha }}
             BEFORE: \${{ github.event.before }}
+            # the PR's head repository: a fork's contributor pushes their verdicts there, and verify reads them too (trusted for now; code review is the safeguard)
+            FORK_URL: \${{ github.event.pull_request.head.repo.clone_url }}
           run: |
             if [ \"\$EVENT\" = pull_request ]; then
-              ~/.local/bin/sr-checks verify --base \"origin/\$BASE_REF\" --head \"\$PR_HEAD\"
+              ~/.local/bin/sr-checks verify --base \"origin/\$BASE_REF\" --head \"\$PR_HEAD\" --fork-url \"\$FORK_URL\"
             else
               # a squash of an up-to-date, verified PR reuses the PR's verdict (same trees); if main moved under the PR it reads 'not judged yet': merge main into the PR before squashing, or run sr-checks run --base \"\$BEFORE\" --head \"\$GITHUB_SHA\"
               # new branch / force push: before is all zeros or a missing object -> merge-base with the default branch, else the root commit

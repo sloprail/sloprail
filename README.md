@@ -72,7 +72,7 @@ default branch (the push's before..after). The shipped gate `sloprail/gate/ci-ve
 refuses an agent's turn until the committed tree has a line containing
 `sr-mark: ci-verify` (a comment beside that CI step, on any provider) and hands
 back copy-paste snippets. Turn it off with `disabled: [sloprail/gate/ci-verify-required]`
-in `.sloprail/config.yaml`.
+in `.sloprail/config.yaml`. In GitHub Actions `verify` annotates each refused file, writes a job summary and ends with the exact local fix; for a pull request from a fork it reads the fork's results branch too (`--fork-url`, trusted for now, code review is the safeguard).
 
 Full docs, including how to write a guardrail:
 [sloprail.com/docs](https://sloprail.com/docs).

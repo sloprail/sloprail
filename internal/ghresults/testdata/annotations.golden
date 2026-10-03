@@ -1,0 +1,4 @@
+::error file=docs/b%2Cc.md,line=12,title=sloprail/file-guard/docs-fresh%3A b.md is stale%3A 100%25 of it::b.md is stale: 100%25 of it%0Areads like the old design
+::error file=src/x.go,line=1,title=sloprail/file-guard/no-slop%3A not judged yet::Not judged yet: no stored verdict covers this content. Run `sr-checks run --base aaa111 --head bbb222`, push the checks ref and re-run the job.
+::error file=src/z.go,title=sloprail/file-guard/no-slop%3A not judged yet::Not judged yet: no stored verdict covers this content. Run `sr-checks run --base aaa111 --head bbb222`, push the checks ref and re-run the job.
+::error title=sloprail::file-guard broken: could not be read

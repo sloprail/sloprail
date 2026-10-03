@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="sloprail/file-guard/docs-fresh" tests="2" failures="1" skipped="0">
+    <testcase name="docs/a.md" classname="sloprail/file-guard/docs-fresh"></testcase>
+    <testcase name="docs/b,c.md" classname="sloprail/file-guard/docs-fresh">
+      <failure message="fail">b.md is stale: 100% of it&#xA;reads like the old design</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="sloprail/file-guard/no-slop" tests="3" failures="1" skipped="1">
+    <testcase name="changeset" classname="sloprail/file-guard/no-slop">
+      <failure message="not judged">no stored verdict; run sr-checks run</failure>
+    </testcase>
+    <testcase name="src/x.go" classname="sloprail/file-guard/no-slop"></testcase>
+    <testcase name="src/y.go" classname="sloprail/file-guard/no-slop">
+      <skipped></skipped>
+    </testcase>
+  </testsuite>
+</testsuites>
