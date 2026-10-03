@@ -38,8 +38,11 @@ type logEntry struct {
 
 func newLogCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "log",
-		Short: "Every stored file-guard verdict, oldest first, including fails a later pass superseded",
+		Use: "log",
+		// Hidden: an operator's read-back of the verdict history, not part of an agent's workflow
+		// (run / verify / show), so it stays out of help, the generated CLI reference and the docs.
+		Hidden: true,
+		Short:  "Every stored file-guard verdict, oldest first, including fails a later pass superseded",
 		Long: `Print every verdict stored on the sloprail/checks branch, oldest first.
 
 Unlike show, which prints each subject's latest result over a range, log is the history: a fail that

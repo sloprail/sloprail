@@ -71,10 +71,6 @@ in parallel, in several worktrees at once. Judges share a machine-wide limit
 (`SLOPRAIL_JUDGE_SLOTS`, default 8), an identical check is judged once, and a second run
 of the same range waits and reuses the first's verdicts.
 
-To read back everything the store holds — including fails a later pass superseded — run
-`sr-checks log` (read-only; `--json` prints one JSON object per line, `--rule`, `--failing` and
-`--since 24h` narrow it).
-
 A file-guard's verdict only binds where it is enforced. Add a CI job that runs
 `sr-checks verify` on every pull request (`--base` the target branch, `--head`
 the PR head sha) and on every push to the default branch (`--base` the push's

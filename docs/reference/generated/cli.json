@@ -479,7 +479,7 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks log [--json] [--rule X] [--failing] [--since T]   every stored verdict, oldest first, superseded fails included; JSONL with --json; read-only\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
@@ -510,37 +510,6 @@
           {
             "name": "head",
             "usage": "The head revision: a branch, tag or sha (required)"
-          }
-        ]
-      },
-      {
-        "path": "sr-checks log",
-        "use": "log",
-        "short": "Every stored file-guard verdict, oldest first, including fails a later pass superseded",
-        "long": "Print every verdict stored on the sloprail/checks branch, oldest first.\n\nUnlike show, which prints each subject's latest result over a range, log is the history: a fail that\na later run replaced with a pass is listed too. A verdict is a guard's pass or fail over one subject\nand one cache key; a run that only replayed a stored verdict is not a new verdict and is not listed,\nand neither are engine errors, skips and interrupted runs.\n\nIt reads the store exactly as verify does (fetches from origin, uses the local copy when that fails)\nand only reads: it never writes, and never runs a script or a judge. It needs no range.\n\n--json (alias --jsonl) prints one JSON object per line on stdout:\n\n  {\"rule\":\"file-guard/docs\",\"subject\":\"changeset\",\"status\":\"fail\",\"reasons\":[\"...\"],\n   \"key\":\"<hash>\",\"judgedAt\":\"2026-01-02T15:04:05.123456789Z\",\"base\":\"<sha|null>\",\"head\":\"<sha|null>\"}\n\nstatus is pass or fail; reasons is present for a fail only. judgedAt is the time the run that stored\nthe verdict was recorded. base and head are that run's commit range, null when it recorded none.\n\n--rule limits the listing to one file-guard, by folder name or qualified name.\n--failing keeps only the fails.\n--since keeps verdicts judged at or after a time: a duration back from now (30m, 24h, 7d, 2w), an\nRFC3339 time, or a date (2026-01-02, UTC).",
-        "flags": [
-          {
-            "name": "failing",
-            "default": "false",
-            "usage": "Only fails"
-          },
-          {
-            "name": "json",
-            "default": "false",
-            "usage": "Print one JSON object per verdict, one per line (JSONL)"
-          },
-          {
-            "name": "jsonl",
-            "default": "false",
-            "usage": "Alias of --json"
-          },
-          {
-            "name": "rule",
-            "usage": "Only this file-guard (folder name or qualified name)"
-          },
-          {
-            "name": "since",
-            "usage": "Only verdicts judged at or after this: a duration (24h, 7d), an RFC3339 time or a date"
           }
         ]
       },
