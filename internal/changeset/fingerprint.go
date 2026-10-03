@@ -113,7 +113,12 @@ func FilesPart(p Payload) string {
 			content = "blob:" + f.NewBlob
 		}
 		if f.Status == "D" {
-			content = "\x00deleted"
+			// What was deleted is part of the verdict: deleting a recreated file with other
+			// content is another change. The old blob's id (or, with none, its bytes).
+			content = "\x00deleted:" + f.OldContent
+			if f.OldBlob != "" {
+				content = "\x00deleted:blob:" + f.OldBlob
+			}
 		}
 		buf = binary.BigEndian.AppendUint64(buf, uint64(len(path)))
 		buf = append(buf, path...)
