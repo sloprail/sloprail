@@ -95,11 +95,14 @@ func addWorktree(dir, path, commit string) error {
 	return err
 }
 
-// retryableWorktreeAdd is true for git's exit 128 (its fatal error), which is how lock and
-// registration collisions ("could not lock", "File exists", "is locked") surface.
+// retryableWorktreeAdd is true for any git exit error. Concurrent adds on one repository collide
+// in more than one way: exit 128 for a lock or registration ("could not lock", "File exists",
+// "is locked"), and other codes for a racing ref update ("update_ref failed for ref 'HEAD'").
+// The tries are bounded, so a real failure still surfaces with git's stderr. An error that is
+// not git exiting (the binary missing) is not retried.
 func retryableWorktreeAdd(err error) bool {
 	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr) && exitErr.ExitCode() == 128
+	return errors.As(err, &exitErr)
 }
 
 // Remove deletes the snapshot and its worktree registration. Safe to call twice.
