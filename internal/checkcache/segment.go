@@ -96,7 +96,14 @@ func newPlainZdict() (*zdict, error) {
 
 // trainDict builds a dictionary from sample records. The zstd dictionary id is
 // derived from the content so two different dictionaries never share one.
-func trainDict(samples [][]byte) ([]byte, error) {
+func trainDict(samples [][]byte) (out []byte, err error) {
+	// The dictionary builder panics on some sample sets (slice bounds out of range); a cache
+	// that cannot train simply keeps plain zstd, so a panic here is an error, never a crash.
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = nil, fmt.Errorf("checkcache: train dictionary: %v", r)
+		}
+	}()
 	d, err := dict.BuildZstdDict(samples, dict.Options{MaxDictSize: 64 << 10, HashBytes: 6, ZstdDictID: 1, ZstdLevel: zstd.SpeedBetterCompression})
 	if err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package checkcache
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -108,6 +109,13 @@ func (s *Store) maybeGc() {
 	if s.opt.NoAutoGc {
 		return
 	}
+	// Compaction is housekeeping after the results are already stored: it must never take
+	// the run down with it. A failure leaves the segments as they are for the next Gc.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "sloprail: checks cache compaction skipped: %v\n", r)
+		}
+	}()
 	sn, err := s.snapshotAt(s.tip())
 	if err != nil || len(sn.Segs) < 2 {
 		return
