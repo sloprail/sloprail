@@ -12,6 +12,14 @@ refuse() {
   exit 1
 }
 
+# The state this gate last saw for this repository, kept in `sr-session state` (per session): one of
+# no-guards, marker-found, refused. A refusal is delivered ONCE per session per state, see the end.
+key=
+note() { # note <state>: best effort; a pass path never fails over its bookkeeping
+  [ -n "$key" ] || return 0
+  [ "$(sr-session state get "$key" 2>/dev/null)" = "$1" ] || sr-session state set "$key" "$1" >/dev/null 2>&1 || true
+}
+
 cd "${SR_WORKSPACE:-.}" 2>/dev/null || refuse "ci-verify-required could not enter the repository (${SR_WORKSPACE:-.}), so whether CI verifies the file-guards could not be checked"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -24,11 +32,13 @@ git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 || exit 0
 # Guards a plugin ships are not the project's to enforce in its CI.
 top="$(git rev-parse --show-toplevel 2>/dev/null)" || refuse "ci-verify-required could not find the repository root, so its file-guards could not be listed"
 own="$(git -C "$top" ls-tree -r --name-only HEAD -- .sloprail/file-guard 2>/dev/null)" || refuse "'git ls-tree' failed in $top, so whether the project has file-guards could not be checked"
-[ -n "$own" ] || exit 0
+fp="$(printf '%s' "$top" | { shasum 2>/dev/null || sha1sum 2>/dev/null || cksum; } | cut -d' ' -f1)"
+[ -n "$fp" ] && key="repo:${fp}"
+[ -n "$own" ] || { note no-guards; exit 0; }
 
 git grep -q -F -e "$MARKER" HEAD -- 2>/dev/null
 case $? in
-  0) exit 0 ;;
+  0) note marker-found; exit 0 ;;
   1) ;;
   *) refuse "'git grep' failed in ${SR_WORKSPACE:-.}, so whether the committed tree carries a '$MARKER' CI marker could not be checked" ;;
 esac
@@ -47,7 +57,9 @@ if [ -n "$plugin_root" ] && [ -r "$installed" ]; then
   esac
 fi
 
-refuse "This project has its own file-guards under .sloprail/file-guard/, but no committed file contains '$MARKER', so nothing shows that CI verifies their verdicts on pull requests and on pushes to the default branch. A file-guard's verdict is only enforced where 'sr-checks verify' runs: on this machine an agent can skip it, in CI it gates the merge.
+msg="ONE-TIME NOTICE, shown once per session for this state of the repository; it will not be repeated, so do not loop on it. Stopping now is allowed. The USER must decide: ask them whether to add the CI job below, or to turn this rule off (list 'sloprail/gate/ci-verify-required' under 'disabled:' in .sloprail/config.yaml). Do not add CI or edit the config without their confirmation.
+
+This project has its own file-guards under .sloprail/file-guard/, but no committed file contains '$MARKER', so nothing shows that CI verifies their verdicts on pull requests and on pushes to the default branch. A file-guard's verdict is only enforced where 'sr-checks verify' runs: on this machine an agent can skip it, in CI it gates the merge.
 
 Add a CI job that runs, on every pull request AND on every push to the default branch,
   pull request:  sr-checks verify --base <merge-base of the target branch and the PR head> --head <PR head sha>
@@ -141,3 +153,21 @@ Azure Pipelines (azure-pipelines.yml; add a build validation policy on the defau
 Any other provider (Bitbucket Pipelines, Jenkins, CircleCI, ...): run the same 'sr-checks verify' on pull requests (--base the target branch, --head the PR head sha) and on pushes to the default branch (--base the push's before sha, --head its after sha), with the line '$MARKER' in a comment beside it in the committed pipeline file. Jenkinsfile: '// $MARKER'. On the first push of a branch (and on a force push) the before sha is all zeros or missing: use the merge-base of the default branch and the after sha, or the root commit if none, as --base.
 
 To turn this off, list 'sloprail/gate/ci-verify-required' under 'disabled:' in .sloprail/config.yaml."
+
+# Refuse ONCE per session per state: the agent cannot fix this alone (CI and config changes need the
+# user's confirmation), so refusing every Stop would loop forever. The state is the repository, whether
+# it has its own file-guards, and whether the marker is found; the gate refuses on entering the
+# "guards, no marker" state and stays quiet while it lasts. A change (no guards -> guards, marker
+# found -> removed) or a new session refuses once again. The refusal is recorded BEFORE it is
+# delivered, and a state read/write error says what failed on stderr and lets the Stop through: a
+# broken store must not become an infinite loop either.
+if [ -z "$key" ] || ! seen="$(sr-session state get "$key" 2>&1)"; then
+  echo "ci-verify-required: could not read its session state ($seen), so the one-time notice is not shown; the CI marker is still missing" >&2
+  exit 0
+fi
+[ "$seen" = refused ] && exit 0
+if ! out="$(sr-session state set "$key" refused 2>&1)"; then
+  echo "ci-verify-required: could not record its session state ($out), so the one-time notice is not shown; the CI marker is still missing" >&2
+  exit 0
+fi
+refuse "$msg"
