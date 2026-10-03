@@ -67,12 +67,12 @@ guardrails bind to what is about to happen.
 
 A file-guard's verdict only binds where it is enforced, so a project that has
 its own file-guards must also run `sr-checks verify` in CI: on pull requests
-(`--base` the target branch, `--head` the PR head sha) and on pushes to the
-default branch (the push's before..after). The shipped gate `sloprail/gate/ci-verify-required`
+(`--base` the target branch, `--head` the PR head sha); protect the default branch (require pull
+requests and up-to-date branches), and verify on pull requests is the guarantee. The shipped gate `sloprail/gate/ci-verify-required`
 refuses an agent's turn until the committed tree carries the marker `sr:ci verify`
 (a comment beside that CI step, written with `sr-mark apply ci --verify=<path>:<line>`, on any
 provider) and hands back copy-paste snippets; the file-guard `sloprail/file-guard/ci-verify-step`
-checks that the marked file really runs `sr-checks verify` on pull requests and pushes to the default branch. Turn it off with `disabled: [sloprail/gate/ci-verify-required]`
+checks that the marked file really runs `sr-checks verify` on pull requests. Turn it off with `disabled: [sloprail/gate/ci-verify-required]`
 in `.sloprail/config.yaml`.
 
 Full docs, including how to write a guardrail:

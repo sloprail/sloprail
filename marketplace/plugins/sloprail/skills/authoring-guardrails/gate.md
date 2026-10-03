@@ -233,9 +233,9 @@ with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
 file-guard's verdict is only enforced where `sr-checks verify` runs, so a project with at
 least one file-guard of its own (a committed file under `.sloprail/file-guard/`) may not end a turn until the *committed* tree
 (`sr-mark find ci --fqn verify`, the engine's own marker reader) carries the marker `sr:ci verify` (write it with `sr-mark apply ci --verify=<path>:<line>`), a comment beside the CI step that runs
-`sr-checks verify` on pull requests (`--base` the target branch, `--head` the PR head sha) and on pushes to the default branch (`--base` the push's before sha, `--head` its after sha). A marker, not a provider's file
+`sr-checks verify` on pull requests (`--base` the target branch, `--head` the PR head sha). Protect the default branch (require pull requests and up-to-date branches): verify on pull requests is the guarantee, so no push job. A marker, not a provider's file
 path, so any CI (GitHub Actions, GitLab, Azure Pipelines, Bitbucket, Jenkins) is the same. The
-refusal carries copy-paste snippets, and the file-guard `sloprail/file-guard/ci-verify-step` checks that each marked file runs `sr-checks verify` on pull requests and on pushes to the default branch. It fails closed on a git or marker-reading error and ships **on**:
+refusal carries copy-paste snippets, and the file-guard `sloprail/file-guard/ci-verify-step` checks that each marked file runs `sr-checks verify` on pull requests. It fails closed on a git or marker-reading error and ships **on**:
 `disabled: [sloprail/gate/ci-verify-required]` turns it off.
 
 ### The resolution floor

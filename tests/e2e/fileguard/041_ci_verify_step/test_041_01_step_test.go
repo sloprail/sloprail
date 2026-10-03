@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// T041_01: a marked file that runs `sr-checks verify` on pull requests and pushes to the default
-// branch passes, on each provider the guard understands.
+// T041_01: a marked file that runs `sr-checks verify` on pull requests
+// passes, on each provider the guard understands.
 func TestT041_01_ValidMarkedFilePasses(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"github": {".github/workflows/sloprail.yml": ghValid},
@@ -41,23 +41,27 @@ func TestT041_03_MarkerWithoutVerifyStepRefused(t *testing.T) {
 	}
 }
 
-// T041_04: a verify step that never runs on a push to the default branch, or on pull requests, is refused.
-func TestT041_04_MissingTriggersRefused(t *testing.T) {
-	noPush := strings.Replace(ghValid, "  push:\n    branches: [main]\n", "", 1)
-	if got := refusalOf(t, map[string]string{".github/workflows/sloprail.yml": noPush}); !strings.Contains(got, "'push:' trigger") {
-		t.Fatalf("a workflow without a push trigger was not refused for it:\n%s", got)
+// T041_04: a verify step with no pull request trigger is refused; a push trigger alone does not do.
+func TestT041_04_MissingPullRequestTriggerRefused(t *testing.T) {
+	onlyPush := strings.Replace(ghValid, "  pull_request:\n", "  push:\n    branches: [main]\n", 1)
+	if got := refusalOf(t, map[string]string{".github/workflows/sloprail.yml": onlyPush}); !strings.Contains(got, "'pull_request' trigger") {
+		t.Fatalf("a workflow with only a push trigger was not refused for the missing pull_request:\n%s", got)
 	}
-	noPR := strings.Replace(ghValid, "  pull_request:\n", "", 1)
-	if got := refusalOf(t, map[string]string{".github/workflows/sloprail.yml": noPR}); !strings.Contains(got, "'pull_request' trigger") {
-		t.Fatalf("a workflow without a pull_request trigger was not refused for it:\n%s", got)
-	}
-	noMR := strings.Replace(glValid, "    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\"\n", "", 1)
+	noMR := strings.Replace(glValid, "    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\"\n", "    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH\n", 1)
 	if got := refusalOf(t, map[string]string{".gitlab-ci.yml": noMR}); !strings.Contains(got, "merge_request_event") {
 		t.Fatalf("a GitLab file without the merge request rule was not refused for it:\n%s", got)
 	}
-	noPr := strings.Replace(azValid, "pr: [main]\n", "", 1)
+	noPr := strings.Replace(azValid, "pr: [main]\n", "trigger: [main]\n", 1)
 	if got := refusalOf(t, map[string]string{"azure-pipelines.yml": noPr}); !strings.Contains(got, "'pr:'") {
 		t.Fatalf("an Azure file without pr: was not refused for it:\n%s", got)
+	}
+}
+
+// T041_06: a push trigger beside the pull request one is allowed.
+func TestT041_06_PushTriggerIsAllowed(t *testing.T) {
+	both := strings.Replace(ghValid, "  pull_request:\n", "  pull_request:\n  push:\n    branches: [main]\n", 1)
+	if got := refusalOf(t, map[string]string{".github/workflows/sloprail.yml": both}); got != "" {
+		t.Fatalf("a push trigger beside pull_request was refused:\n%s", got)
 	}
 }
 

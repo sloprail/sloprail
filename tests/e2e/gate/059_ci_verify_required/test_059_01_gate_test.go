@@ -16,14 +16,14 @@ func TestT059_01_NoFileGuardsNeedsNoMarker(t *testing.T) {
 }
 
 // T059_02: file-guards and no committed marker refuses the Stop, and the refusal carries what the
-// agent needs: why, a snippet per major provider that verifies the PR head, the marker, how to disable.
+// agent needs: why, a pull-request-only snippet per major provider that verifies the PR head, the marker, how to disable.
 func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 	e, proj := project(t, true)
 	got := stop(e, proj, "s-059-02")
 	for _, want := range []string{
 		marker,
 		"GitHub Actions", "GitLab CI", "Azure Pipelines", "Jenkins",
-		"sr-checks verify", "push to the default branch", "github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion", "merge-base",
+		"sr-checks verify", "Protect the default branch",
 		"github.event.pull_request.head.sha", "CI_MERGE_REQUEST_DIFF_BASE_SHA", "System.PullRequest.SourceCommitId",
 		"sloprail/gate/ci-verify-required",
 		"actions/setup-go@v5", "golang:1.25", "GoTool@0",
@@ -31,6 +31,11 @@ func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the refusal lacks %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("the snippets still carry a push-to-default-branch job (%q):\n%s", bad, got)
 		}
 	}
 	if strings.Contains(got, "install.sh | sh") {

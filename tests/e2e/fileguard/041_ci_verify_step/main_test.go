@@ -10,7 +10,7 @@ import (
 
 // ci_verify_step: the plugin's shipped file-guard `sloprail/file-guard/ci-verify-step`. A committed
 // file carrying the marker `sr:ci verify` must run `sr-checks verify` and trigger on pull requests
-// and on pushes to the default branch. Judged by `sr-checks run` over a range, like any file-guard.
+// (a push trigger is allowed, never required: the default branch is protected). Judged by `sr-checks run` over a range, like any file-guard.
 // Every other shipped authoring file-guard is off, so what these tests see is this rule alone.
 
 const ruleName = "sloprail/file-guard/ci-verify-step"
@@ -40,8 +40,6 @@ const (
 	ghValid = `name: sloprail
 on:
   pull_request:
-  push:
-    branches: [main]
 jobs:
   v:
     runs-on: ubuntu-latest
@@ -52,13 +50,11 @@ jobs:
 	glValid = `sloprail-verify:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
     # sr:ci verify
     - sr-checks verify --base "$BASE" --head "$CI_COMMIT_SHA"
 `
-	azValid = `trigger: [main]
-pr: [main]
+	azValid = `pr: [main]
 steps:
   # sr:ci verify
   - script: sr-checks verify --base origin/main --head $(Build.SourceVersion)
