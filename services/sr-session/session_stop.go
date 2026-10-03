@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +25,7 @@ func newSessionStopCmd() *cobra.Command {
 			// Stop: a reply does not pass a rule by being sent twice. What ends a
 			// refusal loop is the project's stop_hook_block_cap — see
 			// stopHookBlockCapReached.
+			defer gitrepo.CleanupOnSignal()() // a killed Stop must not leak its read-only snapshots
 			return completeCycle(cmd, readPayload(cmd))
 		},
 	}
