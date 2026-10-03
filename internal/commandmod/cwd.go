@@ -99,6 +99,10 @@ type cwd struct {
 	// long as every `cd` since the start of the sequence was relative — composed
 	// onto each other, never onto a root this package does not have.
 	dir string
+	// env is what `export NAME=value` has set in this scope so far (value ""
+	// when not literal). Immutable once built: a scope copies it on write, so
+	// a subshell's copy and the parent's never alias.
+	env map[string]string
 }
 
 // startCwd is the effective directory nothing has yet moved out of: the empty,
@@ -134,15 +138,15 @@ func (c cwd) advance(target string) cwd {
 	if path.IsAbs(target) {
 		// An absolute cd names the directory outright, whatever an opaque
 		// eval before it may have done.
-		return cwd{dir: path.Clean(target)}
+		return cwd{dir: path.Clean(target), env: c.env}
 	}
 	if c.dir == "" {
 		// Relative, composed onto "wherever this sequence started" — which
 		// stays exactly that: still relative, one level deeper. Not resolved
 		// against any root, because this package has none.
-		return cwd{dir: path.Clean(target), opaque: c.opaque}
+		return cwd{dir: path.Clean(target), opaque: c.opaque, env: c.env}
 	}
-	return cwd{dir: path.Clean(path.Join(c.dir, target)), opaque: c.opaque}
+	return cwd{dir: path.Clean(path.Join(c.dir, target)), opaque: c.opaque, env: c.env}
 }
 
 // resolveTargetAt turns a path as a command line spelled it into the path it
@@ -420,6 +424,27 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			return
 		}
 		*current = current.advance(target)
+	case *syntax.FuncDecl:
+		// A function body is its own scope, seeded with what is known where it
+		// is defined; nothing in it reaches the statements after the definition.
+		cwdForStmt(cfg, cmd.Body, ptr(*current), out)
+		// Calls are not followed, so what the body exports globally is applied
+		// from here on, as if it had been called: over-approximate, which is
+		// the safe side for "is GIT_DIR set". A `local` stays in the body.
+		syntax.Walk(cmd.Body, func(n syntax.Node) bool {
+			if d, ok := n.(*syntax.DeclClause); ok {
+				if exp, global := exportsOf(cfg, d); exp != nil && global {
+					current.env = withEnv(current.env, exp)
+				}
+			}
+			return true
+		})
+	case *syntax.DeclClause:
+		// `export NAME=value` is a declaration clause, not a call; so are
+		// `declare -x`, `typeset -x` and `local -x`.
+		if exp, _ := exportsOf(cfg, cmd); exp != nil {
+			current.env = withEnv(current.env, exp)
+		}
 	case *syntax.Subshell:
 		// A fresh scope, seeded with a COPY of what the parent currently
 		// knows. Whatever `cd`s happen inside are recorded for the statements
@@ -640,10 +665,43 @@ func cwdForIfChain(cfg *expand.Config, cmd *syntax.IfClause, entry cwd, out map[
 // honestly anyway rather than left to panic on branches[0]: no branches ran
 // is not evidence of a directory, known or otherwise.
 func mergeBranches(branches ...cwd) cwd {
+	out := mergeDirs(branches...)
+	out.env = mergeEnvs(branches...)
+	return out
+}
+
+// mergeEnvs is the union of what any path exported: a variable one path set
+// may be set at runtime, and a consumer asking "is GIT_DIR set" must hear
+// yes. The value survives only where every path agrees on it, else "".
+func mergeEnvs(branches ...cwd) map[string]string {
+	var out map[string]string
+	for _, b := range branches {
+		for k, v := range b.env {
+			if out == nil {
+				out = map[string]string{}
+			}
+			if old, seen := out[k]; seen && old != v {
+				v = ""
+			} else if !seen {
+				for _, o := range branches {
+					if ov, ok := o.env[k]; !ok || ov != v {
+						v = ""
+						break
+					}
+				}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func mergeDirs(branches ...cwd) cwd {
 	if len(branches) == 0 {
 		return cwd{unknown: true}
 	}
 	first := branches[0]
+	first.env = nil
 	if first.unknown {
 		return cwd{unknown: true}
 	}
@@ -763,6 +821,123 @@ func resolveAgainst(targets []FileTarget, at cwd) []FileTarget {
 		}
 
 		out = append(out, t)
+	}
+	return out
+}
+
+// redirectNames are the variables that move git to another repository. A
+// declaration this package cannot read (`declare $opt $name=x`) may export any
+// of them, so each is recorded with an unknown value: a consumer asking "is
+// GIT_DIR set" hears yes and fails closed.
+var redirectNames = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"}
+
+// exportsOf reads a declaration clause and returns what it exports (value ""
+// when not literal, and for a bare `export NAME`, whose value is whatever NAME
+// already was); nil when it exports nothing. `export` always exports;
+// `declare`, `typeset` and `local` do with a literal option containing `x`
+// (`-x`, `-gx`, `-rx`), and, because an option this package cannot evaluate
+// might be one, also with any non-literal bare word.
+func exportsOf(cfg *expand.Config, d *syntax.DeclClause) (env map[string]string, global bool) {
+	if d.Variant == nil {
+		return nil, false
+	}
+	exports := d.Variant.Value == "export"
+	// global: the export outlives a function body that makes it (`export`,
+	// `declare -g`; never `local`). An unreadable word may be `-g`.
+	global = exports
+	unreadable := false
+	for _, as := range d.Args {
+		if as.Name != nil || as.Value == nil {
+			continue
+		}
+		if !isLiteral(as.Value) {
+			unreadable = true
+			continue
+		}
+		if o, err := expand.Literal(cfg, as.Value); err == nil && strings.HasPrefix(o, "-") && !strings.HasPrefix(o, "--") && strings.Contains(o, "g") && d.Variant.Value != "local" {
+			global = true
+		}
+		if o, err := expand.Literal(cfg, as.Value); err == nil && strings.HasPrefix(o, "-") && !strings.HasPrefix(o, "--") && strings.Contains(o, "x") {
+			exports = true
+		}
+	}
+	if !exports && !unreadable {
+		return nil, false
+	}
+	if unreadable && d.Variant.Value != "local" {
+		global = true
+	}
+	out := map[string]string{}
+	if unreadable {
+		for _, n := range redirectNames {
+			out[n] = ""
+		}
+	}
+	for _, as := range d.Args {
+		if as.Name == nil {
+			continue
+		}
+		out[as.Name.Value] = ""
+		if as.Value != nil && !as.Append && as.Array == nil && isLiteral(as.Value) {
+			if v, err := expand.Literal(cfg, as.Value); err == nil {
+				out[as.Name.Value] = v
+			}
+		}
+	}
+	return out, global
+}
+
+// validEnvName reports whether s is a shell variable name.
+func validEnvName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// assignsOf reads the `NAME=value` prefix of one call.
+func assignsOf(cfg *expand.Config, call *syntax.CallExpr) map[string]string {
+	var out map[string]string
+	for _, as := range call.Assigns {
+		if as.Name == nil {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[as.Name.Value] = ""
+		if as.Value != nil && !as.Append && as.Array == nil && isLiteral(as.Value) {
+			if v, err := expand.Literal(cfg, as.Value); err == nil {
+				out[as.Name.Value] = v
+			}
+		}
+	}
+	return out
+}
+
+// underlay returns inv's own env with base beneath it: what the invocation
+// itself set wins over what its scope or its wrapper did.
+func underlay(inv map[string]string, base map[string]string) map[string]string {
+	if len(base) == 0 {
+		return inv
+	}
+	return withEnv(base, inv)
+}
+
+// withEnv returns a copy of base with add laid over it.
+func withEnv(base, add map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(add))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range add {
+		out[k] = v
 	}
 	return out
 }

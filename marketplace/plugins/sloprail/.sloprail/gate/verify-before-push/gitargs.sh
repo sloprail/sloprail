@@ -65,14 +65,15 @@ git_chdir() {
   GOPTS=(${kept[@]+"${kept[@]}"})
 }
 
-# git_redirected PAYLOAD — succeeds when the command line redirects git's repository by means this
-# gate does not replay: GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR /
-# GIT_OBJECT_DIRECTORY (an assignment, export or env prefix) in the raw line, or --git-dir /
-# --work-tree among GOPTS. Callers fail closed: the repository git would use is not the folder's.
+# git_redirected INV — succeeds when this git invocation (its JSON, from `.event.invocations`) redirects
+# git's repository by means the gates do not replay: its `.env` (the parsed assignment prefix, `env`
+# wrapper or earlier `export`) names GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR /
+# GIT_OBJECT_DIRECTORY / GIT_ALTERNATE_OBJECT_DIRECTORIES / GIT_NAMESPACE, or --git-dir / --work-tree
+# is among GOPTS. Nothing here reads the raw command line, so a message that merely MENTIONS GIT_DIR
+# is not a redirection. Callers fail closed: the repository git would use is not the folder's.
 git_redirected() {
-  local raw a
-  raw="$(printf '%s' "$1" | jq -r '.event.raw // ""' 2>/dev/null)" || return 0
-  printf '%s' "$raw" | grep -Eq 'GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE)' && return 0
+  local a
+  printf '%s' "$1" | jq -e '(.env // {}) | keys | any(. as $k | ["GIT_DIR","GIT_WORK_TREE","GIT_INDEX_FILE","GIT_COMMON_DIR","GIT_OBJECT_DIRECTORY","GIT_ALTERNATE_OBJECT_DIRECTORIES","GIT_NAMESPACE"] | index($k))' >/dev/null 2>&1 && return 0
   for a in ${GOPTS[@]+"${GOPTS[@]}"}; do
     case "$a" in --git-dir | --git-dir=* | --work-tree | --work-tree=*) return 0 ;; esac
   done
