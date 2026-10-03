@@ -6,11 +6,11 @@ Not judged yet: run `sr-checks run --base aaa111 --head bbb222` locally, push th
 
 | Rule | Subject | Files | Status | What to do |
 | --- | --- | --- | --- | --- |
-| sloprail/file-guard/docs-fresh | docs/a.md | `docs/a.md` | cached |  |
-| sloprail/file-guard/docs-fresh | docs/b,c.md | `docs/b,c.md` | fail | b.md is stale: 100% of it |
-| sloprail/file-guard/no-slop | changeset | `src/x.go`<br>`src/z.go` | not judged | `sr-checks run --base aaa111 --head bbb222` |
-| sloprail/file-guard/no-slop | src/x.go | `src/x.go` | pass |  |
-| sloprail/file-guard/no-slop | src/y.go | `src/y.go` | skipped |  |
+| sloprail/file-guard/docs-fresh | docs/a.md | docs/a.md | cached |  |
+| sloprail/file-guard/docs-fresh | docs/b,c.md | docs/b,c.md | fail | b.md is stale: 100% of it |
+| sloprail/file-guard/no-slop | changeset | src/x.go<br>src/z.go | not judged | `sr-checks run --base aaa111 --head bbb222` |
+| sloprail/file-guard/no-slop | src/x.go | src/x.go | pass |  |
+| sloprail/file-guard/no-slop | src/y.go | src/y.go | skipped |  |
 
 <details><summary>fail: docs/b,c.md (sloprail/file-guard/docs-fresh)</summary>
 

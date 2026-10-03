@@ -118,3 +118,31 @@ func TestManyFilesAreCappedInTheCell(t *testing.T) {
 		t.Fatalf("files not capped:\n%s", s)
 	}
 }
+
+func hostile() []checkrun.CheckOutcome {
+	return []checkrun.CheckOutcome{
+		{Rule: "r|<b>x</b>", Subject: "changeset", Kind: "guard", Status: "fail", Source: "stored",
+			Reason: "<script>alert(1)</script> | a ``` fence\n</details><img src=x onerror=1>\n```\nmore",
+			Files:  []string{"a|b`c\nd.md", "<i>.md"}},
+	}
+}
+
+func TestSummaryHostileGolden(t *testing.T) {
+	got := Summary(hostile(), nil, rng)
+	golden(t, "summary_hostile.golden", got)
+	// the full reason sits in a fenced block (inert); everywhere else no raw markup may appear
+	for _, ln := range strings.Split(got, "\n") {
+		if strings.HasPrefix(ln, "|") || strings.HasPrefix(ln, "<details><summary>") {
+			for _, bad := range []string{"<script>", "<img", "<i>", "<b>"} {
+				if strings.Contains(ln, bad) {
+					t.Fatalf("raw %q leaked into %q", bad, ln)
+				}
+			}
+		}
+	}
+	for _, ln := range strings.Split(got, "\n") {
+		if strings.HasPrefix(ln, "| r") && strings.Count(ln, "|") != 6 {
+			t.Fatalf("a row was split: %q", ln)
+		}
+	}
+}

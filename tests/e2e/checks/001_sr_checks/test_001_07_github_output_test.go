@@ -40,7 +40,7 @@ func TestT001_07_GitHubNativeResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contains(t, string(md), "| Rule | Subject | Files | Status | What to do |", "| file-guard/docs | changeset | `docs/a.md` | not judged | `sr-checks run --base "+base, "0 pass, 0 fail, 1 not judged, 0 cached")
+	contains(t, string(md), "| Rule | Subject | Files | Status | What to do |", "| file-guard/docs | changeset | docs/a.md | not judged | `sr-checks run --base "+base, "0 pass, 0 fail, 1 not judged, 0 cached")
 	xml, err := os.ReadFile(junit)
 	if err != nil {
 		t.Fatal(err)

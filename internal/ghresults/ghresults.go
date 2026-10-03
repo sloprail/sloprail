@@ -210,7 +210,7 @@ func fileCell(fs []string) string {
 			out = append(out, fmt.Sprintf("+%d more", len(fs)-max))
 			break
 		}
-		out = append(out, "`"+shorten(f)+"`")
+		out = append(out, text(shorten(f)))
 	}
 	return strings.Join(out, "<br>")
 }
@@ -253,11 +253,11 @@ func Summary(outcomes []checkrun.CheckOutcome, extra []string, rng Range) string
 		if r.status != Fail || r.reason == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "<details><summary>fail: %s (%s)</summary>\n\n```text\n%s\n```\n\n</details>\n\n",
-			cell(r.subject), cell(r.rule), strings.ReplaceAll(r.reason, "```", "'''"))
+		fmt.Fprintf(&b, "<details><summary>fail: %s (%s)</summary>\n\n%s\n\n</details>\n\n",
+			text(r.subject), text(r.rule), fence(r.reason))
 	}
 	for _, e := range extra {
-		fmt.Fprintf(&b, "<details><summary>fail: rule could not be loaded</summary>\n\n```text\n%s\n```\n\n</details>\n\n", strings.ReplaceAll(e, "```", "'''"))
+		fmt.Fprintf(&b, "<details><summary>fail: rule could not be loaded</summary>\n\n%s\n\n</details>\n\n", fence(e))
 	}
 	if red > 0 {
 		b.WriteString(rng.Fix() + "\n")
@@ -366,9 +366,32 @@ func sorted(in []checkrun.CheckOutcome) []checkrun.CheckOutcome {
 	return out
 }
 
-func cell(s string) string {
-	s = strings.NewReplacer("|", "\\|", "\n", " ", "\r", "").Replace(s)
-	return s
+// text makes untrusted text (a path, a rule name, a reason: all can quote a judged file) inert
+// in markdown and HTML: markup characters become entities and a newline becomes a space.
+func text(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "`", "&#96;", "|", "&#124;",
+		"\\", "&#92;", "*", "&#42;", "_", "&#95;", "[", "&#91;", "]", "&#93;", "\r\n", " ", "\n", " ", "\r", " ").Replace(s)
+}
+
+// cell is text for a table cell.
+func cell(s string) string { return text(s) }
+
+// fence is a fenced code block around untrusted text, its fence longer than any backtick run
+// the text holds, so the text cannot close it.
+func fence(s string) string {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	f := strings.Repeat("`", max(3, longest+1))
+	return f + "text\n" + s + "\n" + f
 }
 
 // escapeData and escapeProp are GitHub's workflow-command escapes.
