@@ -49,11 +49,13 @@ const (
 	// Keys within one entry of FieldInvocations. Not fields of the kind: a
 	// matcher reads them off an element of the list, and the declaration
 	// describes the list itself.
-	KeyBin   = "bin"
-	KeyArgv  = "argv"
-	KeyFlags = "flags"
-	KeyCwd   = "cwd"
-	KeyEnv   = "env"
+	KeyBin        = "bin"
+	KeyArgv       = "argv"
+	KeyFlags      = "flags"
+	KeyCwd        = "cwd"
+	KeyEnv        = "env"
+	KeyStdin      = "stdin"
+	KeyStdinKnown = "stdinKnown"
 )
 
 // Module produces command events.
@@ -148,6 +150,13 @@ func (*Module) Kinds() []module.KindDecl {
 							// program: NAME -> literal value, "" when the
 							// value is not literal. See Invocation.Env.
 							{Name: KeyEnv, Type: module.TypeMap, Elem: &module.FieldDecl{Type: module.TypeString}},
+
+							// stdin is the literal heredoc or here-string text the
+							// line feeds this program, "" otherwise; stdinKnown says
+							// whether it is literal text (so "" can be told from
+							// an empty heredoc). See Invocation.Stdin.
+							{Name: KeyStdin, Type: module.TypeString},
+							{Name: KeyStdinKnown, Type: module.TypeBool},
 						},
 					},
 				},
