@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"slices"
+	"sync"
 
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -81,28 +83,58 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 			if req.Citation == nil {
 				continue
 			}
+			var subs []changeset.Subject
 			for _, s := range changeset.Subjects(cs, changeset.Requirement) {
-				if slices.Contains(out, s.ID) {
-					continue
+				if !slices.Contains(out, s.ID) {
+					subs = append(subs, s)
 				}
-				if req.When != "" && snapshot == nil {
-					if snapshot, err = gitrepo.AddSnapshot(p.Root, "", rng.Head); err != nil {
-						return nil, err
+			}
+			if len(subs) == 0 {
+				continue
+			}
+			if req.When == "" {
+				for _, s := range subs {
+					out = append(out, s.ID)
+				}
+				continue
+			}
+			if snapshot == nil {
+				if snapshot, err = gitrepo.AddSnapshot(p.Root, "", rng.Head); err != nil {
+					return nil, err
+				}
+			}
+			results := make([]bool, len(subs))
+			errs := make([]error, len(subs))
+			missed := make([]int, len(subs))
+			for i := range subs {
+				missed[i] = i
+			}
+			// A `when` script is run once per subject (its contract), so a change touching many files
+			// runs it many times: those runs are independent, so they run side by side.
+			var wg sync.WaitGroup
+			sem := make(chan struct{}, whenWorkers())
+			for _, i := range missed {
+				wg.Add(1)
+				sem <- struct{}{}
+				go func(i int) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					payload := changeset.NewPayload(cs, subs[i], "")
+					r := dispatchcore.Request{
+						Nature: dispatchcore.NatureFileGuard, Dir: g.Dir, GuardName: g.Name, Changeset: &payload,
+						ProjectRoot: snapshot.Path, Env: changeset.Env(snapshot.Path, rng.Base, rng.Head),
 					}
+					results[i], errs[i] = dispatchcore.Runner{}.PrerequisiteApplies(r, req)
+				}(i)
+			}
+			wg.Wait()
+			for _, i := range missed {
+				if errs[i] != nil {
+					return nil, fmt.Errorf("file-guard %q: %w", g.Name, errs[i])
 				}
-				payload := changeset.NewPayload(cs, s, "")
-				r := dispatchcore.Request{
-					Nature: dispatchcore.NatureFileGuard, Dir: g.Dir, GuardName: g.Name, Changeset: &payload,
-				}
-				if snapshot != nil {
-					r.ProjectRoot = snapshot.Path
-					r.Env = changeset.Env(snapshot.Path, rng.Base, rng.Head)
-				}
-				applies, err := dispatchcore.Runner{}.PrerequisiteApplies(r, req)
-				if err != nil {
-					return nil, fmt.Errorf("file-guard %q: %w", g.Name, err)
-				}
-				if applies {
+			}
+			for i, s := range subs {
+				if results[i] {
 					out = append(out, s.ID)
 				}
 			}
@@ -111,3 +143,7 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 	slices.Sort(out)
 	return out, nil
 }
+
+// whenWorkers is how many `when` scripts run side by side. Verdicts are never kept between runs:
+// nothing an agent can write may stand in for a script's answer.
+func whenWorkers() int { return max(2, min(8, runtime.NumCPU())) }

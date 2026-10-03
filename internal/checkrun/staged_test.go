@@ -3,6 +3,7 @@ package checkrun
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,4 +172,22 @@ func TestStaged_ReadsTheIndexGitIndexFileNames(t *testing.T) {
 	t.Setenv("GIT_INDEX_FILE", "")
 	os.Unsetenv("GIT_INDEX_FILE")
 	assert.Empty(t, runGit(t, repo, "diff", "--cached", "--name-only"), "the real index is untouched")
+}
+
+// A planted file under .git can never waive a requirement: every evaluation runs the `when` script.
+func TestStaged_WhenIsNeverReadFromDisk(t *testing.T) {
+	repo := initRepo(t)
+	commitFile(t, repo, "seed.txt", "seed")
+	counter := filepath.Join(t.TempDir(), "runs")
+	g := citeGuard(t, repo, "docs/**", "#!/bin/sh\ncat >/dev/null\necho x >> "+counter+"\nexit 0\n")
+	for _, n := range []string{"a", "b", "c"} {
+		stage(t, repo, "docs/"+n+".md", n)
+	}
+	for i := 0; i < 2; i++ {
+		got, err := staged(t, repo, false, g)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"docs/a.md", "docs/b.md", "docs/c.md"}, got)
+	}
+	b, _ := os.ReadFile(counter)
+	assert.Equal(t, 6, strings.Count(string(b), "x"), "every evaluation runs the script per subject")
 }

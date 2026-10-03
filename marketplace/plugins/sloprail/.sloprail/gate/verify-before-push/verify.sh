@@ -194,6 +194,10 @@ for inv in "${pushes[@]}"; do
   # runs the agent's own git options or contacts the remote: `-c core.sshCommand=...`, `ext::` URLs
   # and `--receive-pack` would run agent-chosen code (or hang) inside the gate.
   drop_unsafe_gopts
+  git_redirected "$payload" && refuse "This push sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository the commits it would send cannot be checked in. Run it as 'git -C <dir> push ...' with a literal folder and no such setting."
+  git_chdir "$dir"
+  dir="$EDIR"
+  [ -d "$dir" ] || refuse "The folder this push runs in ($dir) does not exist, so the commits it would send could not be checked."
   resolve_push_pairs "$dir" || refuse "This push could not be resolved to the refs it would update in $dir, so what leaves could not be checked: $PUSH_WHY"
 
   while IFS=$'\t' read -r flag pair _; do
