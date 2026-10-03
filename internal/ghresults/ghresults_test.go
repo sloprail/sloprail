@@ -40,19 +40,19 @@ func mixed() []checkrun.CheckOutcome {
 	}
 }
 
-const fix = "To fix: run `sr-checks run --base origin/main --head abc123` locally, then re-run this job."
+var rng = Range{Base: "aaa111", Head: "bbb222", FirstLine: map[string]int{"docs/b,c.md": 12, "src/x.go": 1}}
 
 func TestAnnotationsGolden(t *testing.T) {
-	golden(t, "annotations.golden", Annotations(mixed(), []string{"file-guard broken: could not be read"}))
+	golden(t, "annotations.golden", Annotations(mixed(), []string{"file-guard broken: could not be read"}, rng))
 }
 
 func TestSummaryGolden(t *testing.T) {
-	golden(t, "summary.golden", Summary(mixed(), []string{"file-guard broken: could not be read"}, fix))
+	golden(t, "summary.golden", Summary(mixed(), []string{"file-guard broken: could not be read"}, rng))
 }
 
 func TestSummaryAllPassHasNoFix(t *testing.T) {
-	out := Summary(mixed()[:1], nil, fix)
-	if strings.Contains(out, "To fix") || !strings.Contains(out, "All 1 checks pass") {
+	out := Summary(mixed()[:1], nil, rng)
+	if strings.Contains(out, "To fix") || !strings.Contains(out, "0 fail, 0 not judged, 1 cached") {
 		t.Fatalf("a green summary must not tell the reader to fix anything:\n%s", out)
 	}
 }
@@ -70,14 +70,14 @@ func TestAnnotationsAreCapped(t *testing.T) {
 	for i := 0; i < MaxAnnotations+7; i++ {
 		in = append(in, checkrun.CheckOutcome{Rule: "r", Subject: fmt.Sprintf("f%03d.go", i), Status: "fail", Source: "stored", Reason: "no"})
 	}
-	lines := strings.Split(strings.TrimSpace(Annotations(in, nil)), "\n")
+	lines := strings.Split(strings.TrimSpace(Annotations(in, nil, Range{})), "\n")
 	if len(lines) != MaxAnnotations+1 || !strings.Contains(lines[len(lines)-1], "7 more refusals") {
 		t.Fatalf("want %d annotations and a summary line, got %d lines, last %q", MaxAnnotations, len(lines), lines[len(lines)-1])
 	}
 }
 
 func TestNoAnnotationsWhenGreen(t *testing.T) {
-	if got := Annotations(mixed()[:1], nil); got != "" {
+	if got := Annotations(mixed()[:1], nil, Range{}); got != "" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -99,5 +99,22 @@ func TestGuardWrapsInjectedCommands(t *testing.T) {
 	}
 	if Guard(text) == out {
 		t.Fatal("the token must be fresh per call")
+	}
+}
+
+func TestFirstLines(t *testing.T) {
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -3,0 +4,2 @@ x\n+a\n+b\n@@ -9 +11 @@\n-x\n+y\n" +
+		"diff --git a/new.md b/new.md\n--- /dev/null\n+++ b/new.md\n@@ -0,0 +1,5 @@\n+x\n" +
+		"diff --git a/gone.md b/gone.md\n--- a/gone.md\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-x\n"
+	got := FirstLines(diff)
+	if got["a.go"] != 4 || got["new.md"] != 1 || len(got) != 2 {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestManyFilesAreCappedInTheCell(t *testing.T) {
+	o := checkrun.CheckOutcome{Rule: "r", Subject: "changeset", Status: "missing", Files: []string{"a", "b", "c", "d", "e", "f", "g"}}
+	if s := Summary([]checkrun.CheckOutcome{o}, nil, rng); !strings.Contains(s, "+2 more") || strings.Contains(s, "`f`") {
+		t.Fatalf("files not capped:\n%s", s)
 	}
 }

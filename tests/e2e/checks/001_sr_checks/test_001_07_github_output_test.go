@@ -26,7 +26,10 @@ func TestT001_07_GitHubNativeResults(t *testing.T) {
 	if res.Code != 1 {
 		t.Fatalf("the exit code must stay 1: %d\n%s", res.Code, res.Output)
 	}
-	contains(t, res.Output, "::error file=docs/a.md,title=file-guard/docs::", "To fix: run `sr-checks run --base "+base+" --head HEAD`")
+	contains(t, res.Output, "::error file=docs/a.md,line=1,title=file-guard/docs%3A not judged yet::", "To fix: run `sr-checks run --base "+base+" --head ")
+	if n := strings.Count(res.Output, "not judged yet — run"); n != 0 {
+		t.Fatalf("the plain refusal text must not repeat the annotated errors (%d):\n%s", n, res.Output)
+	}
 
 	contains(t, res.Output, "::stop-commands::")
 	if i, j := strings.Index(res.Output, "::stop-commands::"), strings.Index(res.Output, "::error file="); j < 0 || i < 0 {
@@ -37,7 +40,7 @@ func TestT001_07_GitHubNativeResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contains(t, string(md), "| Rule | Subject | Status |", "| file-guard/docs | changeset (docs/a.md) | not judged |", "<details>", "sr-checks run --base "+base)
+	contains(t, string(md), "| Rule | Subject | Files | Status | What to do |", "| file-guard/docs | changeset | `docs/a.md` | not judged | `sr-checks run --base "+base, "0 pass, 0 fail, 1 not judged, 0 cached")
 	xml, err := os.ReadFile(junit)
 	if err != nil {
 		t.Fatal(err)

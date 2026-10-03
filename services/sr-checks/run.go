@@ -304,13 +304,15 @@ func execute(cmd *cobra.Command, m mode) error {
 	for _, f := range refusals {
 		out = append(out, f.Reason+" (file-guard "+f.Attribution+")")
 	}
+	var annotated bool
 	var fix string
 	if gh {
-		baseRev, _ := cmd.Flags().GetString("base")
-		headRev, _ := cmd.Flags().GetString("head")
-		fix = ghresults.Fix(baseRev, headRev)
-		fmt.Fprint(w, ghresults.Annotations(outcomes, broken))
-		if err := appendStepSummary(ghresults.Summary(outcomes, broken, fix)); err != nil {
+		rng := ghresults.Range{Base: t.rng.Base, Head: t.rng.Head, FirstLine: firstChangedLines(t.root, t.rng)}
+		fix = rng.Fix()
+		ann := ghresults.Annotations(outcomes, broken, rng)
+		annotated = ann != ""
+		fmt.Fprint(w, ann)
+		if err := appendStepSummary(ghresults.Summary(outcomes, broken, rng)); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the job summary could not be written:", err)
 		}
 	}
@@ -327,12 +329,30 @@ func execute(cmd *cobra.Command, m mode) error {
 	if gh {
 		// The reasons can quote attacker-controlled file content: no line of it may act as a
 		// workflow command. Only the escaped ::error lines above run as commands.
-		fmt.Fprint(w, ghresults.Guard(joinRefusals(out)+"\n"+fix))
+		// Each refusal is already shown once, as its ::error annotation: repeat the text only
+		// when nothing was annotated.
+		var text string
+		if !annotated {
+			text = joinRefusals(out) + "\n" + fix
+		} else {
+			text = fmt.Sprintf("sloprail: %d rule(s) refused; each is annotated above and in the job summary.\n%s", len(out), fix)
+		}
+		fmt.Fprint(w, ghresults.Guard(text))
 	} else {
 		fmt.Fprintln(w, joinRefusals(out))
 	}
 	os.Exit(1)
 	return nil
+}
+
+// firstChangedLines is, per file, the first line the range changed (empty when git cannot say:
+// annotations then stay at file level).
+func firstChangedLines(root string, r gitrepo.Range) map[string]int {
+	out, err := exec.Command("git", "-C", root, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", r.Base, r.Head).Output()
+	if err != nil {
+		return nil
+	}
+	return ghresults.FirstLines(string(out))
 }
 
 // githubFormat is whether verify speaks GitHub: asked for with --format github, or --format

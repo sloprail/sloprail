@@ -1,28 +1,22 @@
 ## sloprail: sr-checks verify
 
-**3 red** of 5 checks (2 fail, 1 not judged).
+1 pass, 2 fail, 1 not judged, 1 cached, 1 skipped
 
-| Rule | Subject | Status |
-| --- | --- | --- |
-| sloprail/file-guard/docs-fresh | docs/a.md | cached |
-| sloprail/file-guard/docs-fresh | docs/b,c.md | fail |
-| sloprail/file-guard/no-slop | changeset (src/x.go, src/z.go) | not judged |
-| sloprail/file-guard/no-slop | src/x.go | pass |
-| sloprail/file-guard/no-slop | src/y.go | skipped |
+Not judged yet: run `sr-checks run --base aaa111 --head bbb222` locally, push the checks ref and re-run the job.
+
+| Rule | Subject | Files | Status | What to do |
+| --- | --- | --- | --- | --- |
+| sloprail/file-guard/docs-fresh | docs/a.md | `docs/a.md` | cached |  |
+| sloprail/file-guard/docs-fresh | docs/b,c.md | `docs/b,c.md` | fail | b.md is stale: 100% of it |
+| sloprail/file-guard/no-slop | changeset | `src/x.go`<br>`src/z.go` | not judged | `sr-checks run --base aaa111 --head bbb222` |
+| sloprail/file-guard/no-slop | src/x.go | `src/x.go` | pass |  |
+| sloprail/file-guard/no-slop | src/y.go | `src/y.go` | skipped |  |
 
 <details><summary>fail: docs/b,c.md (sloprail/file-guard/docs-fresh)</summary>
 
 ```text
 b.md is stale: 100% of it
 reads like the old design
-```
-
-</details>
-
-<details><summary>not judged: changeset (src/x.go, src/z.go) (sloprail/file-guard/no-slop)</summary>
-
-```text
-no stored verdict; run sr-checks run
 ```
 
 </details>
@@ -35,4 +29,4 @@ file-guard broken: could not be read
 
 </details>
 
-To fix: run `sr-checks run --base origin/main --head abc123` locally, then re-run this job.
+To fix: run `sr-checks run --base aaa111 --head bbb222` locally (it judges what has no verdict and pushes the results branch sloprail/checks to origin; if the push failed, `git push origin sloprail/checks`), then re-run this job.

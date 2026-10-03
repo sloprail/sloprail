@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/changeset"
@@ -50,15 +51,42 @@ func bad(o checkrun.CheckOutcome) bool {
 	return s == Fail || s == NotJudged
 }
 
-// Fix is the exact local command that makes a red verify green, and what to do after it.
-func Fix(base, head string) string {
-	return fmt.Sprintf("To fix: run `sr-checks run --base %s --head %s` locally (it judges what has no verdict and pushes the results branch sloprail/checks to origin; if the push failed, `git push origin sloprail/checks`), then re-run this job.", base, head)
+// Range is what the results were read over: the resolved shas the exact local fix names, and
+// the first changed line of each file in it (from the diff), so an annotation lands inline in
+// "Files changed". A file with no known line is annotated at file level.
+type Range struct {
+	Base, Head string
+	FirstLine  map[string]int
 }
 
-// Annotations renders one ::error per refused or not-judged file and rule (a subject that is
-// not a file is annotated without one), at most MaxAnnotations, then a line saying how many
-// were left out. extra are findings with no outcome (a rule that failed to load).
-func Annotations(outcomes []checkrun.CheckOutcome, extra []string) string {
+// RunCommand is the exact local command that judges what has no verdict.
+func (r Range) RunCommand() string {
+	return fmt.Sprintf("sr-checks run --base %s --head %s", r.Base, r.Head)
+}
+
+// Fix is what to do about a red verify: the exact local command, then push and re-run.
+func (r Range) Fix() string {
+	return fmt.Sprintf("To fix: run `%s` locally (it judges what has no verdict and pushes the results branch sloprail/checks to origin; if the push failed, `git push origin sloprail/checks`), then re-run this job.", r.RunCommand())
+}
+
+// firstLine is the first line of a reason, trimmed and cut to n runes.
+func firstLine(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if r := []rune(s); len(r) > n {
+		s = string(r[:n-1]) + "…"
+	}
+	return s
+}
+
+// Annotations renders one ::error per refused or not-judged file and rule, on the file's first
+// changed line when known (file level otherwise; a subject that is not a file has none), at most
+// MaxAnnotations, then a line saying how many were left out. The title is "<rule>: not judged
+// yet" or "<rule>: <first line of the reason>". extra are findings with no outcome (a rule
+// that failed to load).
+func Annotations(outcomes []checkrun.CheckOutcome, extra []string, rng Range) string {
 	type key struct{ rule, file string }
 	seen := map[key]bool{}
 	var lines []string
@@ -66,12 +94,13 @@ func Annotations(outcomes []checkrun.CheckOutcome, extra []string) string {
 		if !bad(o) {
 			continue
 		}
-		reason := o.Reason
-		if reason == "" {
-			reason = "refused"
-		}
-		if Status(o) == NotJudged && !strings.Contains(reason, "not judged") {
-			reason = "not judged yet: " + reason
+		title, msg := o.Rule+": not judged yet", "Not judged yet: no stored verdict covers this content. Run `"+rng.RunCommand()+"`, push the checks ref and re-run the job."
+		if Status(o) == Fail {
+			reason := o.Reason
+			if strings.TrimSpace(reason) == "" {
+				reason = "refused"
+			}
+			title, msg = o.Rule+": "+firstLine(reason, 100), reason
 		}
 		for _, f := range files(o) {
 			k := key{o.Rule, f}
@@ -82,8 +111,11 @@ func Annotations(outcomes []checkrun.CheckOutcome, extra []string) string {
 			props := ""
 			if f != "" {
 				props = "file=" + escapeProp(f) + ","
+				if n := rng.FirstLine[f]; n > 0 {
+					props += fmt.Sprintf("line=%d,", n)
+				}
 			}
-			lines = append(lines, "::error "+props+"title="+escapeProp(o.Rule)+"::"+escapeData(reason))
+			lines = append(lines, "::error "+props+"title="+escapeProp(title)+"::"+escapeData(msg))
 		}
 	}
 	for _, e := range extra {
@@ -100,44 +132,135 @@ func Annotations(outcomes []checkrun.CheckOutcome, extra []string) string {
 	return b.String()
 }
 
-// Summary renders the markdown job summary: a table of rule x subject x status, the reasons
-// of what is red collapsed under it, and (when something is red) the local fix.
-func Summary(outcomes []checkrun.CheckOutcome, extra []string, fix string) string {
-	var b strings.Builder
-	rows := sorted(outcomes)
-	red := len(extra)
-	counts := map[string]int{}
-	for _, o := range rows {
-		counts[Status(o)]++
-		if bad(o) {
-			red++
+// row is one rule x subject: its worst status, the files it matched and the reasons.
+type row struct {
+	rule, subject string
+	status        string
+	files         []string
+	reason        string
+}
+
+func rank(s string) int {
+	switch s {
+	case Fail:
+		return 4
+	case NotJudged:
+		return 3
+	case Skipped:
+		return 2
+	case Pass:
+		return 1
+	}
+	return 0 // cached
+}
+
+func rows(outcomes []checkrun.CheckOutcome) []row {
+	var out []row
+	idx := map[[2]string]int{}
+	for _, o := range sorted(outcomes) {
+		k := [2]string{o.Rule, o.Subject}
+		i, ok := idx[k]
+		if !ok {
+			i = len(out)
+			idx[k] = i
+			out = append(out, row{rule: o.Rule, subject: o.Subject, status: Status(o)})
+		}
+		r := &out[i]
+		if st := Status(o); rank(st) > rank(r.status) || (st == r.status && r.reason == "") {
+			r.status = st
+			if o.Reason != "" && (st == Fail || r.reason == "") {
+				r.reason = o.Reason
+			}
+		}
+		for _, f := range files(o) {
+			if f != "" && !contains(r.files, f) {
+				r.files = append(r.files, f)
+			}
 		}
 	}
-	b.WriteString("## sloprail: sr-checks verify\n\n")
-	if red == 0 {
-		fmt.Fprintf(&b, "All %d checks pass.\n\n", len(rows))
-	} else {
-		fmt.Fprintf(&b, "**%d red** of %d checks (%d fail, %d not judged).\n\n", red, len(rows), counts[Fail]+len(extra), counts[NotJudged])
+	return out
+}
+
+func contains(l []string, s string) bool {
+	for _, x := range l {
+		if x == s {
+			return true
+		}
 	}
-	if len(rows) > 0 {
-		b.WriteString("| Rule | Subject | Status |\n| --- | --- | --- |\n")
-		for _, o := range rows {
-			fmt.Fprintf(&b, "| %s | %s | %s |\n", cell(o.Rule), cell(label(o)), Status(o))
+	return false
+}
+
+// shorten keeps a path readable in a table cell: a long one is cut to its last two segments.
+func shorten(p string) string {
+	if len(p) <= 40 {
+		return p
+	}
+	parts := strings.Split(p, "/")
+	if len(parts) <= 2 {
+		return p
+	}
+	return ".../" + strings.Join(parts[len(parts)-2:], "/")
+}
+
+func fileCell(fs []string) string {
+	const max = 5
+	var out []string
+	for i, f := range fs {
+		if i == max {
+			out = append(out, fmt.Sprintf("+%d more", len(fs)-max))
+			break
+		}
+		out = append(out, "`"+shorten(f)+"`")
+	}
+	return strings.Join(out, "<br>")
+}
+
+// Summary renders the markdown job summary: a header with the counts, the one command that
+// judges everything not yet judged, one table row per rule x subject (rule | subject | files |
+// status | what to do) and the full reason of every failure collapsed under it.
+func Summary(outcomes []checkrun.CheckOutcome, extra []string, rng Range) string {
+	rs := rows(outcomes)
+	counts := map[string]int{}
+	for _, r := range rs {
+		counts[r.status]++
+	}
+	red := counts[Fail] + counts[NotJudged] + len(extra)
+	var b strings.Builder
+	b.WriteString("## sloprail: sr-checks verify\n\n")
+	fmt.Fprintf(&b, "%d pass, %d fail, %d not judged, %d cached", counts[Pass], counts[Fail]+len(extra), counts[NotJudged], counts[Cached])
+	if counts[Skipped] > 0 {
+		fmt.Fprintf(&b, ", %d skipped", counts[Skipped])
+	}
+	b.WriteString("\n\n")
+	if counts[NotJudged] > 0 {
+		fmt.Fprintf(&b, "Not judged yet: run `%s` locally, push the checks ref and re-run the job.\n\n", rng.RunCommand())
+	}
+	if len(rs) > 0 {
+		b.WriteString("| Rule | Subject | Files | Status | What to do |\n| --- | --- | --- | --- | --- |\n")
+		for _, r := range rs {
+			todo := ""
+			switch r.status {
+			case NotJudged:
+				todo = "`" + rng.RunCommand() + "`"
+			case Fail:
+				todo = cell(firstLine(r.reason, 120))
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", cell(r.rule), cell(r.subject), fileCell(r.files), r.status, todo)
 		}
 		b.WriteString("\n")
 	}
-	for _, o := range rows {
-		if !bad(o) || o.Reason == "" {
+	for _, r := range rs {
+		if r.status != Fail || r.reason == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "<details><summary>%s: %s (%s)</summary>\n\n```text\n%s\n```\n\n</details>\n\n",
-			Status(o), cell(label(o)), cell(o.Rule), strings.ReplaceAll(o.Reason, "```", "'''"))
+		fmt.Fprintf(&b, "<details><summary>fail: %s (%s)</summary>\n\n```text\n%s\n```\n\n</details>\n\n",
+			cell(r.subject), cell(r.rule), strings.ReplaceAll(r.reason, "```", "'''"))
 	}
 	for _, e := range extra {
 		fmt.Fprintf(&b, "<details><summary>fail: rule could not be loaded</summary>\n\n```text\n%s\n```\n\n</details>\n\n", strings.ReplaceAll(e, "```", "'''"))
 	}
-	if red > 0 && fix != "" {
-		b.WriteString(fix + "\n")
+	if red > 0 {
+		b.WriteString(rng.Fix() + "\n")
 	}
 	return b.String()
 }
@@ -229,14 +352,6 @@ func files(o checkrun.CheckOutcome) []string {
 	return []string{""}
 }
 
-// label is the subject as the summary names it: a subject covering several files lists them.
-func label(o checkrun.CheckOutcome) string {
-	if len(o.Files) == 0 || (len(o.Files) == 1 && o.Files[0] == o.Subject) {
-		return o.Subject
-	}
-	return o.Subject + " (" + strings.Join(o.Files, ", ") + ")"
-}
-
 func sorted(in []checkrun.CheckOutcome) []checkrun.CheckOutcome {
 	out := append([]checkrun.CheckOutcome(nil), in...)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -286,4 +401,34 @@ func newToken() string {
 		panic("sloprail: no randomness for the stop-commands token: " + err.Error())
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// FirstLines reads `git diff -U0` output and gives, for each file, the first changed line on
+// the head side: where an annotation lands inline in "Files changed". A deletion-only hunk
+// points at the line after it; a file with no hunk (a mode change, a binary) is absent.
+func FirstLines(diff string) map[string]int {
+	out := map[string]int{}
+	file := ""
+	for _, ln := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "+++ "):
+			file = ""
+			if p := strings.TrimPrefix(ln, "+++ "); p != "/dev/null" {
+				file = strings.TrimPrefix(p, "b/")
+			}
+		case strings.HasPrefix(ln, "@@ ") && file != "":
+			if _, done := out[file]; done {
+				continue
+			}
+			plus := ln[strings.Index(ln, "+")+1:]
+			plus = plus[:strings.IndexAny(plus+" ", ", ")]
+			if n, err := strconv.Atoi(plus); err == nil {
+				if n < 1 {
+					n = 1
+				}
+				out[file] = n
+			}
+		}
+	}
+	return out
 }
