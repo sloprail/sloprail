@@ -1,4 +1,4 @@
-# <img src="docs/assets/logo.svg" alt="" width="28"> sloprail
+# <img src="https://sloprail.com/logotype.svg" alt="sloprail" width="320">
 
 Your agents slop. Take control.
 
@@ -7,9 +7,28 @@ touches a file or runs a command, and hold until met: files only where you
 allow, right skills loaded first, work proven by diff or logs. Not a
 suggestion in CLAUDE.md or AGENTS.md.
 
-<img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
+| [Website →](https://sloprail.com) | [Docs →](https://sloprail.com/docs) |
+|---|---|
 
-<!-- HERO GIF -->
+## See it in action
+
+| [Watch the 2-min video →](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d) | [Claude Code session replay →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/) |
+|---|---|
+
+<a href="https://www.loom.com/share/16f4d75005a44e699e6a770af136693d"><img src="https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif" alt="2-minute walkthrough of sloprail" width="512"></a>
+
+One Claude Code session, one prompt: make every capability in [`harness-mocks`](https://github.com/sloprail/harness-mocks), our fakes of Claude Code, Codex and Cursor, real for every harness, proven by recordings of the real thing. It split the work across parallel agents, and sloprail checked every step.
+
+## Why not just hooks?
+
+| | Hooks, `CLAUDE.md`, skills, AI reviewers | sloprail |
+|---|---|---|
+| **When rules appear** | **after** a mistake, if you add them | **first**: the agent sets them up before any change that will repeat, and they stay |
+| **The rule** | **text** the model reads, or a hook script you write | a check that **verifies** the work, run by code |
+| **Shell changes** | the hook sees the command, not which **files** it changed | checks **every file** the change touched |
+| **What gets judged** | **one** tool call at a time | **sliced** the way each rule needs: one file, a module, or the whole commit |
+| **Push and merge** | blocked only if your hook **pattern** matches | blocked until the checks **pass** |
+| **Review** | an AI reviewer re-reads it every time; what it checked is **opaque** | every verdict **saved** with its rule and reason, reused until the code changes |
 
 ## Install
 
@@ -23,7 +42,10 @@ binaries the hooks call, once: the release matching the plugin's version,
 checksum-verified, into `~/.local/bin`, and says so. From then on every tool
 call and turn-end runs through sloprail — you don't run anything by hand.
 
-Rather install the binaries yourself? Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
+<details>
+<summary>Rather install the binaries yourself?</summary>
+
+Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
 
 ```
 curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
@@ -31,17 +53,22 @@ curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh |
 
 (or `go install ./services/...` from a checkout).
 
-## Rules first.
+</details>
 
-Usually the agent writes first and you fix it after. With sloprail the rules
-come first, and they stay.
+## How it works
 
-|   | Usually | With sloprail |
-|---|---|---|
-| 1 | You ask | You ask |
-| 2 | Agent writes it all | **Agent writes the rules first** |
-| 3 | You correct it | Agent builds inside them |
-| 4 | Added to CLAUDE.md / SKILL.md, if you ask | Checked on every change; the rules stay |
+<img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
+
+Rules live under `.sloprail/`, one folder per rule:
+
+- [`gate/`](https://sloprail.com/docs/guides/gate/) checks an action before it happens
+- [`file-guard/`](https://sloprail.com/docs/guides/file-guard/) checks what a file holds, on every commit
+- [`context/`](https://sloprail.com/docs/guides/context/) is a mode other rules depend on
+- [`file-guard/structure.yaml`](https://sloprail.com/docs/guides/structure-gate/) lists where files may go at all
+
+Your harness calls sloprail on every tool call and turn end, and sloprail runs the rules that apply.
+
+To make verdicts block merges, run `sr-checks verify` in CI: see the [Quickstart](https://sloprail.com/docs/getting-started/quickstart/).
 
 ## You've seen these happen
 
@@ -53,27 +80,3 @@ come first, and they stay.
 - [The same fact, copied into two files, now disagreeing](https://sloprail.com/docs/use-cases/knowledge/duplicated-knowledge)
 - [It acted without loading what it needed first](https://sloprail.com/docs/use-cases/knowledge/acted-without-context)
 - [The "mechanical" refactor silently rewrote your code](https://sloprail.com/docs/use-cases/coding/refactor-regenerated)
-
-## Docs → [sloprail.com/docs](https://sloprail.com/docs)
-
-## How it works
-
-A project declares guardrails under `.sloprail/`, one folder per rule, in the
-directory named for its kind: `file-guard/` (what a file must hold), `gate/`
-(a checkpoint on an action), `context/` (a mode other rules depend on), plus
-one `file-guard/structure.yaml` listing where writes may land at all. The
-harness calls the session hook points, and the engine runs whichever
-guardrails bind to what is about to happen.
-
-A file-guard's verdict only binds where it is enforced, so a project that has
-its own file-guards must also run `sr-checks verify` in CI: on pull requests
-(`--base` the target branch, `--head` the PR head sha); protect the default branch (require pull
-requests and up-to-date branches), and verify on pull requests is the guarantee. The shipped gate `sloprail/gate/ci-verify-required`
-refuses an agent's turn until the committed tree carries the marker `sr:ci verify`
-(a comment beside that CI step, written with `sr-mark apply ci --verify=<path>:<line>`, on any
-provider) and hands back copy-paste snippets; the file-guard `sloprail/file-guard/ci-verify-step`
-checks that the marked file really runs `sr-checks verify` on pull requests. Turn it off with `disabled: [sloprail/gate/ci-verify-required]`
-in `.sloprail/config.yaml`.
-
-Full docs, including how to write a guardrail:
-[sloprail.com/docs](https://sloprail.com/docs).

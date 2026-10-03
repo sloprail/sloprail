@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 
@@ -127,7 +128,11 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	// — which has not moved — and sees everything this one saw, plus whatever
 	// arrived since. Carrying the position across instead would hand it to a
 	// cycle that never read those turns; see discardOffered.
+	notices := withStopNotices(cmd)
 	if reason := natureStopDispatch(cmd, p); reason != "" {
+		if note := notices.text(); note != "" {
+			reason += "\n" + note
+		}
 		if err := block(cmd, reason); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
@@ -136,6 +141,11 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		return nil
 	}
 	resetStopRefusals(cmd, store)
+	if note := notices.text(); note != "" { // said, not refused: shown to the user
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"systemMessage": note}); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
+	}
 
 	// Where this cycle's reading ended, for the next one to resume after, and
 	// then the position is spent. Only on this path: a cycle that was

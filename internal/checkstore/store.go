@@ -78,6 +78,10 @@ type Store interface {
 	CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, error)
 	// Query runs a read-only SELECT over the check tables and returns its rows.
 	Query(sql string) ([]map[string]any, error)
+	// FlushRun writes one finished run to the backend now instead of at Close, so another
+	// process waiting for its verdict (judgelimit's in-flight lock) can read it. Close then
+	// leaves that run out. A run that is not complete is not flushed.
+	FlushRun(runID string) error
 	// Close writes what was recorded to the backend (one segment) and releases the store. A
 	// store opened read-only writes nothing.
 	Close() error
@@ -87,10 +91,11 @@ type store struct {
 	cache    checkcache.Cache
 	readOnly bool
 
-	mu     sync.Mutex
-	runs   []*checkcache.Run
-	byID   map[string]*checkcache.Run
-	closed bool
+	mu      sync.Mutex
+	runs    []*checkcache.Run
+	byID    map[string]*checkcache.Run
+	closed  bool
+	flushed map[string]bool // runs FlushRun already wrote
 
 	viewMu   sync.Mutex
 	viewDB   *sql.DB // a read-only store's one view, built on first use
@@ -121,7 +126,30 @@ func (s *store) Close() error {
 	}
 	runs := make([]checkcache.Run, 0, len(s.runs))
 	for _, r := range s.runs {
+		if s.flushed[r.ID] {
+			continue
+		}
 		runs = append(runs, *r) // a run still RUNNING stays so: it reads as interrupted, never as a pass
 	}
 	return s.cache.Put(runs)
+}
+
+func (s *store) FlushRun(runID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.writable(); err != nil {
+		return err
+	}
+	run, ok := s.byID[runID]
+	if !ok || !run.Complete || s.flushed[runID] {
+		return nil
+	}
+	if err := s.cache.Put([]checkcache.Run{*run}); err != nil {
+		return err
+	}
+	if s.flushed == nil {
+		s.flushed = map[string]bool{}
+	}
+	s.flushed[runID] = true
+	return nil
 }

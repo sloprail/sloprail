@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -45,5 +46,29 @@ func TestT057_08_GitDirBeforePushFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "GIT_DIR") {
 		t.Fatalf("the refusal does not name GIT_DIR:\n%s", res.Output)
+	}
+}
+
+// T057_09: every way of exporting a redirection is read from the parsed line: an env wrapper, export,
+// declare/typeset/local with -x (combined flags too), --git-dir, and a declaration it cannot read.
+func TestT057_09_OtherRedirectionSpellingsFailClosed(t *testing.T) {
+	for i, cmd := range []string{
+		"env GIT_DIR=%s/.git git push -q origin HEAD:refs/heads/work",
+		"export GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work",
+		"declare -x GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work",
+		"typeset -x GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work",
+		"declare -gx GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work",
+		"f() { local -x GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work; }; f",
+		"declare $OPT GIT_DIR=%s/.git; git push -q origin HEAD:refs/heads/work",
+		"git --git-dir=%s/.git push -q origin HEAD:refs/heads/work",
+		"f() { export GIT_DIR=%s/.git; }; f; git push -q origin HEAD:refs/heads/work",
+		"f() { declare -gx GIT_DIR=%s/.git; }; f; git push -q origin HEAD:refs/heads/work",
+	} {
+		e, proj, _ := project(t, docsRule)
+		c := fmt.Sprintf(cmd, proj)
+		res := e.Run(proj, "s-057-09-"+string(rune('a'+i)), "push", Turns("done", Bash("p", c)))
+		if !res.Refused() {
+			t.Fatalf("%q was not refused:\n%s", c, res.Output)
+		}
 	}
 }

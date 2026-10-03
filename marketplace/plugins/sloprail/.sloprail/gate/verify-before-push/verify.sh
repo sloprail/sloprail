@@ -186,18 +186,25 @@ for inv in "${pushes[@]}"; do
   [ -z "$skip" ] || continue
 
   cwd="$(printf '%s' "$inv" | jq -r '.cwd // ""')"
-  [ -n "$cwd" ] || refuse "The folder this push runs in could not be told from the command line (a cd to a variable, an eval), so the commits it would send could not be checked. Run it as 'git -C <dir> push ...' with a literal folder."
+  # Early feedback only: CI's verify and the file-guards at Stop are the guarantee. A folder this gate
+  # cannot tell is allowed with a note, never refused.
+  if [ -z "$cwd" ]; then
+    echo "verify-before-push: could not check this push (its folder is a variable or eval); the file-guards will check the commits at Stop and in CI." >&2
+    continue
+  fi
   case "$cwd" in /*) dir="$cwd" ;; *) dir="${SR_WORKSPACE:-.}/$cwd" ;; esac
-  [ -d "$dir" ] || refuse "The folder this push runs in ($dir) does not exist, so the commits it would send could not be checked."
+  # A folder that does not exist (yet) holds no commits to verify.
+  [ -d "$dir" ] || continue
 
   # The pushed refs are worked out HERE, from the command line and local refs only. The gate never
   # runs the agent's own git options or contacts the remote: `-c core.sshCommand=...`, `ext::` URLs
   # and `--receive-pack` would run agent-chosen code (or hang) inside the gate.
   drop_unsafe_gopts
-  git_redirected "$payload" && refuse "This push sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository the commits it would send cannot be checked in. Run it as 'git -C <dir> push ...' with a literal folder and no such setting."
+  git_redirected "$inv" && refuse "This push sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository the commits it would send cannot be checked in. Run it as 'git -C <dir> push ...' with a literal folder and no such setting."
   git_chdir "$dir"
   dir="$EDIR"
-  [ -d "$dir" ] || refuse "The folder this push runs in ($dir) does not exist, so the commits it would send could not be checked."
+  [ -d "$dir" ] || continue
+  (cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --git-dir >/dev/null 2>&1) || continue
   resolve_push_pairs "$dir" || refuse "This push could not be resolved to the refs it would update in $dir, so what leaves could not be checked: $PUSH_WHY"
 
   while IFS=$'\t' read -r flag pair _; do

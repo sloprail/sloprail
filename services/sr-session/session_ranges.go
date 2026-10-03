@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -41,7 +42,7 @@ import (
 //
 // At Stop each tracked range is VERIFIED, never judged: the same deterministic logic as
 // `sr-checks verify`, which calls no model and writes nothing. A range whose judges have not
-// been asked is refused with the command that asks them.
+// been asked is not reported (the pre-push gate and CI refuse it): the Stop shows failures only.
 
 // trackedHead is the head a folder's current line of work is tracked under: its branch, or the
 // commit for a detached HEAD. ok is false for a repository with no commit.
@@ -145,6 +146,146 @@ const (
 type observedBranch struct {
 	name, sha string
 	moved     bool // its tip is not the one an earlier hook recorded (or the branch is new)
+	foreign   bool // checked out in ANOTHER worktree of the repository: that worktree's line of work, never this folder's
+}
+
+// realPath is a path with symlinks resolved, so two spellings of one folder compare equal.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
+}
+
+// coveredByWorktree reports whether the other worktree standing on branch b answers for everything
+// this folder would: it holds a tracked row for b in the same repository whose base is the base
+// this folder would track b from, or older. Otherwise the branch is tracked here as usual (a parent
+// that committed on b before a sub-agent checked it out must not lose those commits to the
+// sub-agent's narrower range).
+//
+// The registry is consulted before git: a branch whose other worktree holds no row is decided
+// without a process. A decision that needs git is remembered in the session store under the exact
+// inputs it was made from (this tip, the other row's base and tip, this folder's start, the remote
+// default's tip), so only a changed tip or base is asked again.
+func coveredByWorktree(reg sessionstate.Store, folder string, f sessionstate.Folder, b observedBranch, other string, held map[string]sessionstate.TrackedRange, memo *foreignMemo) bool {
+	row, ok := held[other+"\x00"+b.name]
+	if !ok {
+		return false
+	}
+	key := foreignCoverPrefix + b.name + ":" + folder
+	fingerprint := strings.Join([]string{b.sha, row.Folder, row.Base, row.HeadSHA, row.AddedBy, f.BaseRef, memo.defaultTip(folder)}, "|")
+	if v, seen, err := reg.Meta(key); err == nil && seen {
+		if fp, verdict, found := strings.Cut(v, "="); found && fp == fingerprint {
+			return verdict == "1"
+		}
+	}
+	covered := repoOf(row.Folder) == repoOf(folder)
+	if covered {
+		in, err := gitrepo.IsAncestor(folder, effectiveBase(row, b.name), autoBase(folder, b.sha, f.BaseRef))
+		covered = err == nil && in
+		if err != nil {
+			return false // not remembered: asked again
+		}
+	}
+	verdict := "0"
+	if covered {
+		verdict = "1"
+	}
+	_ = reg.SetMeta(key, fingerprint+"="+verdict)
+	return covered
+}
+
+const foreignCoverPrefix = "foreign-cover:" // foreign-cover:<branch>:<folder> -> inputs=verdict
+
+// foreignMemo holds what one hook reads once for every branch it decides.
+type foreignMemo struct{ tip map[string]string }
+
+func (m *foreignMemo) defaultTip(folder string) string {
+	if m.tip == nil {
+		m.tip = map[string]string{}
+	}
+	if v, ok := m.tip[folder]; ok {
+		return v
+	}
+	v, _ := gitrepo.RemoteDefaultTip(folder)
+	m.tip[folder] = v
+	return v
+}
+
+// checkedOutElsewhere maps each local branch checked out in a worktree of folder's
+// repository other than folder itself to that worktree's path. A branch visible in the shared ref namespace is not the
+// work of every folder that can see it: only the folder standing on it (or moving its tip) answers
+// for it. An unreadable listing is empty: over-track, never under-track.
+func checkedOutElsewhere(folder string) map[string]string {
+	return newRepoViews().checkedOutElsewhere(folder)
+}
+
+// repoViews reads a repository's worktree list and branch tips once per hook, however many of its
+// worktrees ask: every worktree of a repository lists the same worktrees and shares the same refs,
+// so one `git worktree list` (and one `git for-each-ref`) answers for all of them.
+type repoViews struct{ byPath map[string]*repoView }
+
+type repoView struct {
+	worktrees []worktreeEntry // every worktree of the repository
+	listed    bool
+	branches  string // `for-each-ref` output, read lazily
+	haveRefs  bool
+	refsErr   error
+}
+
+type worktreeEntry struct{ path, branch string }
+
+func newRepoViews() *repoViews { return &repoViews{byPath: map[string]*repoView{}} }
+
+func (m *repoViews) view(folder string) *repoView {
+	self := realPath(folder)
+	if v, ok := m.byPath[self]; ok {
+		return v
+	}
+	v := &repoView{}
+	if out, err := exec.Command("git", "-C", folder, "worktree", "list", "--porcelain").Output(); err == nil {
+		v.listed = true
+		for _, ln := range strings.Split(string(out), "\n") {
+			switch {
+			case strings.HasPrefix(ln, "worktree "):
+				v.worktrees = append(v.worktrees, worktreeEntry{path: realPath(strings.TrimPrefix(ln, "worktree "))})
+			case strings.HasPrefix(ln, "branch refs/heads/") && len(v.worktrees) > 0:
+				v.worktrees[len(v.worktrees)-1].branch = strings.TrimPrefix(ln, "branch refs/heads/")
+			}
+		}
+		for _, w := range v.worktrees {
+			if _, ok := m.byPath[w.path]; !ok {
+				m.byPath[w.path] = v
+			}
+		}
+	}
+	m.byPath[self] = v
+	return v
+}
+
+func (m *repoViews) checkedOutElsewhere(folder string) map[string]string {
+	v := m.view(folder)
+	if !v.listed {
+		return nil
+	}
+	self := realPath(folder)
+	elsewhere := map[string]string{}
+	for _, w := range v.worktrees {
+		if w.branch != "" && w.path != self {
+			elsewhere[w.branch] = w.path
+		}
+	}
+	return elsewhere
+}
+
+// localBranches is `for-each-ref refs/heads` of folder's repository, read once per repository.
+func (m *repoViews) localBranches(folder string) ([]byte, error) {
+	v := m.view(folder)
+	if !v.haveRefs {
+		out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
+		v.branches, v.refsErr, v.haveRefs = string(out), err, true
+	}
+	return []byte(v.branches), v.refsErr
 }
 
 // observeFolder records the folder's branch tips and reports which moved since the last hook.
@@ -152,7 +293,12 @@ type observedBranch struct {
 // the registered branch, which started at the folder's BaseRef. Any git or store error is
 // returned: a tip that could not be observed must not be read as "did not move".
 func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string, siblings ...string) ([]observedBranch, error) {
-	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
+	return observeFolderIn(newRepoViews(), reg, folder, f, head, headSHA, siblings...)
+}
+
+// observeFolderIn is observeFolder reading the repository through views shared with the hook's other folders.
+func observeFolderIn(views *repoViews, reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string, siblings ...string) ([]observedBranch, error) {
+	out, err := views.localBranches(folder)
 	if err != nil {
 		return nil, fmt.Errorf("list branches of %s: %w", folder, err)
 	}
@@ -169,13 +315,35 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 	if err != nil {
 		return nil, fmt.Errorf("read observations of %s: %w", folder, err)
 	}
+	elsewhere := views.checkedOutElsewhere(folder)
+	ownRows, err := reg.Ranges(f.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read the session's ranges: %w", err)
+	}
+	ownTracked := map[string]bool{}                // branches this folder already answers for: its session moved them, whoever stands on them now
+	held := map[string]sessionstate.TrackedRange{} // folder\x00branch -> the tracked row of that worktree
+	for _, r := range ownRows {
+		if !r.Tracked() {
+			continue
+		}
+		held[realPath(r.Folder)+"\x00"+r.Head] = r
+		if filepath.Clean(r.Folder) == filepath.Clean(folder) {
+			ownTracked[r.Head] = true
+		}
+	}
+	var memo foreignMemo
 	for i, b := range branches {
+		if b.name != detachedObserved && b.name != head && elsewhere[b.name] != "" && !ownTracked[b.name] && coveredByWorktree(reg, folder, f, b, elsewhere[b.name], held, &memo) {
+			branches[i].foreign = true
+		}
 		key := observedTipPrefix + b.name + ":" + folder
 		prev, seen, err := reg.Meta(key)
 		if err != nil {
 			return nil, fmt.Errorf("read observations of %s: %w", folder, err)
 		}
 		switch {
+		case branches[i].foreign:
+			// recorded below, never moved by this folder
 		case seen:
 			branches[i].moved = prev != b.sha
 		case baselined:
@@ -244,7 +412,17 @@ func ahead(folder, sha, startedAt string) bool {
 // An error (git or the store) is returned, and the Stop refuses on it:
 // a branch that could not be observed is never "not tracked".
 func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+	return trackMissingOf(reg, rs, p, false)
+}
+
+// trackMissingOf is trackMissing; ownOnly (a tool call, not a Stop) leaves the sub-agents' worktrees to
+// the sub-agents themselves, which observe them at their own tool calls: a parent that walked all
+// of them at every call would pay for every worktree the session ever made. The Stop observes all.
+func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOnly bool) error {
 	if err := pruneUnmovedAuto(reg, rs.ID); err != nil {
+		return err
+	}
+	if err := pruneForeignAuto(reg, rs.ID); err != nil {
 		return err
 	}
 	folders, err := reg.Folders(rs.ID)
@@ -270,9 +448,13 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 		hasHead[r.Folder+"\x00"+r.Head] = true
 		lastTip[r.Folder+"\x00"+r.Head] = r.HeadSHA
 	}
+	views := newRepoViews()
 	var errs []error
 	for _, f := range folders {
 		if p.AgentID != "" && f.AgentID != p.AgentID { // the root observes every folder of the session; a sub-agent its own
+			continue
+		}
+		if ownOnly && f.Role == sessionstate.FolderSubagentWorktree && f.AgentID != p.AgentID {
 			continue
 		}
 		if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
@@ -293,7 +475,7 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 				siblings = append(siblings, c)
 			}
 		}
-		observed, err := observeFolder(reg, folder, f, head, sha, siblings...)
+		observed, err := observeFolderIn(views, reg, folder, f, head, sha, siblings...)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -332,7 +514,7 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f sessionstate.Folder, hasHead map[string]bool, lastTip map[string]string, tips map[string]bool, observed []observedBranch) error {
 	guards := 0 // 0 unknown, 1 loads, -1 none
 	for _, b := range observed {
-		if b.name == detachedObserved || b.sha == f.BaseRef {
+		if b.name == detachedObserved || b.sha == f.BaseRef || b.foreign {
 			continue
 		}
 		key := folder + "\x00" + b.name
@@ -607,9 +789,31 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	recorded := lazyRecordedCitations(p, store)
 	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
 	oneEach := collapseByRepo(ranges, p.AgentID, memo)
+	plan := settleRootAgents(cmd, root, rs.ID, p, ranges)
+	running := plan.Waiting
+	var waiting []string
+	silentSaid := map[string]bool{}
+	// The root's own folder tracks the branch a sub-agent's worktree has checked out too, as a row
+	// with no agent_id: the SAME range (one repository, one branch) seen from the other folder.
+	// It belongs to the running agent as much as the agent's own row does.
+	runningBranch := map[string]string{} // repository + branch -> the running agent holding it
+	for _, r := range ranges {
+		if r.Tracked() && r.AgentID != "" && running[r.AgentID] {
+			runningBranch[repoOf(r.Folder)+"\x00"+r.Head] = r.AgentID
+		}
+	}
 	for i, r := range ranges {
 		if p.AgentID != "" && r.AgentID != p.AgentID {
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
+		}
+		if agent := runningAgentOf(r, running, runningBranch); agent != "" {
+			if msg, silent := plan.Silent[agent]; silent {
+				if !silentSaid[agent] {
+					silentSaid[agent] = true
+					waiting = append(waiting, msg)
+				}
+			}
+			continue // half-finished work of a background agent that has not reported back: judged at the first Stop after its terminal notification
 		}
 		if r.Tracked() && !oneEach[i] {
 			continue // the same branch of the same repository, tracked from another worktree: one range
@@ -683,6 +887,18 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	for _, reason := range reasons {
 		if reason != "" {
 			out = append(out, reason)
+		}
+	}
+	if len(waiting) > 0 {
+		waiting = uniqueLines(waiting)
+		// A skip never refuses the Stop: the Stop's caller shows the note (to the user when the
+		// Stop passes, in the refusal when it does not). Without a collector it goes to stderr,
+		// and into a refusal that exists anyway.
+		if !addStopNotice(cmd, waiting...) {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(waiting, "; "))
+			if len(out) > 0 {
+				out = append(out, strings.Join(waiting, "; ")+".")
+			}
 		}
 	}
 	if len(notes) > 0 {
@@ -845,8 +1061,8 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 		return ""
 	}
 	if len(loaded.FileGuards) == 0 {
-		vm.put(qkey, where+": "+joinRefusals(broken)+goneNote)
-		return where + ": " + joinRefusals(broken) + goneNote
+		vm.put(qkey, rangeRefusal(where, broken)+goneNote)
+		return rangeRefusal(where, broken) + goneNote
 	}
 	cache, err := checkrun.OpenLocalCache(r.Folder)
 	if err != nil {
@@ -862,27 +1078,39 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	}
 	results := checkstore.Open(cache, true)
 	defer results.Close()
-	refusals, _ := checkrun.Evaluate(checkrun.Params{
+	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
 		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
-		Store: results, Verify: true, RecordedFn: recorded,
+		Store: results, Verify: true, FailuresOnly: true, RecordedFn: recorded,
 	})
+	// The Stop reports failures: a stored FAIL, a rule that does not load, an error. A key with
+	// no stored verdict is not one; the pre-push gate and CI `sr-checks verify` refuse it.
+	refusals = withoutUnjudged(refusals)
 	if len(refusals) == 0 && len(broken) == 0 {
 		vm.put(memoKey, "")
 		vm.put(qkey, "")
 		return ""
 	}
 	parts := append([]string(nil), broken...)
-	for _, f := range refusals {
-		parts = append(parts, f.Reason+" (file-guard "+f.Attribution+")")
-	}
-	out := where + ": " + joinRefusals(parts) + goneNote
+	parts = append(parts, groupRefusals(refusals, outcomes)...)
+	out := rangeRefusal(where, parts) + goneNote
 	if len(r.Head) < 40 && !strings.HasPrefix(r.Head, "refs/") {
 		out += fmt.Sprintf("\nIf %s is not yours to answer for (the user said to drop it), stop answering for it: `sr-session refs untrack --head %s --reason '<why>'`, and `sr-session refs track --head %s` takes it back.", r.Head, r.Head, r.Head)
 	}
 	vm.put(memoKey, out)
 	vm.put(qkey, out)
 	return out
+}
+
+// withoutUnjudged drops the refusals that only say a key has no stored verdict yet.
+func withoutUnjudged(refusals []checkrun.FileGuardResult) []checkrun.FileGuardResult {
+	kept := refusals[:0:0]
+	for _, f := range refusals {
+		if !strings.HasPrefix(f.Reason, "not judged yet") {
+			kept = append(kept, f)
+		}
+	}
+	return kept
 }
 
 // verifyMemo keeps, in the session's store, what verifying a range answered, so a Stop pays
@@ -943,7 +1171,7 @@ func (m *verifyMemo) key(r sessionstate.TrackedRange, p HookPayload, where strin
 	}
 	sort.Strings(hashes)
 	h := sha256.New()
-	for _, part := range [][]string{{repoOf(r.Folder), rng.Base, rng.Head, p.AgentID, fmt.Sprint(p.IsSubagent()), where, r.Head, resultsTip}, hashes, broken} {
+	for _, part := range [][]string{{"failures-only", repoOf(r.Folder), rng.Base, rng.Head, p.AgentID, fmt.Sprint(p.IsSubagent()), where, r.Head, resultsTip}, hashes, broken} {
 		for _, x := range part {
 			fmt.Fprintf(h, "%d:%s;", len(x), x)
 		}
@@ -1010,7 +1238,7 @@ func (m *verifyMemo) quickKey(r sessionstate.TrackedRange, p HookPayload, cm *co
 		return ""
 	}
 	h := sha256.New()
-	for _, x := range []string{"quick", repo, r.Folder, r.Head, sha, base, def, p.AgentID, fmt.Sprint(p.IsSubagent()), folder} {
+	for _, x := range []string{"quick-failures-only", repo, r.Folder, r.Head, sha, base, def, p.AgentID, fmt.Sprint(p.IsSubagent()), folder} {
 		fmt.Fprintf(h, "%d:%s;", len(x), x)
 	}
 	return verifyMemoPrefix + hex.EncodeToString(h.Sum(nil))
@@ -1769,4 +1997,187 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 		}
 	}
 	return nil
+}
+
+// foreignPrunedReason is why a row a worktree made for another worktree's branch is dropped.
+const foreignPrunedReason = "pruned: the branch is checked out in another worktree"
+
+// pruneForeignAuto untracks, once, every row the engine tracked by itself for a branch that is
+// checked out in a DIFFERENT worktree than the row's folder. Observation used to track every
+// branch visible in the shared ref namespace, so N sub-agent worktrees of one repository held N
+// rows each (N x N). The worktree standing on a branch keeps its own row; a branch a folder moved
+// and then left (checked out nowhere) is kept, as is a row whose other worktree holds no tracked
+// row for the branch (a removed folder's range moved to the root) or one whose base is not the
+// pruned row's or older (a narrower range would let the pruned row's commits escape). Explicit rows and rows of vanished folders are kept.
+func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
+	ranges, err := reg.Ranges(sessionID)
+	if err != nil {
+		return err
+	}
+	held := map[string]sessionstate.TrackedRange{} // folder\x00branch -> the tracked row of the worktree that stands on it
+	for _, r := range ranges {
+		if r.Tracked() {
+			held[realPath(r.Folder)+"\x00"+r.Head] = r
+		}
+	}
+	cover := newCoverMemo()
+	views := newRepoViews()
+	elsewhere := map[string]map[string]string{} // folder -> branch -> the other worktree on it, read once
+	for _, r := range ranges {
+		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || isCommitHead(r.Folder, r.Head) {
+			continue
+		}
+		if st, err := os.Stat(r.Folder); err != nil || !st.IsDir() {
+			continue
+		}
+		m, ok := elsewhere[r.Folder]
+		if !ok {
+			m = views.checkedOutElsewhere(r.Folder)
+			elsewhere[r.Folder] = m
+		}
+		other := m[r.Head]
+		if other == "" {
+			continue
+		}
+		keep, ok := held[other+"\x00"+r.Head]
+		if !ok || repoOf(keep.Folder) != repoOf(r.Folder) {
+			continue // that worktree answers for nothing: this row may be all that holds the work
+		}
+		// The surviving row must cover everything this one does: its base is this base or older.
+		// A sub-agent that checked the branch out later has a narrower range; the commits before
+		// it would escape.
+		covers, err := cover.isAncestor(r.Folder, effectiveBase(keep, r.Head), effectiveBase(r, r.Head))
+		if err != nil || !covers {
+			continue
+		}
+		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, foreignPrunedReason, r.AgentID, r.HeadSHA); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// settleRootAgents is the sub-agent registry's answer for the ROOT's Stop (see settleAgents): which
+// agents' ranges are left for later. Only when some range is an agent's or the registry knows an
+// agent; a sub-agent's own Stop waits for no one. An agent the registry does not know is judged.
+func settleRootAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string, p HookPayload, ranges []sessionstate.TrackedRange) agentPlan {
+	if p.AgentID != "" {
+		return agentPlan{}
+	}
+	hasAgent := false
+	for _, r := range ranges {
+		if r.AgentID != "" {
+			hasAgent = true
+		}
+	}
+	if !hasAgent {
+		if known, err := root.Agents(sessionID); err != nil || len(known) == 0 {
+			return agentPlan{}
+		}
+	}
+	return settleAgents(cmd, root, sessionID, p, agentClock())
+}
+
+// stopNoticesKey carries, in a command's context, the collector of a Stop's notices.
+type stopNoticesKey struct{}
+
+// stopNotices are what a Stop wants said without refusing: shown to the user when the Stop
+// passes, and appended to the refusal when it does not.
+type stopNotices struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// withStopNotices returns the command with a collector in its context, and the collector.
+func withStopNotices(cmd *cobra.Command) *stopNotices {
+	n := &stopNotices{}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd.SetContext(context.WithValue(ctx, stopNoticesKey{}, n))
+	return n
+}
+
+// addStopNotice records notices on the command's collector; false when it has none.
+func addStopNotice(cmd *cobra.Command, lines ...string) bool {
+	ctx := cmd.Context()
+	if ctx == nil {
+		return false
+	}
+	n, ok := ctx.Value(stopNoticesKey{}).(*stopNotices)
+	if !ok {
+		return false
+	}
+	n.mu.Lock()
+	n.lines = uniqueLines(append(n.lines, lines...))
+	n.mu.Unlock()
+	return true
+}
+
+func (n *stopNotices) text() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return strings.Join(n.lines, "\n")
+}
+
+// uniqueLines drops repeated lines, keeping the first of each, in order.
+func uniqueLines(lines []string) []string {
+	seen := map[string]bool{}
+	out := lines[:0:0]
+	for _, l := range lines {
+		if !seen[l] {
+			seen[l] = true
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// groupRefusals words a range's file-guard refusals, one line per distinct reason: rules that
+// refused for the same reason (the same "not judged yet — run ..." for the same range) are
+// named together, with the files of the subjects they could not judge, instead of the line
+// repeated once per rule.
+func groupRefusals(refusals []checkrun.FileGuardResult, outcomes []checkrun.CheckOutcome) []string {
+	var order []string
+	rules := map[string][]string{}
+	for _, f := range refusals {
+		if _, ok := rules[f.Reason]; !ok {
+			order = append(order, f.Reason)
+		}
+		rules[f.Reason] = append(rules[f.Reason], f.Attribution)
+	}
+	var out []string
+	for _, reason := range order {
+		names := uniqueLines(rules[reason])
+		line := reason + " (file-guard " + strings.Join(names, ", ")
+		if strings.HasPrefix(reason, "not judged yet") {
+			var files []string
+			for _, o := range outcomes {
+				if o.Status == "missing" && o.Subject != "" {
+					files = append(files, o.Subject)
+				}
+			}
+			if files = uniqueLines(files); len(files) > 0 && len(names) > 1 {
+				line += "; subjects: " + strings.Join(files, ", ")
+			}
+		}
+		out = append(out, line+")")
+	}
+	return out
+}
+
+// runningAgentOf is the still-running agent a tracked range belongs to: the agent its own row
+// names, or the one whose row holds the same branch of the same repository. "" when none.
+func runningAgentOf(r sessionstate.TrackedRange, running map[string]bool, branches map[string]string) string {
+	if !r.Tracked() {
+		return ""
+	}
+	if r.AgentID != "" {
+		if running[r.AgentID] {
+			return r.AgentID
+		}
+		return ""
+	}
+	return branches[repoOf(r.Folder)+"\x00"+r.Head]
 }

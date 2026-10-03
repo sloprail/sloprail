@@ -13,6 +13,11 @@
 #   git push origin main
 #   git tag v0.2.0 && git push origin v0.2.0
 #
+# It also rewrites the `ref` of every plugin's git-subdir source in
+# marketplace.json to the tag (v<VERSION>). That pin is what makes the plugin
+# files (hooks, skills, wrapper) come from the SAME tag as the released
+# binaries instead of from whatever is on main; see CONTRIBUTING.md.
+#
 # VERSION is bare semver (0.2.0), no leading "v" — plugin.json/marketplace.json
 # never carry the "v" prefix the git tag does.
 set -euo pipefail
@@ -40,6 +45,6 @@ for f in $plugin_jsons; do
 done
 
 tmp="$(mktemp)"
-jq --arg v "$version" '.plugins |= map(.version = $v)' "$marketplace_json" > "$tmp"
+jq --arg v "$version" '.plugins |= map(.version = $v | .source.ref = "v" + $v)' "$marketplace_json" > "$tmp"
 mv "$tmp" "$marketplace_json"
-echo "bumped $marketplace_json -> $version (all plugins)"
+echo "bumped $marketplace_json -> $version (all plugins: version and source.ref v$version)"

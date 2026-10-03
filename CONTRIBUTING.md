@@ -45,3 +45,21 @@ and gives the project a clear, durable license to use it.
 - Questions about the CLA itself (not the bot mechanics) should go to
   A10N, Inc. directly — see [CLA.md](./CLA.md) for the current
   legal-review status of that document.
+
+## Plugin files come from the release tag
+
+`.claude-plugin/marketplace.json` lists each plugin with a `git-subdir`
+source pinned to a release tag (`"ref": "v0.3.0"`), so users who add the
+marketplace get the plugin files (hooks, wrapper, skills) from the same tag as
+the released binaries, and `main` can hold unreleased work. `make cut-release`
+(via `scripts/bump-version.sh`) rewrites the `version` and the `ref` together,
+and `make verify-version` refuses a tag whose ref disagrees.
+
+The pin means `/plugin marketplace add <local checkout>` does NOT test your
+working tree: the marketplace file is read locally but each plugin is still
+fetched from the tag. To try unreleased plugin changes, load the directory
+for one session instead:
+
+```
+claude --plugin-dir marketplace/plugins/sloprail
+```

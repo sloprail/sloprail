@@ -17,7 +17,7 @@ func TestT058_01_UncitedCommitOfAGuardedFileIsRefused(t *testing.T) {
 		t.Fatalf("an uncited commit of a guarded file was not refused:\n%s", res.Output)
 	}
 	has(t, res.Output, "docs/a.md")
-	has(t, res.Output, "sr-session trajectory cite")
+	has(t, res.Output, "Sloprail-Cites-User")
 	if strings.Contains(subjects(e, proj), "add a") {
 		t.Fatalf("the refused commit was made:\n%s", subjects(e, proj))
 	}

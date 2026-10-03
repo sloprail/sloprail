@@ -148,7 +148,9 @@ func newSessionSubagentStopCmd() *cobra.Command {
 			// conversation and answers by re-running the sub-agent's turn — so a
 			// rule refusing delegated work now reaches something, which is the
 			// whole point of binding this event.
-			return completeCycle(cmd, p)
+			blocked, err := runCapturingBlock(cmd, func() error { return completeCycle(cmd, p) })
+			endAgent(cmd, p, blocked)
+			return err
 		},
 	}
 }

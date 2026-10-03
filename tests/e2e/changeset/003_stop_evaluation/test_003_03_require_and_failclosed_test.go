@@ -74,10 +74,14 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 	}
 
 	// The Stop reads no blob (its key is over the blob ids), so it does not meet the lost object:
-	// nothing was judged for this range, and that refuses. The run below is what reads the bytes.
+	// nothing was judged for this range, which the Stop does not report (it shows failures only).
+	// `verify`, which the pre-push gate and CI run, refuses it. The run below is what reads the bytes.
 	r := e.StopJudged(proj, "s-003-04", false)
-	if !harness.Blocked(r) || !strings.Contains(r.Output, "not judged yet") {
-		t.Fatalf("an unreadable range did not fail closed:\n%s", r.Output)
+	if harness.Blocked(r) {
+		t.Fatalf("the Stop reported a range nobody could judge, which is no stored failure:\n%s", r.Output)
+	}
+	if v := e.CheckVerify(proj, "s-003-04", e.RunBase("s-003-04"), "HEAD"); v.Code == 0 || !strings.Contains(v.Output, "not judged yet") {
+		t.Fatalf("an unreadable range did not fail closed under verify:\n%s", v.Output)
 	}
 	if n := len(ledger(t, led)); n != 0 {
 		t.Fatalf("the check ran %d times against a range that could not be read", n)

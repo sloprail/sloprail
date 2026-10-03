@@ -1,0 +1,19 @@
+# `pgrep -f` / `pkill -f` match against FULL command lines, and the shell running the agent's
+# own command line is one of them: `until ! pgrep -f "sr-checks run"; do sleep 5; done` holds
+# the words "sr-checks run" in its own command line, so it always finds itself and never ends
+# (5 sub-agents were seen stuck on exactly this). It also waits for every other agent's runs on
+# the machine, not the one it started.
+#
+# This gate concerns only sloprail's own commands. Refused: a `pgrep`/`pkill` with -f (or
+# --full, or a cluster such as -fl) whose pattern names a sloprail program (sr-checks,
+# sr-session, sr-agent, sr-file, sr-mark, sr-eval, or an `sr ` subcommand), in a wait loop or
+# alone. Every other pattern passes, even a self-matching loop. The pattern is read from the
+# parsed argv (.event.invocations); on parse trouble the gate lets the command through.
+#
+# On by default, and switched off by listing `sloprail/gate/no-self-matching-pgrep` under
+# `disabled:` in .sloprail/config.yaml.
+on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "pgrep" or .bin == "pkill")
+checks:
+  - script: ./refuse.sh

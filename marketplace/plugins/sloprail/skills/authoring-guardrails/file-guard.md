@@ -86,8 +86,10 @@ never the working tree.
   these" (never commits for the agent; applies only to an agent that owns the tree;
   lets go after `stop_hook_block_cap` refusals of the same uncommitted set). Then
   each **tracked range** of the session (below) is verified like `sr-checks verify`,
-  from the local results: a range with no stored pass is refused with the
-  `sr-checks run` command that produces it.
+  from the local results. **Stop shows failures only**: a stored FAIL (with its
+  reasons), a rule that does not load, or a real error refuses it. A range nobody has
+  judged yet is not reported at Stop, and passes it silently; run `sr-checks run`
+  before pushing — the pre-push gate and CI `sr-checks verify` refuse an unjudged range.
 - **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below), and optionally a git `pre-push` hook.
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
   backstop for anything a session did not track. A squash merge keeps the PR's
@@ -136,7 +138,11 @@ untracked, with the reason, and the range is tracked again by itself when the br
 moves. When a worktree is removed, its range moves to the root folder; if its branch is
 gone too, the range stays pinned at the last tip (`refs/sloprail/pins/...`) and is still
 verified. A sub-agent's ranges are verified at the root's Stop, unless
-`enable_subagent_stop_check: true` is set in `.sloprail/config.yaml`. A folder's own `.sloprail` rules apply in it: gates judge the calls made there and
+`enable_subagent_stop_check: true` is set in `.sloprail/config.yaml`. A background sub-agent
+the session's registry holds as running (`sr-session agents list`) has its ranges left for a
+later Stop (no note: unjudged ranges are not reported at Stop); one silent for `subagent_silent_after_minutes` (default 10) is named by the Stop, and
+after `subagent_stale_after_minutes` (default 60), or once its session's process is gone, it is
+stale and its ranges are judged like any other. CI verify covers every range either way. A folder's own `.sloprail` rules apply in it: gates judge the calls made there and
 commit required covers its uncommitted work.
 
 ### Before a push: verify-before-push
@@ -177,11 +183,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }      # the merge base is needed
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
-      # Go, not install.sh: no release tarball carries sr-checks yet. Pin a commit or main.
+      # install.sh from a release tag; the release tarball carries sr-checks. Pin the tag.
       - run: |
-          GOBIN="$HOME/.local/bin" go install github.com/sloprail/sloprail/services/sr-checks@main
+          curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/v0.3.0/install.sh | SLOPRAIL_INSTALL_TAG=v0.3.0 sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: sr-checks verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
 ```

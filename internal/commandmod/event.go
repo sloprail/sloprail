@@ -46,6 +46,22 @@ type Invocation struct {
 	// running where the line began — that is a guess, and a path resolved
 	// against it could name a file the command never touches.
 	Cwd string
+
+	// Env is the environment the line itself sets for this program, NAME to
+	// value: a prefix (`FOO=1 cmd`), a wrapper's assignments (`env FOO=1 cmd`,
+	// `sudo FOO=1 cmd`), and an `export FOO=1` earlier in the same shell scope
+	// (a subshell's export stays inside it). The value is "" when it is not a
+	// literal word (`FOO=$X`, `FOO=$(cmd)`): the name is certain, the value is
+	// not. Nil/empty when the line sets nothing. Only what the text says: the
+	// environment the harness started with is not in it.
+	Env map[string]string
+
+	// Stdin is the text the line itself feeds this program: the body of a heredoc
+	// (`<<EOF`, `<<'EOF'`, `<<-EOF`) or the word of a here-string (`<<<word`, newline
+	// appended) attached to its command. Nil unless that text is literal: a pipe from
+	// another command, a `< file`, a variable or substitution in an unquoted heredoc
+	// body all leave it nil, because what the program reads is then not knowable.
+	Stdin *string
 }
 
 // CommandEvent is what this module's own code passes around.
@@ -89,12 +105,24 @@ func (c CommandEvent) Event() event.Event {
 			}
 			flags[k] = arr
 		}
-		invs = append(invs, map[string]any{
+		env := make(map[string]any, len(inv.Env))
+		for k, v := range inv.Env {
+			env[k] = v
+		}
+		entry := map[string]any{
 			KeyBin:   inv.Bin,
 			KeyArgv:  argv,
 			KeyFlags: flags,
 			KeyCwd:   inv.Cwd,
-		})
+			KeyEnv:   env,
+			// "" with stdinKnown false when the text is not literal or absent.
+			KeyStdin:      "",
+			KeyStdinKnown: inv.Stdin != nil,
+		}
+		if inv.Stdin != nil {
+			entry[KeyStdin] = *inv.Stdin
+		}
+		invs = append(invs, entry)
 	}
 
 	return event.Event{
@@ -143,6 +171,21 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		}
 		if v, ok := m[KeyCwd].(string); ok {
 			inv.Cwd = v
+		}
+		if v, ok := m[KeyStdin].(string); ok {
+			if known, _ := m[KeyStdinKnown].(bool); known {
+				inv.Stdin = &v
+			}
+		}
+		if env, ok := m[KeyEnv].(map[string]any); ok {
+			for k, v := range env {
+				if s, ok := v.(string); ok {
+					if inv.Env == nil {
+						inv.Env = map[string]string{}
+					}
+					inv.Env[k] = s
+				}
+			}
 		}
 		if flags, ok := m[KeyFlags].(map[string]any); ok {
 			for k, v := range flags {

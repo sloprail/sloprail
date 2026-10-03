@@ -10,13 +10,13 @@ set -uo pipefail
 mode="${1:-check}"
 payload="$(cat)"
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
-cmds="sr-session trajectory cite '<exact quote>' && git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'"
+cmds="git commit -m '<what changed>' -m 'Sloprail-Cites-User: <exact quote>'"
 
 # fail MSG: `when` cannot refuse, so it lets the requirement apply (a cite is then asked for, and
 # `check` refuses the same fault once a cite is there); `check` refuses.
 fail() {
   if [ "$mode" = when ]; then
-    jq -n --arg h "cite-before-commit could not check this commit ($1). Run it as \`git -C <literal dir> commit ...\` (a literal folder, no variable or eval) so it can be checked; this commit may not need a citation at all. Only if it changes a file a file-guard requires a citation for, cite before you commit:
+    jq -n --arg h "cite-before-commit could not check this commit ($1). Run it as \`git -C <literal dir> commit ...\` (a literal folder, no variable or eval) so it can be checked; this commit may not need a citation at all. Only if it changes a file a file-guard requires a citation for, carry the quote as a trailer:
   $cmds" '{hint: $h}'
     exit 0
   fi
@@ -166,14 +166,20 @@ for inv in "${invs[@]}"; do
   [ -z "$dry" ] || continue
   [ -z "$amend" ] || amending=1
 
-  dir="$(dir_of "$inv")" || fail "the folder the commit runs in could not be told from the command line (a cd to a variable, an eval)"
+  # The gate is early feedback; the file-guards' `require: citation` at Stop and in CI verify every
+  # committed range. A folder this gate cannot tell is allowed, with a note, never refused.
+  if ! dir="$(dir_of "$inv")"; then
+    echo "cite-before-commit: could not check this commit (its folder is a variable or eval); the file-guards will check the citation at Stop and in CI." >&2
+    continue
+  fi
   # `git -C <dir>` moves git (and so the index it reads) to <dir>: run everything there, never in the hook's cwd.
-  git_redirected "$payload" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
+  git_redirected "$inv" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
   git_chdir "$dir"
   dir="$EDIR"
+  # A folder that does not exist yet (this command creates it) or is no repository has no rules to cite for.
+  [ -d "$dir" ] || continue
+  top="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || continue
   lastdir="$dir"
-  [ -d "$dir" ] || fail "the folder the commit runs in ($dir) does not exist"
-  top="$(cd "$dir" && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || fail "$dir is not inside a git repository"
 
   # The index the commit will build from, on a throwaway copy: the real one is never touched.
   tmp="$(mktemp -d)" || fail "a scratch folder could not be made"
@@ -197,6 +203,7 @@ for inv in "${invs[@]}"; do
     [ "$k" -lt "$idx" ] || break
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
     split_git "$prev"
+    git_redirected "$prev" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree) on a git command it runs before the commit, which moves git to a repository this gate does not replay"
     pdir="$(dir_of "$prev")" || continue
     git_chdir "$pdir"
     pdir="$EDIR"
@@ -233,6 +240,7 @@ for inv in "${invs[@]}"; do
   # against the session transcript by `sr-checks staged --trailers` (the resolver `sr-file --cite` and
   # `sr-session trajectory cite` use). A commit's resolving citation grounds every file it changes;
   # a quote that does not resolve grounds nothing and is named in the refusal.
+  stdin_unknown=""
   if [ -n "$out" ]; then
     msgtext=""
     if [ -n "$amend" ] && [ -z "$newmsg" ]; then
@@ -240,10 +248,25 @@ for inv in "${invs[@]}"; do
     else
       for m in ${msgs[@]+"${msgs[@]}"}; do msgtext="$msgtext$m"$'\n'; done
       for mf in ${msgfiles[@]+"${msgfiles[@]}"}; do
-        [ "$mf" != - ] || continue
+        if [ "$mf" = - ]; then
+          # `-F -` reads the message from the command's stdin: known only when the line itself
+          # feeds it literal text (a heredoc or here-string attached to this git invocation).
+          if [ "$(printf '%s' "$inv" | jq -r '.stdinKnown // false')" = true ]; then
+            msgtext="$msgtext$(printf '%s' "$inv" | jq -j '.stdin // ""')"$'\n'
+          else
+            stdin_unknown=1
+          fi
+          continue
+        fi
         case "$mf" in /*) ;; *) mf="$dir/$mf" ;; esac
         msgtext="$msgtext$(cat "$mf" 2>/dev/null)"$'\n'
       done
+    fi
+    if [ -n "$stdin_unknown" ]; then
+      # The message comes from a pipe or a variable: unknowable here. Early feedback only; the
+      # file-guards' `require: citation` at Stop and in CI check the committed message.
+      echo "cite-before-commit: could not check this commit (its message comes from stdin that is not a literal heredoc or here-string); the file-guards will check the citation at Stop and in CI." >&2
+      continue
     fi
     if printf '%s' "$msgtext" | grep -Eiq '^Sloprail-Cites-(User|Tool):'; then
       res="$(printf '%s' "$msgtext" | (cd "$dir" && sr-checks staged --trailers 2>"$tmp/err"))" ||
@@ -253,7 +276,15 @@ for inv in "${invs[@]}"; do
         out=""
       fi
       bad="$(printf '%s\n' "$res" | jq -rs '[.[] | select(.ok | not)] | map("  \(.trailer): \(.quote): \(.error)") | join("\n")' 2>/dev/null)" || fail "the resolved citations could not be read"
-      [ -z "$bad" ] || unresolved="$unresolved$bad"$'\n'
+      if [ -n "$bad" ]; then
+        # A trailer is one line: git does not read an unindented next line as its continuation, so a
+        # quote wrapped onto one is cut at the line end.
+        if printf '%s\n' "$msgtext" | awk 'prev && NF && $0 !~ /^[ \t]/ && $0 !~ /^[A-Za-z][A-Za-z0-9-]*:/ {f=1} {prev = (tolower($0) ~ /^sloprail-cites-(user|tool):/)} END {exit !f}'; then
+          bad="$bad
+  (a trailer line was followed by an unindented line, so only its first line was read. Keep a trailer on one line.)"
+        fi
+        unresolved="$unresolved$bad"$'\n'
+      fi
     fi
   fi
   while IFS= read -r f; do
@@ -267,7 +298,7 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 if [ "$mode" != when ]; then
-  # A chained cite met the requirement, but a trailer on the commit that does not resolve is refused here:
+  # A trailer on the commit that does not resolve is refused here:
   # it would carry the commit past this gate and fail at Stop and in CI.
   if [ -n "$unresolved" ]; then
     jq -n --arg r "The citation trailers on this commit did not resolve against the session, so they ground nothing:
@@ -279,7 +310,7 @@ fi
 
 list="$(printf '%s\n' "${files[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')"
 if [ -n "$amending" ]; then
-  how="sr-session trajectory cite '<exact quote>' && git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
+  how="git commit --amend --no-edit --trailer 'Sloprail-Cites-User: <exact quote>'"
 else
   how="$cmds"
 fi
@@ -295,9 +326,9 @@ if [ -n "${lastdir:-}" ] && rdir="$lastdir"; then
   rec="$(cd "$rdir" && sr-checks staged --recorded "${files[@]}" 2>/dev/null | jq -r '"  recorded for \(.path): -m \"\(.trailer): \(.quote)\"" ' 2>/dev/null)" || rec=""
 fi
 [ -z "$rec" ] || how="$how
-Quotes this session already recorded for these files (carry one as a trailer, still chained behind a cite):
+Quotes this session already recorded for these files (carry one as a trailer):
 $rec"
-jq -n --arg h "This commit changes files a file-guard requires a citation for: $list. Quote what grounds the change (the user's words, or a tool's output with --source-types tool_result) in front of the commit, and carry the same quote as a trailer on it: the file-guard checks the trailer at Stop and in CI.
+jq -n --arg h "This commit changes files a file-guard requires a citation for: $list. Carry the quote that grounds the change (the user's words, or a tool's output) as a trailer on the commit; the gate checks it against the session, as do the file-guards at Stop and in CI. No separate cite is needed.
   $how
 (Use Sloprail-Cites-Tool for a tool's output.)" '{hint: $h}'
 exit 0

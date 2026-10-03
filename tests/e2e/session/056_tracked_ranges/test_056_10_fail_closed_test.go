@@ -58,7 +58,7 @@ func TestT056_11_AnUnreadableRegistryRefusesTheStop(t *testing.T) {
 // T056_12: commits left on a detached HEAD are a range of their own, refused as such; once a
 // branch holds them, that branch's range answers for them and the detached one is skipped.
 func TestT056_12_ADetachedRangeIsVerifiedUntilABranchHoldsIt(t *testing.T) {
-	e, proj := project(t)
+	e, proj := failingProject(t)
 	const sess = "s-056-12"
 	e.Run(proj, sess, "work on a detached head", Turns("done",
 		Bash("d1", "git switch -q --detach"),
@@ -76,8 +76,8 @@ func TestT056_12_ADetachedRangeIsVerifiedUntilABranchHoldsIt(t *testing.T) {
 		t.Fatalf("the commits on a detached HEAD are tracked as no range: %+v", rs)
 	}
 	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !strings.Contains(joined, "detached at") || !strings.Contains(joined, "not judged yet") {
-		t.Fatalf("the unjudged detached range was not refused as one:\n%s", joined)
+	if !strings.Contains(joined, "detached at") || !strings.Contains(joined, failedText) {
+		t.Fatalf("the failing detached range was not refused as one:\n%s", joined)
 	}
 
 	// Give the commits a branch: that branch's range holds them, so the detached range is
@@ -96,10 +96,10 @@ func TestT056_12_ADetachedRangeIsVerifiedUntilABranchHoldsIt(t *testing.T) {
 // pinned at its last tip (refs/sloprail/pins/…), so the commits stay reachable, and the root's
 // Stop still refuses them.
 func TestT056_13_ARemovedWorktreeWithNoBranchKeepsItsRangePinned(t *testing.T) {
-	e, proj := project(t)
+	e, proj := failingProject(t)
 	const sess = "s-056-13"
-	// The sub-agent stops without judging its range: the root's Stop is what answers for it.
-	sub := harness.SubagentScriptUnjudged(t, Turns("sub done",
+	// The sub-agent judges its range (the judge refuses it): the root's Stop is what answers for it.
+	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("b1", "git switch -q -c sub-gone"),
 		harness.CommitFile("c1", "docs/a.md", "the release is Friday", "sub adds a"),
 	))
@@ -131,7 +131,7 @@ func TestT056_13_ARemovedWorktreeWithNoBranchKeepsItsRangePinned(t *testing.T) {
 		t.Fatalf("the gone branch's last tip %s is not pinned (refs/sloprail/pins: %q), so its commits can be collected", tip, pins)
 	}
 	res := e.StopNow(proj, sess, false)
-	if !harness.Blocked(res) || !strings.Contains(res.Output, "not judged yet") {
-		t.Fatalf("the root's Stop let a pinned, unjudged range go:\n%s", res.Output)
+	if !harness.Blocked(res) || !strings.Contains(res.Output, failedText) {
+		t.Fatalf("the root's Stop let a pinned, failing range go:\n%s", res.Output)
 	}
 }

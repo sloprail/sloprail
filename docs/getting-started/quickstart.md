@@ -65,14 +65,20 @@ sr-checks run --base origin/main --head HEAD
 
 The rule **refuses**, and the reason you wrote is shown back to the agent.
 (A file-guard judges the committed result; the Stop hook and CI only verify the
-stored verdicts with `sr-checks verify`, without asking a model.)
+stored verdicts with `sr-checks verify`, without asking a model. The Stop hook shows
+failures only; run `sr-checks run` before pushing, because the pre-push gate and CI
+refuse a range nobody has judged.) Run `sr-checks run`
+in the foreground and wait: it prints progress (a heartbeat every 30s) and is safe to run
+in parallel, in several worktrees at once. Judges share a machine-wide limit
+(`SLOPRAIL_JUDGE_SLOTS`, default 8), an identical check is judged once, and a second run
+of the same range waits and reuses the first's verdicts.
 
 A file-guard's verdict only binds where it is enforced. Add a CI job that runs
 `sr-checks verify` on every pull request (`--base` the target branch, `--head`
 the PR head sha), and put the marker `sr:ci verify` in a comment beside that step (`sr-mark apply ci --verify=<path>:<line>` writes it; any provider:
 GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, ...). Until a committed file
 carries that marker, the shipped `sloprail/gate/ci-verify-required` refuses the
-end of the agent's turn (and `sloprail/file-guard/ci-verify-step` refuses a marked file that does not run `sr-checks verify` on pull requests) and prints a snippet per provider (it installs `sr-checks` with `go install`, pinned to the revision the plugin was installed from, because no release carries it yet); switch it off with
+end of the agent's turn (and `sloprail/file-guard/ci-verify-step` refuses a marked file that does not run `sr-checks verify` on pull requests) and prints a snippet per provider (it installs sloprail with the release's `install.sh`, pinned to the installed plugin's version); switch it off with
 `disabled: [sloprail/gate/ci-verify-required]` in `.sloprail/config.yaml`.
 
 Protect the default branch (require pull requests and up-to-date branches): verify on pull requests is the guarantee.

@@ -9,7 +9,7 @@
 # the commit must carry a citation, either way:
 #
 #   git commit -m '<msg>' -m 'Sloprail-Cites-User: <exact quote>'      the trailer in the message
-#   sr-session trajectory cite '<exact quote>' && git commit ...        a cite chained in front
+#   (a chained `sr-session trajectory cite '<q>' && git commit ...` also works; it is not needed)
 #
 # The trailer is read from the command's -m/--message, -F/--file (read from the commit's folder) and
 # --trailer, or for `--amend` without a new message from HEAD's. Each quote is resolved against the

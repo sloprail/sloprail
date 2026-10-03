@@ -15,7 +15,9 @@ keys, what is in scope for its match, and when it fires.
   carries frontmatter." It judges the *committed* result: `sr-checks run --base
   --head` hands it `merge-base(base, head)..head` as one changeset and stores the
   verdicts on the `sloprail/checks` branch; Stop and CI only verify them (no
-  model). It never acts before a write — prevention is a
+  model). Stop shows failures only (a stored FAIL, a rule that does not load, an
+  error), never "not judged yet": run `sr-checks run` before pushing, the pre-push
+  gate and CI require it. It never acts before a write — prevention is a
   gate's job. `deletions: include`/`only` when losing the file is the rule's
   business too (by default a deleted file is skipped).
   → [file-guard.md](file-guard.md)
@@ -232,7 +234,10 @@ For a file-guard, `sr-checks changeset --rule <name> --base <rev> --head <rev>` 
 range and the payload its checks will get without running anything
 ([file-guard.md](file-guard.md#seeing-what-a-rule-will-be-handed)), and
 `sr-checks run --base <rev> --head <rev>` judges it (`sr-checks verify` re-reads the stored
-verdicts without asking a model).
+verdicts without asking a model). Run `sr-checks run` in the foreground and wait for it: it reports
+progress on stderr (a heartbeat every 30s) and is safe to run in parallel (judges share a machine-wide
+limit, identical checks are judged once, a second run of the same range waits and reuses), so never
+poll with `pgrep`.
 
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.

@@ -46,8 +46,10 @@ func project(t *testing.T, withGuard bool) (*Env, string) {
 	return e, proj
 }
 
-// stop runs one turn that changes nothing and returns the Stop refusals the agent was shown.
+// stop runs one turn that changes nothing and returns the Stop refusals the agent was shown by
+// THAT turn (the session's record is cumulative, so earlier turns' refusals are not repeated).
 func stop(e *Env, proj, sess string) string {
+	before := len(e.StopContinuations(proj, sess))
 	e.Run(proj, sess, "do nothing", Turns("done"))
-	return strings.Join(e.StopContinuations(proj, sess), "\n")
+	return strings.Join(e.StopContinuations(proj, sess)[before:], "\n")
 }

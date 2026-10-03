@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,6 +56,12 @@ type config struct {
 	// them (the ranges of every folder of the session, sub-agents' worktrees included, are
 	// tracked either way).
 	EnableSubagentStopCheck bool `yaml:"enable_subagent_stop_check"`
+
+	// SubagentSilentAfterMinutes and SubagentStaleAfterMinutes are the silence thresholds of the
+	// sub-agent registry; pointers so absent (the default) is told apart from an explicit 0. See
+	// SubagentThresholds.
+	SubagentSilentAfterMinutes *int `yaml:"subagent_silent_after_minutes"`
+	SubagentStaleAfterMinutes  *int `yaml:"subagent_stale_after_minutes"`
 }
 
 // isEnabled reports whether the project switched the named default-off declaration on.
@@ -108,6 +115,43 @@ func StopHookBlockCap(root string) (int, error) {
 func EnableSubagentStopCheck(root string) bool {
 	c, err := loadConfig(root)
 	return err == nil && c.EnableSubagentStopCheck
+}
+
+// The defaults of the sub-agent silence policy, in minutes.
+const (
+	DefaultSubagentSilentAfterMinutes = 10
+	DefaultSubagentStaleAfterMinutes  = 60
+)
+
+// SubagentThresholds reads how long a background sub-agent may stay silent (no hook of its own,
+// no new line in its own transcript) before the parent's Stop says so, and before it stops being
+// waited for and its ranges are judged:
+//
+//	subagent_silent_after_minutes: 10   # default: the Stop names it, its ranges stay unjudged
+//	subagent_stale_after_minutes: 60    # default: it is marked stale and its ranges are judged
+//
+// A display and escalation policy, not a correctness shortcut: CI verify covers every range
+// either way. A silent threshold of 0 or less, or a stale one not above it, is an error, and the
+// caller gets the defaults with it.
+func SubagentThresholds(root string) (silent, stale time.Duration, err error) {
+	silent = DefaultSubagentSilentAfterMinutes * time.Minute
+	stale = DefaultSubagentStaleAfterMinutes * time.Minute
+	c, err := loadConfig(root)
+	if err != nil {
+		return silent, stale, err
+	}
+	if c.SubagentSilentAfterMinutes != nil {
+		silent = time.Duration(*c.SubagentSilentAfterMinutes) * time.Minute
+	}
+	if c.SubagentStaleAfterMinutes != nil {
+		stale = time.Duration(*c.SubagentStaleAfterMinutes) * time.Minute
+	}
+	if silent <= 0 || stale <= silent {
+		return DefaultSubagentSilentAfterMinutes * time.Minute, DefaultSubagentStaleAfterMinutes * time.Minute,
+			fmt.Errorf("declaration: %s: subagent_silent_after_minutes must be above 0 and below subagent_stale_after_minutes, got %v and %v",
+				filepath.Join(root, configFile), silent, stale)
+	}
+	return silent, stale, nil
 }
 
 // loadConfig reads a project's config, returning the zero value when there is
