@@ -13,6 +13,7 @@ import (
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionpath"
@@ -30,7 +31,14 @@ Every check (requirement, script, judge) is cached by content: one verdict per g
 by the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
 input changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment
 of the sloprail/checks branch, and pushed to origin when the repository has one. Prints each
-refusal, and exits 1 when any rule refuses.`,
+refusal, and exits 1 when any rule refuses.
+
+Run it in the foreground and wait: it prints progress to stderr (a line per judge and per rule, and a
+heartbeat every 30s), so do not poll the process list. It is safe to run in parallel, in several
+worktrees at once: judges share a machine-wide limit (SLOPRAIL_JUDGE_SLOTS, default 8; a process waits for
+a free slot), two runs judging the same check judge it once, and a second run of the same worktree and
+range waits for the first and reuses its verdicts. The lock files are under the user cache dir
+(SLOPRAIL_LOCK_DIR overrides) and a killed run releases them.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return execute(cmd, modeRun) },
 	}
@@ -206,6 +214,18 @@ func execute(cmd *cobra.Command, m mode) error {
 			os.Exit(1)
 		}
 		return nil
+	}
+	if m == modeRun {
+		// A second run of this worktree over the same range waits for the first and then finds
+		// its verdicts stored, instead of judging them again.
+		l := judgelimit.New(cmd.ErrOrStderr())
+		release, err := l.AcquireRun(judgelimit.Name(t.root, t.rng.Base, t.rng.Head),
+			"another sr-checks run of this worktree over the same range to finish")
+		if err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: run lock unavailable, running anyway:", err)
+		} else {
+			defer release()
+		}
 	}
 	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun)
 	if err != nil {
