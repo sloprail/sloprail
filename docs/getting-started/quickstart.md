@@ -65,7 +65,9 @@ sr-checks run --base origin/main --head HEAD
 
 The rule **refuses**, and the reason you wrote is shown back to the agent.
 (A file-guard judges the committed result; the Stop hook and CI only verify the
-stored verdicts with `sr-checks verify`, without asking a model.) Run `sr-checks run`
+stored verdicts with `sr-checks verify`, without asking a model. The Stop hook shows
+failures only; run `sr-checks run` before pushing, because the pre-push gate and CI
+refuse a range nobody has judged.) Run `sr-checks run`
 in the foreground and wait: it prints progress (a heartbeat every 30s) and is safe to run
 in parallel, in several worktrees at once. Judges share a machine-wide limit
 (`SLOPRAIL_JUDGE_SLOTS`, default 8), an identical check is judged once, and a second run

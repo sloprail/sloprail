@@ -79,8 +79,8 @@ func TestT003_77_TheParentsStopLeavesARunningBackgroundAgentsRangeForLater(t *te
 	if harness.Blocked(r) {
 		t.Fatalf("the parent's Stop was refused for a still-running agent's range:\n%s", r.Output)
 	}
-	if !strings.Contains(r.Output, `"systemMessage"`) || !strings.Contains(r.Output, "not judged yet: sub-agent "+agent+" still running") {
-		t.Fatalf("the Stop passed without saying what it left for later:\n%s", r.Output)
+	if strings.Contains(r.Output, "not judged yet") || strings.Contains(r.Output, "still running") {
+		t.Fatalf("the Stop reported the running agent's range, which is no failure:\n%s", r.Output)
 	}
 
 	// After the terminal notification the range is judged again.
