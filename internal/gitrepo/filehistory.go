@@ -82,11 +82,11 @@ func (t fileTouch) substantive(dir string) bool {
 	if t.status == 'A' || t.status == 'D' {
 		return true
 	}
-	after, err := BlobAt(dir, t.sha, t.path)
+	after, err := BlobRaw(dir, t.sha+":"+t.path)
 	if err != nil {
 		return true
 	}
-	before, err := BlobAt(dir, t.sha+"^1", t.parentPath)
+	before, err := BlobRaw(dir, t.sha+"^1:"+t.parentPath)
 	if err != nil {
 		return true
 	}
@@ -98,7 +98,7 @@ func fileTouches(dir, base, head string, files []FileRef) (map[string][]fileTouc
 	if base == EmptyTree {
 		rng = head
 	}
-	out, err := run(dir, "log", "--topo-order", "-M", "--cc", "--name-status", "-z", "--no-ext-diff", "--format=%x01%H %P", rng)
+	out, err := runImmutable(dir, []string{base, head}, "log", "--topo-order", "-M", "--cc", "--name-status", "-z", "--no-ext-diff", "--format=%x01%H %P", rng)
 	if err != nil {
 		return nil, fmt.Errorf("gitrepo: file history %s..%s: %w", short(base), short(head), err)
 	}
@@ -157,7 +157,7 @@ func fileTouches(dir, base, head string, files []FileRef) (map[string][]fileTouc
 // that cannot be established (an old git without `merge-tree --write-tree`, a conflicted
 // automatic merge, a failed read) is false, so the merge still counts as the change.
 func cleanMergeOf(dir string, c logCommit, path string) bool {
-	out, err := run(dir, "merge-tree", "--write-tree", "--no-messages", c.parents[0], c.parents[1])
+	out, err := runImmutable(dir, c.parents, "merge-tree", "--write-tree", "--no-messages", c.parents[0], c.parents[1])
 	if err != nil {
 		return false
 	}
@@ -165,11 +165,11 @@ func cleanMergeOf(dir string, c logCommit, path string) bool {
 	if !isObjectName(tree) {
 		return false
 	}
-	auto, err := run(dir, "rev-parse", "--verify", "-q", tree+":"+path)
+	auto, err := runImmutable(dir, []string{tree}, "rev-parse", "--verify", "-q", tree+":"+path)
 	if err != nil {
 		return false
 	}
-	merged, err := run(dir, "rev-parse", "--verify", "-q", c.sha+":"+path)
+	merged, err := runImmutable(dir, []string{c.sha}, "rev-parse", "--verify", "-q", c.sha+":"+path)
 	if err != nil {
 		return false
 	}

@@ -76,6 +76,9 @@ type Params struct {
 	// Recorded is the citations the session already recorded per file (sr-file --cite),
 	// oldest first; a citation refusal hands them back as the trailer to paste.
 	Recorded map[string][]transcript.Citation
+	// RecordedFn, when Recorded is nil, supplies it on first need: only a citation refusal reads
+	// it, and building it can be expensive (it reads every sub-agent's store).
+	RecordedFn func() map[string][]transcript.Citation
 }
 
 // FileGuardResult is one file-guard's outcome: the guard's name, how a refusal should
@@ -109,6 +112,70 @@ type changesetEvaluation struct {
 
 	mu       sync.Mutex
 	outcomes []CheckOutcome
+
+	// Under verify the rules of one range share one checkout of its head: nothing writes to a
+	// snapshot (it is read-only), and a checkout of a large tree is by far the dearest step.
+	sharedMu   sync.Mutex
+	sharedTree *gitrepo.Snapshot
+	sharedHead string
+
+	statusMu   sync.Mutex
+	statusMemo map[string][]checkstore.CheckStatusRow // verify only: nothing is written, so a rule's rows hold
+}
+
+// verifyTree is the one snapshot of head every rule of a verify shares, made on first need.
+func (ev *changesetEvaluation) verifyTree(head string) (*gitrepo.Snapshot, error) {
+	ev.sharedMu.Lock()
+	defer ev.sharedMu.Unlock()
+	if ev.sharedTree != nil && ev.sharedHead == head {
+		return ev.sharedTree, nil
+	}
+	if ev.sharedTree != nil {
+		return nil, nil // another head: the caller takes its own
+	}
+	ev.snapshots.Lock()
+	defer ev.snapshots.Unlock()
+	tree, err := gitrepo.AddSnapshot(ev.root, "", head)
+	if err != nil {
+		return nil, err
+	}
+	ev.sharedTree, ev.sharedHead = tree, head
+	return tree, nil
+}
+
+// releaseShared removes the shared snapshot, once every rule is done with it.
+func (ev *changesetEvaluation) releaseShared() {
+	ev.sharedMu.Lock()
+	tree := ev.sharedTree
+	ev.sharedTree = nil
+	ev.sharedMu.Unlock()
+	if tree != nil {
+		ev.snapshots.Lock()
+		defer ev.snapshots.Unlock()
+		_ = tree.Remove()
+	}
+}
+
+// checkStatus is store.CheckStatus(false, rule), read once per rule under verify (the store is
+// only read then, and each read rebuilds a view of every run).
+func (ev *changesetEvaluation) checkStatus(rule string) ([]checkstore.CheckStatusRow, error) {
+	if !ev.verify {
+		return ev.store.CheckStatus(false, rule)
+	}
+	ev.statusMu.Lock()
+	defer ev.statusMu.Unlock()
+	if rows, ok := ev.statusMemo[rule]; ok {
+		return rows, nil
+	}
+	rows, err := ev.store.CheckStatus(false, rule)
+	if err != nil {
+		return nil, err
+	}
+	if ev.statusMemo == nil {
+		ev.statusMemo = map[string][]checkstore.CheckStatusRow{}
+	}
+	ev.statusMemo[rule] = rows
+	return rows, nil
 }
 
 // CheckOutcome is one check's latest result as this evaluation saw it: what `verify`
@@ -227,6 +294,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		batch: "check-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 	}
 	ev.identity = ev.runIdentity()
+	defer ev.releaseShared()
 	limit := stopConcurrency()
 	for _, g := range guards {
 		ev.diags[g.Qualified()] = &bytes.Buffer{} // filled before the pool: read-only map after
@@ -311,11 +379,11 @@ func refusal(g declaration.FileGuard, reason string) FileGuardResult {
 	return FileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason}
 }
 
-// runIdentity fills the provenance columns: the repository (its root commit), the branch and
+// runIdentity fills the provenance columns: the repository (gitrepo.RepoID), the branch and
 // the session. Best effort — an unreadable one is left empty rather than costing the run.
 func (ev *changesetEvaluation) runIdentity() checkstore.RunIdentity {
 	id := checkstore.RunIdentity{SessionID: ev.params.SessionID, AgentID: ev.params.AgentID}
-	if root, err := gitrepo.RootCommit(ev.root); err == nil {
+	if root, err := gitrepo.RepoID(ev.root); err == nil {
 		id.RepoID = root
 	}
 	if pos, err := gitrepo.Head(ev.root); err == nil {
@@ -373,19 +441,30 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 	run.BaseTree, run.HeadTree = rangeTrees(ev.root, r)
 
-	hash, err := changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin())
-	if err != nil {
-		return ev.fail(g, run, err)
+	// The rule's hash is what a run is recorded under; verify records nothing, so it hashes only
+	// a rule that selected something (hashing walks the rule's folder, and most rules select nothing).
+	var hash string
+	if !ev.verify {
+		if hash, err = changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin()); err != nil {
+			return ev.fail(g, run, err)
+		}
+		run.RuleHash = hash
 	}
-	run.RuleHash = hash
 	match, err := guardrail.CompileFileMatch(g.Match)
 	if err != nil {
 		return ev.fail(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
+	lean := ev.verify && g.Subjects == "" && !strings.Contains(g.Match, "arkers")
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
 		Deletions: changeset.DeletionMode(g.Deletions),
 		Scan:      Markers,
 		Select:    Selector(match),
+		Lean:      lean,
+		// A `subjects:` script is handed the whole payload in run and in verify alike.
+		NoPatch:  ev.verify && g.Subjects == "",
+		RawBlobs: ev.verify && g.Subjects == "",
+		// Only a citation requirement reads which commits changed a file.
+		SkipHistory: lean && !requiresCitation(g),
 	})
 	if err != nil {
 		return ev.fail(g, run, err)
@@ -397,6 +476,12 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			return ev.fail(g, run, err)
 		}
 		return nil, FileGuardResult{}, false
+	}
+	if ev.verify {
+		if hash, err = changeset.RuleHashAt(ev.root, g.Dir, g.Origin.FromPlugin()); err != nil {
+			return ev.fail(g, run, err)
+		}
+		run.RuleHash = hash
 	}
 
 	// Verify never consults the session: a citation counts when a commit trailer carries it
@@ -412,6 +497,11 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	subjects := []changeset.Subject{changeset.Whole(cs)}
 	trees := make([]*gitrepo.Snapshot, 0, 1)
 	snapshot := func() (*gitrepo.Snapshot, error) {
+		if ev.verify {
+			if tree, err := ev.verifyTree(r.Head); tree != nil || err != nil {
+				return tree, err
+			}
+		}
 		ev.snapshots.Lock()
 		defer ev.snapshots.Unlock()
 		tree, err := gitrepo.AddSnapshot(ev.root, "", r.Head)
@@ -425,9 +515,11 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			ev.dropTree(g, t, r.Head)
 		}
 	}
-	tree, err := snapshot()
-	if err != nil {
-		return ev.fail(g, run, err)
+	var tree *gitrepo.Snapshot
+	if !lean { // a lean (verify) rule runs nothing, so it needs no checkout
+		if tree, err = snapshot(); err != nil {
+			return ev.fail(g, run, err)
+		}
 	}
 	if g.Subjects != "" {
 		if subjects, err = ev.guardSubjects(g, r, cs, tree.Path); err != nil {
@@ -438,13 +530,17 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 
 	rrs := make([]*ruleRun, 0, len(subjects))
 	for i, sub := range subjects {
-		if i > 0 {
+		if i > 0 && !lean {
 			if tree, err = snapshot(); err != nil {
 				dropAll()
 				return ev.fail(g, run, err)
 			}
 		}
-		req := ev.requestFor(g, r, cs, sub, tree.Path, unresolved)
+		treePath := ""
+		if tree != nil {
+			treePath = tree.Path
+		}
+		req := ev.requestFor(g, r, cs, sub, treePath, unresolved)
 		// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
 		// never reads as a pass.
 		subRun := run
@@ -592,6 +688,15 @@ func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.Chec
 
 // dropTree removes a rule's snapshot.
 func (ev *changesetEvaluation) dropTree(g declaration.FileGuard, tree *gitrepo.Snapshot, head string) {
+	if tree == nil {
+		return
+	}
+	ev.sharedMu.Lock()
+	shared := tree == ev.sharedTree
+	ev.sharedMu.Unlock()
+	if shared {
+		return // released by Evaluate, once every rule is done
+	}
 	ev.snapshots.Lock()
 	defer ev.snapshots.Unlock()
 	if err := tree.Remove(); err != nil {
@@ -1028,7 +1133,7 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 // verdict, when it was the judge returning none ("" otherwise). The run is left incomplete, so
 // its row reads error or interrupted, never a verdict.
 func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
-	rows, err := ev.store.CheckStatus(false, rr.g.Qualified())
+	rows, err := ev.checkStatus(rr.g.Qualified())
 	if err != nil {
 		return ""
 	}
@@ -1399,6 +1504,16 @@ func BrokenFileGuards(l declaration.Loaded) []string {
 		}
 	}
 	return out
+}
+
+// requiresCitation says whether a rule has a citation requirement.
+func requiresCitation(g declaration.FileGuard) bool {
+	for _, r := range g.Require {
+		if r.Citation != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // rangeTrees are the tree ids of a range's base and head, "" when either cannot be read (such

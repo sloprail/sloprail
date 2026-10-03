@@ -95,6 +95,10 @@ func FilesPart(p Payload) string {
 	for _, path := range paths {
 		f := byPath[path]
 		content := f.NewContent
+		if f.NewBlob != "" {
+			// git's own hash of the bytes: the same content has the same id, and nothing was read.
+			content = "blob:" + f.NewBlob
+		}
 		if f.Status == "D" {
 			content = "\x00deleted"
 		}

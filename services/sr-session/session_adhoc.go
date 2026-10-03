@@ -178,7 +178,7 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 			f.Branch, f.HeadRef = pos.Branch, pos.Commit
 			f.BaseRef = pos.Commit
 		}
-		if id, err := gitrepo.RootCommit(tree); err == nil {
+		if id, err := gitrepo.RepoID(tree); err == nil {
 			f.RepoID = id
 		}
 		if _, err := reg.RegisterFolder(f); err != nil {
@@ -226,7 +226,7 @@ func registerCommandFolders(reg sessionstate.Store, rs rootSession, p HookPayloa
 				}
 			}
 			f.BaseRef = start
-			if id, err := gitrepo.RootCommit(tree); err == nil {
+			if id, err := gitrepo.RepoID(tree); err == nil {
 				f.RepoID = id
 			}
 			if _, err := reg.RegisterFolder(f); err != nil {

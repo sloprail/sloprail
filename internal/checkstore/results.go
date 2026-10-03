@@ -21,7 +21,8 @@ const (
 
 // RunIdentity says whose run it is: provenance, never part of a lookup.
 type RunIdentity struct {
-	// RepoID is the repository's root-commit SHA: it survives worktrees and branches.
+	// RepoID is gitrepo.RepoID: the normalized remote and the initial commit (the git common dir
+	// without a remote); it survives worktrees, branches and clones.
 	RepoID    string
 	Branch    string
 	SessionID string

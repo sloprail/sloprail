@@ -173,11 +173,11 @@ func TestCoveredByBranch_OnlyWhenTheBranchRangeContainsTheCommit(t *testing.T) {
 	branch := func(base, stored string) []sessionstate.TrackedRange {
 		return []sessionstate.TrackedRange{{Folder: proj, Head: "main", HeadSHA: stored, Base: base}}
 	}
-	assert.True(t, coveredByBranch(detached(c2), branch(first, c2)), "inside base..tip")
-	assert.False(t, coveredByBranch(detached(c1), branch(c1, c2)), "at the branch's base: before its range")
-	assert.False(t, coveredByBranch(detached(first), branch(c1, c2)), "older than the branch's base")
+	assert.True(t, coveredByBranch(detached(c2), branch(first, c2), newCoverMemo()), "inside base..tip")
+	assert.False(t, coveredByBranch(detached(c1), branch(c1, c2), newCoverMemo()), "at the branch's base: before its range")
+	assert.False(t, coveredByBranch(detached(first), branch(c1, c2), newCoverMemo()), "older than the branch's base")
 	// The stored tip is stale: the live branch has moved on and now holds c2.
-	assert.True(t, coveredByBranch(detached(c2), branch(first, c1)), "the live tip, not the stored one, decides")
+	assert.True(t, coveredByBranch(detached(c2), branch(first, c1), newCoverMemo()), "the live tip, not the stored one, decides")
 }
 
 // A range whose folder is gone and whose branch is gone, with no root folder to move it to, is not

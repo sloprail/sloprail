@@ -64,6 +64,36 @@ func sloprailRoot(dir string) string {
 // plugin's, is an error, never a fallback to another hash. Both paths are symlink-resolved
 // before they are compared (macOS /tmp is /private/tmp).
 func RuleHashAt(repo, dir string, plugin bool) (string, error) {
+	return ruleHashAt(repo, dir, plugin, gitrepo.TrackedFiles)
+}
+
+// RuleHashesAt is RuleHashAt for several rules of one repository, asking git which files it
+// tracks once per folder instead of once per rule. The hashes come back in the order of dirs.
+func RuleHashesAt(repo string, dirs []string, plugins []bool) ([]string, error) {
+	memo := map[string][]string{}
+	tracked := func(r, rel string) ([]string, error) {
+		k := r + "\x00" + rel
+		if v, ok := memo[k]; ok {
+			return v, nil
+		}
+		v, err := gitrepo.TrackedFiles(r, rel)
+		if err == nil {
+			memo[k] = v
+		}
+		return v, err
+	}
+	out := make([]string, len(dirs))
+	for i, d := range dirs {
+		h, err := ruleHashAt(repo, d, plugins[i], tracked)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = h
+	}
+	return out, nil
+}
+
+func ruleHashAt(repo, dir string, plugin bool, trackedFiles func(repo, rel string) ([]string, error)) (string, error) {
 	if plugin {
 		return RuleHash(sloprailRoot(dir))
 	}
@@ -92,12 +122,12 @@ func RuleHashAt(repo, dir string, plugin bool) (string, error) {
 			set[strings.TrimPrefix(strings.TrimPrefix(n, rootRel), "/")] = true
 		}
 	}
-	tracked, err := gitrepo.TrackedFiles(realRepo, rootRel)
+	tracked, err := trackedFiles(realRepo, rootRel)
 	if err != nil {
 		return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
 	}
 	add(tracked)
-	own, err := gitrepo.TrackedFiles(realRepo, rel)
+	own, err := trackedFiles(realRepo, rel)
 	if err != nil {
 		return "", fmt.Errorf("changeset: hash rule %s: %w", dir, err)
 	}
