@@ -44,16 +44,16 @@ func TestT003_77_TheParentsStopLeavesARunningBackgroundAgentsRangeForLater(t *te
 	e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
 	_, agent := subagentFolder(t, e, proj, sess)
 	record := e.TranscriptPath(proj, sess)
-	// The agent's branch is tracked twice: from its worktree (with its agent_id) and from the
-	// root's folder (with none). Both are the one range, and both are left for later.
+	// The agent's branch is tracked once, from its worktree and with its agent_id: a branch
+	// checked out in another worktree is never the root folder's row.
 	var rows int
 	for _, r := range e.SessionRanges(proj, sess) {
 		if strings.HasPrefix(r.Head, "worktree-agent-") {
 			rows++
 		}
 	}
-	if rows < 2 {
-		t.Fatalf("premise: the agent's branch should be tracked from the worktree and from the root, have %d rows", rows)
+	if rows != 1 {
+		t.Fatalf("premise: the agent's branch should be tracked once, from its worktree, have %d rows", rows)
 	}
 
 	// Premise: with nothing marking the agent as running, the parent's Stop judges its range.
