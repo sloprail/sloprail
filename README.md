@@ -7,6 +7,9 @@ touches a file or runs a command, and hold until met: files only where you
 allow, right skills loaded first, work proven by diff or logs. Not a
 suggestion in CLAUDE.md or AGENTS.md.
 
+| [Website →](https://sloprail.com) | [Docs →](https://sloprail.com/docs) |
+|---|---|
+
 ## See it in action
 
 | [Watch the 2-min video →](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d) | [Claude Code session replay →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/) |
@@ -77,7 +80,3 @@ To make verdicts block merges, run `sr-checks verify` in CI: see the [Quickstart
 - [The same fact, copied into two files, now disagreeing](https://sloprail.com/docs/use-cases/knowledge/duplicated-knowledge)
 - [It acted without loading what it needed first](https://sloprail.com/docs/use-cases/knowledge/acted-without-context)
 - [The "mechanical" refactor silently rewrote your code](https://sloprail.com/docs/use-cases/coding/refactor-regenerated)
-
-Website: [sloprail.com](https://sloprail.com)
-
-Docs, including how to write a guardrail: [sloprail.com/docs](https://sloprail.com/docs)
