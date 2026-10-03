@@ -1,6 +1,7 @@
 package gitrepo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,7 +37,7 @@ func IsSnapshot(path string) bool {
 	}
 }
 
-func processStart(pid int) string {
+var processStart = func(pid int) string {
 	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return ""
@@ -49,19 +50,31 @@ func writeOwner(root string) error {
 	return os.WriteFile(filepath.Join(root, ownerFile), []byte(fmt.Sprintf("%d\n%s\n", pid, processStart(pid))), 0o644)
 }
 
-// ownerAlive reports whether the process that wrote the owner file in root still runs.
+// ownerAlive reports whether the owner of root may still run. It answers false (dead) only when
+// the pid is gone, or when both start times are known and differ; anything unknown or failing
+// keeps the snapshot, since deleting a live run's checkout is the worse mistake.
 func ownerAlive(root string) bool {
 	b, err := os.ReadFile(filepath.Join(root, ownerFile))
 	if err != nil {
-		return false
+		return true
 	}
 	lines := strings.SplitN(string(b), "\n", 3)
 	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
 	if err != nil || pid <= 0 {
+		return true
+	}
+	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return false
 	}
-	start := processStart(pid)
-	return start != "" && len(lines) > 1 && start == strings.TrimSpace(lines[1])
+	recorded := ""
+	if len(lines) > 1 {
+		recorded = strings.TrimSpace(lines[1])
+	}
+	now := processStart(pid)
+	if recorded == "" || now == "" {
+		return true
+	}
+	return recorded == now
 }
 
 // SweepStaleSnapshots removes the snapshots of this repository whose owner is dead: made

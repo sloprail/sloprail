@@ -93,3 +93,26 @@ func TestSnapshot_SIGTERMLeavesNoRegistration(t *testing.T) {
 	_, statErr := os.Stat(filepath.Dir(path))
 	assert.True(t, os.IsNotExist(statErr))
 }
+
+func TestSnapshot_UnknownStartTimeKeepsLiveOwner(t *testing.T) {
+	root := t.TempDir()
+	own := func(content string) {
+		require.NoError(t, os.WriteFile(filepath.Join(root, ownerFile), []byte(content), 0o644))
+	}
+	pid := itoa(os.Getpid())
+
+	own(pid + "\n\n") // start time was unknown when written
+	assert.True(t, ownerAlive(root), "empty recorded start, live pid: kept")
+
+	own(pid + "\nMon Jan  1 00:00:00 2001\n")
+	orig := processStart
+	t.Cleanup(func() { processStart = orig })
+	processStart = func(int) string { return "" } // ps fails now
+	assert.True(t, ownerAlive(root), "ps error, live pid: kept")
+
+	processStart = func(int) string { return "Tue Feb  2 00:00:00 2002" }
+	assert.False(t, ownerAlive(root), "both known and differ: dead")
+
+	own(itoa(deadPID(t)) + "\n\n")
+	assert.False(t, ownerAlive(root), "pid gone: dead")
+}
