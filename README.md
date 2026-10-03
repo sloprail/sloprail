@@ -9,13 +9,11 @@ suggestion in CLAUDE.md or AGENTS.md.
 
 ## See it in action
 
-**[Watch the full video (2 min) →](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d)**
+**[Watch the 2-min video →](https://www.loom.com/share/16f4d75005a44e699e6a770af136693d)** · **[Explore every refusal and fix →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/)**
 
 <a href="https://www.loom.com/share/16f4d75005a44e699e6a770af136693d"><img src="https://cdn.loom.com/sessions/thumbnails/16f4d75005a44e699e6a770af136693d-af4ff870b27721ee.gif" alt="2-minute walkthrough of sloprail" width="512"></a>
 
 One Claude Code session, one prompt: make every capability in [`harness-mocks`](https://github.com/sloprail/harness-mocks), our fakes of Claude Code, Codex and Cursor, real for every harness, proven by recordings of the real thing. It split the work across parallel agents, and sloprail checked every step.
-
-> **[Replay the whole session →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/)**: every refusal, with the agent's fix right below it.
 
 ## Install
 
