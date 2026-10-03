@@ -15,6 +15,26 @@ One Claude Code session, one prompt: make every capability in [`harness-mocks`](
 
 **[Replay the whole session →](https://claude-capabilities-matrix-i.website-c9i.pages.dev/demos/20261003-capabilities-matrix/)**: every refusal, with the agent's fix right below it.
 
+## Install
+
+```
+/plugin marketplace add sloprail/sloprail
+/plugin install sloprail@sloprail-marketplace
+```
+
+Pick the project scope. The first session after that installs the `sr*`
+binaries the hooks call, once: the release matching the plugin's version,
+checksum-verified, into `~/.local/bin`, and says so. From then on every tool
+call and turn-end runs through sloprail — you don't run anything by hand.
+
+Rather install the binaries yourself? Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
+
+```
+curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+```
+
+(or `go install ./services/...` from a checkout).
+
 ## How it works
 
 <img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
@@ -37,26 +57,6 @@ in `.sloprail/config.yaml`.
 
 Full docs, including how to write a guardrail:
 [sloprail.com/docs](https://sloprail.com/docs).
-
-## Install
-
-```
-/plugin marketplace add sloprail/sloprail
-/plugin install sloprail@sloprail-marketplace
-```
-
-Pick the project scope. The first session after that installs the `sr*`
-binaries the hooks call, once: the release matching the plugin's version,
-checksum-verified, into `~/.local/bin`, and says so. From then on every tool
-call and turn-end runs through sloprail — you don't run anything by hand.
-
-Rather install the binaries yourself? Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
-
-```
-curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
-```
-
-(or `go install ./services/...` from a checkout).
 
 ## Rules first.
 
