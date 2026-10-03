@@ -608,8 +608,10 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	recorded := lazyRecordedCitations(p, store)
 	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
 	oneEach := collapseByRepo(ranges, p.AgentID, memo)
-	running := runningSubagents(p, ranges)
+	plan := settleRootAgents(cmd, root, rs.ID, p, ranges)
+	running := plan.Waiting
 	var waiting []string
+	silentSaid := map[string]bool{}
 	// The root's own folder tracks the branch a sub-agent's worktree has checked out too, as a row
 	// with no agent_id: the SAME range (one repository, one branch) seen from the other folder.
 	// It belongs to the running agent as much as the agent's own row does.
@@ -624,7 +626,14 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
 		}
 		if agent := runningAgentOf(r, running, runningBranch); agent != "" {
-			waiting = append(waiting, fmt.Sprintf("not judged yet: sub-agent %s still running (%s %s)", agent, r.Folder, r.Head))
+			if msg, silent := plan.Silent[agent]; silent {
+				if !silentSaid[agent] {
+					silentSaid[agent] = true
+					waiting = append(waiting, msg)
+				}
+			} else {
+				waiting = append(waiting, fmt.Sprintf("not judged yet: sub-agent %s still running (%s %s)", agent, r.Folder, r.Head))
+			}
 			continue // half-finished work of a background agent that has not reported back: judged at the first Stop after its terminal notification
 		}
 		if r.Tracked() && !oneEach[i] {
@@ -1797,15 +1806,12 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 	return nil
 }
 
-// runningSubagents is the set of background sub-agents of this session that are still running,
-// read from the dispatching session's own record (transcript.RunningBackgroundAgents), for the
-// ROOT's Stop only: a range whose agent is in it is left for the first Stop after the agent's
-// terminal notification. Fails closed: with no record, an unreadable one or an unparseable one,
-// nothing is running and every range is judged. A session that ends with an agent that never
-// reported is no loophole: CI verifies every range of a pull request whatever the Stop did.
-func runningSubagents(p HookPayload, ranges []sessionstate.TrackedRange) map[string]bool {
-	if p.AgentID != "" || p.TranscriptPath == "" {
-		return nil
+// settleRootAgents is the sub-agent registry's answer for the ROOT's Stop (see settleAgents): which
+// agents' ranges are left for later. Only when some range is an agent's or the registry knows an
+// agent; a sub-agent's own Stop waits for no one. An agent the registry does not know is judged.
+func settleRootAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string, p HookPayload, ranges []sessionstate.TrackedRange) agentPlan {
+	if p.AgentID != "" {
+		return agentPlan{}
 	}
 	hasAgent := false
 	for _, r := range ranges {
@@ -1814,13 +1820,11 @@ func runningSubagents(p HookPayload, ranges []sessionstate.TrackedRange) map[str
 		}
 	}
 	if !hasAgent {
-		return nil
+		if known, err := root.Agents(sessionID); err != nil || len(known) == 0 {
+			return agentPlan{}
+		}
 	}
-	running, err := transcript.RunningBackgroundAgents(p.TranscriptPath)
-	if err != nil {
-		return nil
-	}
-	return running
+	return settleAgents(cmd, root, sessionID, p, agentClock())
 }
 
 // stopNoticesKey carries, in a command's context, the collector of a Stop's notices.

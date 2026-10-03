@@ -45,6 +45,7 @@ func newSessionPreToolCmd() *cobra.Command {
 // difference Stop measures does not depend on this tool call's rules.
 func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
+	touchAgent(cmd, p) // a sub-agent's own call: it is alive (the registry's last_seen_at)
 
 	store := natureStore(cmd, p)
 	if store != nil {
