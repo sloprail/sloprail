@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,5 +200,50 @@ func TestT058_19_GitEnvRedirectionFailsClosed(t *testing.T) {
 		}
 		has(t, res.Output, "could not check")
 		has(t, res.Output, "git -C <literal dir> commit")
+	}
+}
+
+// T058_23: a commit message that merely MENTIONS GIT_DIR is not a redirection and is not refused for
+// it; a real assignment still is (T058_19, T058_24).
+func TestT058_23_MessageMentioningGitDirIsNotARedirection(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-23", prompt, Turns("done",
+		Bash("c", "git -C "+oth+" commit -q --allow-empty -m \"mentions GIT_DIR and GIT_INDEX_FILE=x\""),
+	))
+	if res.Refused() {
+		t.Fatalf("a message mentioning GIT_DIR was refused:\n%s", res.Output)
+	}
+}
+
+// T058_24: GIT_DIR=x git commit is still refused (fail closed).
+func TestT058_24_RealGitDirAssignmentStillRefused(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-24", prompt, Turns("done",
+		Bash("c", "GIT_DIR="+oth+"/.git git -C "+oth+" commit -q --allow-empty -m x"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a real GIT_DIR assignment was not refused:\n%s", res.Output)
+	}
+}
+
+// T058_25: the other spellings of a redirection are read from the parsed invocation too: an `env`
+// wrapper, an `export` earlier on the line, and git's own --git-dir.
+func TestT058_25_OtherRedirectionSpellingsStillRefused(t *testing.T) {
+	for i, cmd := range []string{
+		"env GIT_DIR=%s/.git git -C %s commit -q --allow-empty -m x",
+		"export GIT_DIR=%s/.git; git -C %s commit -q --allow-empty -m x",
+		"git --git-dir=%s/.git -C %s commit -q --allow-empty -m x",
+	} {
+		e, proj := project(t)
+		oth := other(t, e)
+		res := e.Run(proj, "s-058-25-"+string(rune('a'+i)), prompt, Turns("done",
+			Bash("c", fmt.Sprintf(cmd, oth, oth)),
+		))
+		if !res.Refused() {
+			t.Fatalf("%q was not refused:\n%s", cmd, res.Output)
+		}
+		has(t, res.Output, "could not check")
 	}
 }
