@@ -105,19 +105,60 @@ func TestT058_16_DashCAmendOfUnguardedFileIsAllowed(t *testing.T) {
 	}
 }
 
-// T058_17: a folder that cannot be told (a cd to a variable) is a "could not check" that does not
-// demand a citation: it says to run it as `git -C <literal dir> commit` first.
-func TestT058_17_UnknownFolderAsksForALiteralDirFirst(t *testing.T) {
+// T058_17: a folder that cannot be told (a cd to a variable) is allowed with a one-line note: the
+// file-guards check the citation at Stop and in CI.
+func TestT058_17_UnknownFolderIsAllowedWithANote(t *testing.T) {
 	e, proj := project(t)
 	res := e.Run(proj, "s-058-17", prompt, Turns("done",
 		stage("a", "src/x.go", "package x"),
 		Bash("c", "d=.; cd $d && git commit -q -m 'add x'"),
 	))
-	if !res.Refused() {
-		t.Fatalf("a commit in an unknowable folder was not refused:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("a commit in an unknowable folder was refused:\n%s", res.Output)
 	}
-	has(t, res.Output, "git -C <literal dir> commit")
-	has(t, res.Output, "may not need a citation")
+}
+
+// T058_20: a throwaway repository created and committed in by the same command (its folder does not
+// exist at check time) is allowed.
+func TestT058_20_FolderCreatedByTheCommandIsAllowed(t *testing.T) {
+	e, proj := project(t)
+	probe := filepath.Join(t.TempDir(), "probe", "repo")
+	res := e.Run(proj, "s-058-20", prompt, Turns("done",
+		Bash("c", "mkdir -p "+probe+" && git -C "+probe+" init -q && git -C "+probe+" -c commit.gpgsign=false -c user.email=a@b -c user.name=a commit -q --allow-empty -m init"),
+	))
+	if res.Refused() {
+		t.Fatalf("a commit in a folder the command creates was refused:\n%s", res.Output)
+	}
+}
+
+// T058_21: an existing repository with no `require: citation` rules is allowed, even when the hook's
+// own project has one.
+func TestT058_21_RuleLessRepositoryIsAllowed(t *testing.T) {
+	e, proj := project(t)
+	bare := e.Project()
+	e.GitInit(bare)
+	e.WriteFile(bare, "docs/seed.md", "seed\n")
+	e.CommitAll(bare, "plain")
+	res := e.Run(proj, "s-058-21", prompt, Turns("done",
+		Bash("a", stageIn("a", bare, "docs/a.md", "a")),
+		Bash("c", "git -C "+bare+" commit -q -m 'add a'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a commit in a rule-less repository was refused:\n%s", res.Output)
+	}
+}
+
+// T058_22: a repository whose rules require a citation still needs one (nothing relaxed there).
+func TestT058_22_RuledRepositoryStillRefused(t *testing.T) {
+	e, proj := project(t)
+	oth := other(t, e)
+	res := e.Run(proj, "s-058-22", prompt, Turns("done",
+		Bash("a", stageIn("a", oth, "docs/a.md", "a")),
+		Bash("c", "git -C "+oth+" commit -q -m 'add a'"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a commit in a ruled repository was not refused:\n%s", res.Output)
+	}
 }
 
 // T058_18: `git -C link/..` with link -> <other>/docs/sub is the parent of the symlink's TARGET, the
