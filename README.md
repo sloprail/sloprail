@@ -36,6 +36,17 @@ curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh |
 
 (or `go install ./services/...` from a checkout).
 
+## Harness hooks vs sloprail
+
+| | Hooks, `CLAUDE.md`, skills, AI reviewers | sloprail |
+|---|---|---|
+| **When rules appear** | **after** a mistake, if you add them | **first**: the agent sets them up before any change that will repeat, and they stay |
+| **The rule** | **text** the model reads, or a hook script you write | a check that **verifies** the work, run by code |
+| **Shell changes** | the hook sees the command, not which **files** it changed | checks **every file** the change touched |
+| **What gets judged** | **one** tool call at a time | **sliced** the way each rule needs: one file, a module, or the whole commit |
+| **Push and merge** | blocked only if your hook **pattern** matches | blocked until the checks **pass** |
+| **Review** | an AI reviewer re-reads it every time; what it checked is **opaque** | every verdict **saved** with its rule and reason, reused until the code changes |
+
 ## How it works
 
 <img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
@@ -58,17 +69,6 @@ in `.sloprail/config.yaml`.
 
 Full docs, including how to write a guardrail:
 [sloprail.com/docs](https://sloprail.com/docs).
-
-## Harness hooks vs sloprail
-
-| | Hooks, `CLAUDE.md`, skills, AI reviewers | sloprail |
-|---|---|---|
-| **When rules appear** | **after** a mistake, if you add them | **first**: the agent sets them up before any change that will repeat, and they stay |
-| **The rule** | **text** the model reads, or a hook script you write | a check that **verifies** the work, run by code |
-| **Shell changes** | the hook sees the command, not which **files** it changed | checks **every file** the change touched |
-| **What gets judged** | **one** tool call at a time | **sliced** the way each rule needs: one file, a module, or the whole commit |
-| **Push and merge** | blocked only if your hook **pattern** matches | blocked until the checks **pass** |
-| **Review** | an AI reviewer re-reads it every time; what it checked is **opaque** | every verdict **saved** with its rule and reason, reused until the code changes |
 
 ## You've seen these happen
 
