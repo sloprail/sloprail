@@ -147,7 +147,7 @@ type observedBranch struct {
 // The folder's first observation takes the baseline: every branch stands where it stands, except
 // the registered branch, which started at the folder's BaseRef. Any git or store error is
 // returned: a tip that could not be observed must not be read as "did not move".
-func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string) ([]observedBranch, error) {
+func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder, head, headSHA string, siblings ...string) ([]observedBranch, error) {
 	out, err := exec.Command("git", "-C", folder, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").Output()
 	if err != nil {
 		return nil, fmt.Errorf("list branches of %s: %w", folder, err)
@@ -178,6 +178,11 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 			branches[i].moved = true // a branch the session has not seen before
 		case b.name == head && f.BaseRef != "" && f.BaseRef != sessionstate.FolderBaseUnborn:
 			branches[i].moved = f.BaseRef != b.sha // the registered branch started at BaseRef
+		case f.Role == sessionstate.FolderSubagentWorktree && b.name != head && b.name != detachedObserved:
+			// A sub-agent's worktree met late shares the repository's branches. One that no other
+			// folder of the session ever recorded, and that has commits the default lacks, is the
+			// sub-agent's own (it made it after the session began).
+			branches[i].moved = !recordedElsewhere(reg, b.name, siblings) && ownCommits(folder, b.sha, f.BaseRef)
 		}
 		if !seen || prev != b.sha {
 			if err := reg.SetMeta(key, b.sha); err != nil {
@@ -191,6 +196,30 @@ func observeFolder(reg sessionstate.Store, folder string, f sessionstate.Folder,
 		}
 	}
 	return branches, nil
+}
+
+// recordedElsewhere reports whether another folder of the session already recorded the branch.
+func recordedElsewhere(reg sessionstate.Store, branch string, folders []string) bool {
+	for _, o := range folders {
+		if _, ok, err := reg.Meta(observedTipPrefix + branch + ":" + o); err != nil || ok {
+			return true // unreadable: do not over-track
+		}
+	}
+	return false
+}
+
+// ownCommits reports whether sha has commits that neither the remote default branch nor the
+// folder's start hold. Commit dates are never consulted: the agent controls them.
+func ownCommits(folder, sha, startedAt string) bool {
+	args := []string{"-C", folder, "rev-list", "-n", "1", sha}
+	if tip, ok := gitrepo.RemoteDefaultTip(folder); ok {
+		args = append(args, "^"+tip)
+	}
+	if startedAt != "" && startedAt != sessionstate.FolderBaseUnborn {
+		args = append(args, "^"+startedAt)
+	}
+	out, err := exec.Command("git", args...).Output()
+	return err != nil || strings.TrimSpace(string(out)) != "" // unreadable: over-track
 }
 
 // ahead reports whether sha carries commits the default branch does not (the folder's
@@ -254,7 +283,13 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 		if !ok {
 			continue // no commit yet: nothing to track
 		}
-		observed, err := observeFolder(reg, folder, f, head, sha)
+		var siblings []string
+		for _, o := range folders {
+			if c := filepath.Clean(o.Path); c != folder {
+				siblings = append(siblings, c)
+			}
+		}
+		observed, err := observeFolder(reg, folder, f, head, sha, siblings...)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -1201,7 +1236,7 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 	}
 	lateFolder := map[string]bool{} // a folder that is not the session's own root: where first sight over-tracked
 	for _, f := range folders {
-		if f.Role != sessionstate.FolderRoot {
+		if f.Role != sessionstate.FolderRoot && f.Role != sessionstate.FolderSubagentWorktree {
 			lateFolder[filepath.Clean(f.Path)] = true
 		}
 	}
