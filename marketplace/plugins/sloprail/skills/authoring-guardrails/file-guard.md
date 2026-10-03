@@ -183,11 +183,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }      # the merge base is needed
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
-      # Go, not install.sh: no release tarball carries sr-checks yet. Pin a commit or main.
+      # install.sh from a release tag; the release tarball carries sr-checks. Pin the tag.
       - run: |
-          GOBIN="$HOME/.local/bin" go install github.com/sloprail/sloprail/services/sr-checks@main
+          curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/v0.3.0/install.sh | SLOPRAIL_INSTALL_TAG=v0.3.0 sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: sr-checks verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
 ```

@@ -1,6 +1,10 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,15 +30,29 @@ func TestT059_02_FileGuardsWithoutMarkerRefuseWithSnippets(t *testing.T) {
 		"sr-checks verify", "push to the default branch", "github.event.before", "CI_COMMIT_BEFORE_SHA", "Build.SourceVersion", "merge-base",
 		"github.event.pull_request.head.sha", "CI_MERGE_REQUEST_DIFF_BASE_SHA", "System.PullRequest.SourceCommitId",
 		"sloprail/gate/ci-verify-required",
-		"actions/setup-go@v5", "golang:1.25", "GoTool@0",
-		"go install github.com/sloprail/sloprail/services/sr-checks@",
+		"/install.sh | SLOPRAIL_INSTALL_TAG=",
+		`>> "$GITHUB_PATH"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the refusal lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "install.sh | sh") {
-		t.Fatalf("the snippets must not install from a release (none carries sr-checks):\n%s", got)
+	for _, bad := range []string{"actions/setup-go", "golang:1.25", "GoTool@0", "go install", "no sloprail release tarball"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("the snippets must install from the release, not with Go (%q):\n%s", bad, got)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(srcRoot(), "marketplace/plugins/sloprail/.claude-plugin/plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pj struct{ Version string }
+	if err := json.Unmarshal(raw, &pj); err != nil || pj.Version == "" {
+		t.Fatalf("plugin.json version unreadable: %v", err)
+	}
+	tag := "v" + pj.Version
+	if n := strings.Count(got, "/sloprail/"+tag+"/install.sh | SLOPRAIL_INSTALL_TAG="+tag+" sh"); n != 3 {
+		t.Fatalf("want 3 install lines pinned to the plugin version %s, got %d:\n%s", tag, n, got)
 	}
 }
 
@@ -144,4 +162,10 @@ func TestT059_10_MarkerAlwaysPasses(t *testing.T) {
 			t.Fatalf("Stop %d with the marker was refused:\n%s", i, got)
 		}
 	}
+}
+
+// srcRoot is the repository root, found from this test file own path.
+func srcRoot() string {
+	_, f, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(f), "..", "..", "..", "..")
 }
