@@ -133,7 +133,7 @@ func TestCitationPart_ARebuiltRangeWithTheSameContentHits(t *testing.T) {
 // The key is over blob ids: the same blob at the same path is the same key without any bytes read.
 func TestFilesPart_FromBlobIDsNotBytes(t *testing.T) {
 	mk := func(blob, content string) Payload {
-		return Payload{Changeset: Changeset{Files: []File{{Path: "a.md", Status: "M", NewBlob: blob, NewContent: content}}}}
+		return Payload{Subject: Subject{Files: []string{"a.md"}}, Changeset: Changeset{Files: []File{{Path: "a.md", Status: "M", NewBlob: blob, NewContent: content}}}}
 	}
 	assert.Equal(t, FilesPart(mk("b1", "")), FilesPart(mk("b1", "x")))
 	assert.NotEqual(t, FilesPart(mk("b1", "")), FilesPart(mk("b2", "")))
