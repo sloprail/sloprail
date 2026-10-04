@@ -230,6 +230,9 @@ func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir strin
 			skip(item, "absent: "+src)
 			return
 		}
+		if r, rerr := filepath.EvalSymlinks(src); rerr == nil {
+			src = r // WalkDir does not descend a symlinked root
+		}
 		skipped, err := copyTreeLenient(src, filepath.Join(sdir, dst))
 		if err != nil {
 			skip(item, err.Error())
@@ -380,13 +383,9 @@ func toolVersions() map[string]string {
 // $CLAUDE_CODE_TMPDIR (Claude Code's own override), then the platform's temp
 // dirs. Symlinked roots (macOS /tmp -> /private/tmp) are resolved.
 func findTempDir(projName, id, transcriptPath string) (dir, how string) {
-	if data, err := os.ReadFile(transcriptPath); err == nil {
-		re := regexp.MustCompile(`(/[^\s"'\\]*/claude-[0-9]+/[A-Za-z0-9-]+/` + regexp.QuoteMeta(id) + `)/`)
-		for _, m := range re.FindAllSubmatch(data, -1) {
-			if isDir(string(m[1])) {
-				return string(m[1]), "named in the transcript"
-			}
-		}
+	re := regexp.MustCompile(`(/[^\s"'\\]*/claude-[0-9]+/[A-Za-z0-9-]+/` + regexp.QuoteMeta(id) + `)/`)
+	if p := scanForTempDir(transcriptPath, re); p != "" {
+		return p, "named in the transcript"
 	}
 	var bases []string
 	if d := os.Getenv("CLAUDE_CODE_TMPDIR"); d != "" {
@@ -403,4 +402,34 @@ func findTempDir(projName, id, transcriptPath string) (dir, how string) {
 		}
 	}
 	return "", ""
+}
+
+// scanForTempDir streams the transcript (these run to hundreds of MB; reading
+// one whole would double the process's memory) in chunks that overlap enough
+// to keep a path split across a chunk boundary, and returns the first match
+// that is a directory.
+func scanForTempDir(path string, re *regexp.Regexp) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	const chunk, overlap = 4 << 20, 4096
+	buf := make([]byte, 0, chunk+overlap)
+	tmp := make([]byte, chunk)
+	for {
+		n, rerr := f.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		for _, m := range re.FindAllSubmatch(buf, -1) {
+			if isDir(string(m[1])) {
+				return string(m[1])
+			}
+		}
+		if len(buf) > overlap {
+			buf = append(buf[:0], buf[len(buf)-overlap:]...)
+		}
+		if rerr != nil {
+			return ""
+		}
+	}
 }

@@ -168,6 +168,8 @@ func commitDir(root, runDir, msg string) error {
 			"-c", "user.email=sr-eval@localhost",
 		)
 	}
+	// The pathspec after "--" commits only this entry's directory, even if
+	// something else in the archive repo was staged by hand.
 	args = append(args, "commit", "--quiet", "-m", msg)
 	if !hasGitIdentity(root) {
 		// Only the placeholder identity's commits are forced unsigned — it
@@ -178,6 +180,7 @@ func commitDir(root, runDir, msg string) error {
 		args = append(args, "--no-gpg-sign")
 	}
 
+	args = append(args, "--", relDir)
 	commit := exec.Command("git", args...)
 	out, err := commit.CombinedOutput()
 	if err != nil {
@@ -199,6 +202,10 @@ func commitDir(root, runDir, msg string) error {
 // symlink to a directory, a file that vanished or is unreadable — is skipped
 // and reported, one string per entry, instead of failing the whole copy. The
 // strict copyTree stays for sources a caller owns, where a failure is a bug.
+// maxLenientFileSize bounds one file of a foreign tree (a stray core dump or
+// build artefact in a scratchpad must not bloat the git archive).
+const maxLenientFileSize = 256 << 20
+
 func copyTreeLenient(src, dst string) (skipped []string, err error) {
 	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, werr error) error {
 		rel, _ := filepath.Rel(src, path)
@@ -211,6 +218,12 @@ func copyTreeLenient(src, dst string) (skipped []string, err error) {
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
+			if d.Name() == ".git" && rel != "." {
+				// A nested repository would be staged as an empty gitlink,
+				// losing its content while looking archived.
+				skipped = append(skipped, rel+": nested git directory not copied")
+				return fs.SkipDir
+			}
 			return os.MkdirAll(target, 0o755)
 		}
 		info, serr := os.Stat(path)
@@ -220,6 +233,10 @@ func copyTreeLenient(src, dst string) (skipped []string, err error) {
 		}
 		if !info.Mode().IsRegular() {
 			skipped = append(skipped, fmt.Sprintf("%s: not a regular file (%s)", rel, info.Mode().Type()))
+			return nil
+		}
+		if info.Size() > maxLenientFileSize {
+			skipped = append(skipped, fmt.Sprintf("%s: %d bytes exceeds the %d byte limit", rel, info.Size(), int64(maxLenientFileSize)))
 			return nil
 		}
 		if cerr := copyFile(path, target); cerr != nil {
