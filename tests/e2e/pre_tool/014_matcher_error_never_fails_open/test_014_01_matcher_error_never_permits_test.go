@@ -50,6 +50,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -284,10 +286,39 @@ func TestT014_06_ACheckTheOSWillNotLaunchRefuses(t *testing.T) {
 	if !got.Saw("could not be run") {
 		t.Errorf("the refusal does not say the check could not be run:\n%s", got.Output)
 	}
-	// The OS's own message travels with it. Without it an author sees a refusal
-	// naming a command that looks perfectly fine, and has nothing to go on.
-	if !got.Saw("invalid argument") {
-		t.Errorf("the refusal does not carry what the OS said:\n%s", got.Output)
+	// A script string is a path plus plain arguments, run without a shell: the NUL is shell-level
+	// garbage, refused before any exec, and the refusal says what the string may be.
+	if !got.Saw("plain arguments") {
+		t.Errorf("the refusal does not say what a declared script may be:\n%s", got.Output)
+	}
+}
+
+// T014_06b: a script the OS will not START (its folder is unsearchable, so the file is not
+// stat-able but not absent either) refuses, carrying the OS's own error.
+func TestT014_06b_AScriptTheOSWillNotStartRefuses(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.Gate(proj, "unstartable", "on:\n  - event: PreFileWrite\nchecks:\n  - script: ./sub/h.sh\n", nil)
+	sub := filepath.Join(proj, ".sloprail", "gate", "unstartable", "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "h.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	got := e.Run(proj, "s-014-06b", "write a note", Turns("done",
+		Write("w1", "any/notes.md", "hello"),
+	))
+	if got.Permitted() {
+		t.Fatalf("a script the OS would not start was read as approval:\n%s", got.Output)
+	}
+	if !got.Saw("unstartable") || !got.Saw("could not be run") || !got.Saw("permission denied") {
+		t.Errorf("the refusal does not name the gate, say it could not be run and carry what the OS said:\n%s", got.Output)
 	}
 }
 

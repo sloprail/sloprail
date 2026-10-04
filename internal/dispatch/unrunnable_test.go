@@ -86,3 +86,27 @@ func TestUnrunnableScript_RefusesInEveryRole(t *testing.T) {
 		})
 	}
 }
+
+// A declared script is exec'd directly (a path plus plain arguments), never through `sh -c`: a
+// chain, a pipe or a quoted path is refused before anything runs, and plain arguments arrive.
+func TestRunScriptExec_NoShellSyntax(t *testing.T) {
+	dir := t.TempDir()
+	mark := filepath.Join(dir, "ran")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.sh"), []byte("#!/bin/sh\ncat >/dev/null\necho \"$1 $2\" > "+mark+"\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.sh"), []byte("#!/bin/sh\ntouch "+mark+".b\n"), 0o755))
+	for _, s := range []string{"./a.sh && ./b.sh", "./a.sh | cat", `"./a.sh"`, "./a.sh; ./b.sh", "./a.sh $(./b.sh)"} {
+		res, err := runScriptExec(scriptCall{Dir: dir, Script: s})
+		require.NoError(t, err)
+		assert.False(t, res.Passed, s)
+		assert.True(t, res.Unrunnable, s)
+		assert.Contains(t, res.Reason, "plain arguments", s)
+	}
+	assert.NoFileExists(t, mark, "a refused script string must not run any part of itself")
+	assert.NoFileExists(t, mark+".b")
+
+	res, err := runScriptExec(scriptCall{Dir: dir, Script: "./a.sh one two"})
+	require.NoError(t, err)
+	assert.True(t, res.Passed, res.Reason)
+	got, _ := os.ReadFile(mark)
+	assert.Equal(t, "one two\n", string(got))
+}
