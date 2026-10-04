@@ -7,11 +7,15 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T003_81: a branch's range belongs to the folder where it is (or was) checked out or committed. A
-// sibling worktree of the same repository sees the branch in the shared ref namespace, but it
-// never answers for it: not for a branch the root committed on and left checked out nowhere, nor for
-// one now checked out in another worktree. (An untrack is undone only by the range being re-tracked,
-// so a range that is never attached to the sibling cannot come back there.)
+// T003_81: a branch's range belongs to ONE home folder of the repository: the folder that has it
+// checked out, else the one already holding its row (the root first), else the root. A sibling
+// worktree sees every branch in the shared ref namespace, but never answers for one it is not the
+// home of. #198 kept out only a branch checked out in ANOTHER worktree; a branch checked out
+// nowhere, or one made by a sibling, was still attached to every folder (one real session: 4,082
+// rows over 111 folders). Boundary cases covered here: a branch moved in one worktree while N
+// siblings can see it, a branch checked out nowhere, a sub-agent worktree (its own branch and one it
+// left), a branch handed to another worktree, an untrack followed by a tip move. Nothing the session
+// worked on is dropped: every branch stays tracked in SOME folder.
 func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-81"
@@ -19,6 +23,8 @@ func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 	third := filepath.Join(t.TempDir(), "third-tree")
 
 	sub := harness.SubagentScript(t, Turns("sub done",
+		Bash("b0", "git switch -q -c sub-left"),
+		harness.CommitFile("c0", "docs/e.md", "sub words", "sub adds e"),
 		Bash("b1", "git switch -q -c sub-own"),
 		harness.CommitFile("c1", "docs/a.md", "sub words", "sub adds a"),
 	))
@@ -46,14 +52,24 @@ func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 			t.Fatalf("%s, committed in the root's checkout, is attached to the sub-agent's sibling worktree: %+v", head, rs)
 		}
 	}
+	// Nothing dropped: a sub-agent's branch it left (checked out nowhere) is still answered for.
+	if !trackedIn(rs, wt, "sub-left") && !trackedIn(rs, proj, "sub-left") {
+		t.Fatalf("the sub-agent's branch sub-left, which it left, is tracked in no folder: %+v", rs)
+	}
 	if !trackedIn(rs, wt, "sub-own") {
 		t.Fatalf("premise: the sub-agent's own branch is not tracked in its folder: %+v", rs)
 	}
-	if trackedIn(rs, proj, "sub-own") {
-		t.Fatalf("the sub-agent's branch is attached to the root's checkout: %+v", rs)
+	for _, head := range []string{"sub-own", "sub-left"} {
+		if trackedIn(rs, proj, head) && trackedIn(rs, wt, head) {
+			t.Fatalf("%s is answered for in both the root's checkout and the sub-agent's worktree: %+v", head, rs)
+		}
 	}
 
-	// A branch that moves later stays with its home: the sub-agent's worktree does not pick it up.
+	// An untrack, then the tip moves: the branch is tracked again by itself, by its home, and
+	// the sibling worktree still does not pick it up.
+	e.Run(proj, sess, "root gives up", Turns("root done",
+		Bash("u1", "sr-session refs untrack --head root-left --reason 'the user said root-left is dead, do not keep it'"),
+	))
 	e.Run(proj, sess, "root more", Turns("root done",
 		Bash("m1", "git switch -q root-left"),
 		harness.CommitFile("m2", "docs/d.md", "more words", "root adds d"),
@@ -62,6 +78,9 @@ func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 	e.StopNow(proj, sess, false)
 	rs = sessionRanges(t, e, proj, sess)
 	if trackedIn(rs, wt, "root-left") {
-		t.Fatalf("root-left moved again and was re-attached to the sibling worktree: %+v", rs)
+		t.Fatalf("root-left moved after an untrack and was attached to the sibling worktree: %+v", rs)
+	}
+	if !trackedIn(rs, proj, "root-left") {
+		t.Fatalf("root-left moved after an untrack and is tracked again nowhere: %+v", rs)
 	}
 }

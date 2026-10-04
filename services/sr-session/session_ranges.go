@@ -425,6 +425,9 @@ func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOn
 	if err := pruneForeignAuto(reg, rs.ID); err != nil {
 		return err
 	}
+	if err := pruneSiblingAuto(reg, rs.ID); err != nil {
+		return err
+	}
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
 		return err
@@ -509,40 +512,57 @@ func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOn
 
 // branchHomes names, per repository, the one folder of the session that answers for a branch the
 // session moved. A branch lives in the repository's shared ref namespace, so every worktree of it
-// sees every branch; attaching a moved branch to each of them would make a sibling that never
-// stood on it (a stale sub-agent worktree whose rules no longer load) answer for it, and would
-// re-attach it there after an untrack. The home is, in order: the session folder that has the
-// branch checked out; the folder already holding a row for it (the root's before any other);
-// the root folder, else the first folder that claims it.
+// sees every branch, and observation (which marks a branch "moved" for each folder that never saw
+// it) cannot tell whose work it is: #198 only kept out a branch checked out in ANOTHER worktree
+// (foreign), so a branch checked out nowhere, or created by one folder, was attached to every
+// sibling, stale worktrees whose rules no longer load included. The home is, in order: the session
+// folder that has the branch checked out; the folder already holding a row for it (the root's
+// before any other); the root folder, else the first folder that claims it. The foreign test stays
+// as the coverage-aware exemption the root needs (see isHome); this decides who MAY attach.
 type branchHomes struct {
 	views   *repoViews
 	folders []sessionstate.Folder
 	rows    map[string][]string // repo\x00branch -> the folders holding a row, in row order
+	held    map[string]bool     // folder\x00branch -> the folder holds a TRACKED row for it
 	home    map[string]string   // repo\x00branch -> decided home
 }
 
 func newBranchHomes(views *repoViews, folders []sessionstate.Folder, ranges []sessionstate.TrackedRange) *branchHomes {
-	h := &branchHomes{views: views, folders: folders, rows: map[string][]string{}, home: map[string]string{}}
+	h := &branchHomes{views: views, folders: folders, rows: map[string][]string{}, held: map[string]bool{}, home: map[string]string{}}
 	for _, r := range ranges {
 		k := repoOf(r.Folder) + "\x00" + r.Head
 		h.rows[k] = append(h.rows[k], filepath.Clean(r.Folder))
+		if r.Tracked() {
+			h.held[filepath.Clean(r.Folder)+"\x00"+r.Head] = true
+		}
 	}
 	return h
 }
 
-// isHome reports whether folder answers for branch. The session's root folder always may: it is the
-// parent, whose own commits on a branch a sub-agent later checked out must not be lost to the
-// sub-agent's narrower range (observeFolder already skips the branch where the other worktree's
-// range covers it).
-func (h *branchHomes) isHome(folder, branch string) bool {
+// isRoot reports whether folder is the session's root folder.
+func (h *branchHomes) isRoot(folder string) bool {
 	for _, f := range h.folders {
 		if f.Role == sessionstate.FolderRoot && filepath.Clean(f.Path) == folder {
 			return true
 		}
 	}
+	return false
+}
+
+// isHome reports whether folder may attach branch. Always: the session's root folder (the parent,
+// whose own commits on a branch a sub-agent later checked out must not be lost to the sub-agent's
+// narrower range; observeFolder already skips the branch where the other worktree's range covers
+// it), and a folder that already holds a TRACKED row for it (its tip keeps being refreshed). An
+// untracked row does not: an untrack of a sibling's row sticks because the sibling is never home.
+func (h *branchHomes) isHome(folder, branch string) bool {
+	return h.isRoot(folder) || h.held[folder+"\x00"+branch] || h.homeOf(folder, branch) == folder
+}
+
+// homeOf is the folder that answers for branch among the session's folders of folder's repository.
+func (h *branchHomes) homeOf(folder, branch string) string {
 	k := repoOf(folder) + "\x00" + branch
 	if home, ok := h.home[k]; ok {
-		return home == folder
+		return home
 	}
 	home := ""
 	session := map[string]string{} // real path -> the session folder spelled so
@@ -559,10 +579,8 @@ func (h *branchHomes) isHome(folder, branch string) bool {
 			if home == "" {
 				home = c
 			}
-			for _, f := range h.folders {
-				if f.Role == sessionstate.FolderRoot && filepath.Clean(f.Path) == c {
-					home = c
-				}
+			if h.isRoot(c) {
+				home = c
 			}
 		}
 	}
@@ -575,7 +593,7 @@ func (h *branchHomes) isHome(folder, branch string) bool {
 		}
 	}
 	h.home[k] = home
-	return home == folder
+	return home
 }
 
 // trackSessionBranches tracks every local branch of folder whose observed tip moved during the
@@ -2190,6 +2208,69 @@ func pruneForeignAuto(reg sessionstate.Store, sessionID string) error {
 			continue
 		}
 		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, foreignPrunedReason, r.AgentID, r.HeadSHA); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// siblingPrunedReason is why a row a sibling worktree made for a branch another folder answers for is dropped.
+const siblingPrunedReason = "pruned: the branch is answered for by its home folder"
+
+// pruneSiblingAuto untracks, once, the rows the engine made by itself in a worktree that is not the
+// branch's home (see branchHomes) while the home's tracked row already verifies everything the
+// row does: the home row's base is the row's base or older, and its tip holds the row's tip.
+// Observation attached every moved branch to every worktree of the repository (one real session:
+// 4,082 rows over 111 folders). Nothing that verifies something is dropped: the root's rows,
+// explicit rows, commit heads, rows of vanished folders, and rows whose home holds no covering
+// tracked row (an untracked or stale one) are kept.
+func pruneSiblingAuto(reg sessionstate.Store, sessionID string) error {
+	ranges, err := reg.Ranges(sessionID)
+	if err != nil {
+		return err
+	}
+	folders, err := reg.Folders(sessionID)
+	if err != nil {
+		return err
+	}
+	homes := newBranchHomes(newRepoViews(), folders, ranges)
+	tracked := map[string]sessionstate.TrackedRange{} // folder\x00branch -> its tracked row
+	for _, r := range ranges {
+		if r.Tracked() {
+			tracked[filepath.Clean(r.Folder)+"\x00"+r.Head] = r
+		}
+	}
+	cover := newCoverMemo()
+	bases := map[string]string{} // repo\x00branch\x00tip\x00base -> effectiveBase, one git call set per distinct row
+	baseOf := func(r sessionstate.TrackedRange) string {
+		k := commonOf(r.Folder) + "\x00" + r.Head + "\x00" + r.HeadSHA + "\x00" + r.Base + "\x00" + r.AddedBy
+		if b, ok := bases[k]; ok {
+			return b
+		}
+		b := effectiveBase(r, r.Head)
+		bases[k] = b
+		return b
+	}
+	for _, r := range ranges {
+		folder := filepath.Clean(r.Folder)
+		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto || homes.isRoot(folder) {
+			continue
+		}
+		home := homes.homeOf(folder, r.Head)
+		keep, ok := tracked[home+"\x00"+r.Head]
+		if home == folder || !ok || repoOf(home) != repoOf(folder) {
+			continue
+		}
+		if st, err := os.Stat(r.Folder); err != nil || !st.IsDir() || cover.isCommitHead(r.Folder, r.Head) {
+			continue
+		}
+		if in, err := cover.isAncestor(folder, baseOf(keep), baseOf(r)); err != nil || !in {
+			continue
+		}
+		if in, err := cover.isAncestor(folder, r.HeadSHA, keep.HeadSHA); err != nil || !in {
+			continue
+		}
+		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, siblingPrunedReason, r.AgentID, r.HeadSHA); err != nil {
 			return err
 		}
 	}
