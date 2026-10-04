@@ -468,7 +468,7 @@ func sorted(s ...string) []string {
 	return out
 }
 
-func mustWrite(t*testing.T, path, content string) {
+func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
