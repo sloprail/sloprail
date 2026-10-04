@@ -182,6 +182,7 @@ func (c *cwd) applyAssigns(cfg *expand.Config, assigns []*syntax.Assign, declare
 var varWriters = map[string]bool{
 	"read": true, "mapfile": true, "readarray": true, "getopts": true, "unset": true, "let": true,
 	"source": true, ".": true, "command": true, "builtin": true, "exec": true, "wait": true, "trap": true,
+	"export": true, "declare": true, "typeset": true, "local": true, "readonly": true,
 }
 
 // startCwd is the effective directory nothing has yet moved out of: the empty,

@@ -15,7 +15,7 @@ git_split() {
   local args=() a gap=$'\001gap'
   # NUL-delimited: an argument may hold a newline (a multi-line -m), which a line read would split.
   # A lost word is a marker token at its position.
-  while IFS= read -r -d '' a; do args+=("$a"); done < <(printf '%s' "$1" | jq -j '(.argv // []) as $a | (.gaps // []) as $g | [range(1; ($a | length) + 1) as $i | (if ($g | index($i)) != null then "\u0001gap" else empty end), ($a[$i] // empty)] | .[] | ., "\u0000"')
+  while IFS= read -r -d '' a; do args+=("$a"); done < <(printf '%s' "$1" | jq -j '(.argv // []) as $a | (.gaps // []) as $g | [(if ($g | index(0)) != null then "\u0001gap" else empty end), range(1;($a | length) + 1) as $i | (if ($g | index($i)) != null then "\u0001gap" else empty end), ($a[$i] // empty)] | .[] | ., "\u0000"')
   local i=0 n=${#args[@]}
   while [ "$i" -lt "$n" ]; do
     a="${args[$i]}"

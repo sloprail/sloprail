@@ -130,6 +130,27 @@ func TestVars_AnInterpreterPayloadFromAKnownVariableIsUnwrapped(t *testing.T) {
 	assert.Empty(t, inv.Gaps)
 }
 
+// A word lost between a wrapper and its program may be another wrapper (`$X` = `env -C /y`), or a
+// later -C: the program's folder is unknown, whatever a literal option said before it.
+func TestVars_ALostWordAfterAWrapperMakesTheFolderUnknown(t *testing.T) {
+	for _, line := range []string{
+		`env -C /x $A git push`,
+		`sudo -D /x $A git push`,
+		`nohup $X git push`,
+		`command $X git push`,
+	} {
+		assert.Equal(t, "", cwdOf(t, line, "git"), line)
+	}
+	assert.Equal(t, "/x", cwdOf(t, `env $A -C /x git push`, "git"))
+}
+
+func TestVars_AQuotedDeclarationBuiltinStillAssigns(t *testing.T) {
+	for _, line := range []string{`D=/x; \export D=/y; git -C $D push`, `D=/x; 'export' D=/y; git -C $D push`, `D=/x; "declare" D=/y; git -C $D push`} {
+		inv := firstInv(t, line, "git")
+		assert.Equal(t, []string{"git", "-C", "push"}, inv.Argv, line)
+	}
+}
+
 func TestVars_AWrapperKeepsItsProgramWhenItsValueIsLost(t *testing.T) {
 	inv := firstInv(t, `sudo -u $U git -C /x push`, "git")
 	assert.Equal(t, []string{"git", "-C", "/x", "push"}, inv.Argv)
