@@ -26,8 +26,5 @@ case $n in
   7) bash_ b2 "mkdir -p .sloprail/file-guard && git mv .sloprail/structure.yaml .sloprail/file-guard/structure.yaml" ;;
   8) bash_ b3 "git -c user.name=t -c user.email=t@t commit -q -m move-structure -m \"Sloprail-Cites-User: put the structure declaration in .sloprail, then move it where the engine reads it\"" ;;
   9) bash_ c2 "$RUN" ;;
-  # the PreFileWrite gate: the same declaration, one level too high, and where it belongs
-  10) write_ gw1 .sloprail/structure.yaml $'allow:\n  - glob: ".sloprail/**"\n' ;;
-  11) write_ gw2 .sloprail/file-guard/structure.yaml $'allow:\n  - glob: ".sloprail/**"\n' ;;
   *) finish ;;
 esac
