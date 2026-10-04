@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Hands the judge the whole committed case folder (every file, not only the changed ones) and the
-# folders of the rules the case covers, both read from SR_TREE. What this reads beyond the subject's
-# files is in the subject's fingerprint (subjects.sh), so a changed rule judges the case again.
+# Hands the judge the whole committed case folder (every file, not only the changed ones) and the files of
+# the ONE rule that owns it (the folder the case sits in; its own cases excluded), both read from SR_TREE.
+# What this reads beyond the subject's files is in the subject's fingerprint (subjects.sh), so a changed
+# owner rule judges its cases again.
 set -uo pipefail
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -35,13 +36,18 @@ dir_json() {
 }
 
 case_files="$(dir_json "$SR_TREE/$case_dir" "")"
-root="$(root_abs "$case_dir")"
-rules='[]'
-while IFS= read -r r; do
-  [ -n "$r" ] || continue
-  rf="$(dir_json "$root/.sloprail/$r" "")"
-  rules="$(printf '%s' "$rules" | jq -c --arg n "$r" --argjson f "$rf" '. + [{name: $n, files: $f}]')"
-done < <(covered_rules "$case_dir")
+case_split "$case_dir" || {
+  echo "rule-tests-rigorous prepare: $case_dir is not a case folder of a rule. Refusing." >&2
+  exit 1
+}
+owner_name="$(owner_rule "$CASE_ROOT" "$CASE_RULE")"
+kind="$(owner_kind "$CASE_NATURE")"
+rule_files='[]'
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  rule_files="$(printf '%s' "$rule_files" | jq -c --arg p "${f#"$(root_abs "$CASE_ROOT")"/.sloprail/}" --rawfile c "$f" '. + [{path: $p, content: $c}]')"
+done < <(owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE")
 
-jq -n --arg dir "$case_dir" --argjson files "$case_files" --argjson rules "$rules" \
-  '{additionalContext: {case: {dir: $dir, files: $files}, rules: $rules}}'
+jq -n --arg dir "$case_dir" --argjson files "$case_files" --arg name "$owner_name" --arg nature "$CASE_NATURE" \
+  --arg kind "$kind" --argjson rfiles "$rule_files" \
+  '{additionalContext: {case: {dir: $dir, files: $files}, rule: {name: $name, nature: $nature, kind: $kind, files: $rfiles}}}'

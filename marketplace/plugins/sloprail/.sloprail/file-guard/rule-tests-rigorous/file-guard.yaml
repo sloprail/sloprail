@@ -1,26 +1,29 @@
-# rule-tests-rigorous: a sr-test case (one `.sloprail/tests/<case>/` folder) must prove its rule, not
-# decorate it. A test that passes whatever the rule does is the slop this plugin exists to stop, one
+# rule-tests-rigorous: a sr-test case (one case folder in its owning rule's folder) must prove that rule,
+# not decorate it. A test that passes whatever the rule does is the slop this plugin exists to stop, one
 # layer down: it sits in the project looking like coverage and checks nothing. The argument lives in
 # README.md.
 #
-# match: any file of a case folder, at any depth of nesting (a plugin's own `.sloprail/tests/` too).
-# An expression, not a glob, so the root project's `.sloprail/tests/<case>/` matches as well as a
-# nested one; a file straight under `tests/` is no case and subjects.sh skips it.
-match: 'path matches "(^|/)[.]sloprail/tests/[^/]+/."'
+# match: any file of a case folder, at any depth of nesting (a plugin's own `.sloprail/` too):
+#   .sloprail/<gate|file-guard|context>/<rule>/tests/<case>/...
+#   .sloprail/file-guard/structure.tests/<case>/...          (the structure gate's cases)
+# An expression, not a glob, so the root project's `.sloprail/` matches as well as a nested one; a file
+# straight under `tests/` is no case and subjects.sh skips it.
+match: 'path matches "(^|/)[.]sloprail/(((gate|file-guard|context)/[^/]+/tests)|file-guard/structure[.]tests)/[^/]+/."'
 
-# One subject per case folder, each cached on its own. The fingerprint carries what the verdict reads
-# beside the changed files: the whole case folder and the folders of the rules it covers (read from
-# SR_TREE), so editing a covered rule judges the case again.
+# One subject per case folder that still has a test.sh (a deleted case is no subject), each cached on its
+# own. The fingerprint carries what the verdict reads beside the changed files: the whole case folder and
+# the files of the rule that owns it (read from SR_TREE), so editing the owner judges its cases again.
 subjects: ./subjects.sh
 
 checks:
-  # The deterministic floor: shebang, events asserted, reasons asserted, no vacuous assertion, no
-  # fixed-answer mock judge. It reads the committed case from SR_TREE.
+  # The deterministic floor: shebang, an event of the owning rule asserted (its nature's kind, its name),
+  # reasons asserted, no vacuous assertion, no fixed-answer mock judge. It reads the committed case from
+  # SR_TREE.
   - script: ./check-case.sh
 
-  # The reasoning above the floor: does each covered rule have a refusal AND a permit, is the refusal
-  # for the rule's own reason, is recovery shown, does the permit sit at the boundary, do the mocked
-  # judges decide from their input. prepare.sh hands the judge the whole case and the covered rules.
+  # The reasoning above the floor: does the owning rule have a refusal AND a permit in this case, is the
+  # refusal for the rule's own reason, is recovery shown, does the permit sit at the boundary, do the mocked
+  # judges decide from their input. prepare.sh hands the judge the whole case and the owning rule's files.
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md

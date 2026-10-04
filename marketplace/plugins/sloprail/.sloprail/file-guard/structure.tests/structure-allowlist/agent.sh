@@ -11,5 +11,6 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 case $n in
   0) write_ w1 src/app.txt "ok" ;;
   1) write_ w2 docs/notes.txt "stray" ;;
+  2) write_ w3 src/notes.txt "recovered under an allowed path" ;;
   *) finish ;;
 esac

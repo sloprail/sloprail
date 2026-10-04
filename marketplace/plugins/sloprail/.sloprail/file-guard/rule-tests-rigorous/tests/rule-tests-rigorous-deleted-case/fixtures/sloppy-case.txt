@@ -1,0 +1,3 @@
+git init -q .
+RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "write to forbidden/")
+echo "$RESULT" | jq -e '.exit == 0' || true

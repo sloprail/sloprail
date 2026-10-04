@@ -6,8 +6,10 @@ set -euo pipefail
 # reasoning; a follow-up commit that really changes the file and cites the words that ask for it passes.
 git init -q .
 mkdir -p .sloprail/gate/demo
+# the demo gate is incidental here, not under test: rule-tests-pass would ask for a case for it
+printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
 printf 'on:\n  - event: Stop\n  - event: PreFileWrite\n    match: "true"\n' > .sloprail/gate/demo/gate.yaml
-git add .sloprail/gate/demo/gate.yaml
+git add .sloprail/gate/demo/gate.yaml .sloprail/config.yaml
 git -c user.name=t -c user.email=t@t commit -q -m "a gate that already stands"
 export SR_CHECKS_JUDGE_MOCKS='{"sloprail/file-guard/grounded-rule-changes/judge":"'"$SR_TEST_CASE_DIR"'/judge-grounding.sh"}'
 RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "tighten the demo gate to run only on Stop. Also tell me the time.")

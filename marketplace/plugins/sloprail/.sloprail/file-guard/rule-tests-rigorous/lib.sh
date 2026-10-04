@@ -1,61 +1,98 @@
 #!/usr/bin/env bash
-# Shared by subjects.sh, check-case.sh and prepare.sh: where a case lives and which rules it covers.
+# Shared by subjects.sh, check-case.sh and prepare.sh: where a case lives and which rule owns it.
 # Sourced, never run. Everything reads SR_TREE (the committed head), never the working tree.
+#
+# A case lives in its OWNING rule's folder: the owner is the folder, never inferred from the case's code.
+#   <root>/.sloprail/<gate|file-guard|context>/<rule>/tests/<case>/
+#   <root>/.sloprail/file-guard/structure.tests/<case>/        (the structure gate: one file, no folder)
 
-# case_root <case dir, tree-relative> -> the tree-relative dir that holds the `.sloprail` ("" for the repo root)
-case_root() {
-  local r="${1%%.sloprail/tests/*}"
-  printf '%s' "${r%/}"
+# case_split <case dir, tree-relative> -> sets CASE_ROOT (the tree-relative dir that holds the `.sloprail`,
+# "" for the repo root), CASE_NATURE (gate | file-guard | context | structure), CASE_RULE (the rule's folder
+# name; "structure" for the structure gate) and CASE_NAME. Returns 1 for a path that is no case folder.
+case_split() {
+  local d="$1" rest a b c e
+  CASE_ROOT="" CASE_NATURE="" CASE_RULE="" CASE_NAME=""
+  case "$d" in
+    .sloprail/*) rest="${d#.sloprail/}" ;;
+    */.sloprail/*)
+      CASE_ROOT="${d%%/.sloprail/*}"
+      rest="${d#*/.sloprail/}"
+      ;;
+    *) return 1 ;;
+  esac
+  IFS=/ read -r a b c e <<<"$rest"
+  if [ "$a" = file-guard ] && [ "$b" = structure.tests ] && [ -n "$c" ] && [ -z "$e" ]; then
+    CASE_NATURE=structure CASE_RULE=structure CASE_NAME="$c"
+    return 0
+  fi
+  case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac
+  [ -n "$b" ] && [ "$c" = tests ] && [ -n "$e" ] || return 1
+  CASE_NATURE="$a" CASE_RULE="$b" CASE_NAME="$e"
 }
 
-# root_abs <case dir, tree-relative> -> the absolute dir that holds the `.sloprail`
+# root_abs <tree-relative root> -> the absolute dir that holds the `.sloprail`
 root_abs() {
-  local r
-  r="$(case_root "$1")"
-  if [ -n "$r" ]; then printf '%s/%s' "$SR_TREE" "$r"; else printf '%s' "$SR_TREE"; fi
+  if [ -n "$1" ]; then printf '%s/%s' "$SR_TREE" "$1"; else printf '%s' "$SR_TREE"; fi
 }
 
-# tree_sha <abs dir>... -> one sha256 over the names and contents of every file under the dirs, sorted
-tree_sha() {
-  local d f
-  {
-    for d in "$@"; do
-      [ -d "$d" ] || continue
-      find "$d" -type f | LC_ALL=C sort | while IFS= read -r f; do
-        printf '%s\n' "$f"
-        cat "$f"
-      done
-    done
-  } | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1
-}
-
-# covered_rules <case dir, tree-relative> -> "<nature>/<rule>" per line: every rule folder of the same
-# `.sloprail` root whose name the case's code mentions. A rule the case never names is not covered by it.
-# A rule is covered through its own nature: a gate by a case that asserts GateChecked events, a file-guard by
-# FileGuardChecked, a context by ContextActivated, on the same line as the rule's name (one assertion).
-# A gate and a file-guard share a name (authoring-slop, misplaced-declaration, grounded-rule-changes), so
-# the name alone does not say which one the case proves.
-# A comment is not code, and a line that maps judge ids to mock scripts (SR_CHECKS_JUDGE_MOCKS) names every
-# judge the flow meets, not the rule under test, so neither counts.
-covered_rules() {
-  local case_abs="$SR_TREE/$1" root nature d name code kind
-  root="$(root_abs "$1")"
-  code="$(grep -rhv -E '^[[:space:]]*#|SR_CHECKS_JUDGE_MOCKS' "$case_abs" 2>/dev/null)"
-  for nature in file-guard gate context; do
-    case "$nature" in
-      gate) kind=GateChecked ;;
-      file-guard) kind=FileGuardChecked ;;
-      *) kind=ContextActivated ;;
-    esac
-    for d in "$root/.sloprail/$nature"/*/; do
-      [ -d "$d" ] || continue
-      name="$(basename "$d")"
-      # the rule's name and its nature's event kind on one line: the case asserts that nature's decision
-      if printf '%s\n' "$code" | grep -F -e "$kind" | grep -qF -e "$name"; then
-        printf '%s/%s\n' "$nature" "$name"
-      fi
-    done
+# plugin_of <tree-relative root> -> the name of the plugin the `.sloprail` belongs to: the "name" of the
+# nearest `.claude-plugin/plugin.json` at or above the dir that holds the `.sloprail` (up to the tree's
+# root); empty for a rule that lives in the project itself.
+plugin_of() {
+  local d
+  d="$(root_abs "$1")"
+  while :; do
+    if [ -f "$d/.claude-plugin/plugin.json" ]; then
+      jq -r '.name // empty' "$d/.claude-plugin/plugin.json" 2>/dev/null || true
+      return 0
+    fi
+    [ "$d" = "$SR_TREE" ] && return 0
+    case "$d" in "$SR_TREE"/*) ;; *) return 0 ;; esac
+    d="$(dirname "$d")"
   done
+}
+
+# owner_rule <tree-relative root> <rule> -> the name the owner's events carry in `.rule`: "<plugin>/<rule>"
+# for a plugin's rule, the bare "<rule>" for one in the project ("structure" is the rule of the structure gate)
+owner_rule() {
+  local p
+  p="$(plugin_of "$1")"
+  if [ -n "$p" ]; then printf '%s/%s' "$p" "$2"; else printf '%s' "$2"; fi
+}
+
+# owner_kind <nature> -> the event kind the owner's decisions are recorded with
+owner_kind() {
+  case "$1" in
+    gate) echo GateChecked ;;
+    file-guard) echo FileGuardChecked ;;
+    context) echo ContextActivated ;;
+    structure) echo StructureChecked ;;
+  esac
+}
+
+# owner_files <tree-relative root> <nature> <rule> -> the absolute path of every file that makes up the
+# owning rule (its declaration, README, scripts, templates), one per line, sorted. Its cases (tests/) are
+# not part of the rule: a sibling case is another subject.
+owner_files() {
+  local base
+  base="$(root_abs "$1")/.sloprail"
+  if [ "$2" = structure ]; then
+    [ -f "$base/file-guard/structure.yaml" ] && printf '%s\n' "$base/file-guard/structure.yaml"
+    return 0
+  fi
+  [ -d "$base/$2/$3" ] || return 0
+  find "$base/$2/$3" -type f -not -path "$base/$2/$3/tests/*" | LC_ALL=C sort
+}
+
+# files_sha -> one sha256 over the tree-relative names and the contents of the files whose absolute paths
+# are on stdin, sorted
+files_sha() {
+  local f
+  LC_ALL=C sort | while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    printf '%s\n' "${f#"$SR_TREE"/}"
+    cat "$f"
+  done | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1
 }
 
 rule_tests_rigorous_lib_loaded=1
