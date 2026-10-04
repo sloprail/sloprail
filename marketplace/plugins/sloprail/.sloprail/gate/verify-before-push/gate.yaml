@@ -29,6 +29,6 @@
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and (any(.argv, # == "push") or len(.gaps) > 0))
+      any(event.invocations, .bin == "git" and any(.argv, # == "push"))
 checks:
   - script: ./verify.sh
