@@ -52,7 +52,7 @@ const (
 // other — Go names an installed binary after its directory, and a directory
 // called `session` would install as `session` while the proxy looked for
 // `sr-session`. Listed once here so a new service is added in one place.
-var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks"}
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks", "sr-eval"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {
@@ -1428,6 +1428,14 @@ func (e *Env) TranscriptPath(projDir, sessionID string) string {
 func (e *Env) ConfigDir() string {
 	return e.configDir
 }
+
+// TmpDir is the mock's CLAUDE_CODE_TMPDIR: the root under which Claude Code keeps a session's
+// scratchpad and task outputs (<TmpDir>/claude-<uid>/<project dir>/<session>/).
+func (e *Env) TmpDir() string { return e.tmpDir }
+
+// HomeDir is the HOME every process of this Env runs with (and so where sloprail's
+// state stores live).
+func (e *Env) HomeDir() string { return e.home }
 
 // SubagentRecordPaths lists the sub-agent transcript files the mock wrote for a
 // session, as a plain directory listing of <session>/subagents/agent-*.jsonl.
