@@ -20,9 +20,13 @@ checks:
 - **Non-zero refuses**, carrying whatever the script said as the reason.
 - **A script that cannot run at all** — missing, an internal error, a timeout,
   killed by a signal — is a **refusal**. This is fail-closed and deliberate: a
-  rule that could not be checked must not read as approval. (A script without
-  the execute bit is not in this list: the engine runs it through its `#!`
-  interpreter, or `sh`, so no `chmod` is needed.)
+  rule that could not be checked must not read as approval.
+- **A script is exec'd directly, never through a shell.** It must be executable and start with
+  a shebang (`#!/usr/bin/env bash` or `#!/bin/sh`). One that is not stays loaded and still
+  refuses what it guards; `sr-file declarations` and the session hook report it, naming the
+  file and the fix (`chmod +x`, or add the shebang). The declared string is a **path plus plain
+  arguments** (`./staged.sh check`): quoting, `$`, `|`, `&&`, `;`, redirects and globs are
+  refused (put the logic in the script). A relative path is resolved against the rule's folder.
 
 **A script's verdict is cached by content**, like every check ([file-guard.md](file-guard.md#cached-verdicts)):
 with the same rule hash, subject, files' content and citation quotes, `sr-checks run` does not

@@ -35,21 +35,29 @@ root_abs() {
   if [ -n "$1" ]; then printf '%s/%s' "$SR_TREE" "$1"; else printf '%s' "$SR_TREE"; fi
 }
 
-# plugin_of <tree-relative root> -> the name of the plugin the `.sloprail` belongs to: the "name" of the
-# nearest `.claude-plugin/plugin.json` at or above the dir that holds the `.sloprail` (up to the tree's
-# root); empty for a rule that lives in the project itself.
-plugin_of() {
+# plugin_manifest <tree-relative root> -> the absolute path of the nearest `.claude-plugin/plugin.json` at or
+# above the dir that holds the `.sloprail` (up to the tree's root); nothing for a rule that lives in the project.
+plugin_manifest() {
   local d
   d="$(root_abs "$1")"
   while :; do
     if [ -f "$d/.claude-plugin/plugin.json" ]; then
-      jq -r '.name // empty' "$d/.claude-plugin/plugin.json" 2>/dev/null || true
+      printf '%s\n' "$d/.claude-plugin/plugin.json"
       return 0
     fi
     [ "$d" = "$SR_TREE" ] && return 0
     case "$d" in "$SR_TREE"/*) ;; *) return 0 ;; esac
     d="$(dirname "$d")"
   done
+}
+
+# plugin_of <tree-relative root> -> the name of the plugin the `.sloprail` belongs to: the "name" of its
+# plugin_manifest; empty for a rule that lives in the project itself.
+plugin_of() {
+  local m
+  m="$(plugin_manifest "$1")"
+  [ -n "$m" ] || return 0
+  jq -r '.name // empty' "$m" 2>/dev/null || true
 }
 
 # owner_rule <tree-relative root> <rule> -> the name the owner's events carry in `.rule`: "<plugin>/<rule>"

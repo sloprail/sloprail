@@ -1312,9 +1312,11 @@ func writeDeclFile(t *testing.T, path, content string) {
 }
 
 // A declared script that exists but cannot be exec'd directly (no shebang, no
-// execute bit, a non-standard interpreter) fails the rule to load, naming the file
-// and the fix. Written with os.WriteFile directly: writeDeclFile would repair them.
-func TestLoad_Script_WithoutShebangOrExecBitFailsToLoad(t *testing.T) {
+// execute bit, a non-standard interpreter) does NOT drop the rule: it stays loaded
+// and enforced (its exec path refuses what it guards), and is reported in Degraded,
+// naming the file and the fix. Written with os.WriteFile directly: writeDeclFile
+// would repair them.
+func TestLoad_Script_WithoutShebangOrExecBitStaysLoadedAndIsReported(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body string
 		mode os.FileMode
@@ -1333,11 +1335,13 @@ func TestLoad_Script_WithoutShebangOrExecBitFailsToLoad(t *testing.T) {
 			require.NoError(t, os.Chmod(p, tc.mode))
 			loaded, err := New(root).Load(testRegistry(t))
 			require.NoError(t, err)
-			require.Len(t, loaded.Invalid, 1)
-			assert.Empty(t, loaded.FileGuards, "the rule must not load")
-			assert.True(t, hasKind(loaded.Invalid[0], ErrBadScript))
-			assert.Contains(t, loaded.Invalid[0].Reason, "c.sh")
-			assert.Contains(t, loaded.Invalid[0].Reason, tc.want)
+			assert.Empty(t, loaded.Invalid, "an unrunnable script is not a declaration fault")
+			require.Len(t, loaded.FileGuards, 1, "the rule must stay loaded, or it stops refusing until the next report")
+			require.Len(t, loaded.Degraded, 1)
+			assert.True(t, hasKind(loaded.Degraded[0], ErrBadScript))
+			assert.Equal(t, "g", loaded.Degraded[0].Name)
+			assert.Contains(t, loaded.Degraded[0].Reason, "c.sh")
+			assert.Contains(t, loaded.Degraded[0].Reason, tc.want)
 		})
 	}
 }
@@ -1348,4 +1352,29 @@ func TestLoad_Script_MissingFileStillLoads(t *testing.T) {
 	loadOK(t, map[string]string{
 		"file-guard/g/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - script: sr-checks\n  - script: ./nowhere.sh\n",
 	})
+}
+
+// The same holds for every nature: a gate's check, a context's enter and exit and a rule's
+// subjects script stay loaded when the file loses its shebang or execute bit.
+func TestLoad_Script_OtherNaturesStayLoadedAndReported(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"gate/gt/gate.yaml":       "on:\n  - event: PreFileWrite\n    match: event.path endsWith \".md\"\nchecks:\n  - prepare: ./p.sh\n    judge: ./j.md.j2\n",
+		"gate/gt/j.md.j2":         "judge\n",
+		"context/cx/context.yaml": "on:\n  - event: PostFileWrite\n    match: event.path endsWith \".md\"\nenter: ./enter.sh\nexit: ./exit.sh\n",
+	})
+	for _, rel := range []string{"gate/gt/p.sh", "context/cx/enter.sh", "context/cx/exit.sh"} {
+		p := filepath.Join(root, rel)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o644))
+		require.NoError(t, os.Chmod(p, 0o644))
+	}
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, loaded.Invalid)
+	require.Len(t, loaded.Gates, 1)
+	require.Len(t, loaded.Contexts, 1)
+	require.Len(t, loaded.Degraded, 2)
+	for _, d := range loaded.Degraded {
+		assert.True(t, hasKind(d, ErrBadScript))
+		assert.Contains(t, d.Reason, "chmod +x")
+	}
 }

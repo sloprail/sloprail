@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One subject per changed case folder. id and files are the case; the fingerprint is everything else the
-# verdict depends on: the case's whole folder and the files of the rule that owns it (read from SR_TREE).
+# verdict depends on: the case's whole folder, the files of the rule that owns it and the plugin's manifest
+# (its name is in the event name the verdict requires), all read from SR_TREE.
 # A case the range deleted is no subject: the rule's `deletions` default is skip, so a deleted file is never
 # among the changed files, and a case folder only appears here while some file of it still stands.
 set -uo pipefail
@@ -31,6 +32,8 @@ while IFS= read -r c; do
   fp="$({
     find "$SR_TREE/$c" -type f
     owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE"
+    # the plugin name is part of the event name the verdict requires: <plugin>/<rule>
+    plugin_manifest "$CASE_ROOT"
   } | files_sha)"
   out="$(printf '%s' "$out" | jq -c --arg c "$c" --argjson f "$files" --arg fp "$fp" '. + [{id: $c, files: $f, fingerprint: $fp}]')"
 done <<<"$cases"

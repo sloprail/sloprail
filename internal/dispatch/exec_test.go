@@ -78,9 +78,10 @@ func TestScriptRefusalReason_OrdinaryExitKeepsBareFallback(t *testing.T) {
 // exercised against a genuinely signalled process rather than a synthesised code.
 func TestRunScriptExec_SignalledCheckRefusesWithKilled(t *testing.T) {
 	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "k.sh"), []byte("#!/bin/sh\nkill -9 $$\n"), 0o755))
 	res, err := runScriptExec(scriptCall{
 		Dir:    dir,
-		Script: "kill -9 $$",
+		Script: "./k.sh",
 	})
 	require.NoError(t, err)
 
@@ -159,9 +160,16 @@ func TestRunScriptExec_GuardrailDirEnvIsAlwaysAbsolute(t *testing.T) {
 	require.NoError(t, os.Chdir(parent))
 	t.Cleanup(func() { _ = os.Chdir(origWD) })
 
+	require.NoError(t, os.WriteFile(filepath.Join(absDir, "echo.sh"), []byte("#!/bin/sh\necho \"$SR_GUARDRAIL_DIR\"\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(absDir, "verify.sh"), []byte(`#!/bin/sh
+if [ "$SR_GUARDRAIL_DIR" != "`+absDir+`" ]; then
+	echo "SR_GUARDRAIL_DIR was '$SR_GUARDRAIL_DIR', want '`+absDir+`'" >&2
+	exit 1
+fi
+`), 0o755))
 	res, err := runScriptExec(scriptCall{
 		Dir:    relDir, // relative, resolvable only against the parent's cwd above
-		Script: `echo "$SR_GUARDRAIL_DIR"`,
+		Script: "./echo.sh",
 	})
 	require.NoError(t, err)
 	require.True(t, res.Passed, "echo must succeed: %q", res.Reason)
@@ -172,11 +180,8 @@ func TestRunScriptExec_GuardrailDirEnvIsAlwaysAbsolute(t *testing.T) {
 	// "what the child actually saw" into the refusal reason runScriptExec
 	// already surfaces.
 	verify, err := runScriptExec(scriptCall{
-		Dir: relDir,
-		Script: `if [ "$SR_GUARDRAIL_DIR" != "` + absDir + `" ]; then
-			echo "SR_GUARDRAIL_DIR was '$SR_GUARDRAIL_DIR', want '` + absDir + `'" >&2
-			exit 1
-		fi`,
+		Dir:    relDir,
+		Script: "./verify.sh",
 	})
 	require.NoError(t, err)
 	assert.True(t, verify.Passed,

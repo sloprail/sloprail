@@ -112,10 +112,10 @@ missing=""
 shown=".sloprail"
 [ "$root" = "." ] || shown="$root/.sloprail"
 if grep -q -E '^rule	' "$work/touched.tsv"; then
-  plugin=""
-  [ -f "$abs/.claude-plugin/plugin.json" ] && plugin="$(jq -r '.name // empty' "$abs/.claude-plugin/plugin.json" 2>/dev/null)"
-  sr-test doctor "$abs" >"$work/doctor.out" 2>"$work/doctor.err"
-  if ! grep -q -E '^(uncovered: |every rule is covered)' "$work/doctor.out"; then
+  # one JSON object per uncovered rule, each with the .sloprail it sits in (dir, "." for this root's own):
+  # the rule is matched on (dir, nature, rule), never on a name rebuilt here from plugin.json
+  if ! sr-test doctor --json "$abs" >"$work/doctor.out" 2>"$work/doctor.err" ||
+    ! jq -e -s 'all(.[]; type == "object" and (.dir | type == "string") and (.nature | type == "string") and (.rule | type == "string"))' "$work/doctor.out" >/dev/null 2>&1; then
     refuse "sr-test doctor could not tell which rules have a case under $root/.sloprail:
 $(tail -n 12 "$work/doctor.err" | sed 's/^/    /')"
   fi
@@ -127,9 +127,7 @@ $(tail -n 12 "$work/doctor.err" | sed 's/^/    /')"
       decl="$sloprail/$nature/$rule/$nature.yaml"; label="$nature/$rule"; casedir="$shown/$nature/$rule/tests/<case>/"
     fi
     [ -f "$decl" ] || continue
-    q="$rule"
-    [ -z "$plugin" ] || q="$plugin/$rule"
-    if grep -q -x -F "uncovered: $nature:$q" "$work/doctor.out"; then
+    if jq -e -s --arg n "$nature" --arg r "$rule" 'any(.[]; .dir == "." and .nature == $n and .rule == $r)' "$work/doctor.out" >/dev/null 2>&1; then
       missing="$missing
 - $label: add a case in $casedir"
     fi

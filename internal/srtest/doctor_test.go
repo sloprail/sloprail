@@ -49,3 +49,25 @@ func TestUncoveredNothingToCover(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+// UncoveredRules locates each rule: the .sloprail's parent relative to the root and the qualified
+// name, which for a plugin without a `name` in plugin.json is its folder's (as PluginName says).
+func TestUncoveredRulesLocatesEachRule(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, ".sloprail/gate/top/gate.yaml", "")
+	manifest := func(dir, body string) {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, dir, ".claude-plugin"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, dir, ".claude-plugin", "plugin.json"), []byte(body), 0o644))
+	}
+	manifest("plugins/unnamed", "{}")
+	put(t, root, "plugins/unnamed/.sloprail/gate/g/gate.yaml", "")
+	manifest("plugins/named", `{"name":"pl"}`)
+	put(t, root, "plugins/named/.sloprail/file-guard/structure.yaml", "")
+	got, err := UncoveredRules(root)
+	require.NoError(t, err)
+	assert.Equal(t, []UncoveredRule{
+		{Nature: "gate", Rule: "top", Dir: ".", Qualified: "top"},
+		{Nature: "gate", Rule: "g", Dir: "plugins/unnamed", Qualified: "unnamed/g"},
+		{Nature: "structure", Rule: "structure", Dir: "plugins/named", Qualified: "pl/structure"},
+	}, got)
+}

@@ -48,6 +48,7 @@ func LoadDeclarationsStrict(w io.Writer, cwd string, reg *module.Registry, sessi
 		return declaration.Loaded{}, err
 	}
 	ReportNatureInvalid(w, loaded.Invalid)
+	ReportNatureDegraded(w, loaded.Degraded)
 	for _, sh := range loaded.Shadowed {
 		fmt.Fprintf(w, "sloprail: %s\n", sh.Message())
 	}
@@ -98,5 +99,18 @@ func ReportNatureInvalid(w io.Writer, invalid []declaration.Invalid) {
 			fmt.Fprintf(w, "  - %s\n", reason)
 		}
 		fmt.Fprintf(w, "  %s\n", iv.Remedy())
+	}
+}
+
+// ReportNatureDegraded names every declaration that IS loaded and enforced but whose declared
+// script cannot be exec'd (it lost its shebang or execute bit), with the file and the fix. The
+// rule keeps refusing what it guards (the exec path refuses with the same error) until the file
+// is fixed, so unlike an unloadable declaration there is no gap to close, only a repair to make.
+func ReportNatureDegraded(w io.Writer, degraded []declaration.Invalid) {
+	for _, iv := range degraded {
+		fmt.Fprintf(w, "sloprail: declaration %s is loaded and enforced, but a script it declares cannot run, so it REFUSES what it guards until fixed:\n", iv.Attribution())
+		for _, reason := range iv.Reasons {
+			fmt.Fprintf(w, "  - %s\n", reason)
+		}
 	}
 }

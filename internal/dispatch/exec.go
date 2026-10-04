@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,8 +21,8 @@ import (
 // and a `judge`'s substrate — and turns each into a Verdict, fail-closed.
 //
 // The mechanics mirror services/sr-session's old runHooks, deliberately: a check
-// is an arbitrary shell command, so it is run as `sh -c` from the guard's own
-// folder with the payload on stdin, under a per-check timeout, in its own process
+// is a declared script (a path plus plain arguments, exec'd directly, no shell; the judge
+// substrate is a shell line) run from the guard's own folder with the payload on stdin, under a per-check timeout, in its own process
 // group so a wedged child (a model call, most of all) can be killed as a group.
 // Everything that is not a clean exit is a refusal — the mechanism failing must
 // not read as approval.
@@ -176,11 +177,18 @@ type scriptResult struct {
 	// could not be started or was killed. Read only where an exit code other
 	// than zero carries meaning of its own (a prerequisite's `when`).
 	Code int
+
+	// Unrunnable is set when the script could not be run at all (its file is not
+	// executable or has no shebang, it could not be started, it was killed on the
+	// timeout), as against one that ran and declined with a non-zero exit. A caller
+	// where "declined" would permit something (a context's enter) must refuse on it.
+	Unrunnable bool
 }
 
-// runScriptExec is the production runScript: it runs the script as `sh -c` from
-// the guard's folder, with the payload on stdin, and reports pass/fail by exit
-// code.
+// runScriptExec is the production runScript: it execs the declared script directly
+// (a path plus plain arguments, scriptexec.Argv: never `sh -c`, so there is no shell
+// syntax to leave unchecked) from the guard's folder, with the payload on stdin, and
+// reports pass/fail by exit code.
 //
 // FAIL-CLOSED throughout. A clean exit passes; every other outcome — a non-zero
 // exit, a timeout, a process that would not start, a NUL in the command — refuses.
@@ -188,10 +196,9 @@ type scriptResult struct {
 // that all the ways a check can fail land on the safe side without each caller
 // arranging it.
 //
-// The `sh -c` shape and the relative-to-Dir resolution match the old hooks and
-// the spec's "resolved relative to the guard's folder": an author writes
-// `./verify.sh` and it runs from the guard's directory, so a bare relative path
-// finds the sibling script.
+// The relative-to-Dir resolution matches the spec's "resolved relative to the
+// guard's folder": an author writes `./verify.sh` and it runs from the guard's
+// directory, so a relative path finds the sibling script.
 func runScriptExec(s scriptCall) (scriptResult, error) {
 	// A script/prepare has no per-check timeout — its runtime is the author's to
 	// bound (spec: model/timeout are judge-only) — so it always runs under the
@@ -199,13 +206,35 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	// default here keeps the expired message's duration honest.
 	if err := scriptexec.VerifyDeclared(s.Dir, s.Script); err != nil {
 		return scriptResult{
-			Passed: false,
-			Reason: fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
-			Code:   -1,
+			Passed:     false,
+			Reason:     fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
+			Code:       -1,
+			Unrunnable: true,
 		}, nil
 	}
-	stdout, stderr, code, expired, signal, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
+	argv, err := scriptexec.Argv(s.Dir, s.Script)
+	if err != nil {
+		return scriptResult{
+			Passed:     false,
+			Reason:     fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
+			Code:       -1,
+			Unrunnable: true,
+		}, nil
+	}
+	stdout, stderr, code, expired, signal, startErr := runArgv(s.Dir, argv, s.Stdin, s.env(), defaultCheckTimeout)
 	if startErr != nil {
+		if errors.Is(startErr, fs.ErrNotExist) {
+			// The declared script is not there (renamed, or the wrong name): say so plainly,
+			// the one fact the author needs to find it.
+			return scriptResult{
+				Passed: false,
+				Reason: fmt.Sprintf(
+					"the check %q was not found: %v. The action was refused because a check that cannot run must not be read as approval.",
+					s.Script, startErr),
+				Code:       -1,
+				Unrunnable: true,
+			}, nil
+		}
 		// Could not be started at all — a NUL byte in the command, a Dir that went
 		// away. Not the rule's decision, but a mechanism failure, and a mechanism
 		// failure refuses (fail-closed) rather than erroring up to a caller who
@@ -217,7 +246,8 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Reason: fmt.Sprintf(
 				"the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.",
 				s.Script, startErr),
-			Code: -1,
+			Code:       -1,
+			Unrunnable: true,
 		}, nil
 	}
 	if expired {
@@ -226,7 +256,8 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Reason: fmt.Sprintf(
 				"the check %q was killed after %s without answering, and the action was refused because a check that did not answer must not be read as approval.%s",
 				s.Script, defaultCheckTimeout, quoted(stderr)),
-			Code: -1,
+			Code:       -1,
+			Unrunnable: true,
 		}, nil
 	}
 	if code == 0 {
@@ -239,12 +270,6 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 		Code:   code,
 	}, nil
 }
-
-// command is the shell line for a script call: the script as the author wrote it,
-// run from the guard's folder so a `./x.sh` resolves there. The file is verified
-// first (scriptexec.VerifyDeclared), so the shell can only exec it directly — a
-// script without a shebang or the execute bit never reaches a `sh <file>` fallback.
-func (s scriptCall) command() string { return s.Script }
 
 // env is the environment one check runs in: the parent's, plus the guard's own
 // name under SR_GUARDRAIL so a check calling `sr-session state` reaches its own
@@ -360,6 +385,13 @@ const launchedByEnv = "SLOPRAIL_LAUNCHED_BY"
 // mechanism, unchanged, because the failure it prevents (a leaked model-calling
 // subprocess per guarded action, and an unbounded hang) is identical here.
 func runShell(dir, command string, stdin []byte, env []string, timeout time.Duration) (stdout, stderr []byte, code int, expired bool, signal syscall.Signal, startErr error) {
+	return runArgv(dir, []string{"sh", "-c", command}, stdin, env, timeout)
+}
+
+// runArgv is runShell for an argv exec'd directly: the one primitive, so a script (no shell)
+// and the judge substrate (a shell line) share the timeout, the process-group kill and the
+// exit/signal reading.
+func runArgv(dir string, argv []string, stdin []byte, env []string, timeout time.Duration) (stdout, stderr []byte, code int, expired bool, signal syscall.Signal, startErr error) {
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
 	}
@@ -367,7 +399,7 @@ func runShell(dir, command string, stdin []byte, env []string, timeout time.Dura
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	c := exec.CommandContext(ctx, "sh", "-c", command)
+	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	c.Dir = dir
 	c.Env = env
 	c.Stdin = bytes.NewReader(stdin)
