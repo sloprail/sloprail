@@ -131,8 +131,9 @@ Every check (script, judge, requirement) is cached; a verdict per guard and subj
 commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, so a
 rebase, another clone or CI reads the same results. The Stop hook only verifies: it
 refuses uncommitted work on guarded paths, then verifies each range the session
-tracks (`sr-session refs list|track|untrack`; a folder's current branch is tracked
-automatically). CI runs `sr-checks verify` as a required check. Two gates ship on by default
+tracks (`sr-session refs list|track|untrack`). Nothing is tracked automatically unless
+`SR_AUTO_WATCH_GIT_REFS=1` is set in the environment (then a folder's current branch is
+tracked on its own); the pre-push gate below does not depend on tracking. CI runs `sr-checks verify` as a required check. Two gates ship on by default
 around it: `sloprail/gate/verify-before-push` refuses an agent's `git push` until
 `sr-checks verify` passes for the commits it would send, and `sloprail/gate/checks-ref-sr-only`
 refuses any agent git write to the `sloprail/checks` results branch (only `sr-checks` writes

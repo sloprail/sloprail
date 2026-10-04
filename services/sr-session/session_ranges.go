@@ -419,6 +419,9 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 // the sub-agents themselves, which observe them at their own tool calls: a parent that walked all
 // of them at every call would pay for every worktree the session ever made. The Stop observes all.
 func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOnly bool) error {
+	if !autoWatchGitRefs() {
+		return nil
+	}
 	if err := pruneUnmovedAuto(reg, rs.ID); err != nil {
 		return err
 	}
@@ -641,6 +644,23 @@ func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f se
 	return nil
 }
 
+// autoWatchEnv, set to a value other than "", "0", "false", "no" or "off", lets the engine
+// attach git refs to the session on its own: the checked-out branch of each folder, the
+// branches the session committed on, a worktree it discovers. It is OFF by default. What the
+// agent adds with `sr-session refs track` is always watched and verified at Stop; `refs
+// untrack`, the push gate (verify-before-push) and `sr-checks run --base --head` never read
+// whether anything was auto-watched.
+const autoWatchEnv = "SR_AUTO_WATCH_GIT_REFS"
+
+// autoWatchGitRefs reports whether the engine may track refs automatically.
+func autoWatchGitRefs() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(autoWatchEnv))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
+
 // trackAtHook is the tracking every hook runs for its agent's folders (the root's store holds
 // the registry): the current branch, and the branches the session committed on.
 func trackAtHook(p HookPayload) {
@@ -664,6 +684,9 @@ func trackAtHook(p HookPayload) {
 // there (what the agent changed or dropped stays so). startedAt is the folder's registered
 // BaseRef.
 func ensureTracked(reg sessionstate.Store, sessionID, folder, agent, startedAt string) error {
+	if !autoWatchGitRefs() {
+		return nil
+	}
 	return trackCurrent(reg, sessionID, folder, agent, startedAt, true)
 }
 
