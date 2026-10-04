@@ -359,6 +359,9 @@ func writePath(e event.Event) (string, bool) {
 // reported, the module contract the old path also honours — one path a module
 // could not classify must not drop the events it did produce.
 func extractPreEvents(cmd *cobra.Command, p HookPayload, reg *module.Registry, bound []string) []event.Event {
+	if replayInjected != nil { // a rule test: the normalized events, no harness payload (replay_seam.go)
+		return injectedOfKinds(replayInjected.pre, bound)
+	}
 	in := module.Input{
 		module.InputPhase:   module.PhasePre,
 		module.InputPayload: p,

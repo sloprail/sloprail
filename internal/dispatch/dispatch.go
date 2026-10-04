@@ -349,7 +349,11 @@ func (r Runner) withDefaults() Runner {
 		r.runScript = runScriptExec
 	}
 	if r.runJudge == nil {
-		r.runJudge = runJudgeAgent
+		if stub := installedJudgeStub.Load(); stub != nil {
+			r.runJudge = stubbedJudge(*stub)
+		} else {
+			r.runJudge = runJudgeAgent
+		}
 	}
 	return r
 }

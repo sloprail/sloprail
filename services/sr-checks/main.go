@@ -43,6 +43,8 @@ func newRoot() *cobra.Command {
   sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
   sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
   sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)
+  sr-checks test [<rule>...]                   run the cases beside the project's own rules (no model, no harness): refuse/permit over commits, trajectories of normalized events, stubbed judges
+  sr-checks doctor [<rule>...]                 every project rule loads, has a refuse and a permit case (judges stubbed both ways), and its cases pass
 
 The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
 states the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by
@@ -57,6 +59,6 @@ origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newLogCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newLogCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd(), newTestCmd(), newDoctorCmd())
 	return root
 }

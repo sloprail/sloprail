@@ -22,6 +22,9 @@ import (
 // difference against this session's baseline. It returns the events and the
 // repository root their paths resolve against.
 func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) ([]event.Event, string) {
+	if replayInjected != nil { // a rule test: the cycle's events as the case gave them (replay_seam.go)
+		return injectedOfKinds(replayInjected.post, bound), p.Root()
+	}
 	commit, ok, err := store.Meta(sessionstate.MetaBaselineCommit)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: baseline not read:", err)
@@ -105,6 +108,9 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 // next Stop in a still-open cycle can mark what this one saw (seen.go). "" when
 // nothing was read.
 func tagEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) (evs []event.Event, end string) {
+	if replayInjected != nil { // a rule test: the tags as the case gave them (replay_seam.go)
+		return injectedOfKinds(replayInjected.tags, bound), ""
+	}
 	m, ok := reg.Lookup(tagmod.KindPostTagWrite)
 	if !ok {
 		// No module owns the kind — an impossible state in this build, since

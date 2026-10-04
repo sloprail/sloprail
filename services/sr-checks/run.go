@@ -200,20 +200,34 @@ func resolveTarget(cmd *cobra.Command) (target, error) {
 }
 
 func execute(cmd *cobra.Command, m mode) error {
+	out, err := evaluate(cmd, m)
+	if err != nil {
+		return err
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), joinRefusals(out))
+	os.Exit(1)
+	return nil
+}
+
+// evaluate does what run, verify and show do over the range the command's flags name, and
+// returns the refusals instead of exiting: `sr-checks test` runs it in-process.
+func evaluate(cmd *cobra.Command, m mode) ([]string, error) {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	t, err := resolveTarget(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer t.sess.close()
 	defer gitrepo.CleanupOnSignal()() // a killed run must not leak its read-only snapshots
 	broken := brokenFileGuards(t.loaded)
 	if len(t.loaded.FileGuards) == 0 {
 		if m != modeShow && len(broken) > 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), joinRefusals(broken))
-			os.Exit(1)
+			return broken, nil
 		}
-		return nil
+		return nil, nil
 	}
 	if m == modeRun {
 		// A second run of this worktree over the same range waits for the first and then finds
@@ -229,7 +243,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	}
 	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	results := checkstore.Open(cache, m != modeRun)
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
@@ -238,7 +252,7 @@ func execute(cmd *cobra.Command, m mode) error {
 		Store: results, Verify: m != modeRun, WholeRange: m == modeShow, Recorded: recordedCitations(t.sess, t.root),
 	})
 	if err := results.Close(); err != nil {
-		return fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)
+		return nil, fmt.Errorf("sloprail: the verdicts could not be stored: %w", err)
 	}
 	// Local-first: the verdicts are safe locally, but a push that failed must not be silent.
 	// A `run` already pushed what an earlier run left pending; verify and show only read, so
@@ -254,7 +268,7 @@ func execute(cmd *cobra.Command, m mode) error {
 			enc := json.NewEncoder(w)
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(outcomes); err != nil {
-				return err
+				return nil, err
 			}
 		} else {
 			for _, o := range outcomes {
@@ -267,18 +281,13 @@ func execute(cmd *cobra.Command, m mode) error {
 		}
 	}
 	if m == modeShow {
-		return nil
+		return nil, nil
 	}
 	out := broken
 	for _, f := range refusals {
 		out = append(out, f.Reason+" (file-guard "+f.Attribution+")")
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	fmt.Fprintln(w, joinRefusals(out))
-	os.Exit(1)
-	return nil
+	return out, nil
 }
 
 // brokenFileGuards names every file-guard that failed to load, with why: a rule that cannot be
