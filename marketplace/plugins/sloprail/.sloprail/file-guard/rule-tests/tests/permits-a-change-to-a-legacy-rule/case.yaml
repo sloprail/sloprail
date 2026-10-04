@@ -1,0 +1,2 @@
+description: "the rollout: a rule that stood with no tests at all is grandfathered, so changing its script is permitted"
+expect: permit

@@ -1,0 +1,24 @@
+# A rule of the project's own may not change without its tests. When a commit touches
+# `.sloprail/<nature>/<name>/**` (the rule, a script, a judge template, or one of its
+# `tests/` cases), this runs `sr-checks doctor` on that rule: it loads, it has a case that
+# refuses and one that permits (a judge stubbed to pass in one case and to fail in
+# another), and every case passes, with the judges answered from the case's canned
+# verdicts. So a rule change is proved against scenarios, deterministically, before any
+# judge is asked about it. See the sibling README.md for the argument and the rollout.
+#
+# It is a SCRIPT check, so it runs before every judge in the same run (a rule's cheap checks
+# are all done before the first judge starts): a change whose tests fail never reaches
+# grounded-rule-changes' model call.
+#
+# One subject per rule (subjects.sh), so the verdict is cached per rule, and fingerprinted by
+# the rule's whole folder as committed (git's tree hash): the doctor reads files `match` did
+# not select (an unchanged check script a changed case exercises), and the fingerprint is how
+# a change to them is seen. Deletions are included: removing a rule's tests is a change to it.
+#
+# `match` selects only what is inside a rule's folder (not `.sloprail/config.yaml`, not the
+# one `file-guard/structure.yaml`): every selected file must belong to a subject.
+match: 'path matches "^\\.sloprail/(file-guard|gate|context)/[^/]+/"'
+deletions: include
+subjects: ./subjects.sh
+checks:
+  - script: ./check.sh

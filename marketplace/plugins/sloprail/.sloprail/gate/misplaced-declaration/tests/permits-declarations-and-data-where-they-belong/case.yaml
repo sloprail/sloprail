@@ -1,0 +1,2 @@
+description: "a declaration where the engine reads it, config.yaml, and a data file inside a rule's folder (a test case, say) are not misplaced declarations"
+with: [file-guard/misplaced-declaration]

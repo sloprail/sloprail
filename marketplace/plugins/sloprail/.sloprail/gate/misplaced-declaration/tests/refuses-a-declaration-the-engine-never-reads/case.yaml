@@ -1,0 +1,2 @@
+description: "a structure.yaml one level too high, and a gate.yaml with no rule folder, are refused before they land, naming where they belong"
+with: [file-guard/misplaced-declaration]

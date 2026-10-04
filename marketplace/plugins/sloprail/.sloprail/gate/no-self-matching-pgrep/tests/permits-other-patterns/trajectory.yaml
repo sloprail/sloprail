@@ -1,0 +1,9 @@
+- kind: PreCommandInvoke
+  command: pgrep -f "node server.js"
+  expect: permit
+- kind: PreCommandInvoke
+  command: pgrep sr-checks
+  expect: permit
+- kind: PreCommandInvoke
+  command: ls -la
+  expect: permit

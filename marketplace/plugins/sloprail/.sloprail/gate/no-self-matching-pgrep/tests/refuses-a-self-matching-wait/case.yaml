@@ -1,0 +1,1 @@
+description: "pgrep -f on a sloprail program name, alone, in a wait loop or as a cluster, matches its own shell"

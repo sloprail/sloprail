@@ -1,0 +1,13 @@
+- kind: PreCommandInvoke
+  command: sr-session stop
+  expect: refuse
+- kind: PreCommandInvoke
+  command: sr-session start < /dev/null
+  expect: refuse
+- kind: PreCommandInvoke
+  command: sr session pre-tool
+  expect: refuse
+- kind: PreCommandInvoke
+  command: echo checking && sr-session subagent-stop
+  expect: refuse
+  reason_contains: "sr-checks run --base"

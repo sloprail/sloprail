@@ -1,0 +1,10 @@
+- kind: PreFileCreate
+  path: .sloprail/structure.yaml
+  newContent: "allow: [src/**]\n"
+  expect: refuse
+  reason_contains: ".sloprail/file-guard/structure.yaml"
+- kind: PreFileCreate
+  path: .sloprail/gate.yaml
+  newContent: "on: []\n"
+  expect: refuse
+  reason_contains: ".sloprail/gate/<rule-name>/gate.yaml"

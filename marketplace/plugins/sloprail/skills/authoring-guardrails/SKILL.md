@@ -242,6 +242,16 @@ poll with `pgrep`.
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.
 
+Then keep the proof: write it down as cases beside the rule,
+`.sloprail/<nature>/<name>/tests/<case>/`, and run `sr-checks test <rule>`. A case is a
+`case.yaml` (what it expects), a `setup.sh` (pure bash + git: the repository) and, for a gate,
+a context or a Stop, a `trajectory.yaml` of normalized events. Judges are answered from canned
+verdicts, so no model runs and the case holds whichever harness the project uses.
+`sr-checks doctor` requires every rule to have a case that refuses and one that permits (a
+judge stubbed both ways), and the plugin's `rule-tests` rule refuses a rule change whose cases
+fail or are missing, so a rule cannot land unproved. Worked examples for each nature and for
+a context, a gate and a sub-agent composed: **[testing.md](testing.md)**.
+
 ## Changing a rule that already stands
 
 The plugin's `grounded-rule-changes` rule judges a change to what already stands in the
@@ -301,6 +311,9 @@ file. Naming it here is the way out that does not mean uninstalling the plugin.
 - [grounding.md](grounding.md) — changes that must trace to what the user
   said: citing with `sr-file --cite:` or `cite && <cmd>`, `event.citations`,
   `require: [{citation}]`, and judging a citation.
+- [testing.md](testing.md) — proving a rule with cases beside it: `sr-checks test` and
+  `doctor`, the case layout, normalized trajectories, canned judges, one example per nature
+  and a composed context + gate + sub-agent.
 - [state-management.md](state-management.md) — `sr-session state` across cycles,
   the `--owner` cross-guardrail read a gate uses to read a context's registry,
   and the turn-scoping trap.

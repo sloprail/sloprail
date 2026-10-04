@@ -1,0 +1,27 @@
+- kind: PreFileCreate
+  path: docs/notes.md
+  newContent: "not a gate\n"
+  expect: permit
+# nothing read yet: the skill itself is asked for first
+- kind: PreFileCreate
+  path: .sloprail/gate/no-curl/gate.yaml
+  newContent: "on: []\n"
+  expect: refuse
+  reason_contains: SKILL REQUIRED
+# the skill is loaded (its SKILL.md read), but not the page about gates
+- kind: PreToolUse
+  tool: Read
+  input: {file_path: ".claude/skills/authoring-guardrails/SKILL.md"}
+- kind: PreFileCreate
+  path: .sloprail/gate/no-curl/gate.yaml
+  newContent: "on: []\n"
+  expect: refuse
+  reason_contains: gate.md
+# the page is read: the write is allowed
+- kind: PreToolUse
+  tool: Read
+  input: {file_path: ".claude/skills/authoring-guardrails/gate.md"}
+- kind: PreFileCreate
+  path: .sloprail/gate/no-curl/gate.yaml
+  newContent: "on: []\n"
+  expect: permit

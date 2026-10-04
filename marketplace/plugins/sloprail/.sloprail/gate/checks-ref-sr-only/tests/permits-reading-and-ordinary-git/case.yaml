@@ -1,0 +1,3 @@
+description: "ordinary git, and the commands that read the results, stay allowed"
+# the gate sources the git-argument helper that sits beside verify-before-push
+with: [gate/verify-before-push]

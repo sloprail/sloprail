@@ -1,0 +1,3 @@
+description: "the sloprail/checks results branch is sr-checks' alone: a command moving it, and a file write into its storage, are refused"
+# the gate sources the git-argument helper that sits beside verify-before-push
+with: [gate/verify-before-push]

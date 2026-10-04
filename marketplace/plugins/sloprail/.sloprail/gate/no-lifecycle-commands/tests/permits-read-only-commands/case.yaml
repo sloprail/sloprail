@@ -1,0 +1,1 @@
+description: "the read-only commands an agent does use stay allowed, so the rule is not simply refusing everything that starts with sr-"

@@ -1,0 +1,2 @@
+description: "declarations where the engine reads them, and a test case's own yaml, pass over the range"
+expect: permit

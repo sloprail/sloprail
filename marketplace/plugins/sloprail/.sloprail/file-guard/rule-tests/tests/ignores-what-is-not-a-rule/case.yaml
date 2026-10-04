@@ -1,0 +1,2 @@
+description: "config.yaml and files outside a rule's folder are not rules: nothing to prove"
+expect: permit

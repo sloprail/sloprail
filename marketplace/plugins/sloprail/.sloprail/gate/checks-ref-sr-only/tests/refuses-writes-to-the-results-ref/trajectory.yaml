@@ -1,0 +1,12 @@
+- kind: PreCommandInvoke
+  command: git update-ref refs/sloprail/checks HEAD
+  expect: refuse
+  reason_contains: "only sr-checks writes it"
+- kind: PreCommandInvoke
+  command: git branch -D sloprail/checks
+  expect: refuse
+- kind: PreFileUpdate
+  path: .git/refs/sloprail/checks
+  newContent: "0000000000000000000000000000000000000000\n"
+  oldContent: ""
+  expect: refuse

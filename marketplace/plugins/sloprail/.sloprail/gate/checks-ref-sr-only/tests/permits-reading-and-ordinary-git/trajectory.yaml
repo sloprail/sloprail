@@ -1,0 +1,13 @@
+- kind: PreCommandInvoke
+  command: git status
+  expect: permit
+- kind: PreCommandInvoke
+  command: git commit -m "a change"
+  expect: permit
+- kind: PreCommandInvoke
+  command: sr-checks verify --base main --head HEAD
+  expect: permit
+- kind: PreFileCreate
+  path: docs/notes.md
+  newContent: "notes\n"
+  expect: permit

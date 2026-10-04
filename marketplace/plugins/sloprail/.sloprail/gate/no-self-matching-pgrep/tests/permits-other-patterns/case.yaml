@@ -1,0 +1,1 @@
+description: "the gate concerns sloprail's own commands only: any other pattern, or pgrep without -f, passes"

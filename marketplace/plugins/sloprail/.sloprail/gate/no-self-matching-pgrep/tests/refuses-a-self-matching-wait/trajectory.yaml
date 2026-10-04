@@ -1,0 +1,9 @@
+- kind: PreCommandInvoke
+  command: 'until ! pgrep -f "sr-checks run"; do sleep 5; done'
+  expect: refuse
+- kind: PreCommandInvoke
+  command: pgrep --full sr-session
+  expect: refuse
+- kind: PreCommandInvoke
+  command: pkill -fl sr-agent
+  expect: refuse

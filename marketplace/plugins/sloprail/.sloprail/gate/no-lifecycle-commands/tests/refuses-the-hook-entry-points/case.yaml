@@ -1,0 +1,1 @@
+description: "every hook-only entry point is refused, as `sr-session ...` and through the `sr session ...` proxy, alone or in a chain"

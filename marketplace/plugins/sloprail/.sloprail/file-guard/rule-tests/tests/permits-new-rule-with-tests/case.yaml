@@ -1,0 +1,2 @@
+description: "a new rule lands with a refuse case and a permit case, both passing: permitted"
+expect: permit

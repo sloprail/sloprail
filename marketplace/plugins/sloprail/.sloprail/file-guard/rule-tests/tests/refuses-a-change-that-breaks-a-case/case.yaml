@@ -1,0 +1,6 @@
+description: "a rule that stood with passing cases is changed so it no longer refuses curl: the case that expects the refusal now fails, so the change is refused"
+expect: refuse
+reason_contains:
+  - "is not proved by its tests"
+  - "refuses-curl"
+  - "expected the engine to refuse, but it permitted"

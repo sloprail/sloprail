@@ -1,0 +1,6 @@
+description: "a new rule lands with no cases: refused, naming the rule and what to add"
+expect: refuse
+reason_contains:
+  - "is not proved by its tests"
+  - "gate/no-curl"
+  - "no cases"

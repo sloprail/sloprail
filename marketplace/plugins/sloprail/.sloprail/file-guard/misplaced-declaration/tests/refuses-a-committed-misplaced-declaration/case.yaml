@@ -1,0 +1,5 @@
+description: "the backstop: a structure.yaml committed one level too high is refused over the range, naming where it belongs"
+expect: refuse
+reason_contains:
+  - ".sloprail/structure.yaml"
+  - ".sloprail/file-guard/structure.yaml"

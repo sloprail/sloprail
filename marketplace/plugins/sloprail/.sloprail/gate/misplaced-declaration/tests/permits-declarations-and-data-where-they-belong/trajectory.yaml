@@ -1,0 +1,16 @@
+- kind: PreFileCreate
+  path: .sloprail/gate/no-curl/gate.yaml
+  newContent: "on: []\n"
+  expect: permit
+- kind: PreFileCreate
+  path: .sloprail/file-guard/structure.yaml
+  newContent: "allow: [src/**]\n"
+  expect: permit
+- kind: PreFileCreate
+  path: .sloprail/config.yaml
+  newContent: "stop_hook_block_cap: 4\n"
+  expect: permit
+- kind: PreFileCreate
+  path: .sloprail/gate/no-curl/tests/refuses-curl/case.yaml
+  newContent: "expect: refuse\n"
+  expect: permit

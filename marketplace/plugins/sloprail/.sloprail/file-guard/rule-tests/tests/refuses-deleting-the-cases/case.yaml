@@ -1,0 +1,5 @@
+description: "a rule that had cases cannot get a change through by deleting them"
+expect: refuse
+reason_contains:
+  - "gate/no-curl"
+  - "no cases"

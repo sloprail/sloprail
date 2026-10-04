@@ -1,0 +1,12 @@
+- kind: PreCommandInvoke
+  command: sr-session state list
+  expect: permit
+- kind: PreCommandInvoke
+  command: sr-session trajectory describe --path /tmp/x.jsonl
+  expect: permit
+- kind: PreCommandInvoke
+  command: sr-checks run --base main --head HEAD
+  expect: permit
+- kind: PreCommandInvoke
+  command: sr session refs list
+  expect: permit
