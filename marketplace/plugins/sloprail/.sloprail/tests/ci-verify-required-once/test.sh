@@ -7,6 +7,6 @@ mkdir -p .sloprail/file-guard/demo
 printf 'match: "**/*.txt"\nchecks:\n  - script: ./ok.sh\n' > .sloprail/file-guard/demo/file-guard.yaml
 printf '#!/bin/sh\nexit 0\n' > .sloprail/file-guard/demo/ok.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m setup
-RESULT=$(sr-test agent "$CASE/agent.sh" --prompt "finish")
+RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "finish")
 echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/ci-verify-required")] | .[0].outcome=="refused" and (.[0].reason|contains("sr:ci verify")) and .[-1].outcome=="permitted" and .[0].on=="Stop"' >/dev/null
 echo "$RESULT" | jq -e '.exit==0' >/dev/null
