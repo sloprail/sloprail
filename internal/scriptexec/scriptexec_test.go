@@ -128,3 +128,34 @@ func TestVerifyDeclaredRefusesShellSyntax(t *testing.T) {
 		t.Errorf("a path plus plain arguments: %v", err)
 	}
 }
+
+// A relative path is verified and exec'd as the SAME file whatever Dir the caller sets on the
+// command: Go resolves a relative Path against cmd.Dir, so Command must make it absolute first.
+func TestCommandRelativePathIsTheFileVerified(t *testing.T) {
+	work := t.TempDir()
+	other := t.TempDir()
+	// a decoy at the same relative name under the other dir: exec'd if the path stayed relative
+	os.WriteFile(filepath.Join(other, "x.sh"), []byte("#!/bin/sh\nexit 7\n"), 0o755)
+	os.WriteFile(filepath.Join(work, "x.sh"), []byte("#!/bin/sh\nexit 3\n"), 0o755)
+	orig, _ := os.Getwd()
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+
+	for _, rel := range []string{"x.sh", "./x.sh"} {
+		cmd, err := Command(context.Background(), rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.Dir = other
+		if err := cmd.Run(); err == nil || !strings.Contains(err.Error(), "exit status 3") {
+			t.Errorf("%s: ran the file under Dir, not the one verified: %v", rel, err)
+		}
+	}
+	// a file that exists only under Dir is not found, rather than verified elsewhere and run there
+	os.WriteFile(filepath.Join(other, "only.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	if _, err := Command(context.Background(), "only.sh"); err == nil {
+		t.Error("a path that does not exist at the verified location was accepted")
+	}
+}

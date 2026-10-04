@@ -155,13 +155,17 @@ func VerifyDeclared(dir, script string) error {
 }
 
 // Command verifies path and returns a command that execs it directly (no shell,
-// no interpreter fallback) with args.
+// no interpreter fallback) with args. A relative path is resolved against the
+// process's working directory, once, here: the file verified is the file exec'd,
+// whatever Dir the caller then sets on the command (Go would otherwise resolve a
+// relative Path against cmd.Dir, a different place).
 func Command(ctx context.Context, path string, args ...string) (*exec.Cmd, error) {
-	if err := Verify(path); err != nil {
+	abs, err := filepath.Abs(path)
+	if err != nil {
 		return nil, err
 	}
-	if !filepath.IsAbs(path) && !strings.ContainsRune(path, filepath.Separator) {
-		path = "." + string(filepath.Separator) + path
+	if err := Verify(abs); err != nil {
+		return nil, err
 	}
-	return exec.CommandContext(ctx, path, args...), nil
+	return exec.CommandContext(ctx, abs, args...), nil
 }
