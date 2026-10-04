@@ -23,3 +23,10 @@ echo "$(result_of c3)" | jq -e '.[0]!=true' >/dev/null || fail "c3: the correcte
 echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/authoring-slop" and .on=="sr-checks run")] | map(.outcome)==["refused","refused","passed"]' >/dev/null || fail "FileGuardChecked outcomes are not refused, refused, passed"
 # the logged refusals carry their reasons: the grep's own rule, then the judge's reasoning
 echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/authoring-slop" and .outcome=="refused")] | (.[0].reason|contains("content-may-be-unresolvable")) and (.[1].reason|contains("never refuses anything"))' >/dev/null || fail "the logged refusals do not carry the grep rule and the judge reasoning"
+# the PreFileWrite gate (gate/authoring-slop): the slop shape written with the Write tool is refused before it
+# lands, naming the rule and resultKnown; the same hook asking resultKnown first is permitted
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/authoring-slop" and .tool_use_id=="gw1")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("content-may-be-unresolvable") and contains("resultKnown"))' >/dev/null ||
+  fail "gw1: the gate did not refuse the slop-shaped Write with its rule and resultKnown"
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/authoring-slop" and .tool_use_id=="gw2")] | length==1 and .[0].outcome=="permitted"' >/dev/null ||
+  fail "gw2: the gate refused the hook that asks resultKnown first"
+grep -q resultKnown .sloprail/gate/demo/second.sh || fail "second.sh on disk is not the permitted hook"

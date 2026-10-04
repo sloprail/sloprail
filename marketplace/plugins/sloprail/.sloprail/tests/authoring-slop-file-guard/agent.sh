@@ -13,6 +13,8 @@ S=.sloprail/gate/demo/check.sh
 
 # v0 reads newContent without resultKnown. It is written from inside a script, so no gate sees it.
 MK=$'mkdir -p .sloprail/gate/demo\ncat > .sloprail/gate/demo/check.sh <<\'SCRIPT\'\n#!/usr/bin/env bash\nevent="$(cat)"\nprintf \'%s\' "$event" | jq -r \'.event.newContent\' | grep -q TODO && exit 1\nexit 0\nSCRIPT\n'
+# the same shape as v0, written with the Write tool, where the gate sees it
+BAD=$'#!/usr/bin/env bash\nevent="$(cat)"\nprintf \'%s\' "$event" | jq -r \'.event.newContent\' | grep -q TODO && exit 1\nexit 0\n'
 # v2 asks resultKnown, then admits everything: a hook that loads, validates and refuses nothing
 INERT=$'#!/usr/bin/env bash\nevent="$(cat)"\n[ "$(printf \'%s\' "$event" | jq -r \'.event.resultKnown\')" = true ] || exit 1\nexit 0\n'
 # v3 asks resultKnown and refuses what it is for
@@ -34,5 +36,10 @@ case $n in
   13) bash_ s5 "git add $S" ;;
   14) bash_ b3 "$GIT commit -q -m 'refuse what it is for' -m 'Sloprail-Cites-User: add a gate script'" ;;
   15) bash_ c3 "$RUN" ;;
+  # the PreFileWrite gate sees a Write: the slop shape is refused before it lands, the fixed one is permitted
+  16) write_ gw1 .sloprail/gate/demo/second.sh "$BAD" ;;
+  17) write_ gw2 .sloprail/gate/demo/second.sh "$GOOD" ;;
+  18) bash_ s6 "git add .sloprail/gate/demo/second.sh" ;;
+  19) bash_ b4 "$GIT commit -q -m 'a second demo script'" ;;
   *) finish ;;
 esac
