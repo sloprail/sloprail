@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -150,6 +151,7 @@ func commandEventFor(e event.Event, p HookPayload, root string) (event.Event, bo
 		return e, true
 	}
 	var kept []any
+	var raws []string
 	for _, item := range list {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -167,6 +169,7 @@ func commandEventFor(e event.Event, p HookPayload, root string) (event.Event, bo
 		}
 		if dir, ok := invocationDir(inv, p.Cwd); ok && owningRepo(filepath.Join(dir, "x")) == root {
 			kept = append(kept, item)
+			raws = append(raws, strings.Join(inv.Argv, " "))
 		}
 	}
 	if len(kept) == 0 {
@@ -177,6 +180,9 @@ func commandEventFor(e event.Event, p HookPayload, root string) (event.Event, bo
 		fields[k] = v
 	}
 	fields[commandmod.FieldInvocations] = kept
+	// raw is the whole line, which names the other repos' commands too: the repo sees
+	// only the kept invocations' words.
+	fields[commandmod.FieldRaw] = strings.Join(raws, "; ")
 	return event.Event{Kind: e.Kind, Fields: fields}, true
 }
 
