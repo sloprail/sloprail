@@ -188,6 +188,7 @@ func runTests(cmd *cobra.Command, args []string, doctor bool) error {
 		ro := ruleOutput{Rule: rule.FQN(), Untested: rr.Untested, Invalid: rule.Invalid, Missing: rr.Missing}
 		for _, e := range rr.CaseErrors {
 			ro.Errors = append(ro.Errors, e.Error())
+			failedCases++
 		}
 		// Run cases: a rule that does not load has none that can run.
 		if len(rule.Invalid) == 0 && len(rr.Cases) > 0 && !(doctor && noRun) {
