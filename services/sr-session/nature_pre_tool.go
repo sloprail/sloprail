@@ -205,13 +205,15 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 			continue
 		}
 		if outsideProject(root, path) {
-			if reason := checkForeignStructure(root, path, reg); reason != "" {
+			if reason := checkForeignStructure(root, path, reg, e.Kind, toolUseID); reason != "" {
 				return reason
 			}
 			continue
 		}
 		allowed, reason := compiled.Decide(path)
-		emitStructure(allowed, reason, e.Kind, toolUseID)
+		for _, rule := range compiled.Deciders(path) {
+			emitStructure(rule, allowed, reason, e.Kind, toolUseID)
+		}
 		if !allowed {
 			return reason
 		}
@@ -259,7 +261,7 @@ func outsideProject(root, path string) bool {
 // (their load report belongs to that project's own sessions); if they cannot
 // be read at all the write is refused, since a structure that may exist was
 // not consulted.
-func checkForeignStructure(root, path string, reg *module.Registry) string {
+func checkForeignStructure(root, path string, reg *module.Registry, on, toolUseID string) string {
 	if reg == nil {
 		return ""
 	}
@@ -279,7 +281,9 @@ func checkForeignStructure(root, path string, reg *module.Registry) string {
 	store, _ := natureDeclarationStore(quiet, owner)
 	loaded, err := store.Load(reg)
 	if err != nil {
-		return fmt.Sprintf("writing to %q, inside %s: that project's sloprail declarations could not be read, so whether its structure allows this write is unknown. Refusing.", path, owner)
+		reason := fmt.Sprintf("writing to %q, inside %s: that project's sloprail declarations could not be read, so whether its structure allows this write is unknown. Refusing.", path, owner)
+		emitStructure("structure", false, reason, on, toolUseID)
+		return reason
 	}
 	if len(loaded.Structures) == 0 {
 		return ""
@@ -292,8 +296,15 @@ func checkForeignStructure(root, path string, reg *module.Registry) string {
 	if err != nil {
 		return ""
 	}
-	if allowed, reason := compiled.Decide(filepath.ToSlash(rel)); !allowed {
-		return fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", owner, reason)
+	allowed, reason := compiled.Decide(filepath.ToSlash(rel))
+	if !allowed {
+		reason = fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", owner, reason)
+	}
+	for _, rule := range compiled.Deciders(filepath.ToSlash(rel)) {
+		emitStructure(rule, allowed, reason, on, toolUseID)
+	}
+	if !allowed {
+		return reason
 	}
 	return ""
 }

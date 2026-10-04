@@ -18,12 +18,12 @@ func TestEmitGateAndStructure(t *testing.T) {
 	e := event.Event{Kind: "PreCommandInvoke"}
 	emitGate(g, e, hookScope{ToolUseID: "t1"}, dispatchcore.Verdict{Refused: true, Reason: "nope"}, nil)
 	emitGate(g, e, hookScope{ToolUseID: "t2"}, dispatchcore.Verdict{}, nil)
-	emitStructure(false, "outside", "PreFileCreate", "t3")
+	emitStructure("sloprail/structure", false, "outside", "PreFileCreate", "t3")
 	b, _ := os.ReadFile(f)
 	s := string(b)
 	for _, want := range []string{
 		`"kind":"GateChecked","rule":"sloprail/no-x","outcome":"refused"`, `"tool_use_id":"t1"`, `"reason":"nope"`,
-		`"outcome":"permitted"`, `"kind":"StructureChecked"`, `"tool_use_id":"t3"`,
+		`"outcome":"permitted"`, `"kind":"StructureChecked","rule":"sloprail/structure","outcome":"refused"`, `"tool_use_id":"t3"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %s in\n%s", want, s)

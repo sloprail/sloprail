@@ -22,9 +22,11 @@ func emitGate(g declaration.Gate, e event.Event, scope hookScope, v dispatchcore
 	srevents.Emit(ev)
 }
 
-// emitStructure logs a structure gate's decision on one write.
-func emitStructure(allowed bool, reason, on, toolUseID string) {
-	ev := srevents.Event{Kind: srevents.StructureChecked, Rule: "structure", Outcome: srevents.Permitted, On: on, ToolUseID: toolUseID}
+// emitStructure logs one structure gate's decision on one write; rule is the gate's disable key
+// (`<plugin>/structure`, or `structure` for the project's, which is also what a write into a
+// foreign project is attributed to), the same name `sr-test run` lists in metadata.rules.
+func emitStructure(rule string, allowed bool, reason, on, toolUseID string) {
+	ev := srevents.Event{Kind: srevents.StructureChecked, Rule: rule, Outcome: srevents.Permitted, On: on, ToolUseID: toolUseID}
 	if !allowed {
 		ev.Outcome, ev.Reason = srevents.Refused, reason
 	}

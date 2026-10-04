@@ -3,12 +3,11 @@ package srtest
 import (
 	"encoding/json"
 	"sort"
-	"strings"
 )
 
 // Uncovered returns the rules ("<nature>:<rule>") listed by any case that no case's events
-// show deciding (or, for a context, activating). A structure rule counts as covered by any
-// StructureChecked event.
+// show deciding (or, for a context, activating). A structure gate is "structure:<plugin>/structure"
+// (or "structure:structure" for the project's) and is covered by a StructureChecked event of that rule.
 func Uncovered(results []Result) []string {
 	seen := map[string]bool{}
 	for _, r := range results {
@@ -25,14 +24,14 @@ func Uncovered(results []Result) []string {
 			case "ContextActivated":
 				seen["context:"+e.Rule] = true
 			case "StructureChecked":
-				seen["structure"] = true
+				seen["structure:"+e.Rule] = true
 			}
 		}
 	}
 	set := map[string]bool{}
 	for _, r := range results {
 		for _, rule := range r.Metadata.Rules {
-			if seen[rule] || (strings.HasPrefix(rule, "structure:") && seen["structure"]) {
+			if seen[rule] {
 				continue
 			}
 			set[rule] = true

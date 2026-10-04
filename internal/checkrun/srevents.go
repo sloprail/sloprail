@@ -7,7 +7,10 @@ import (
 // emitFileGuardEvents logs each rule's decision to $SR_EVENTS_FILE: refused when any of its
 // subjects refused, passed when it ran and none did. A rule with nothing to run (no file it
 // selects changed) decided nothing and is not logged unless it refused.
-func emitFileGuardEvents(out []*ruleRun) {
+func emitFileGuardEvents(out []*ruleRun, on string) {
+	if on == "" {
+		on = "Stop"
+	}
 	type decision struct {
 		rule    string
 		refused bool
@@ -41,9 +44,9 @@ func emitFileGuardEvents(out []*ruleRun) {
 		d := byRule[key]
 		switch {
 		case d.refused:
-			srevents.Emit(srevents.Event{Kind: srevents.FileGuardChecked, Rule: d.rule, Outcome: srevents.Refused, On: "Stop", Reason: d.reason})
+			srevents.Emit(srevents.Event{Kind: srevents.FileGuardChecked, Rule: d.rule, Outcome: srevents.Refused, On: on, Reason: d.reason})
 		case d.ran:
-			srevents.Emit(srevents.Event{Kind: srevents.FileGuardChecked, Rule: d.rule, Outcome: srevents.Passed, On: "Stop"})
+			srevents.Emit(srevents.Event{Kind: srevents.FileGuardChecked, Rule: d.rule, Outcome: srevents.Passed, On: on})
 		}
 	}
 }

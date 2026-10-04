@@ -233,6 +233,7 @@ func execute(cmd *cobra.Command, m mode) error {
 	}
 	results := checkstore.Open(cache, m != modeRun)
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
+		On:  "sr-checks " + m.String(),
 		Err: cmd.ErrOrStderr(), Guards: t.loaded.FileGuards, Root: t.root, Range: t.rng,
 		Cwd: t.root, Transcript: t.sess.record, Workspace: t.sess.workspace, SessionID: t.sess.id, AgentID: t.sess.agentID, Subagent: t.sess.subagent,
 		Store: results, Verify: m != modeRun, WholeRange: m == modeShow, Recorded: recordedCitations(t.sess, t.root),
@@ -313,4 +314,15 @@ func filterShown(cmd *cobra.Command, in []checkrun.CheckOutcome) []checkrun.Chec
 		out = append(out, o)
 	}
 	return out
+}
+
+// String is the verb the rule-decision log names the check by.
+func (m mode) String() string {
+	switch m {
+	case modeVerify:
+		return "verify"
+	case modeShow:
+		return "show"
+	}
+	return "run"
 }

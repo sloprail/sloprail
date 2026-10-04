@@ -1,12 +1,15 @@
 package srtest
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func project(t *testing.T, cases map[string]string) string {
@@ -104,4 +107,12 @@ echo '{"kind":"ContextActivated","rule":"c1"}' >> "$SR_EVENTS_FILE"`})
 	if got != "file-guard:f,gate:g2" {
 		t.Fatalf("got %s", got)
 	}
+}
+
+func TestUncoveredStructureByRule(t *testing.T) {
+	r := Result{Metadata: Metadata{
+		Rules:  []string{"structure:sloprail/structure", "structure:structure"},
+		Events: []json.RawMessage{json.RawMessage(`{"kind":"StructureChecked","rule":"sloprail/structure"}`)},
+	}}
+	assert.Equal(t, []string{"structure:structure"}, Uncovered([]Result{r}))
 }

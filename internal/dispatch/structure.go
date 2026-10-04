@@ -340,6 +340,22 @@ func (s *StructureSet) Decide(path string) (bool, string) {
 	}
 }
 
+// Deciders names the structure gates that decide a write to path, by their disable key
+// (`<plugin>/structure`, `structure` for the project's): the owning plugin (every owner, in a
+// conflict), else the project's own. Empty when no gate has a say.
+func (s *StructureSet) Deciders(path string) []string {
+	var out []string
+	for i := range s.plugins {
+		if s.plugins[i].ownerOf(path) != "" {
+			out = append(out, s.plugins[i].decl.Qualified())
+		}
+	}
+	if len(out) == 0 && s.project != nil {
+		out = append(out, "structure")
+	}
+	return out
+}
+
 // describeOwner names a plugin structure and the scope that matched, for a
 // refusal: `plugin "mdmap"'s structure gate (scope ".mdmap/", <path>)`.
 func describeOwner(o owner) string {
