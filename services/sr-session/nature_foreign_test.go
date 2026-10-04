@@ -72,7 +72,7 @@ func TestCommandEventForKeepsOnlyInvocationsInTheRepo(t *testing.T) {
 			inv("git", ".", "git", "-C", b, "status"),
 		},
 	}}
-	got, ok := commandEventFor(e, HookPayload{Cwd: a}, root)
+	got, ok := commandEventFor(e, HookPayload{Cwd: a}, root, owningRepo)
 	if !ok {
 		t.Fatal("the event with an invocation in the repo was dropped")
 	}
@@ -82,7 +82,7 @@ func TestCommandEventForKeepsOnlyInvocationsInTheRepo(t *testing.T) {
 	if raw := got.Fields["raw"].(string); strings.Contains(raw, "rm -rf") {
 		t.Errorf("raw still carries the other repo's command: %q", raw)
 	}
-	if _, ok := commandEventFor(e, HookPayload{Cwd: a}, "/nowhere"); ok {
+	if _, ok := commandEventFor(e, HookPayload{Cwd: a}, "/nowhere", owningRepo); ok {
 		t.Error("an event with no invocation in the repo was kept")
 	}
 }
