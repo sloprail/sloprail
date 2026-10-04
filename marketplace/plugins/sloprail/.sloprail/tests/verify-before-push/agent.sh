@@ -8,7 +8,11 @@ write_() { tu "$1" Write "$(jq -nc --arg p "$2" --arg c "$3" '{file_path:$p,cont
 finish() { echo '{"type":"result","subtype":"success","result":"done","is_error":false}'; }
 
 
+# The refusal names the `sr-checks run --base <b> --head <h>` that judges the range: the agent runs it, then pushes again.
+cmd=$(grep -o 'sr-checks run --base [0-9a-f]* --head [0-9a-f]*' "$A10N_MOCK_SESSION_FILE" 2>/dev/null | tail -1)
 case $n in
-  0) bash_ t1 "git push origin HEAD" ;;
+  0) bash_ p1 "git push origin HEAD" ;;
+  1) if [ -n "$cmd" ]; then bash_ c1 "$cmd"; else finish; fi ;;
+  2) bash_ p2 "git push origin HEAD" ;;
   *) finish ;;
 esac
