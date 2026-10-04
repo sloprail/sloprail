@@ -66,6 +66,9 @@ type Store struct {
 	dicts map[string]*zdict
 	snap  *snapshot // in-process copy keyed by dir tree
 
+	runsMemo    []Run // Runs' decoded result, valid while the ref's tip is runsMemoTip
+	runsMemoTip string
+
 	frozen    bool // read-only use: the ref is read once (FreezeTip)
 	frozenTip string
 	frozenSn  *snapshot
