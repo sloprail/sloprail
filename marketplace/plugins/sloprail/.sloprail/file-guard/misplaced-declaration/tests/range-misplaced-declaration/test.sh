@@ -3,7 +3,10 @@ set -euo pipefail
 
 # The CI path, no agent turn: `sr-checks run` judges a committed range with the plugin's file-guards.
 git init -q .
-git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+# the demo project's rules and structure are incidental here, not under test: rule-tests-pass would ask for a case for each
+mkdir -p .sloprail
+printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
+git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 BASE=$(git rev-parse HEAD)
 # one agent run with no turn sets up the plugin (config dir and plugin cache) for sr-checks here
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")

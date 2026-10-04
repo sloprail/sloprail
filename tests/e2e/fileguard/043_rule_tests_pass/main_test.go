@@ -37,28 +37,35 @@ func refusalOf(t *testing.T, files map[string]string) string {
 const (
 	gateYAML = "on:\n  - event: PreFileWrite\n    match: 'event.path startsWith \"notes/\"'\nchecks:\n  - script: ./check.sh\n"
 	checkSh  = "#!/usr/bin/env bash\nexit 0\n"
+	passCase = "#!/usr/bin/env bash\nexit 0\n"
+	failCase = "#!/usr/bin/env bash\necho 'the broken one' >&2\nexit 1\n"
 )
 
-type legacyEnv struct {
-	t    *testing.T
-	e    *harness.Env
-	proj string
+// notes returns the files of the gate "notes": its declaration and script, plus the cases given (name -> test.sh),
+// each in the gate's own folder.
+func notes(cases map[string]string) map[string]string {
+	files := map[string]string{
+		".sloprail/gate/notes/gate.yaml": gateYAML,
+		".sloprail/gate/notes/check.sh":  checkSh,
+	}
+	for name, body := range cases {
+		files[".sloprail/gate/notes/tests/"+name+"/test.sh"] = body
+	}
+	return files
 }
 
-// newEnvWithLegacyRule commits a rule with no case as the base, then a passing case on top of it.
-func newEnvWithLegacyRule(t *testing.T) *legacyEnv {
+// scopeEnv commits the gate "notes" with a passing case "good" and a broken one "broken" as the base, and a
+// legacy gate "old" with no case at all. Nothing in the range yet.
+func scopeEnv(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e := harness.New(t, harness.WithOnlyShippedFileGuard(ruleName))
 	proj := e.Project()
-	e.WriteExecutable(proj, ".sloprail/gate/notes/gate.yaml", gateYAML)
-	e.WriteExecutable(proj, ".sloprail/gate/notes/check.sh", checkSh)
+	for path, body := range notes(map[string]string{"good": passCase, "broken": failCase}) {
+		e.WriteExecutable(proj, path, body)
+	}
+	e.WriteExecutable(proj, ".sloprail/gate/old/gate.yaml", gateYAML)
+	e.WriteExecutable(proj, ".sloprail/gate/old/check.sh", checkSh)
 	e.GitInit(proj)
 	e.Run(proj, "s-043", "hello", harness.Turns("done"))
-	e.WriteExecutable(proj, ".sloprail/tests/fine/test.sh", "#!/usr/bin/env bash\nexit 0\n")
-	e.CommitAll(proj, "add a case")
-	return &legacyEnv{t: t, e: e, proj: proj}
-}
-
-func (l *legacyEnv) refusals() []string {
-	return l.e.CheckRunRange(l.proj, "s-043", "origin/main", "HEAD")
+	return e, proj
 }

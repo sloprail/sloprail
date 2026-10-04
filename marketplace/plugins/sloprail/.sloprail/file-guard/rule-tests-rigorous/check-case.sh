@@ -2,10 +2,16 @@
 # rule-tests-rigorous, the deterministic floor. One subject = one case folder. It reads the committed
 # test.sh (and the mock judges beside it) from SR_TREE and refuses the structural shapes that make a case
 # pass whatever the rule does. What needs reading for meaning (is the refusal for the rule's own reason,
-# does the permit sit at the boundary) is the judge's, next.
+# does the permit sit at the boundary) is the judge's, next. A case's rule is the folder it sits in, so the
+# floor also requires test.sh to assert an event of THAT rule.
 # Contract: stdin is the Changeset payload; exit 1 with {"reason": ...} refuses; whatever cannot be read
 # is refused.
 set -uo pipefail
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+unset rule_tests_rigorous_lib_loaded
+. "$lib_dir/lib.sh" || exit 2
+[ "${rule_tests_rigorous_lib_loaded:-}" = 1 ] || exit 2
 payload="$(cat)"
 
 refuse() {
@@ -40,6 +46,22 @@ body="$(grep -v -E '^[[:space:]]*#' "$test_sh")"
 if ! printf '%s\n' "$body" | grep -q -E '[.]events|SR_EVENTS_FILE' ||
   ! printf '%s\n' "$body" | grep -q -E 'jq[[:space:]]+(-[A-Za-z]*e[A-Za-z]*|--exit-status)([[:space:]]|$)'; then
   add "test.sh never asserts on the events (a 'jq -e' over '.events' of the sr-test agent result, or over \$SR_EVENTS_FILE). The exit code of sr-test agent only says the agent ran; assert which rule decided, with which outcome."
+fi
+
+# the owner's events: the case's folder names its rule (bare in the project, <plugin>/<rule> in a plugin) and
+# its nature names the event kind; one jq assertion must carry both. Backslash continuations are joined first
+# so an assertion split over lines is read as one.
+case_split "$case_dir" ||
+  refuse "$case_dir is not a case folder: a case lives in its rule's folder, .sloprail/<gate|file-guard|context>/<rule>/tests/<case>/ (the structure gate's in .sloprail/file-guard/structure.tests/<case>/)."
+ev_rule="$(owner_rule "$CASE_ROOT" "$CASE_RULE")"
+ev_kind="$(owner_kind "$CASE_NATURE")"
+ev_re="$ev_rule"
+# the structure gate is one file: a plugin's case for it builds the project that holds the structure.yaml, so its
+# events carry the bare "structure" as well as "<plugin>/structure"
+[ "$CASE_NATURE" != structure ] || ev_re="(${ev_rule%structure})?structure"
+joined="$(printf '%s\n' "$body" | awk '{ if (sub(/\\$/, "")) { buf = buf $0; next } print buf $0; buf = "" } END { if (buf != "") print buf }')"
+if ! printf '%s\n' "$joined" | grep -F -e "$ev_kind" | grep -E 'jq[[:space:]]' | grep -q -E "[.]rule[[:space:]]*==[[:space:]]*\"$ev_re\""; then
+  add "test.sh asserts no event of its owning rule $ev_rule. The case sits in the folder of $CASE_NATURE/$CASE_RULE, so it must prove that rule: one jq -e must select '.kind==\"$ev_kind\" and .rule==\"$ev_rule\"' and assert its outcome. Events of other rules, or of another kind, do not count."
 fi
 
 if printf '%s\n' "$body" | grep -q 'refused'; then

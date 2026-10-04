@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One subject for the whole change. Its fingerprint is the rules plus the tests: every file under the
-# `.sloprail/` of each root the change touches, read from SR_TREE (check.sh runs all of their cases).
+# One subject per `.sloprail` root the change touches. Its fingerprint is the rules plus the tests of that
+# root: every file under its `.sloprail/`, read from SR_TREE (check.sh runs the root's cases).
 set -uo pipefail
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -18,12 +18,16 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null |
   exit 1
 }
 
-files="$(printf '%s' "$payload" | jq -c '[.changeset.files[].path]')"
-dirs=()
+# one subject per touched `.sloprail` root: its id is the root (a dir relative to the tree, "." for the repo
+# root) and its files are the changed paths under that root's `.sloprail/`; the fingerprint is every file of
+# that `.sloprail/` (the rules and the tests of the root), read from SR_TREE
+paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
+out='[]'
 while IFS= read -r r; do
   [ -n "$r" ] || continue
-  if [ "$r" = "." ]; then dirs+=("$SR_TREE/.sloprail"); else dirs+=("$SR_TREE/$r/.sloprail"); fi
-done < <(printf '%s' "$files" | jq -r '.[]' | roots_of)
-
-fp="$(tree_sha "${dirs[@]}")"
-jq -nc --argjson f "$files" --arg fp "$fp" '[{id: "changeset", files: $f, fingerprint: $fp}]'
+  if [ "$r" = "." ]; then dir="$SR_TREE/.sloprail"; else dir="$SR_TREE/$r/.sloprail"; fi
+  files="$(printf '%s\n' "$paths" | jq -R -s -c --arg r "$r" '[split("\n")[] | select(length > 0) | select(if $r == "." then startswith(".sloprail/") else startswith($r + "/.sloprail/") end)]')"
+  fp="$(tree_sha "$dir")"
+  out="$(printf '%s' "$out" | jq -c --arg r "$r" --argjson f "$files" --arg fp "$fp" '. + [{id: $r, files: $f, fingerprint: $fp}]')"
+done < <(printf '%s\n' "$paths" | roots_of)
+printf '%s\n' "$out"

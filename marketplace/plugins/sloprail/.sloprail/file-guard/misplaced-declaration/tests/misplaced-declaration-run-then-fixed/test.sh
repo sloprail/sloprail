@@ -6,7 +6,10 @@ set -euo pipefail
 # the file and commits, citing the user's words (the moved file is a rule change; move and commit as separate commands, as cite-before-commit demands); judging the
 # same range again passes, and the Stop that follows blocks nothing.
 git init -q .
-git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+# the demo project's rules and structure are incidental here, not under test: rule-tests-pass would ask for a case for each
+mkdir -p .sloprail
+printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
+git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 export SR_CHECKS_JUDGE_MOCKS='{"sloprail/file-guard/grounded-rule-changes/judge":"'"$SR_TEST_CASE_DIR"'/judge-grounding.sh"}'
 RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "put the structure declaration in .sloprail, then move it where the engine reads it")
 fail() { echo "$1" >&2; echo "$RESULT" | jq -c '.events[]|{kind,rule,outcome,on,tool_use_id,reason}' >&2; exit 1; }

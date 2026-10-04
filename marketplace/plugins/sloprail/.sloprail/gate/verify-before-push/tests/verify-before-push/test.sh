@@ -6,7 +6,10 @@ set -euo pipefail
 REMOTE="$(dirname "$SR_TEST_CASE_DIR")/remote.git"
 git init -q --bare "$REMOTE"
 git init -q -b main .
-git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+# the demo project's rules and structure are incidental here, not under test: rule-tests-pass would ask for a case for each
+mkdir -p .sloprail
+printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
+git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 git remote add origin "$REMOTE"
 git push -q origin main
 git checkout -q -b feature
