@@ -46,3 +46,5 @@ write_no_curl_tests() {
   write_no_curl_case refuses-curl refuse "curl -s https://example.com"
   write_no_curl_case permits-ls permit "ls -la"
 }
+
+rule_tests_cases_loaded=1

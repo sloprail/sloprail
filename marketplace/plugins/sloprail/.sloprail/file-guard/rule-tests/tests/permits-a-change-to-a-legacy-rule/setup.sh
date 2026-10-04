@@ -1,5 +1,7 @@
 set -e
-. "$SR_TEST_CASE_DIR/../_lib.sh"
+unset rule_tests_cases_loaded
+. "$(dirname "$0")/../_lib.sh" || exit 2
+[ "${rule_tests_cases_loaded:-}" = 1 ] || exit 2
 write_no_curl
 git add -A
 git commit -q -m "the no-curl gate, written before tests existed"

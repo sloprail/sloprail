@@ -88,8 +88,15 @@ git commit -q -m "add the doc"
   marks where the range starts.
 - For a trajectory case, `setup.sh` builds the world the **session starts in**; the changes are the
   trajectory's `run:` steps.
-- Several cases share helpers by sourcing a file beside them: `tests/_lib.sh` (a plain file in `tests/`
-  is not a case) with `. "$SR_TEST_CASE_DIR/../_lib.sh"`.
+- Several cases share helpers by sourcing a file beside them, `tests/_lib.sh` (a plain file in `tests/` is
+  not a case). `setup.sh` runs as `bash <its path>`, so `$0` finds it, and a helper that loads only
+  partly must not be trusted, so it ends with a loaded sentinel the caller checks:
+
+  ```bash
+  unset my_lib_loaded
+  . "$(dirname "$0")/../_lib.sh" || exit 2
+  [ "${my_lib_loaded:-}" = 1 ] || exit 2     # _lib.sh's last line is my_lib_loaded=1
+  ```
 - Build a fixture *rule* with heredocs in `setup.sh`, not as files under `tests/`: a fixture file named
   `gate.yaml` there is read as a misplaced declaration by `sloprail/gate/misplaced-declaration`.
 
