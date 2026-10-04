@@ -146,7 +146,14 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 	} else {
 		defer os.RemoveAll(dir)
 	}
-	if err := copyTree(filepath.Join(root, ".sloprail"), filepath.Join(dir, ".sloprail")); err != nil {
+	// A plugin's own .sloprail is the plugin: its rules load from the installed plugin (named
+	// <plugin>/<rule>). Copying them in as well would shadow those with in-repo copies, bare-named,
+	// so only the plugin's cases come along.
+	srcRel := ".sloprail"
+	if _, err := os.Stat(filepath.Join(root, ".claude-plugin", "plugin.json")); err == nil {
+		srcRel = filepath.Join(".sloprail", "tests")
+	}
+	if err := copyTree(filepath.Join(root, srcRel), filepath.Join(dir, srcRel)); err != nil {
 		return finish(Error, "copy .sloprail: "+err.Error())
 	}
 	casePath := filepath.Join(dir, ".sloprail", "tests", name)
