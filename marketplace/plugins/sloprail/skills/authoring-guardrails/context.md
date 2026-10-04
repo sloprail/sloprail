@@ -132,9 +132,11 @@ mode was meant to be on. So:
 The repair of the context's own script is never refused, so a context that
 triggers on every tool call cannot lock the agent out of fixing it: a Write or
 Edit of a file inside the context's folder, and a command made only of `chmod`
-(or `sr-file edit|write`) on paths inside that folder, go through. Anything else
-in the same call, or any other command, is still refused until the script is
-fixed.
+(an add-execute mode such as `+x` or `755`) or `sr-file edit|write <path>` on
+paths inside that folder, go through. Anything else in the same call, or any
+other command, is still refused until the script is fixed. `sr-file delete`,
+`rm` and `mv` of the script are not exempt, nor is a `chmod` that removes the
+bit: only an Edit or Write of it, and `chmod +x` or `sr-file edit|write` on it.
 
 A script that runs and exits non-zero is still a decline, and refuses nothing.
 

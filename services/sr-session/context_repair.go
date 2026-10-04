@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -60,8 +61,15 @@ func repairsContext(events []event.Event, c declaration.Context, workspace strin
 	return acts > 0
 }
 
-// repairInvocation: one invocation that is `chmod <mode> <paths>` or `sr-file edit|write <path>
-// ...` with every path inside folder. An unknown cwd (a `cd` it could not resolve) is not a repair.
+// repairInvocation: one invocation that is exactly
+//
+//	chmod [-R] <mode> <path>...        mode adds execute: `+x`, `u+x`, `ug+x`, `+rx`, 755, 0755
+//	sr-file edit|write <path> [--flag]...   the path FIRST, every later word a bare `--flag`
+//
+// with every path inside folder. Anything else is not a repair: a removed bit (`-x`), a
+// `--reference`, a flag that takes a value (its value could be taken for the path, or hide
+// another file), a path hidden behind a flag. An unknown cwd (a `cd` it could not resolve) is not
+// a repair. (An edit that needs flag values is made with the Edit or Write tool, which is exempt.)
 func repairInvocation(inv map[string]any, folder, workspace string) bool {
 	bin, _ := inv["bin"].(string)
 	cwd, ok := inv["cwd"].(string)
@@ -75,39 +83,57 @@ func repairInvocation(inv map[string]any, folder, workspace string) bool {
 		s, _ := a.(string)
 		argv = append(argv, s)
 	}
-	if len(argv) < 2 {
-		return false
-	}
-	var positional []string
-	for _, a := range argv[1:] {
-		if !strings.HasPrefix(a, "-") || a == "-" {
-			positional = append(positional, a)
-		} else if bin == "chmod" && len(a) > 1 && (a[1] == 'x' || a[1] == 'r' || a[1] == 'w') {
-			// `chmod -x file`: a mode, not a flag. Not a repair, and not a path either.
-			positional = append(positional, a)
-		}
-	}
 	var paths []string
 	switch bin {
 	case "chmod":
-		if len(positional) < 2 {
+		args := argv[min(1, len(argv)):]
+		if len(args) > 0 && args[0] == "-R" {
+			args = args[1:]
+		}
+		if len(args) < 2 || !addsExecute(args[0]) {
 			return false
 		}
-		paths = positional[1:] // the first is the mode
+		paths = args[1:]
 	case "sr-file":
-		if len(positional) < 2 || (positional[0] != "edit" && positional[0] != "write") {
+		if len(argv) < 3 || (argv[1] != "edit" && argv[1] != "write") || strings.HasPrefix(argv[2], "-") {
 			return false
 		}
-		paths = positional[1:2] // the file; the rest is content
+		for _, w := range argv[3:] {
+			if !strings.HasPrefix(w, "--") {
+				return false
+			}
+		}
+		paths = argv[2:3]
 	default:
 		return false
 	}
 	for _, p := range paths {
-		if !insideFolder(absPath(p, base), folder) {
+		if strings.HasPrefix(p, "-") || !insideFolder(absPath(p, base), folder) {
 			return false
 		}
 	}
 	return true
+}
+
+var (
+	symbolicAddsX = regexp.MustCompile(`^[ugoa]*\+[rwXst]*x[rwXst]*$`)
+	octalMode     = regexp.MustCompile(`^[0-7]{3,4}$`)
+)
+
+// addsExecute: a chmod mode that adds an execute bit (`+x`, `u+x`, `a+rx`) or an octal mode with
+// one. `-x`, `u-x`, `=r` and the rest are not.
+func addsExecute(mode string) bool {
+	if symbolicAddsX.MatchString(mode) {
+		return true
+	}
+	if octalMode.MatchString(mode) {
+		for _, d := range mode {
+			if (d-'0')&1 != 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // absPath makes p absolute against base (the current directory when base is "") and resolves
