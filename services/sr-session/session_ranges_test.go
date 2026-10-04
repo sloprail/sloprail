@@ -780,12 +780,3 @@ func TestUntrackStored_NamesARangeByItsStoredHead(t *testing.T) {
 	assert.ErrorIs(t, untrackStored(reg, "s1", "/wt", "never", "x"), errNoStoredRange)
 	assert.ErrorIs(t, untrackStored(reg, "s1", "/elsewhere", "pr201", "x"), errNoStoredRange)
 }
-
-// The Stop names how many refs it did not verify because they are untracked, never each one.
-func TestUntrackedCountLine_IsOneShortLineWithoutReasons(t *testing.T) {
-	assert.Equal(t, "1 ref not verified because they are untracked (`sr-session refs list` shows them)", untrackedCountLine(1))
-	got := untrackedCountLine(300)
-	assert.Contains(t, got, "300 refs not verified")
-	assert.NotContains(t, got, "reason")
-	assert.NotContains(t, got, "\n")
-}

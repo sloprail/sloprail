@@ -67,11 +67,8 @@ func TestT003_80_AnUntrackNamesARangeWhoseBranchIsGoneInAFolderThatStands(t *tes
 			t.Fatalf("the untracked range was still refused (%q):\n%s", bad, r.Output)
 		}
 	}
-	if strings.Contains(r.Output, "sub-gone-branch (reason: the branch is gone)") {
-		t.Fatalf("the Stop lists an untracked range one by one; it is noise:\n%s", r.Output)
-	}
-	if !strings.Contains(r.Output, "not verified because they are untracked (`sr-session refs list` shows them)") {
-		t.Fatalf("the Stop does not carry the one-line count of untracked refs:\n%s", r.Output)
+	if strings.Contains(r.Output, "sub-gone-branch") || strings.Contains(r.Output, "untracked") {
+		t.Fatalf("the Stop mentions an untracked range; it must say nothing about it:\n%s", r.Output)
 	}
 	r = e.CLIDirectEnv(proj, e.SessionEnv(sess), "sr-session", "refs", "untrack", "--folder", wt, "--head", "never-tracked", "--reason", "x")
 	if r.Code == 0 {

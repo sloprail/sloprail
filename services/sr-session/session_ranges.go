@@ -887,7 +887,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet := &cobra.Command{}
 	quiet.SetOut(io.Discard)
 	quiet.SetErr(io.Discard)
-	out, notes := trackRefusal, []string(nil)
+	out := trackRefusal
 	tSerial := time.Now()
 	var due []sessionstate.TrackedRange
 	memo := newCoverMemo()
@@ -928,8 +928,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			if r.UntrackedReason == prunedReason {
 				continue // housekeeping, not a decision anyone should be told about
 			}
-			notes = append(notes, fmt.Sprintf("untracked: %s %s (reason: %s)", r.Folder, r.Head, r.UntrackedReason))
-			continue
+			continue // an untracked range is a decision already made: the Stop says nothing about it
 		}
 		if coveredByBranch(r, ranges, memo) {
 			continue // commits left on a detached HEAD, since given a branch: that branch's range holds them
@@ -1007,26 +1006,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			}
 		}
 	}
-	if len(notes) > 0 {
-		// An untracked range is a decision already made: nothing here is for the agent to act on,
-		// so the Stop names how many there are and where to see them, never each one.
-		line := untrackedCountLine(len(notes))
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+line)
-		if len(out) > 0 {
-			out = append(out, line+".")
-		}
-	}
 	return out
-}
-
-// untrackedCountLine is the one short line the Stop carries for the ranges it does not verify
-// because they are untracked.
-func untrackedCountLine(n int) string {
-	noun := "refs"
-	if n == 1 {
-		noun = "ref"
-	}
-	return fmt.Sprintf("%d %s not verified because they are untracked (`sr-session refs list` shows them)", n, noun)
 }
 
 // identityRefusal is the Stop's answer when the session it belongs to cannot be named: the
