@@ -59,9 +59,27 @@ the project's covers the whole tree, and a plugin's covers only the
 .sloprail/gate/<name>/gate.yaml
 .sloprail/context/<name>/context.yaml
 .sloprail/config.yaml                        # project settings (disabled:, …), not a rule
+
+.sloprail/<nature>/<name>/tests/<case>/test.sh     # sr-test cases of that rule
+.sloprail/file-guard/structure.tests/<case>/test.sh  # sr-test cases of the structure gate
 ```
 
-Nothing else under `.sloprail/` is read as a declaration.
+Nothing else under `.sloprail/` is read as a declaration. In particular nothing under a
+rule's `tests/` or under `structure.tests/` is: a case is data (it may carry
+declaration-named fixture files), and there is no top-level `.sloprail/tests/`.
+
+### A rule's cases live in its folder
+
+An end-to-end case (`sr-test`) sits in the folder of the ONE rule it proves: the rule's
+`tests/<case>/test.sh`, or `file-guard/structure.tests/<case>/test.sh` for the structure
+gate (one file, so it owns the sibling folder). Many cases to one rule is the normal
+shape. A case that would prove two rules is split in two, duplicating its setup; the folder
+a case sits in is its owner. `sr-test run` prints one JSONL line per case, with
+`owner` (`gate/<rule>`, `file-guard/structure`) and `subject` (`<owner>:<case>`, prefixed
+by the nested folder for a `.sloprail/` below the root: `marketplace/plugins/p:gate/<rule>:<case>`);
+`sr-test run --rule gate/<rule>` runs one rule's cases, `--only <text>` those whose subject
+contains the text. `sr-test doctor` lists, deterministically, every rule with no case
+(`uncovered: <nature>:<rule>`).
 
 One folder per rule, under the directory named for its nature. **The folder name
 IS the rule's name** — it is not repeated in a `name:` field, because a name
@@ -240,7 +258,8 @@ limit, identical checks are judged once, a second run of the same range waits an
 poll with `pgrep`.
 
 So cause the action the rule guards and see the refusal. If you cannot make it
-refuse, you have not written a working guardrail — you have written a file.
+refuse, you have not written a working guardrail — you have written a file. Keep that proof
+as a case in the rule's own `tests/<case>/test.sh` (see "A rule's cases live in its folder").
 
 ## Changing a rule that already stands
 

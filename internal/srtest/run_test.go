@@ -1,22 +1,19 @@
 package srtest
 
 import (
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func project(t *testing.T, cases map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
 	for n, body := range cases {
-		d := filepath.Join(root, ".sloprail", "tests", n)
+		d := filepath.Join(root, ".sloprail", "gate", "r", "tests", n)
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -49,14 +46,14 @@ func TestStatusMapping(t *testing.T) {
 	m := byName(rs)
 	want := map[string]string{"a-pass": Pass, "b-fail": Fail, "c-error": Error, "d-other": Fail}
 	for k, v := range want {
-		if m[k].Status != v {
-			t.Errorf("%s: %s want %s", k, m[k].Status, v)
+		if m["gate/r:"+k].Status != v {
+			t.Errorf("%s: %s want %s", k, m["gate/r:"+k].Status, v)
 		}
 	}
-	if m["a-pass"].Output != "" || !strings.Contains(m["b-fail"].Output, "boom") || !strings.Contains(m["c-error"].Output, "bad") {
+	if m["gate/r:a-pass"].Output != "" || !strings.Contains(m["gate/r:b-fail"].Output, "boom") || !strings.Contains(m["gate/r:c-error"].Output, "bad") {
 		t.Errorf("output: %+v", rs)
 	}
-	if rs[0].CheckID != "sr-test" || rs[0].Kind != "test" || rs[0].CheckedAt == "" {
+	if rs[0].Owner != "gate/r" || rs[0].Metadata.Owner != "gate/r" || rs[0].CheckID != "sr-test" || rs[0].Kind != "test" || rs[0].CheckedAt == "" {
 		t.Errorf("shape: %+v", rs[0])
 	}
 }
@@ -65,7 +62,7 @@ func TestEnvAndEvents(t *testing.T) {
 	root := project(t, map[string]string{"e": `
 test -f "$SR_TEST_CASE_DIR/test.sh" || exit 1
 test "$SR_CHECKS_JUDGE_MOCKS" = "{}" || exit 1
-test ! -e .sloprail/tests || exit 1   # the case is not part of the project it runs in
+test ! -e .sloprail/gate/r/tests || exit 1   # the case is not part of the project it runs in
 case "$PWD" in */project) ;; *) exit 1 ;; esac
 echo '{"kind":"GateChecked","rule":"g","outcome":"permitted"}' >> "$SR_EVENTS_FILE"
 `})
@@ -98,26 +95,6 @@ func TestParallel(t *testing.T) {
 	}
 }
 
-func TestDoctor(t *testing.T) {
-	root := project(t, map[string]string{"x": `echo '{"kind":"GateChecked","rule":"p/g1","outcome":"refused"}' >> "$SR_EVENTS_FILE"
-echo '{"kind":"ContextActivated","rule":"c1"}' >> "$SR_EVENTS_FILE"`})
-	rs, _ := Run(root, Options{Rules: func(Context, io.Writer) []string {
-		return []string{"gate:p/g1", "gate:g2", "context:c1", "file-guard:f"}
-	}})
-	got := strings.Join(Uncovered(rs), ",")
-	if got != "file-guard:f,gate:g2" {
-		t.Fatalf("got %s", got)
-	}
-}
-
-func TestUncoveredStructureByRule(t *testing.T) {
-	r := Result{Metadata: Metadata{
-		Rules:  []string{"structure:sloprail/structure", "structure:structure"},
-		Events: []json.RawMessage{json.RawMessage(`{"kind":"StructureChecked","rule":"sloprail/structure"}`)},
-	}}
-	assert.Equal(t, []string{"structure:structure"}, Uncovered([]Result{r}))
-}
-
 // test.sh is exec'd directly: a missing shebang or execute bit is an error result
 // naming the file and the fix, never a silent `sh test.sh`.
 func TestTestShNeedsShebangAndExecBit(t *testing.T) {
@@ -130,7 +107,7 @@ func TestTestShNeedsShebangAndExecBit(t *testing.T) {
 		"no-shebang": {"exit 0\n", 0o755, "#!/usr/bin/env bash"},
 		"no-exec":    {"#!/bin/sh\nexit 0\n", 0o644, "chmod +x"},
 	} {
-		d := filepath.Join(root, ".sloprail", "tests", name)
+		d := filepath.Join(root, ".sloprail", "gate", "r", "tests", name)
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -147,12 +124,69 @@ func TestTestShNeedsShebangAndExecBit(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := byName(rs)
-	if m["ok"].Status != Pass {
-		t.Errorf("ok: %+v", m["ok"])
+	if m["gate/r:ok"].Status != Pass {
+		t.Errorf("ok: %+v", m["gate/r:ok"])
 	}
 	for name, want := range map[string]string{"no-shebang": "#!/usr/bin/env bash", "no-exec": "chmod +x"} {
-		if m[name].Status != Error || !strings.Contains(m[name].Output, "test.sh") || !strings.Contains(m[name].Output, want) {
-			t.Errorf("%s: want an error naming test.sh and %q, got %+v", name, want, m[name])
+		r := m["gate/r:"+name]
+		if r.Status != Error || !strings.Contains(r.Output, "test.sh") || !strings.Contains(r.Output, want) {
+			t.Errorf("%s: want an error naming test.sh and %q, got %+v", name, want, r)
 		}
+	}
+}
+
+// The case is not part of the project it runs in: the project's .sloprail/ copy holds the rules, not
+// any rule's tests/ nor structure.tests/.
+func TestCasesAreNotCopiedIntoTheProject(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, ".sloprail/gate/g/tests/a/test.sh", `test -f .sloprail/gate/g/gate.yaml && test ! -e .sloprail/gate/g/tests && test ! -e .sloprail/file-guard/structure.tests && test -f .sloprail/file-guard/structure.yaml`)
+	put(t, root, ".sloprail/gate/g/gate.yaml", "")
+	put(t, root, ".sloprail/file-guard/structure.yaml", "")
+	put(t, root, ".sloprail/file-guard/structure.tests/s/test.sh", "exit 0")
+	rs, err := Run(root, Options{})
+	if err != nil || len(rs) != 2 {
+		t.Fatalf("%v %+v", err, rs)
+	}
+	for _, r := range rs {
+		if r.Status != Pass {
+			t.Errorf("%s: %s", r.Subject, r.Output)
+		}
+	}
+}
+
+func TestOnlyAndOwnerFilters(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, ".sloprail/gate/g/tests/a/test.sh", "exit 0")
+	put(t, root, ".sloprail/gate/g/tests/b/test.sh", "exit 0")
+	put(t, root, ".sloprail/context/c/tests/a/test.sh", "exit 0")
+	subjects := func(o Options) string {
+		rs, err := Run(root, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range rs {
+			out = append(out, r.Subject)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := subjects(Options{Owners: []string{"gate/g"}}); got != "gate/g:a,gate/g:b" {
+		t.Errorf("owner: %s", got)
+	}
+	if got := subjects(Options{Only: []string{":a"}}); got != "context/c:a,gate/g:a" {
+		t.Errorf("only: %s", got)
+	}
+	if got := subjects(Options{Only: []string{":a"}, Owners: []string{"gate/g"}}); got != "gate/g:a" {
+		t.Errorf("both: %s", got)
+	}
+	if got := subjects(Options{Owners: []string{"gate/none"}}); got != "" {
+		t.Errorf("none: %s", got)
+	}
+}
+
+func TestRunWithNoCases(t *testing.T) {
+	rs, err := Run(t.TempDir(), Options{})
+	if err != nil || len(rs) != 0 {
+		t.Fatalf("%v %v", err, rs)
 	}
 }

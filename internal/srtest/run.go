@@ -1,5 +1,6 @@
-// Package srtest runs a project's end-to-end rule tests (.sloprail/tests/<case>/test.sh) and
-// reports one result per case. See services/sr-test.
+// Package srtest runs a project's end-to-end rule tests and reports one result per case. A case
+// lives in its owning rule's folder: .sloprail/<nature>/<rule>/tests/<case>/test.sh, or
+// .sloprail/file-guard/structure.tests/<case>/test.sh for the structure gate. See services/sr-test.
 package srtest
 
 import (
@@ -31,10 +32,11 @@ const (
 
 // Options configure a run.
 type Options struct {
-	Root       string        // project root; every .sloprail/tests/*/test.sh below it is a case
+	Root       string        // project root; every case below it (see Discover) is run
 	Jobs       int           // parallel cases (<=0: 4)
 	Timeout    time.Duration // per case (<=0: 5m)
 	Only       []string      // run only cases whose subject contains one of these (empty: all)
+	Owners     []string      // run only cases owned by one of these ("gate/<rule>", "file-guard/structure"; empty: all)
 	LiveJudges bool          // leave SR_CHECKS_JUDGE_MOCKS unset
 	Keep       bool          // keep temp dirs
 	Stderr     io.Writer     // where kept paths are printed
@@ -49,6 +51,7 @@ type Options struct {
 // Metadata is a result's metadata.
 type Metadata struct {
 	DurationMS int64             `json:"duration_ms"`
+	Owner      string            `json:"owner"`
 	Rules      []string          `json:"rules"`
 	Events     []json.RawMessage `json:"events"`
 }
@@ -56,7 +59,8 @@ type Metadata struct {
 // Result is one JSONL line.
 type Result struct {
 	CheckID   string   `json:"check_id"`
-	Subject   string   `json:"subject"`
+	Subject   string   `json:"subject"` // "<owner>:<case>" in the root .sloprail/, "<dir of the .sloprail's parent>:<owner>:<case>" below it
+	Owner     string   `json:"owner"`   // the owning rule's folder within its .sloprail/: "gate/<rule>", "file-guard/structure"
 	Kind      string   `json:"kind"`
 	Status    string   `json:"status"`
 	Output    string   `json:"output"`
@@ -83,14 +87,11 @@ func Run(root string, opt Options) ([]Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(opt.Only) > 0 {
+	if len(opt.Only) > 0 || len(opt.Owners) > 0 {
 		var keep []Case
 		for _, c := range cases {
-			for _, o := range opt.Only {
-				if strings.Contains(c.Subject, o) {
-					keep = append(keep, c)
-					break
-				}
+			if selected(c, opt) {
+				keep = append(keep, c)
 			}
 		}
 		cases = keep
@@ -119,9 +120,32 @@ func Run(root string, opt Options) ([]Result, error) {
 	return res, nil
 }
 
+// selected: a case passes the filters when its subject contains one of Only AND its owner is one of Owners
+// (an empty filter passes every case).
+func selected(c Case, opt Options) bool {
+	ok := len(opt.Only) == 0
+	for _, o := range opt.Only {
+		if strings.Contains(c.Subject, o) {
+			ok = true
+		}
+	}
+	if !ok {
+		return false
+	}
+	if len(opt.Owners) == 0 {
+		return true
+	}
+	for _, o := range opt.Owners {
+		if c.Owner() == o {
+			return true
+		}
+	}
+	return false
+}
+
 func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	start := time.Now()
-	r := Result{CheckID: "sr-test", Subject: c.Subject, Kind: "test", Metadata: Metadata{Rules: []string{}, Events: []json.RawMessage{}}}
+	r := Result{CheckID: "sr-test", Subject: c.Subject, Owner: c.Owner(), Kind: "test", Metadata: Metadata{Owner: c.Owner(), Rules: []string{}, Events: []json.RawMessage{}}}
 	finish := func(status, out string) Result {
 		r.Status, r.Output = status, out
 		r.Metadata.DurationMS = time.Since(start).Milliseconds()
@@ -147,12 +171,12 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		return finish(Error, err.Error())
 	}
-	if err := copyTree(c.Dir, casePath); err != nil {
+	if err := copyTree(c.Dir, casePath, nil); err != nil {
 		return finish(Error, "copy the case: "+err.Error())
 	}
 	if len(c.Plugins) == 0 {
 		// A project case runs against a copy of the .sloprail/ it belongs to (its rules, not its cases).
-		if err := copyTree(c.SloprailDir, filepath.Join(proj, ".sloprail"), "tests"); err != nil {
+		if err := copyTree(c.SloprailDir, filepath.Join(proj, ".sloprail"), isCaseDir); err != nil {
 			return finish(Error, "copy .sloprail: "+err.Error())
 		}
 	}
@@ -268,8 +292,21 @@ func tail(s string, n int) string {
 	return "..." + s[len(s)-n:]
 }
 
-// copyTree copies src to dst, leaving out the top-level entries named in skip.
-func copyTree(src, dst string, skip ...string) error {
+// isCaseDir reports whether rel (a path inside a .sloprail/) is a rule's tests/ folder or the
+// structure gate's structure.tests/ folder: cases are not part of the rules a case runs against.
+func isCaseDir(rel string) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	switch len(parts) {
+	case 2:
+		return parts[0] == NatureFileGuard && parts[1] == structureTests
+	case 3:
+		return parts[2] == "tests" && (parts[0] == NatureGate || parts[0] == NatureFileGuard || parts[0] == NatureContext)
+	}
+	return false
+}
+
+// copyTree copies src to dst, leaving out every entry whose path relative to src skip reports true for.
+func copyTree(src, dst string, skip func(rel string) bool) error {
 	if _, err := os.Stat(src); err != nil {
 		return err
 	}
@@ -278,10 +315,8 @@ func copyTree(src, dst string, skip ...string) error {
 			return err
 		}
 		rel, _ := filepath.Rel(src, p)
-		for _, sk := range skip {
-			if rel == sk {
-				return fs.SkipDir
-			}
+		if skip != nil && rel != "." && skip(rel) {
+			return fs.SkipDir
 		}
 		t := filepath.Join(dst, rel)
 		info, err := d.Info()

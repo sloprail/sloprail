@@ -26,7 +26,7 @@ lib_check() {
   */.sloprail/*) root="${rest%%/.sloprail/*}/"; rest="${rest#*/.sloprail/}" ;;
   *) return 0 ;;
   esac
-  # A path can hold several folders (a fixture under .sloprail/tests/): the last is the nearest.
+  # A path can hold several folders (a case's fixture under <rule>/tests/<case>/): the last is the nearest.
   while :; do
     case "$rest" in
     .sloprail/*) root="${root}.sloprail/"; rest="${rest#.sloprail/}" ;;
@@ -37,6 +37,10 @@ lib_check() {
   dot="${root}.sloprail"
 
   case "$rest" in
+  # sr-test cases: the owning rule's tests/ and the structure gate's structure.tests/. A case is data
+  # (its own fixtures, declaration-named files included), never a declaration. There is no top-level
+  # .sloprail/tests/: that, like any stray folder, is judged by the rules below.
+  gate/*/tests/* | file-guard/*/tests/* | context/*/tests/* | file-guard/structure.tests/*) return 0 ;;
   config.yaml | config.yml) return 0 ;;
   file-guard/structure.yaml | file-guard/structure.yml) return 0 ;;
   file-guard/*/file-guard.yaml | gate/*/gate.yaml | context/*/context.yaml) return 0 ;;
