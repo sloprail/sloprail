@@ -9,19 +9,22 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 
 
 # The gate sees a write the tool call or the command line names; it cannot see inside a script. The
-# agent writes the declaration one level too high from inside a script, so only Stop catches it.
-# Stop says "not judged yet" and names the `sr-checks run --base .. --head ..` to run: the agent runs it.
+# agent writes the declaration one level too high from inside a script, so no gate stops it. The Stop
+# does not block on a range that was never judged; the agent judges its own commits with sr-checks run.
 MK=$'mkdir -p .sloprail\nprintf \'allow:\\n  - glob: ".sloprail/**"\\n\' > .sloprail/structure.yaml\n'
-cmd=$(grep -o 'sr-checks run --base [0-9a-f]* --head [0-9a-f]*' "$A10N_MOCK_SESSION_FILE" 2>/dev/null | tail -1)
-ran=0; [ -n "$cmd" ] && ran=$(grep -c "\"command\":\"$cmd\"" "$A10N_MOCK_SESSION_FILE")
+DOCS="$(dirname "$CLAUDE_CODE_PLUGIN_CACHE_DIR")/marketplace/marketplace/plugins/sloprail/skills/authoring-guardrails"
+RUN='sr-checks run --base $(git rev-list --max-parents=0 HEAD) --head HEAD'
 case $n in
   0) write_ w1 mk.sh "$MK" ;;
   1) bash_ s1 "bash mk.sh && rm mk.sh" ;;
   2) bash_ s2 "git add .sloprail/structure.yaml" ;;
   3) bash_ b1 "git -c user.name=t -c user.email=t@t commit -q -m structure" ;;
-  4) if [ -n "$cmd" ]; then bash_ c1 "$cmd"; else finish; fi ;;
-  5) bash_ b2 "mkdir -p .sloprail/file-guard && git mv .sloprail/structure.yaml .sloprail/file-guard/structure.yaml" ;;
-  6) bash_ b3 "git -c user.name=t -c user.email=t@t commit -q -m move-structure" ;;
-  7) if [ -n "$cmd" ] && [ "$ran" -eq 0 ]; then bash_ c2 "$cmd"; else finish; fi ;;
+  4) bash_ c1 "$RUN" ;;
+  # the moved file is a structure declaration: read what the structure doc says before putting it there
+  5) tu k1 Skill '{"skill":"sloprail:authoring-guardrails"}' ;;
+  6) tu k2 Read "$(jq -nc --arg p "$DOCS/structure-gate.md" '{file_path:$p}')" ;;
+  7) bash_ b2 "mkdir -p .sloprail/file-guard && git mv .sloprail/structure.yaml .sloprail/file-guard/structure.yaml" ;;
+  8) bash_ b3 "git -c user.name=t -c user.email=t@t commit -q -m move-structure -m \"Sloprail-Cites-User: put the structure declaration in .sloprail, then move it where the engine reads it\"" ;;
+  9) bash_ c2 "$RUN" ;;
   *) finish ;;
 esac
