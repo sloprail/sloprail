@@ -168,6 +168,14 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   harness's working directory for that tool call — in a transcript, the record's
   own `cwd` — so a script joins a relative `.cwd` onto that.
 
+- `.gaps` — list of integers, where `.argv` lost a word: `i` means a word of the line stood
+  immediately before `.argv[i]` and could not be resolved, `len(.argv)` that one trailed the vector.
+  Words are read against the shell variables the line assigned to literals earlier (`D=/x; ...`,
+  `export D=/x && ...`) and nothing else: an unset variable, one from the real environment, a
+  `${X:-default}` or a `$(...)` is dropped from `.argv` rather than read as empty. `-C $D push` is
+  `["git", "-C", "push"]` with `.gaps == [2]`, so a rule that resolves a path from `.argv` can tell
+  that a word is missing and fail closed. Empty when every word resolved.
+
 - `.env` — map of string to string, the environment the line itself sets for the
   program: an assignment prefix (`GIT_DIR=x git ...`), a wrapper's assignments
   (`env GIT_DIR=x git ...`, `sudo FOO=1 cmd`), and an `export NAME=v` earlier on
@@ -199,7 +207,7 @@ len(event.invocations) > 1
 In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
-`.bin`, `.argv`, `.cwd`, `.env`, `.stdin` and `.stdinKnown` have declared shapes, so a mistyped key inside a
+`.bin`, `.argv`, `.gaps`, `.cwd`, `.env`, `.stdin` and `.stdinKnown` have declared shapes, so a mistyped key inside a
 predicate is refused at load; `.flags` is the one map whose keys are open. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a

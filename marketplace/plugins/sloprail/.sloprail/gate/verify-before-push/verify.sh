@@ -34,7 +34,13 @@ while [ "$i" -lt "$n" ]; do
   i=$((i + 1))
   [ "$(printf '%s' "$inv" | jq -r '.bin // ""')" = "git" ] || continue
   git_split "$inv"
+  # A word of the command that the engine could not resolve (a `$(...)`, a variable the line did not
+  # assign to a literal) is not the next word: judging the command without it would judge another
+  # repository, or another remote, than the one the push runs in. Fail closed.
+  [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand the gate could not resolve (a variable, \$(...) or ~ the line does not assign to a literal), so this push could not be checked. Write the command out literally: git -C <literal dir> push <remote> <ref>."
   if [ "$SUB" = "push" ]; then
+    [ -z "$GAP_VAL" ] || refuse "This push's -C folder is a variable, \$(...) or ~ that could not be resolved, so the repository it pushes from could not be checked. Use the literal folder: git -C <literal dir> push ..."
+    [ -z "$GAP_REST" ] || refuse "This push names a remote or refspec through a variable or \$(...) that could not be resolved, so what it would send could not be checked. Write them out literally: git -C <literal dir> push <remote> <ref>."
     pushes+=("$inv")
   elif [ -n "$SUB" ] && [[ "$movers" == *" $SUB "* ]]; then
     mover="$SUB"
@@ -186,12 +192,9 @@ for inv in "${pushes[@]}"; do
   [ -z "$skip" ] || continue
 
   cwd="$(printf '%s' "$inv" | jq -r '.cwd // ""')"
-  # Early feedback only: CI's verify and the file-guards at Stop are the guarantee. A folder this gate
-  # cannot tell is allowed with a note, never refused.
-  if [ -z "$cwd" ]; then
-    echo "verify-before-push: could not check this push (its folder is a variable or eval); the file-guards will check the commits at Stop and in CI." >&2
-    continue
-  fi
+  # A folder this gate cannot tell (a variable the line did not assign to a literal, a substitution, an
+  # eval) is refused, never judged as the hook's cwd: that would judge another repository.
+  [ -n "$cwd" ] || refuse "This push runs in a folder the gate could not resolve (after a 'cd' to a variable, \$(...), ~, or an eval), so the commits it would send could not be checked. Run it as: git -C <literal dir> push ..."
   case "$cwd" in /*) dir="$cwd" ;; *) dir="${SR_WORKSPACE:-.}/$cwd" ;; esac
   # A folder that does not exist (yet) holds no commits to verify.
   [ -d "$dir" ] || continue

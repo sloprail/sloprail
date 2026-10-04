@@ -1048,7 +1048,7 @@ func targetsForArgv(argv []string, depth int, stdin Payload) []FileTarget {
 		// unknown, and a relative target under it is dropped rather than
 		// guessed, as after `cd "$D"`.
 		inner := targetsForArgv(values(nested), depth, stdin)
-		if dir, known, moves := wrapperChdir(asWords(argv[:len(argv)-len(nested)])); moves {
+		if dir, known, moves := wrapperChdir(asWords(argv[:len(argv)-len(nested)]), false); moves {
 			at := cwd{unknown: true}
 			if known {
 				at = cwd{dir: path.Clean(dir)}

@@ -31,7 +31,7 @@
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and any(.argv, # == "commit"))
+      any(event.invocations, .bin == "git" and (any(.argv, # == "commit") or len(.gaps) > 0))
 require:
   - citation: {source_types: [user, tool_result]}
     when: ./staged.sh when

@@ -51,6 +51,7 @@ const (
 	// describes the list itself.
 	KeyBin        = "bin"
 	KeyArgv       = "argv"
+	KeyGaps       = "gaps"
 	KeyFlags      = "flags"
 	KeyCwd        = "cwd"
 	KeyEnv        = "env"
@@ -112,6 +113,15 @@ func (*Module) Kinds() []module.KindDecl {
 								Name: KeyArgv,
 								Type: module.TypeList,
 								Elem: &module.FieldDecl{Type: module.TypeString},
+							},
+
+							// gaps are the positions in argv where a word the line
+							// wrote could not be resolved and was dropped. See
+							// Invocation.Gaps.
+							{
+								Name: KeyGaps,
+								Type: module.TypeList,
+								Elem: &module.FieldDecl{Type: module.TypeInt},
 							},
 
 							// flags stays OPEN, and the asymmetry with argv is

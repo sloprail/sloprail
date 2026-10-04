@@ -16,6 +16,11 @@
 # Pushing the results branch sloprail/checks is refused here too: only `sr-checks run`
 # writes it.
 #
+# A folder, remote or refspec the command line spells with a variable the line did not assign to a
+# literal, a `$(...)` or a `~` is refused too, with a reason telling the agent to write it literally
+# (`git -C <literal dir> push <remote> <ref>`). `D=/x; git -C $D push` and `D=/x && cd $D && git push`
+# are read as `/x`; anything else the gate cannot resolve is never judged as the hook's own repository.
+#
 # Limit: this gate sees the command line the agent runs, not the commands inside a script it
 # runs (`sh ship.sh` that pushes). CI verify is the backstop for those.
 #
@@ -24,6 +29,6 @@
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and any(.argv, # == "push"))
+      any(event.invocations, .bin == "git" and (any(.argv, # == "push") or len(.gaps) > 0))
 checks:
   - script: ./verify.sh

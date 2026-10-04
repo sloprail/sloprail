@@ -74,7 +74,10 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			// exports under the call's own prefix.
 			scope := withEnv(at.env, assignsOf(cfg, node))
 			stdin := stdinOf(stmt)
-			for _, inv := range resolve(cfg, node, depth) {
+			// Words are read against the variables the line assigned before this
+			// statement, and a reference to any other is unresolvable.
+			cfgAt := cfgWith(cfg, at.vars)
+			for _, inv := range resolve(cfgAt, node, depth) {
 				inv.Env = underlay(inv.Env, scope)
 				if inv.Stdin == nil {
 					inv.Stdin = stdin
@@ -91,7 +94,7 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			// A literal eval payload runs these programs in this shell,
 			// exactly as `sh -c` runs its payload in a child: re-parsed at
 			// depth+1 against the same bound. eval itself is reported above.
-			if text, isEval, ok := evalPayloadText(cfg, node); isEval && ok && depth < maxUnwrapDepth {
+			if text, isEval, ok := evalPayloadText(cfgAt, node); isEval && ok && depth < maxUnwrapDepth {
 				for _, inv := range walkAt(text, depth+1) {
 					inv.Env = underlay(inv.Env, scope)
 					inv.Cwd = composeCwd(at, inv.Cwd)
@@ -143,10 +146,20 @@ var chdirFlags = map[string][2]string{
 // wrapper does not change directory; known is false when it does, to a
 // directory that is not a literal word (`env -C "$D" …`) or starts with `~`,
 // which this package never expands. The last flag wins, as for the programs.
-func wrapperChdir(own []word) (dir string, known, moves bool) {
+func wrapperChdir(own []word, gapAtEnd bool) (dir string, known, moves bool) {
 	flags, ok := chdirFlags[basename(own[0].value)]
 	if !ok {
 		return "", false, false
+	}
+	// A word of the wrapper's own that was dropped as unresolvable (`env -C
+	// "$D" cat f`, `env "$X" cat f`) may have been the directory: it moves, to
+	// somewhere unknown, unless a later literal option says otherwise.
+	gapped := gapAtEnd
+	for _, w := range own[1:] {
+		gapped = gapped || w.gapBefore || w.gapAfter
+	}
+	if gapped {
+		dir, known, moves = "", false, true
 	}
 	short, long := flags[0], flags[1]
 	set := func(w word) {
