@@ -302,11 +302,20 @@ const findPlaceholder = "{}"
 // way `rm ./a*.md` keeps its literal prefix.
 func stripPlaceholders(argv []word) []word {
 	out := make([]word, 0, len(argv))
+	gap := false
 	for _, w := range argv {
 		if w.value == findPlaceholder {
+			// The path find substitutes is unknown: a gap, so `-C {}` is not read as `-C`
+			// followed by the next word.
+			gap = true
 			continue
 		}
+		w.gapBefore = w.gapBefore || gap
+		gap = false
 		out = append(out, w)
+	}
+	if gap && len(out) > 0 {
+		out[len(out)-1].gapAfter = true
 	}
 	return out
 }

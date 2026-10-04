@@ -27,8 +27,9 @@ git_split() {
           if [ "${args[$i]}" = "$gap" ]; then
             GAP_VAL=1
             GOPTS+=("")
-          elif [ "${args[$i]:0:1}" = "~" ]; then
-            # tilde is not expanded by the engine: the word is the shell's to resolve, not a folder
+          elif [ "${args[$i]:0:1}" = "~" ] || [[ "${args[$i]}" == *[\*\?\[]* ]]; then
+            # tilde is not expanded and a glob is not matched by the engine: the word is the shell's to
+            # resolve, not a folder
             GAP_VAL=1
             GOPTS+=("")
           else
@@ -49,13 +50,6 @@ git_split() {
     esac
     i=$((i + 1))
   done
-}
-
-# git_unresolved — succeeds when the last git_split'ed invocation lost a word that decides WHICH git
-# command runs or WHERE (GAP_FREE: an option or the subcommand; GAP_VAL: an option's value). Callers
-# refuse: the command is not the one this gate would judge.
-git_unresolved() {
-  [ -n "${GAP_FREE:-}" ] || [ -n "${GAP_VAL:-}" ]
 }
 
 # git_chdir BASE — applies GOPTS's `-C <dir>` options the way git does (each relative to the one

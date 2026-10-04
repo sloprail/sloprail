@@ -34,6 +34,7 @@ func TestVars_LiteralAssignmentsAreExpanded(t *testing.T) {
 		{"composed from a known variable", `A=/x; D=$A/y; git -C $D push`, []string{"git", "-C", "/x/y", "push"}},
 		{"braced", `D=/x; git -C ${D} push`, []string{"git", "-C", "/x", "push"}},
 		{"reassigned", `D=/a; D=/b; git -C $D push`, []string{"git", "-C", "/b", "push"}},
+		{"a backgrounded block runs in a subshell", `D=/x; { D=/y; } & git -C $D push`, []string{"git", "-C", "/x", "push"}},
 		{"both branches agree", `if t; then D=/x; else D=/x; fi; git -C $D push`, []string{"git", "-C", "/x", "push"}},
 	}
 	for _, tc := range cases {
@@ -68,6 +69,16 @@ func TestVars_UnresolvableWordsLeaveAGap(t *testing.T) {
 		{"a function in the line", `f() { D=/evil; }; D=/x; f; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
 		{"an assignment inside an expansion", `D=/x; echo ${D:=/y}; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
 		{"the prefix form does not apply to its own words", `D=/x git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a conditional && assignment", `D=/x; false && D=/y; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a conditional || assignment", `D=/x; c || D=/y; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a conditional export", `D=/x; c && export D=/y; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a nameref", `declare -n D=Q; Q=/y; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a lowercasing declare", `declare -l D=/Y; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"an integer declare", `declare -i D=3+4; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"arithmetic inside an assignment", `D=/x; A=$((D=1)); git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a function defined by eval", `D=/x; eval 'f() { D=/y; }'; f; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a sourced file may define one", `D=/x; source ./env.sh; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"find's placeholder", `find /y -name .git -exec git -C {} push \;`, []string{"git", "-C", "push"}, []int{2}},
 		{"a backgrounded assignment sets nothing here", `D=/x & git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
 	}
 	for _, tc := range cases {

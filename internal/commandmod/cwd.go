@@ -488,6 +488,18 @@ func cwdForSequence(cfg *expand.Config, stmts []*syntax.Stmt, entry cwd, out map
 // actually run), or anything else (recorded at the current directory and
 // nothing to advance).
 func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*syntax.Stmt]cwd) {
+	if stmt.Background {
+		// A backgrounded command runs in a subshell: nothing it does (a cd, an
+		// assignment, a block's or loop's body) reaches what follows.
+		inner := *current
+		cwdForStmtHere(cfg, stmt, &inner, out)
+		return
+	}
+	cwdForStmtHere(cfg, stmt, current, out)
+}
+
+// cwdForStmtHere is cwdForStmt in the shell it was handed.
+func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*syntax.Stmt]cwd) {
 	out[stmt] = *current
 
 	switch cmd := stmt.Cmd.(type) {
@@ -495,9 +507,11 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		if len(cmd.Args) == 0 {
 			// Bare assignments: `D=/x` sets a shell variable for what follows.
 			// A backgrounded one runs in a subshell and sets nothing here.
-			if !stmt.Background {
-				current.applyAssigns(cfg, cmd.Assigns, false)
+			if mayAssign(cmd) {
+				// `A=$((D=1))`: an expansion in the value assigns another variable.
+				current.vars = nil
 			}
+			current.applyAssigns(cfg, cmd.Assigns, false)
 			return
 		}
 		if forgetsVars(cfg, current, cmd) {
@@ -511,7 +525,12 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 				// the file-target side keeps resolving.
 				current.opaque = true
 				current.vars = nil
+				current.noVars = true // it may define a function
 				return
+			}
+			if hasFuncDecl(payload) {
+				current.vars = nil
+				current.noVars = true
 			}
 			// eval runs its payload in THIS shell, exactly like a Block: a
 			// `cd` inside it moves every statement after the eval. Its own
@@ -551,13 +570,19 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			current.env = withEnv(current.env, exp)
 		}
 		// Every NAME=value in it also assigns the shell variable. An option
-		// this package does not model (`-n` makes a name reference) forgets all.
+		// this package does not model changes what the name means from here on
+		// (`-n` a name reference, `-l`/`-u`/`-i`/`-c` the value assigned): no
+		// variable is tracked from then on. So does an option it cannot read.
 		for _, as := range cmd.Args {
 			if as.Name == nil && as.Value != nil {
-				if o, err := expand.Literal(cfg, as.Value); err != nil || !isLiteral(as.Value) || (strings.HasPrefix(o, "-") && strings.Contains(o, "n")) {
+				if o, err := expand.Literal(cfg, as.Value); err != nil || !isLiteral(as.Value) || (strings.HasPrefix(o, "-") && strings.ContainsAny(o, "nluic")) {
 					current.vars = nil
+					current.noVars = true
 				}
 			}
+		}
+		if mayAssign(cmd) {
+			current.vars = nil
 		}
 		if cmd.Variant != nil {
 			current.applyAssigns(cfg, cmd.Args, true)
@@ -613,7 +638,11 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			// actually run. Both share `current` because both really do run
 			// in the one shell this function is tracking.
 			cwdForStmt(cfg, cmd.X, current, out)
+			afterX := cwd{vars: current.vars}
 			cwdForStmt(cfg, cmd.Y, current, out)
+			// Y runs only when X succeeds (`&&`) or fails (`||`): a variable it
+			// assigns is known afterwards only if X's path agrees.
+			current.vars = mergeVars(afterX, *current)
 		}
 	case *syntax.Block:
 		// `{ cd /a; }` in the CURRENT shell — a Block is not a new process,
@@ -839,6 +868,9 @@ func forgetsVars(cfg *expand.Config, c *cwd, call *syntax.CallExpr) bool {
 	first, err := expand.Literal(cfg, call.Args[0])
 	if err != nil {
 		return true
+	}
+	if first == "source" || first == "." {
+		c.noVars = true // the sourced file may define a function
 	}
 	if first == "printf" {
 		for _, a := range call.Args[1:] {
@@ -1152,4 +1184,18 @@ func plainKnown(cfg *expand.Config, w *syntax.Word) bool {
 		return ok
 	})
 	return ok && paramsKnown(cfg, w)
+}
+
+// hasFuncDecl reports whether any statement under stmts defines a function.
+func hasFuncDecl(stmts []*syntax.Stmt) bool {
+	found := false
+	for _, st := range stmts {
+		syntax.Walk(st, func(n syntax.Node) bool {
+			if _, ok := n.(*syntax.FuncDecl); ok {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
 }
