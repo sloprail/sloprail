@@ -30,7 +30,8 @@ git_split() {
             # (`-c $A push` with A='x=y -C /other'), so it is not known to be only a value
             GAP_VAL=1
             GOPTS+=("")
-          elif [ "${args[$i]:0:1}" = "~" ] || [[ "${args[$i]}" == *[\*\?\[]* ]]; then
+          elif case "$a" in -C | --git-dir | --work-tree) true ;; *) false ;; esac &&
+            { [ "${args[$i]:0:1}" = "~" ] || [[ "${args[$i]}" == *[\*\?\[]* ]]; }; then
             # tilde is not expanded and a glob is not matched by the engine: the word is the shell's to
             # resolve, not a folder
             GAP_VAL=1
