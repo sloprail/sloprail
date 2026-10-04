@@ -420,7 +420,9 @@ func trackMissing(reg sessionstate.Store, rs rootSession, p HookPayload) error {
 // of them at every call would pay for every worktree the session ever made. The Stop observes all.
 func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOnly bool) error {
 	if !autoWatchGitRefs() {
-		return nil
+		// Only ADDING auto rows is gated: rows an earlier session (or run with the variable set)
+		// left behind stop being verified. What the agent tracked itself stays.
+		return dropAutoRows(reg, rs.ID)
 	}
 	if err := pruneUnmovedAuto(reg, rs.ID); err != nil {
 		return err
@@ -2173,6 +2175,26 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 }
 
 // foreignPrunedReason is why a row a worktree made for another worktree's branch is dropped.
+const autoOffReason = "pruned: auto-watching git refs is off (SR_AUTO_WATCH_GIT_REFS is unset)"
+
+// dropAutoRows untracks every tracked range the engine added on its own. Rows the agent added
+// (refs track) are left alone.
+func dropAutoRows(reg sessionstate.Store, sessionID string) error {
+	ranges, err := reg.Ranges(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, r := range ranges {
+		if !r.Tracked() || r.AddedBy != sessionstate.RangeAuto {
+			continue
+		}
+		if err := reg.UntrackRange(sessionID, r.Folder, r.Head, autoOffReason, r.AgentID, r.HeadSHA); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 const foreignPrunedReason = "pruned: the branch is checked out in another worktree"
 
 // pruneForeignAuto untracks, once, every row the engine tracked by itself for a branch that is

@@ -35,8 +35,8 @@ func TestT056_20_WithoutTheVariableACommitIsNotAutoWatched(t *testing.T) {
 	if got := e.AllBlockingErrorsFrom(proj, sess, "Stop"); len(got) != 0 {
 		t.Fatalf("the Stop verified a range nobody asked to watch:\n%s", strings.Join(got, "\n"))
 	}
-	if strings.Contains(res.Output, "Not verified, because it was untracked") {
-		t.Fatalf("the Stop listed untracked refs although nothing was watched:\n%s", res.Output)
+	if strings.Contains(res.Output, "untracked") {
+		t.Fatalf("the Stop mentioned untracked refs:\n%s", res.Output)
 	}
 }
 

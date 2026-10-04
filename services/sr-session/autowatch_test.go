@@ -42,3 +42,22 @@ func TestAutoWatch_UnsetTracksNothingAutomatically(t *testing.T) {
 	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
 	assert.True(t, trackedIn_(t, reg, rs.ID, proj, "feature"), "the same state, with the variable set, is auto-watched")
 }
+
+// Turning the variable off stops auto rows left behind from being verified: they are untracked
+// at the next observation. A range the agent tracked itself stays.
+func TestAutoWatch_UnsetDropsLeftoverAutoRowsAndKeepsManualOnes(t *testing.T) {
+	proj, reg, rs := ruledAndObserved(t, nil) // variable set: main is auto-tracked
+	require.True(t, trackedIn_(t, reg, rs.ID, proj, "main"))
+	runGit(t, proj, "switch", "-c", "mine")
+	commitFile(t, proj, "m.md", "m")
+	head := runGit(t, proj, "rev-parse", "HEAD")
+	require.NoError(t, reg.TrackRange(sessionstate.TrackedRange{
+		SessionID: rs.ID, Folder: proj, Head: "mine", HeadSHA: head, AddedBy: sessionstate.RangeAgent,
+	}))
+
+	t.Setenv(autoWatchEnv, "")
+	require.NoError(t, trackMissing(reg, rs, HookPayload{}))
+
+	assert.False(t, trackedIn_(t, reg, rs.ID, proj, "main"), "the leftover auto row is still verified")
+	assert.True(t, trackedIn_(t, reg, rs.ID, proj, "mine"), "the agent's own row was dropped")
+}
