@@ -281,11 +281,22 @@ func short(sha string) string {
 func (s *Store) Runs() ([]Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sn, err := s.snapshotAt(s.tip())
+	tip := s.tip()
+	if s.runsMemo != nil && s.runsMemoTip == tip && tip != "" {
+		return append([]Run(nil), s.runsMemo...), nil
+	}
+	sn, err := s.snapshotAt(tip)
 	if err != nil {
 		return nil, err
 	}
-	return s.runsOf(sn)
+	out, err := s.runsOf(sn)
+	if err != nil {
+		return nil, err
+	}
+	// Decoding every segment is the dearest read the store has, and a verify asks for it once
+	// per rule: keep the decoded runs for as long as the ref's tip is the same commit.
+	s.runsMemo, s.runsMemoTip = out, tip
+	return append([]Run(nil), out...), nil
 }
 
 // runsOf is Runs over one snapshot, for a caller that holds the lock.

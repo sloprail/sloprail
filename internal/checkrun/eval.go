@@ -130,6 +130,11 @@ type changesetEvaluation struct {
 	sharedTree *gitrepo.Snapshot
 	sharedHead string
 
+	// Every rule's effectiveBase asks the same ancestry questions of the same commits: one
+	// answer per pair for the whole evaluation, not one `git merge-base` per rule.
+	ancMu sync.Mutex
+	anc   map[[2]string]bool
+
 	// Coordination with parallel runs, and live progress (a `run` only).
 	locks             *judgelimit.Limiter
 	errMu             sync.Mutex // errw is written by the pool's goroutines and by the heartbeat
@@ -651,22 +656,7 @@ func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, hash strin
 	if len(runs) > maxEffectiveCandidates {
 		runs = runs[:maxEffectiveCandidates]
 	}
-	type pair struct{ a, b string }
-	memo := map[pair]bool{}
-	anc := func(a, b string) bool { // a is an ancestor-or-equal of b
-		if a == b || a == gitrepo.EmptyTree {
-			return true
-		}
-		k := pair{a, b}
-		ok, seen := memo[k]
-		if !seen {
-			var err error
-			ok, err = gitrepo.IsAncestor(ev.root, a, b)
-			ok = ok && err == nil
-			memo[k] = ok
-		}
-		return ok
-	}
+	anc := ev.isAncestor
 	eb := r.Base
 	for range runs {
 		best := ""
@@ -690,6 +680,30 @@ func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, hash strin
 		return r
 	}
 	return gitrepo.Range{Base: eb, Head: r.Head}
+}
+
+// isAncestor reports whether a is an ancestor-or-equal of b (the empty tree is everyone's),
+// asking git once per pair for the whole evaluation.
+func (ev *changesetEvaluation) isAncestor(a, b string) bool {
+	if a == b || a == gitrepo.EmptyTree {
+		return true
+	}
+	k := [2]string{a, b}
+	ev.ancMu.Lock()
+	ok, seen := ev.anc[k]
+	ev.ancMu.Unlock()
+	if seen {
+		return ok
+	}
+	ok, err := gitrepo.IsAncestor(ev.root, a, b)
+	ok = ok && err == nil
+	ev.ancMu.Lock()
+	if ev.anc == nil {
+		ev.anc = map[[2]string]bool{}
+	}
+	ev.anc[k] = ok
+	ev.ancMu.Unlock()
+	return ok
 }
 
 // Shown is what `sr-checks changeset` prints for a rule: the range the engine would judge it
