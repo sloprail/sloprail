@@ -11,7 +11,7 @@
 # bytes at Stop and cannot see whether a page was read this session.
 on:
   - event: PreFileWrite
-    match: 'event.path matches "^\\.sloprail/file-guard/[^/]+/file-guard\\.ya?ml$"'
+    match: 'event.path matches "(^|/)\\.sloprail/file-guard/[^/]+/file-guard\\.ya?ml$"'
 
 require:
   - skill: authoring-guardrails

@@ -11,6 +11,6 @@
 # same whether or not the new content is known.
 on:
   - event: PreFileWrite
-    match: 'event.path startsWith ".sloprail/" and (event.path endsWith ".yaml" or event.path endsWith ".yml")'
+    match: '(event.path startsWith ".sloprail/" or event.path contains "/.sloprail/") and (event.path endsWith ".yaml" or event.path endsWith ".yml")'
 checks:
   - script: ./check-path.sh

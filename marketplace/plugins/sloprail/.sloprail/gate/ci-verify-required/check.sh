@@ -35,7 +35,11 @@ git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 || exit 0
 # Applies only where the project has its OWN file-guards: a committed file under .sloprail/file-guard/.
 # Guards a plugin ships are not the project's to enforce in its CI.
 top="$(git rev-parse --show-toplevel 2>/dev/null)" || refuse "ci-verify-required could not find the repository root, so its file-guards could not be listed"
-own="$(git -C "$top" ls-tree -r --name-only HEAD -- .sloprail/file-guard 2>/dev/null)" || refuse "'git ls-tree' failed in $top, so whether the project has file-guards could not be checked"
+# A `.sloprail/` folder below the root counts too (marketplace/plugins/<p>/.sloprail/file-guard/): a file-guard
+# anywhere in the repository is judged only by `sr-checks`, never at the write. A fixture folder under
+# `.sloprail/tests/` is data, not a guard.
+all="$(git -C "$top" ls-tree -r --name-only HEAD 2>/dev/null)" || refuse "'git ls-tree' failed in $top, so whether the project has file-guards could not be checked"
+own="$(printf '%s\n' "$all" | grep -E '(^|/)\.sloprail/file-guard/' | grep -vE '(^|/)\.sloprail/tests/')" || own=""
 fp="$(printf '%s' "$top" | { shasum 2>/dev/null || sha1sum 2>/dev/null || cksum; } | cut -d' ' -f1)"
 [ -n "$fp" ] && key="repo:${fp}"
 [ -n "$own" ] || { note no-guards; exit 0; }
