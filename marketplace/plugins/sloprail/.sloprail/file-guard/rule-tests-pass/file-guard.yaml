@@ -1,0 +1,16 @@
+# rule-tests-pass: when anything under a `.sloprail/` changes, every sr-test case must pass, and a rule
+# that the change adds or edits must be exercised by some case. A rule change that breaks a case, or a new
+# rule nobody proves fires, is refused here, not discovered later. The argument lives in README.md.
+#
+# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's).
+match: 'path matches "(^|/)[.]sloprail/."'
+
+# One subject for the whole change, whose fingerprint is the rules plus the tests: every file of every
+# `.sloprail/` the change touches, read from SR_TREE (check.sh runs all cases of those roots, so a case
+# nobody changed can start failing when a rule does). Editing any of them judges the change again.
+subjects: ./subjects.sh
+
+checks:
+  # Script only: running cases is deterministic and asks no model. It runs `sr-test run` over all cases
+  # of each touched `.sloprail` root, then `sr-test doctor` for the rules the change touched.
+  - script: ./check.sh

@@ -112,4 +112,6 @@ var shippedFileGuards = []string{
 	"sloprail/file-guard/read-judge-checks-doc",
 	"sloprail/file-guard/read-script-checks-doc",
 	"sloprail/file-guard/read-structure-gate-doc",
+	"sloprail/file-guard/rule-tests-pass",
+	"sloprail/file-guard/rule-tests-rigorous",
 }

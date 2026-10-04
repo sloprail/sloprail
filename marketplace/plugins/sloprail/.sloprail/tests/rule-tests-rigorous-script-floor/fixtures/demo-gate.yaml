@@ -1,0 +1,5 @@
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "forbidden/"'
+checks:
+  - script: ./refuse.sh

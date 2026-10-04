@@ -1,0 +1,27 @@
+# rule-tests-rigorous: a sr-test case (one `.sloprail/tests/<case>/` folder) must prove its rule, not
+# decorate it. A test that passes whatever the rule does is the slop this plugin exists to stop, one
+# layer down: it sits in the project looking like coverage and checks nothing. The argument lives in
+# README.md.
+#
+# match: any file of a case folder, at any depth of nesting (a plugin's own `.sloprail/tests/` too).
+# An expression, not a glob, so the root project's `.sloprail/tests/<case>/` matches as well as a
+# nested one; a file straight under `tests/` is no case and subjects.sh skips it.
+match: 'path matches "(^|/)[.]sloprail/tests/[^/]+/."'
+
+# One subject per case folder, each cached on its own. The fingerprint carries what the verdict reads
+# beside the changed files: the whole case folder and the folders of the rules it covers (read from
+# SR_TREE), so editing a covered rule judges the case again.
+subjects: ./subjects.sh
+
+checks:
+  # The deterministic floor: shebang, events asserted, reasons asserted, no vacuous assertion, no
+  # fixed-answer mock judge. It reads the committed case from SR_TREE.
+  - script: ./check-case.sh
+
+  # The reasoning above the floor: does each covered rule have a refusal AND a permit, is the refusal
+  # for the rule's own reason, is recovery shown, does the permit sit at the boundary, do the mocked
+  # judges decide from their input. prepare.sh hands the judge the whole case and the covered rules.
+  - prepare: ./prepare.sh
+    judge: ./judge.md.j2
+    model: size-md
+    allowed_tools: [Read]
