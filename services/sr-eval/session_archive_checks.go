@@ -77,20 +77,14 @@ func archiveChecks(m *archiveManifest, folders map[string][]string, dir string) 
 		skip := func(reason string) {
 			m.Skipped = append(m.Skipped, skippedItem{Item: "checks of " + repo, Reason: reason})
 		}
-		// Run from one folder that still exists: the main worktree may itself
-		// be gone while a linked worktree stands.
-		from := ""
-		for _, f := range append([]string{repo}, g.folders...) {
-			if isDir(f) {
-				from = f
-				break
-			}
-		}
-		if from == "" {
+		// repo is the main worktree (or common dir), which exists whenever any of
+		// its worktrees does; if the main worktree is gone, git cannot resolve the
+		// common dir and each standing worktree stands for itself.
+		if !isDir(repo) {
 			skip("the folder is gone")
 			continue
 		}
-		stdout, err := runTool(from, nil, "sr-checks", "log", "--json")
+		stdout, err := runTool(repo, nil, "sr-checks", "log", "--json")
 		if err != nil {
 			skip(err.Error())
 			continue

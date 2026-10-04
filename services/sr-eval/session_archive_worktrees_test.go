@@ -95,3 +95,83 @@ func sortedStrings(s ...string) []string {
 	}
 	return out
 }
+
+func fakeChecks(t *testing.T, script string) {
+	t.Helper()
+	bin := t.TempDir()
+	mustWriteFile2(t, filepath.Join(bin, "sr-checks"), "#!/bin/sh\n"+script+"\n")
+	if err := os.Chmod(filepath.Join(bin, "sr-checks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// No tracked folder at all: nothing is archived and nothing is skipped.
+func TestArchiveChecks_ZeroRepositories(t *testing.T) {
+	fakeChecks(t, "exit 9")
+	m := &archiveManifest{}
+	archiveChecks(m, map[string][]string{}, t.TempDir())
+	if len(m.Checks) != 0 || len(m.Skipped) != 0 {
+		t.Fatalf("checks %+v skipped %+v", m.Checks, m.Skipped)
+	}
+}
+
+// A repository whose checks store cannot be read is skipped, not archived as an empty file,
+// and does not stop the other repository from being archived.
+func TestArchiveChecks_RepositoryWithoutChecksStoreIsSkipped(t *testing.T) {
+	good, bad := gitInit(t, t.TempDir()), gitInit(t, t.TempDir())
+	fakeChecks(t, `if [ "$(pwd -P)" = "`+bad+`" ]; then echo "no checks store" >&2; exit 2; fi; echo '{"rule":"r"}'`)
+	dir := t.TempDir()
+	m := &archiveManifest{}
+	archiveChecks(m, map[string][]string{good: {"s1"}, bad: {"s1"}}, dir)
+	if len(m.Checks) != 1 || m.Checks[0].Repo != good {
+		t.Fatalf("checks: %+v", m.Checks)
+	}
+	if len(m.Skipped) != 1 || m.Skipped[0].Item != "checks of "+bad || !strings.Contains(m.Skipped[0].Reason, "no checks store") {
+		t.Fatalf("skipped: %+v", m.Skipped)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "checks", "*.jsonl")); len(files) != 1 {
+		t.Fatalf("files: %v", files)
+	}
+}
+
+// The main worktree is gone but a linked one stands: the log is still read, from the linked folder.
+func TestArchiveChecks_MainWorktreeGoneLinkedStands(t *testing.T) {
+	main := gitInit(t, t.TempDir())
+	gitOut(t, main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "init")
+	wt := filepath.Join(t.TempDir(), "wt")
+	gitOut(t, main, "worktree", "add", "--quiet", "-b", "b", wt)
+	wt, _ = filepath.EvalSymlinks(wt)
+	fakeChecks(t, `echo "{\"from\":\"$(pwd -P)\"}"`)
+	if err := os.RemoveAll(main); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	m := &archiveManifest{}
+	archiveChecks(m, map[string][]string{wt: {"s1"}}, dir)
+	if len(m.Checks) != 1 || len(m.Skipped) != 0 {
+		t.Fatalf("checks %+v skipped %+v", m.Checks, m.Skipped)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, m.Checks[0].File)); !strings.Contains(string(got), wt) {
+		t.Fatalf("log was not read from the standing worktree: %s", got)
+	}
+}
+
+// A symlinked spelling of a tracked folder and its real path are one repository.
+func TestArchiveChecks_SameRepositoryTwoSpellings(t *testing.T) {
+	repo := gitInit(t, t.TempDir())
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	fakeChecks(t, `echo '{"rule":"r"}'`)
+	m := &archiveManifest{}
+	archiveChecks(m, map[string][]string{repo: {"s1"}, link: {"s2"}}, t.TempDir())
+	if len(m.Checks) != 1 {
+		t.Fatalf("checks: %+v", m.Checks)
+	}
+	c := m.Checks[0]
+	if len(c.Folders) != 2 || strings.Join(c.Sessions, ",") != "s1,s2" {
+		t.Fatalf("%+v", c)
+	}
+}
