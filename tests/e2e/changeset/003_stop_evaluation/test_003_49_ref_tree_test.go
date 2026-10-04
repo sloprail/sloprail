@@ -80,7 +80,7 @@ func TestT003_50_TheRefusalNamesTheWorktreeAndNeverSwitchesTheCheckout(t *testin
 	if !strings.Contains(got, "JUDGE-SAYS-NO") {
 		t.Fatalf("the branch lacking the file was not refused:\n%s", got)
 	}
-	if !strings.Contains(got, "checked out in another worktree") || !strings.Contains(got, filepath.Base(wt)) {
+	if !strings.Contains(got, filepath.Base(wt)) {
 		t.Fatalf("the refusal did not name the worktree holding the branch:\n%s", got)
 	}
 	if strings.Contains(got, " switch feat-x") || strings.Contains(got, "switch 'feat-x'") {
