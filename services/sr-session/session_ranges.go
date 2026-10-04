@@ -887,7 +887,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	quiet := &cobra.Command{}
 	quiet.SetOut(io.Discard)
 	quiet.SetErr(io.Discard)
-	out, notes := trackRefusal, []string(nil)
+	out := trackRefusal
 	tSerial := time.Now()
 	var due []sessionstate.TrackedRange
 	memo := newCoverMemo()
@@ -928,8 +928,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			if r.UntrackedReason == prunedReason {
 				continue // housekeeping, not a decision anyone should be told about
 			}
-			notes = append(notes, fmt.Sprintf("untracked: %s %s (reason: %s)", r.Folder, r.Head, r.UntrackedReason))
-			continue
+			continue // an untracked range is a decision already made: the Stop says nothing about it
 		}
 		if coveredByBranch(r, ranges, memo) {
 			continue // commits left on a detached HEAD, since given a branch: that branch's range holds them
@@ -1005,12 +1004,6 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 			if len(out) > 0 {
 				out = append(out, strings.Join(waiting, "; ")+".")
 			}
-		}
-	}
-	if len(notes) > 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(notes, "; "))
-		if len(out) > 0 {
-			out = append(out, "Not verified, because it was untracked: "+strings.Join(notes, "; ")+".")
 		}
 	}
 	return out
