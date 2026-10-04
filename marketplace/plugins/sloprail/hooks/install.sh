@@ -12,6 +12,7 @@
 #   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks into one directory —
 #      $SLOPRAIL_INSTALL_DIR if set, else ~/.local/bin — because sibling
 #      resolution (internal/subbin) requires the set to be installed together
+#   3b. also installs a10n-claude-mock (pinned, see below) next to them
 #   4. warns, once, if that directory is not on $PATH — the wrapper the
 #      plugin's hooks call (sr-session-hook.sh) gives the same install command
 #      back if this step was skipped, so this is not the only place a stranger
@@ -47,6 +48,72 @@ esac
 platform="${os}-${arch}"
 say "sloprail install: detected ${platform}"
 
+# --- a10n-claude-mock (the agent double sr-test drives) ------------------------
+# Pinned to internal/harnessmock/version.txt (what the sr-test code checks with
+# --version). Released from sloprail/harness-mocks as per-platform raw binaries,
+# a10n-claude-mock-<os>-<arch>, plus an optional checksums.txt.
+# TODO: internal/harnessmock/version.txt is created by the sr-test Go part; until
+# it is on this branch the fallback below is the single default.
+HARNESS_MOCKS_REPO="sloprail/harness-mocks"
+HARNESS_MOCK_DEFAULT_VERSION="0.2.0"
+
+harness_mock_version() {
+  v=""
+  for f in "$(dirname "$0")/internal/harnessmock/version.txt" internal/harnessmock/version.txt; do
+    [ -f "$f" ] && { v="$(tr -d ' \t\r\n' <"$f")"; break; }
+  done
+  v="${SLOPRAIL_HARNESS_MOCK_VERSION:-${v:-$HARNESS_MOCK_DEFAULT_VERSION}}"
+  printf '%s' "${v#v}"
+}
+
+# install_harness_mock DIR: best-effort. sr-test is the only user, so a platform
+# without a release asset warns instead of failing the sloprail install.
+install_harness_mock() {
+  hm_dir="$1"
+  hm_ver="$(harness_mock_version)"
+  hm_tag="v${hm_ver}"
+  hm_asset="a10n-claude-mock-${os}-${arch}"
+  hm_base="${SLOPRAIL_HARNESS_MOCK_URL:-https://github.com/${HARNESS_MOCKS_REPO}/releases/download/${hm_tag}}"
+  hm_tmp="$(mktemp -d)"
+  say "sloprail install: a10n-claude-mock ${hm_ver} (${hm_asset})"
+  if ! fetch "${hm_base}/${hm_asset}" "${hm_tmp}/${hm_asset}" 2>/dev/null; then
+    if [ -z "${SLOPRAIL_HARNESS_MOCK_URL:-}" ] && command -v gh >/dev/null 2>&1 &&
+      gh release download "$hm_tag" --repo "$HARNESS_MOCKS_REPO" --pattern "$hm_asset" --dir "$hm_tmp" --clobber >/dev/null 2>&1; then
+      :
+    else
+      say "sloprail install: WARNING — ${hm_base}/${hm_asset} is not available; a10n-claude-mock NOT installed (sr-test needs it; see https://github.com/${HARNESS_MOCKS_REPO}/releases)"
+      rm -rf "$hm_tmp"
+      return 0
+    fi
+  fi
+  # Checksum: only when the release publishes one.
+  if fetch "${hm_base}/checksums.txt" "${hm_tmp}/checksums.txt" 2>/dev/null; then
+    hm_want="$(grep " ${hm_asset}\$" "${hm_tmp}/checksums.txt" | awk '{print $1}')"
+    if [ -n "$hm_want" ]; then
+      if command -v shasum >/dev/null 2>&1; then hm_got="$(shasum -a 256 "${hm_tmp}/${hm_asset}" | awk '{print $1}')"
+      elif command -v sha256sum >/dev/null 2>&1; then hm_got="$(sha256sum "${hm_tmp}/${hm_asset}" | awk '{print $1}')"
+      else hm_got="$hm_want"; fi
+      [ "$hm_got" = "$hm_want" ] || die "checksum mismatch for ${hm_asset}: expected ${hm_want}, got ${hm_got} — not installing"
+    fi
+  else
+    say "sloprail install: no checksums.txt published for ${hm_tag}; a10n-claude-mock is unverified"
+  fi
+  mkdir -p "$hm_dir"
+  cp "${hm_tmp}/${hm_asset}" "${hm_dir}/a10n-claude-mock"
+  chmod +x "${hm_dir}/a10n-claude-mock"
+  command -v codesign >/dev/null 2>&1 && codesign --sign - --force "${hm_dir}/a10n-claude-mock" 2>/dev/null || true
+  rm -rf "$hm_tmp"
+  if got="$("${hm_dir}/a10n-claude-mock" --version 2>/dev/null)"; then
+    case "$got" in
+    *"$hm_ver"*) say "sloprail install: a10n-claude-mock ${hm_ver} verified into ${hm_dir}" ;;
+    *) say "sloprail install: WARNING — a10n-claude-mock --version printed '${got}', expected ${hm_ver}" ;;
+    esac
+  else
+    say "sloprail install: WARNING — could not run '${hm_dir}/a10n-claude-mock --version' (wrong platform, or this build has no --version)"
+  fi
+}
+
+
 # --- downloader ---------------------------------------------------------------
 # curl preferred, wget as the fallback every POSIX box that lacks curl usually
 # has — this script has no other dependency Claude Code doesn't already need.
@@ -71,6 +138,12 @@ gh_ok() {
   [ -z "${SLOPRAIL_RELEASE_URL:-}" ] || return 1 # an explicit source is never swapped for GitHub
   command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1
 }
+
+# --harness-mock-only: used by make distribute-local, installs just the mock.
+if [ "${1:-}" = "--harness-mock-only" ]; then
+  install_harness_mock "${2:-$INSTALL_DIR}"
+  exit 0
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -169,6 +242,8 @@ for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
   # hosts where it is simply absent.
   command -v codesign >/dev/null 2>&1 && codesign --sign - --force "${INSTALL_DIR}/${bin}" 2>/dev/null || true
 done
+
+install_harness_mock "${INSTALL_DIR}"
 
 say "sloprail install: installed ${tag} (sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks) into ${INSTALL_DIR}"
 

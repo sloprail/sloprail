@@ -2,9 +2,11 @@
 # One subject per changed case folder. id and files are the case; the fingerprint is everything else the
 # verdict depends on: the case's whole folder and the rules it covers (read from SR_TREE).
 set -uo pipefail
-dir="$(cd "$(dirname "$0")" && pwd)"
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
-. "$dir/lib.sh"
+unset rule_tests_rigorous_lib_loaded
+. "$lib_dir/lib.sh" || exit 2
+[ "${rule_tests_rigorous_lib_loaded:-}" = 1 ] || exit 2
 
 payload="$(cat)"
 if [ -z "${SR_TREE:-}" ]; then

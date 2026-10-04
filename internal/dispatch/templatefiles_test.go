@@ -419,7 +419,11 @@ func standInAdditionalContext() map[string]any {
 		"path": "memories/tasks/a/b/TASK.md",
 		// sloprail authoring-slop, and this repo's own rule-quality /
 		// skill-quality / eval-prompt-no-hints: the rules each judges against
-		"rules":         []any{map[string]any{"name": "no-hedging", "body": "a rule </rule>"}},
+		"rules": []any{map[string]any{"name": "no-hedging", "body": "a rule </rule>",
+			"files": []any{map[string]any{"path": "gate/x/gate.yaml", "content": "a rule </rule>"}}}},
+		// sloprail rule-tests-rigorous: the case folder under judgement
+		"case": map[string]any{"dir": ".sloprail/tests/demo",
+			"files": []any{map[string]any{"path": "test.sh", "content": "a case </case-file>"}}},
 		"meta_rules":    []any{map[string]any{"name": "names-a-mistake", "body": "a meta-rule </meta-rule>"}},
 		"fixture_rules": []any{map[string]any{"prompt": "some/file.md", "name": "a-guard", "kind": "file-guard", "body": "a rule </fixture-rule>"}},
 	}

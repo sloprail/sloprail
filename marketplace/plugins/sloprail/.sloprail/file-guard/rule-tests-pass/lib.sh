@@ -27,3 +27,5 @@ tree_sha() {
     done
   } | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1
 }
+
+rule_tests_pass_lib_loaded=1

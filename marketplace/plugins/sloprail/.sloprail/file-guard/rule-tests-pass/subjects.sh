@@ -2,9 +2,11 @@
 # One subject for the whole change. Its fingerprint is the rules plus the tests: every file under the
 # `.sloprail/` of each root the change touches, read from SR_TREE (check.sh runs all of their cases).
 set -uo pipefail
-dir="$(cd "$(dirname "$0")" && pwd)"
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
-. "$dir/lib.sh"
+unset rule_tests_pass_lib_loaded
+. "$lib_dir/lib.sh" || exit 2
+[ "${rule_tests_pass_lib_loaded:-}" = 1 ] || exit 2
 
 payload="$(cat)"
 if [ -z "${SR_TREE:-}" ]; then

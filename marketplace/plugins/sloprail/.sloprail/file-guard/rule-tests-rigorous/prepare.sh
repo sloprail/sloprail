@@ -3,9 +3,11 @@
 # folders of the rules the case covers, both read from SR_TREE. What this reads beyond the subject's
 # files is in the subject's fingerprint (subjects.sh), so a changed rule judges the case again.
 set -uo pipefail
-dir="$(cd "$(dirname "$0")" && pwd)"
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
-. "$dir/lib.sh"
+unset rule_tests_rigorous_lib_loaded
+. "$lib_dir/lib.sh" || exit 2
+[ "${rule_tests_rigorous_lib_loaded:-}" = 1 ] || exit 2
 
 payload="$(cat)"
 command -v jq >/dev/null 2>&1 || {

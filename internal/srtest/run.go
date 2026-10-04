@@ -172,14 +172,6 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	defer cancel()
 	// Run the file itself, by its shebang: `sh test.sh` is a different shell (on macOS bash in POSIX
 	// mode, whose echo interprets backslashes), so a case would pass or fail by platform.
-	cmd, err := scriptexec.Command(ctx, filepath.Join(casePath, "test.sh"))
-	if err != nil {
-		return finish(Error, "test.sh cannot be run: "+err.Error())
-	}
-	cmd.Dir = proj
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 2 * time.Second
 	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return finish(Error, err.Error())
@@ -192,10 +184,28 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	if !opt.LiveJudges {
 		env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
 	}
-	cmd.Env = env
 	var buf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &buf, &buf
-	runErr := cmd.Run()
+	var runErr error
+	// The case was just written (copied) by this process, and cases run in parallel: on Linux an exec of a
+	// file another goroutine's fork still holds open for writing fails with ETXTBSY. It is transient.
+	for attempt := 0; attempt < 20; attempt++ {
+		cmd, err := scriptexec.Command(ctx, filepath.Join(casePath, "test.sh"))
+		if err != nil {
+			return finish(Error, "test.sh cannot be run: "+err.Error())
+		}
+		cmd.Dir = proj
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.WaitDelay = 2 * time.Second
+		cmd.Env = env
+		buf.Reset()
+		cmd.Stdout, cmd.Stderr = &buf, &buf
+		runErr = cmd.Run()
+		if !errors.Is(runErr, syscall.ETXTBSY) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	exit, timedOut := 0, ctx.Err() == context.DeadlineExceeded
 	var ee *exec.ExitError
@@ -205,6 +215,7 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 		exit = ee.ExitCode()
 	default:
 		exit = 2
+		buf.WriteString("\nsr-test: could not run test.sh: " + runErr.Error() + "\n")
 	}
 	if data, err := os.ReadFile(eventsFile); err == nil {
 		for _, ln := range strings.Split(string(data), "\n") {

@@ -7,9 +7,11 @@
 # sr-test is given each touched root as an explicit path argument. When sr-test finds nested
 # `**/.sloprail/tests` itself, this can become one run from the repo root.
 set -uo pipefail
-dir="$(cd "$(dirname "$0")" && pwd)"
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
-. "$dir/lib.sh"
+unset rule_tests_pass_lib_loaded
+. "$lib_dir/lib.sh" || exit 2
+[ "${rule_tests_pass_lib_loaded:-}" = 1 ] || exit 2
 payload="$(cat)"
 
 refuse() {

@@ -57,3 +57,5 @@ covered_rules() {
     done
   done
 }
+
+rule_tests_rigorous_lib_loaded=1
