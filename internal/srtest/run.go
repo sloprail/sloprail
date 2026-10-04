@@ -146,24 +146,42 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 	} else {
 		defer os.RemoveAll(dir)
 	}
-	// A plugin's own .sloprail is the plugin: its rules load from the installed plugin (named
-	// <plugin>/<rule>). Copying them in as well would shadow those with in-repo copies, bare-named,
-	// so only the plugin's cases come along.
-	srcRel := ".sloprail"
-	if _, err := os.Stat(filepath.Join(root, ".claude-plugin", "plugin.json")); err == nil {
-		srcRel = filepath.Join(".sloprail", "tests")
+	// The project the agent works in is dir/project; the case's own folder, the events log and HOME sit
+	// beside it, so none of them is an uncommitted change in the project a Stop hook would ask to commit.
+	proj := filepath.Join(dir, "project")
+	casePath := filepath.Join(dir, "case")
+	eventsFile := filepath.Join(dir, "events.jsonl")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		return finish(Error, err.Error())
 	}
-	if err := copyTree(filepath.Join(root, srcRel), filepath.Join(dir, srcRel)); err != nil {
-		return finish(Error, "copy .sloprail: "+err.Error())
+	if err := copyTree(filepath.Join(root, ".sloprail", "tests", name), casePath); err != nil {
+		return finish(Error, "copy the case: "+err.Error())
 	}
-	casePath := filepath.Join(dir, ".sloprail", "tests", name)
-	eventsFile := filepath.Join(dir, ".sr-test-events.jsonl")
+	// A plugin root's rules load from the installed plugin (named <plugin>/<rule>): copying them into the
+	// project as well would shadow them with in-repo copies, bare-named. A project's own rules (everything
+	// but its cases) are copied in.
+	plugin := pluginName(root)
+	if plugin == "" {
+		if err := copyTree(filepath.Join(root, ".sloprail"), filepath.Join(proj, ".sloprail"), "tests"); err != nil {
+			return finish(Error, "copy .sloprail: "+err.Error())
+		}
+	}
 	if err := os.WriteFile(eventsFile, nil, 0o644); err != nil {
 		return finish(Error, err.Error())
 	}
 	if opt.Rules != nil {
 		var errBuf bytes.Buffer
-		if rs := opt.Rules(dir, &errBuf); rs != nil {
+		rulesDir := proj
+		if plugin != "" {
+			rulesDir = root
+		}
+		if rs := opt.Rules(rulesDir, &errBuf); rs != nil {
+			for i, rule := range rs {
+				if plugin != "" {
+					nat, name, _ := strings.Cut(rule, ":")
+					rs[i] = nat + ":" + plugin + "/" + strings.TrimPrefix(name, plugin+"/")
+				}
+			}
 			r.Metadata.Rules = rs
 		}
 	}
@@ -173,11 +191,11 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 	// Run the file itself, by its shebang: `sh test.sh` is a different shell (on macOS bash in POSIX
 	// mode, whose echo interprets backslashes), so a case would pass or fail by platform.
 	cmd := exec.CommandContext(ctx, filepath.Join(casePath, "test.sh"))
-	cmd.Dir = dir
+	cmd.Dir = proj
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second
-	home := filepath.Join(dir, ".sr-test-home")
+	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return finish(Error, err.Error())
 	}
@@ -250,7 +268,21 @@ func tail(s string, n int) string {
 	return "..." + s[len(s)-n:]
 }
 
-func copyTree(src, dst string) error {
+// pluginName is the name in root's .claude-plugin/plugin.json, or "" when root is not a plugin.
+func pluginName(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		return ""
+	}
+	var p struct{ Name string }
+	if json.Unmarshal(data, &p) != nil {
+		return ""
+	}
+	return p.Name
+}
+
+// copyTree copies src to dst, leaving out the top-level entries named in skip.
+func copyTree(src, dst string, skip ...string) error {
 	if _, err := os.Stat(src); err != nil {
 		return err
 	}
@@ -259,6 +291,11 @@ func copyTree(src, dst string) error {
 			return err
 		}
 		rel, _ := filepath.Rel(src, p)
+		for _, sk := range skip {
+			if rel == sk {
+				return fs.SkipDir
+			}
+		}
 		t := filepath.Join(dst, rel)
 		info, err := d.Info()
 		if err != nil {
