@@ -389,7 +389,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 			refusals = append(refusals, o.result)
 		}
 	}
-	emitFileGuardEvents(out, p.On)
+	emitFileGuardEvents(out, p.On, p.FailuresOnly)
 	for _, o := range out {
 		if o != nil && o.tree != nil {
 			fmt.Fprintf(ev.log(o.g), "sloprail: file-guard %s: cheap checks %s, judges %s\n", o.g.Attribution(),

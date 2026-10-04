@@ -20,7 +20,7 @@ func project(t *testing.T, cases map[string]string) string {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(d, "test.sh"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(d, "test.sh"), []byte("#!/usr/bin/env bash\n"+body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,7 +65,8 @@ func TestEnvAndEvents(t *testing.T) {
 	root := project(t, map[string]string{"e": `
 test -f "$SR_TEST_CASE_DIR/test.sh" || exit 1
 test "$SR_CHECKS_JUDGE_MOCKS" = "{}" || exit 1
-test -f .sloprail/tests/e/test.sh || exit 1
+test ! -e .sloprail/tests || exit 1   # the case is not part of the project it runs in
+case "$PWD" in */project) ;; *) exit 1 ;; esac
 echo '{"kind":"GateChecked","rule":"g","outcome":"permitted"}' >> "$SR_EVENTS_FILE"
 `})
 	rs, _ := Run(root, Options{})
@@ -141,7 +142,7 @@ func TestTestShNeedsShebangAndExecBit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rs, err := Run(root, Options{Rules: func(string, io.Writer) []string { return nil }})
+	rs, err := Run(root, Options{Rules: func(Context, io.Writer) []string { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

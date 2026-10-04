@@ -15,19 +15,19 @@ func put(t *testing.T, root, rel, body string) {
 	t.Helper()
 	p := filepath.Join(root, rel)
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
-	require.NoError(t, os.WriteFile(p, []byte(body), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
 }
 
 // tree: a root case, a plugin case (same name as the root's), another plugin, a plain nested
 // folder, and trees that must be skipped.
 func nestedTree(t *testing.T) string {
 	root := t.TempDir()
-	put(t, root, ".sloprail/tests/dup/test.sh", "test -f .sloprail/tests/dup/test.sh && test -z \"$SR_TEST_PLUGIN_DIR\"")
+	put(t, root, ".sloprail/tests/dup/test.sh", "test -d .sloprail && test ! -e .sloprail/tests && test -f \"$SR_TEST_CASE_DIR/test.sh\" && test -z \"$SR_TEST_PLUGIN_DIR\"")
 	put(t, root, "marketplace/plugins/p/.claude-plugin/plugin.json", `{"name":"p"}`)
 	put(t, root, "marketplace/plugins/p/.sloprail/tests/dup/test.sh", "test ! -e .sloprail && test -n \"$SR_TEST_PLUGIN_DIR\" && test -f \"$SR_TEST_CASE_DIR/test.sh\"")
 	put(t, root, "marketplace/plugins/p/.sloprail/tests/only/test.sh", "exit 0")
 	put(t, root, "marketplace/plugins/p/.sloprail/tests/no-script/readme", "x")
-	put(t, root, "tools/x/.sloprail/tests/t/test.sh", "test -f .sloprail/tests/t/test.sh")
+	put(t, root, "tools/x/.sloprail/tests/t/test.sh", "test -d .sloprail")
 	put(t, root, "node_modules/q/.sloprail/tests/n/test.sh", "exit 1")
 	put(t, root, ".claude/worktrees/w/.sloprail/tests/w/test.sh", "exit 1")
 	put(t, root, "sr-test-123/.sloprail/tests/tmp/test.sh", "exit 1")

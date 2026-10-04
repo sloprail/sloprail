@@ -126,36 +126,48 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	} else {
 		defer os.RemoveAll(dir)
 	}
-	casePath := c.Dir
+	// The project the agent works in is dir/project; the case's own folder, the events log and HOME sit
+	// beside it, so none of them is an uncommitted change in the project a Stop hook would ask to commit.
+	proj := filepath.Join(dir, "project")
+	casePath := filepath.Join(dir, "case")
+	eventsFile := filepath.Join(dir, "events.jsonl")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		return finish(Error, err.Error())
+	}
+	if err := copyTree(c.Dir, casePath); err != nil {
+		return finish(Error, "copy the case: "+err.Error())
+	}
 	if len(c.Plugins) == 0 {
-		// A project case runs against a copy of the .sloprail/ it belongs to.
-		if err := copyTree(c.SloprailDir, filepath.Join(dir, ".sloprail")); err != nil {
+		// A project case runs against a copy of the .sloprail/ it belongs to (its rules, not its cases).
+		if err := copyTree(c.SloprailDir, filepath.Join(proj, ".sloprail"), "tests"); err != nil {
 			return finish(Error, "copy .sloprail: "+err.Error())
 		}
-		casePath = filepath.Join(dir, ".sloprail", "tests", c.Name)
 	}
-	eventsFile := filepath.Join(dir, ".sr-test-events.jsonl")
+	// A plugin case copies nothing: its rules load from the installed plugin (named <plugin>/<rule>);
+	// copying them into the project too would shadow them with bare-named in-repo copies.
 	if err := os.WriteFile(eventsFile, nil, 0o644); err != nil {
 		return finish(Error, err.Error())
 	}
 	if opt.Rules != nil {
 		var errBuf bytes.Buffer
-		if rs := opt.Rules(Context{Dir: dir, Plugins: c.Plugins}, &errBuf); rs != nil {
+		if rs := opt.Rules(Context{Dir: proj, Plugins: c.Plugins}, &errBuf); rs != nil {
 			r.Metadata.Rules = rs
 		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), orDefault(opt.Timeout))
 	defer cancel()
+	// Run the file itself, by its shebang: `sh test.sh` is a different shell (on macOS bash in POSIX
+	// mode, whose echo interprets backslashes), so a case would pass or fail by platform.
 	cmd, err := scriptexec.Command(ctx, filepath.Join(casePath, "test.sh"))
 	if err != nil {
 		return finish(Error, "test.sh cannot be run: "+err.Error())
 	}
-	cmd.Dir = dir
+	cmd.Dir = proj
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second
-	home := filepath.Join(dir, ".sr-test-home")
+	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return finish(Error, err.Error())
 	}
@@ -232,7 +244,8 @@ func tail(s string, n int) string {
 	return "..." + s[len(s)-n:]
 }
 
-func copyTree(src, dst string) error {
+// copyTree copies src to dst, leaving out the top-level entries named in skip.
+func copyTree(src, dst string, skip ...string) error {
 	if _, err := os.Stat(src); err != nil {
 		return err
 	}
@@ -241,6 +254,11 @@ func copyTree(src, dst string) error {
 			return err
 		}
 		rel, _ := filepath.Rel(src, p)
+		for _, sk := range skip {
+			if rel == sk {
+				return fs.SkipDir
+			}
+		}
 		t := filepath.Join(dst, rel)
 		info, err := d.Info()
 		if err != nil {

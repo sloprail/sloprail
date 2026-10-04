@@ -10,6 +10,6 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 
 case $n in
   0) bash_ t1 "sr-session stop" ;;
-  1) bash_ t2 "git status" ;;
+  1) bash_ t2 "sr-session trajectory --help" ;;
   *) finish ;;
 esac
