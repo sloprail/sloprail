@@ -75,6 +75,13 @@ type Problem struct {
 // The faults a declaration can have. Sentinels so a caller can ask what went
 // wrong with errors.Is rather than matching strings.
 var (
+	// ErrBadScript: a declared script (a check's `script`/`prepare`, `subjects`,
+	// a context's `enter`/`exit`) exists but cannot be exec'd directly — no
+	// shebang, not executable, or an interpreter outside /bin and /usr/bin.
+	// Scripts are never run as `sh <file>`, so the rule could not run
+	// as written. Declaration fault.
+	ErrBadScript = errors.New("declaration: script cannot be run directly")
+
 	// ErrMalformed: the declaration could not be read or parsed at all. There is
 	// no rule to load. Declaration fault.
 	ErrMalformed = errors.New("declaration: could not be read")

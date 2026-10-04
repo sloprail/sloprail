@@ -1481,6 +1481,17 @@ func (e *Env) WriteFile(projDir, rel, body string) {
 	}
 }
 
+// scriptBody gives a `.sh` fixture the shebang sloprail demands of every script it
+// runs (it execs them directly, never as `sh <file>`), when the test's body is
+// shell text without one. A test about the missing shebang writes its file with
+// WriteFile instead, which never touches the body.
+func scriptBody(name, body string) string {
+	if strings.HasSuffix(name, ".sh") && !strings.HasPrefix(body, "#!") {
+		return "#!/bin/sh\n" + body
+	}
+	return body
+}
+
 // WriteExecutable writes a file into a project with the executable bit set — for
 // a script a rule will run that lives in the tree rather than beside a rule's own
 // declaration (a goal's verify.sh under goal/<name>/, which a gate's check execs).
@@ -1492,7 +1503,7 @@ func (e *Env) WriteExecutable(projDir, rel, body string) {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
 	}
-	if err := os.WriteFile(full, []byte(body), 0o755); err != nil {
+	if err := os.WriteFile(full, []byte(scriptBody(rel, body)), 0o755); err != nil {
 		e.t.Fatalf("harness: write executable %s: %v", rel, err)
 	}
 }
@@ -1548,7 +1559,7 @@ func (e *Env) Gate(projDir, name, gateYAML string, files map[string]string) {
 		e.t.Fatalf("harness: write gate.yaml: %v", err)
 	}
 	for file, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(scriptBody(file, body)), 0o755); err != nil {
 			e.t.Fatalf("harness: write gate file %s: %v", file, err)
 		}
 	}
@@ -1708,7 +1719,7 @@ func (e *Env) FileGuard(projDir, name, guardYAML string, files map[string]string
 		e.t.Fatalf("harness: write file-guard.yaml: %v", err)
 	}
 	for file, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(scriptBody(file, body)), 0o755); err != nil {
 			e.t.Fatalf("harness: write file-guard file %s: %v", file, err)
 		}
 	}
@@ -1731,7 +1742,7 @@ func (e *Env) Context(projDir, name, contextYAML string, files map[string]string
 		e.t.Fatalf("harness: write context.yaml: %v", err)
 	}
 	for file, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(scriptBody(file, body)), 0o755); err != nil {
 			e.t.Fatalf("harness: write context file %s: %v", file, err)
 		}
 	}

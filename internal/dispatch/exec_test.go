@@ -183,37 +183,39 @@ func TestRunScriptExec_GuardrailDirEnvIsAlwaysAbsolute(t *testing.T) {
 		"SR_GUARDRAIL_DIR must be absolute even when scriptCall.Dir is relative: %s", verify.Reason)
 }
 
-// A script written without the execute bit (an editor or a Write tool creates
-// files 0644) runs through its own #! interpreter instead of being refused with
-// "chmod +x it" — and its verdict still counts both ways.
-func TestRunScript_NonExecutableRunsThroughItsInterpreter(t *testing.T) {
+// A declared script runs DIRECTLY: one without the execute bit, without a shebang
+// or with a non-standard interpreter is refused, naming the file and the fix —
+// never run through `sh <file>`.
+func TestRunScript_RefusesWhatCannotBeExecedDirectly(t *testing.T) {
 	dir := t.TempDir()
-	pass := filepath.Join(dir, "pass.sh")
-	fail := filepath.Join(dir, "fail.sh")
-	bare := filepath.Join(dir, "bare.sh")
-	if err := os.WriteFile(pass, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fail, []byte("#!/usr/bin/env sh\necho '{\"reason\":\"no\"}'\nexit 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(bare, []byte("exit 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, tc := range []struct {
-		script string
-		passed bool
-	}{{"./pass.sh", true}, {"./fail.sh", false}, {"./bare.sh", true}} {
-		res, err := runScriptExec(scriptCall{Dir: dir, Script: tc.script})
+	for _, f := range []struct {
+		name, body string
+		mode       os.FileMode
+		fix        string
+	}{
+		{"noexec.sh", "#!/bin/sh\nexit 0\n", 0o644, "chmod +x"},
+		{"bare.sh", "exit 0\n", 0o755, "#!/usr/bin/env bash"},
+		{"local.sh", "#!/usr/local/bin/bash\nexit 0\n", 0o755, "#!/usr/bin/env bash"},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, f.name), []byte(f.body), f.mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(dir, f.name), f.mode); err != nil {
+			t.Fatal(err)
+		}
+		res, err := runScriptExec(scriptCall{Dir: dir, Script: "./" + f.name})
 		if err != nil {
-			t.Fatalf("%s: %v", tc.script, err)
+			t.Fatalf("%s: %v", f.name, err)
 		}
-		if res.Passed != tc.passed {
-			t.Errorf("%s: passed=%v, want %v (reason: %s)", tc.script, res.Passed, tc.passed, res.Reason)
+		if res.Passed || !strings.Contains(res.Reason, f.name) || !strings.Contains(res.Reason, f.fix) {
+			t.Errorf("%s: want a refusal naming the file and %q, got passed=%v %q", f.name, f.fix, res.Passed, res.Reason)
 		}
-		if strings.Contains(res.Reason, "not executable") {
-			t.Errorf("%s was refused as not executable instead of run: %s", tc.script, res.Reason)
-		}
+	}
+	ok := filepath.Join(dir, "ok.sh")
+	if err := os.WriteFile(ok, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := runScriptExec(scriptCall{Dir: dir, Script: "./ok.sh"}); !res.Passed {
+		t.Errorf("a well-formed script must pass: %s", res.Reason)
 	}
 }

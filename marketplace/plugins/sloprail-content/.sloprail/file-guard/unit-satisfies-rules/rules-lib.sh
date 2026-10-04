@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # The rule-collection library, sourced by unit-satisfies-rules's judge
 # prepare (the only check left — see file-guard.yaml's header for why the
 # script-rule stage was removed) so a rule's applicability is answered in one

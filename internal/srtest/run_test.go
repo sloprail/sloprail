@@ -20,7 +20,7 @@ func project(t *testing.T, cases map[string]string) string {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(d, "test.sh"), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(d, "test.sh"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -115,4 +115,43 @@ func TestUncoveredStructureByRule(t *testing.T) {
 		Events: []json.RawMessage{json.RawMessage(`{"kind":"StructureChecked","rule":"sloprail/structure"}`)},
 	}}
 	assert.Equal(t, []string{"structure:structure"}, Uncovered([]Result{r}))
+}
+
+// test.sh is exec'd directly: a missing shebang or execute bit is an error result
+// naming the file and the fix, never a silent `sh test.sh`.
+func TestTestShNeedsShebangAndExecBit(t *testing.T) {
+	root := project(t, map[string]string{"ok": "exit 0"})
+	for name, tc := range map[string]struct {
+		body string
+		mode os.FileMode
+		want string
+	}{
+		"no-shebang": {"exit 0\n", 0o755, "#!/usr/bin/env bash"},
+		"no-exec":    {"#!/bin/sh\nexit 0\n", 0o644, "chmod +x"},
+	} {
+		d := filepath.Join(root, ".sloprail", "tests", name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(d, "test.sh")
+		if err := os.WriteFile(p, []byte(tc.body), tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rs, err := Run(root, Options{Rules: func(string, io.Writer) []string { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := byName(rs)
+	if m["ok"].Status != Pass {
+		t.Errorf("ok: %+v", m["ok"])
+	}
+	for name, want := range map[string]string{"no-shebang": "#!/usr/bin/env bash", "no-exec": "chmod +x"} {
+		if m[name].Status != Error || !strings.Contains(m[name].Output, "test.sh") || !strings.Contains(m[name].Output, want) {
+			t.Errorf("%s: want an error naming test.sh and %q, got %+v", name, want, m[name])
+		}
+	}
 }

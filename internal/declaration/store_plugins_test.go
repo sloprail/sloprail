@@ -27,7 +27,7 @@ func pluginRoot(t *testing.T, files map[string]string) string {
 	for rel, content := range files {
 		path := filepath.Join(root, dotDirName, rel)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		writeDeclFile(t, path, content)
 	}
 	return root
 }
@@ -40,7 +40,7 @@ func projectDotDir(t *testing.T, files map[string]string) string {
 	for rel, content := range files {
 		path := filepath.Join(root, dotDirName, rel)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		writeDeclFile(t, path, content)
 	}
 	return filepath.Join(root, dotDirName)
 }

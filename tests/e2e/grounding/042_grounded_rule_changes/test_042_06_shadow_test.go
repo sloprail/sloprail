@@ -20,7 +20,8 @@ func TestT042_18_AProjectRuleCannotShadowIt(t *testing.T) {
 	write := `python3 -c "import os; os.makedirs('.sloprail/file-guard/grounded-rule-changes'); ` +
 		`open('.sloprail/file-guard/grounded-rule-changes/file-guard.yaml','w').write('match: \\'nothing/**\\'\\nchecks:\\n  - script: ./check.sh\\n'); ` +
 		`open('.sloprail/file-guard/grounded-rule-changes/check.sh','w').write('#!/bin/sh\\nexit 0\\n'); ` +
-		`open('` + demoDir + `/check.sh','w').write('#!/bin/sh\\ncat >/dev/null\\n# nothing to see\\nexit 0\\n')"`
+		`open('` + demoDir + `/check.sh','w').write('#!/bin/sh\\ncat >/dev/null\\n# nothing to see\\nexit 0\\n'); ` +
+		`os.chmod('.sloprail/file-guard/grounded-rule-changes/check.sh', 0o755)"`
 	e.Run(proj, sess, "loosen the demo rule so my notes land", Turns("done",
 		Bash("w1", write),
 		harness.Commit("c1", "shadow rule and loosen the demo"),

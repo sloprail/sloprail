@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
 // This file runs the two kinds of executable a check names — a `script`/`prepare`
@@ -196,6 +197,13 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	// bound (spec: model/timeout are judge-only) — so it always runs under the
 	// default. Passing 0 would work too (runShell falls back), but naming the
 	// default here keeps the expired message's duration honest.
+	if err := scriptexec.VerifyDeclared(s.Dir, s.Script); err != nil {
+		return scriptResult{
+			Passed: false,
+			Reason: fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
+			Code:   -1,
+		}, nil
+	}
 	stdout, stderr, code, expired, signal, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
 	if startErr != nil {
 		// Could not be started at all — a NUL byte in the command, a Dir that went
@@ -232,57 +240,11 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	}, nil
 }
 
-// command is the shell line for a script call: the script path as the author
-// wrote it, run from the guard's folder so a `./x.sh` resolves there.
-func (s scriptCall) command() string {
-	fields := strings.Fields(s.Script)
-	if len(fields) == 0 {
-		return s.Script
-	}
-	path := fields[0]
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(s.Dir, path)
-	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 != 0 || info.Mode().Perm()&0o400 == 0 {
-		return s.Script
-	}
-	// An existing script that is not executable, but IS readable, runs through
-	// its own interpreter instead of being refused. A file written with an
-	// editor or a Write tool is created without the execute bit, so every
-	// freshly authored rule used to be refused once with "chmod +x it" —
-	// measured on every run of the onboarding eval — for a script whose
-	// interpreter line already said how to run it. The check still runs;
-	// nothing is skipped or read as approval.
-	//
-	// The readability check matters: a script with NO read permission (chmod
-	// 000) cannot have its shebang inspected, so interpreterOf falls back to
-	// "sh", and "sh ./refuse.sh" fails with a shell-specific "cannot open"
-	// message whose exit code is not portably 126 — measured different on
-	// Linux (dash) than macOS (bash), which made T004_02 pass locally and fail
-	// in CI. Skipping the interpreter path here lets the shell's own attempt to
-	// EXEC the file directly produce the portable, already-diagnosed 126.
-	return interpreterOf(path) + " " + s.Script
-}
-
-// interpreterOf is the command a script's `#!` line names (`/usr/bin/env bash`,
-// `/bin/bash`), or `sh` when it has none.
-func interpreterOf(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return "sh"
-	}
-	defer f.Close()
-	line, _ := bufio.NewReader(f).ReadString('\n')
-	if !strings.HasPrefix(line, "#!") {
-		return "sh"
-	}
-	interp := strings.TrimSpace(strings.TrimPrefix(line, "#!"))
-	if interp == "" {
-		return "sh"
-	}
-	return interp
-}
+// command is the shell line for a script call: the script as the author wrote it,
+// run from the guard's folder so a `./x.sh` resolves there. The file is verified
+// first (scriptexec.VerifyDeclared), so the shell can only exec it directly — a
+// script without a shebang or the execute bit never reaches a `sh <file>` fallback.
+func (s scriptCall) command() string { return s.Script }
 
 // env is the environment one check runs in: the parent's, plus the guard's own
 // name under SR_GUARDRAIL so a check calling `sr-session state` reaches its own

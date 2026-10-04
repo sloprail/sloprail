@@ -44,7 +44,7 @@ func writeDecl(t *testing.T, files map[string]string) string {
 	for rel, content := range files {
 		path := filepath.Join(root, rel)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		writeDeclFile(t, path, content)
 	}
 	return root
 }
@@ -1293,4 +1293,59 @@ func TestLoad_FileGuard_PreventiveIsRefusedWithTheSplit(t *testing.T) {
 		assert.Contains(t, msg, "gate")
 		assert.Contains(t, msg, "file-guard")
 	}
+}
+
+// writeDeclFile writes one declaration file. A `.sh` file is a declared script, so
+// it gets what the loader demands of one — the execute bit and a shebang —
+// unless the test is about exactly that (it then writes the file itself).
+func writeDeclFile(t *testing.T, path, content string) {
+	t.Helper()
+	mode := os.FileMode(0o644)
+	if strings.HasSuffix(path, ".sh") {
+		mode = 0o755
+		if !strings.HasPrefix(content, "#!") {
+			content = "#!/bin/sh\n" + content
+		}
+	}
+	require.NoError(t, os.WriteFile(path, []byte(content), mode))
+	require.NoError(t, os.Chmod(path, mode))
+}
+
+// A declared script that exists but cannot be exec'd directly (no shebang, no
+// execute bit, a non-standard interpreter) fails the rule to load, naming the file
+// and the fix. Written with os.WriteFile directly: writeDeclFile would repair them.
+func TestLoad_Script_WithoutShebangOrExecBitFailsToLoad(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		mode os.FileMode
+		want string
+	}{
+		"no shebang":     {"exit 0\n", 0o755, "#!/usr/bin/env bash"},
+		"not executable": {"#!/bin/sh\nexit 0\n", 0o644, "chmod +x"},
+		"local interp":   {"#!/usr/local/bin/bash\nexit 0\n", 0o755, "#!/usr/bin/env bash"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := writeDecl(t, map[string]string{
+				"file-guard/g/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - script: ./c.sh\n",
+			})
+			p := filepath.Join(root, "file-guard", "g", "c.sh")
+			require.NoError(t, os.WriteFile(p, []byte(tc.body), tc.mode))
+			require.NoError(t, os.Chmod(p, tc.mode))
+			loaded, err := New(root).Load(testRegistry(t))
+			require.NoError(t, err)
+			require.Len(t, loaded.Invalid, 1)
+			assert.Empty(t, loaded.FileGuards, "the rule must not load")
+			assert.True(t, hasKind(loaded.Invalid[0], ErrBadScript))
+			assert.Contains(t, loaded.Invalid[0].Reason, "c.sh")
+			assert.Contains(t, loaded.Invalid[0].Reason, tc.want)
+		})
+	}
+}
+
+// A script that does not exist is not this load check's concern (it is reported
+// where it is run), and an inline command is never inspected.
+func TestLoad_Script_MissingFileStillLoads(t *testing.T) {
+	loadOK(t, map[string]string{
+		"file-guard/g/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - script: sr-checks\n  - script: ./nowhere.sh\n",
+	})
 }

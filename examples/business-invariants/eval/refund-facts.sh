@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Sourced by the goodwill-refund scorers: what the final Refund DOES, measured by
 # calling it (bypass-probe.sh), and the verdict that follows from it.
 #

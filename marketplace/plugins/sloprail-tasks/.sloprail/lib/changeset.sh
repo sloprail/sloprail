@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Reads a Changeset event's files, for every file-guard script of this plugin that
 # walks `changeset.files`, so they agree on what a missing field is. A pure library:
 # sourced, never run; nothing here exits. Each function prints and returns jq's

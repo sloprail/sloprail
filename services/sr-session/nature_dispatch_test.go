@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -45,7 +46,12 @@ func loadDeclFrom(t *testing.T, reg *module.Registry, files map[string]string, c
 	for rel, content := range files {
 		path := filepath.Join(root, rel)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(path, ".sh") {
+			mode = 0o755
+		}
+		require.NoError(t, os.WriteFile(path, []byte(content), mode))
+		require.NoError(t, os.Chmod(path, mode))
 	}
 	if config != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "config.yaml"), []byte(config), 0o644))
