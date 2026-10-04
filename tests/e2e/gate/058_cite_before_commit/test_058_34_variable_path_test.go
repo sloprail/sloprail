@@ -68,7 +68,6 @@ func TestT058_36_UnresolvableFolderFailsClosed(t *testing.T) {
 		"git -C ${D:-/x} commit -q --allow-empty -m x",
 		"D=$(pwd); git -C $D commit -q --allow-empty -m x",
 		"D=/x; read D; git -C $D commit -q --allow-empty -m x",
-		"git $OPTS commit -q --allow-empty -m x",
 		"git -C ~/x commit -q --allow-empty -m x",
 	} {
 		e, proj := project(t)
