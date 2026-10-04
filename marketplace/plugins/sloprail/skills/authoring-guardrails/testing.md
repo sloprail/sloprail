@@ -89,8 +89,8 @@ git commit -q -m "add the doc"
 - For a trajectory case, `setup.sh` builds the world the **session starts in**; the changes are the
   trajectory's `run:` steps.
 - Several cases share helpers by sourcing a file beside them, `tests/_lib.sh` (a plain file in `tests/` is
-  not a case). `setup.sh` runs as `bash <its path>`, so `$0` finds it, and a helper that loads only
-  partly must not be trusted, so it ends with a loaded sentinel the caller checks:
+  not a case). `setup.sh` is run by `bash` on its own file, so `$0` finds it, and a helper that loads
+  only partly must not be trusted, so it ends with a loaded sentinel the caller checks:
 
   ```bash
   unset my_lib_loaded
