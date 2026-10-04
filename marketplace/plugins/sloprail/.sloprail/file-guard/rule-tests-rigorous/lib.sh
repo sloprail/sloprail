@@ -32,8 +32,9 @@ tree_sha() {
 # covered_rules <case dir, tree-relative> -> "<nature>/<rule>" per line: every rule folder of the same
 # `.sloprail` root whose name the case's code mentions. A rule the case never names is not covered by it.
 # A rule is covered through its own nature: a gate by a case that asserts GateChecked events, a file-guard by
-# FileGuardChecked, a context by ContextActivated. A gate and a file-guard share a name (authoring-slop,
-# misplaced-declaration, grounded-rule-changes), so the name alone does not say which one the case proves.
+# FileGuardChecked, a context by ContextActivated, on the same line as the rule's name (one assertion).
+# A gate and a file-guard share a name (authoring-slop, misplaced-declaration, grounded-rule-changes), so
+# the name alone does not say which one the case proves.
 # A comment is not code, and a line that maps judge ids to mock scripts (SR_CHECKS_JUDGE_MOCKS) names every
 # judge the flow meets, not the rule under test, so neither counts.
 covered_rules() {
@@ -46,11 +47,11 @@ covered_rules() {
       file-guard) kind=FileGuardChecked ;;
       *) kind=ContextActivated ;;
     esac
-    printf '%s\n' "$code" | grep -qF -e "$kind" || continue
     for d in "$root/.sloprail/$nature"/*/; do
       [ -d "$d" ] || continue
       name="$(basename "$d")"
-      if printf '%s\n' "$code" | grep -qF -e "$name"; then
+      # the rule's name and its nature's event kind on one line: the case asserts that nature's decision
+      if printf '%s\n' "$code" | grep -F -e "$kind" | grep -qF -e "$name"; then
         printf '%s/%s\n' "$nature" "$name"
       fi
     done
