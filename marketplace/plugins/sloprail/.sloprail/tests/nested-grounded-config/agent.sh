@@ -10,5 +10,9 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 case $n in
   0) write_ c1 marketplace/plugins/x/config.yaml $'note: not a sloprail config\n' ;;
   1) write_ c2 marketplace/plugins/x/.sloprail/config.yaml $'disabled:\n  - sloprail/gate/no-lifecycle-commands\n' ;;
+  2) bash_ s1 "sr-file write marketplace/plugins/x/.sloprail/config.yaml --cite:user 'turn the lifecycle rule off' <<'BODY'
+disabled:
+  - sloprail/gate/no-lifecycle-commands
+BODY" ;;
   *) finish ;;
 esac
