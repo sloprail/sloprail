@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # The ARTIFACT citation library, sourced by task-evidence-resolves (check-task.sh)
 # and task-review (review-preflight.sh, expand-evidence.sh).
 #

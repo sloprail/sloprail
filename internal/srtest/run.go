@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/sloprail/sloprail/internal/ambientenv"
+	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
 // Status of one case.
@@ -163,9 +164,11 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 
 	ctx, cancel := context.WithTimeout(context.Background(), orDefault(opt.Timeout))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "test.sh")
+	cmd, err := scriptexec.Command(ctx, filepath.Join(casePath, "test.sh"))
+	if err != nil {
+		return finish(Error, "test.sh cannot be run: "+err.Error())
+	}
 	cmd.Dir = dir
-	cmd.Args = []string{"sh", filepath.Join(casePath, "test.sh")}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second

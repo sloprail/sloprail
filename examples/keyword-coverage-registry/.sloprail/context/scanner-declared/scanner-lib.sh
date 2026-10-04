@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Shared by every rule in this example — sourced, never run. One reading of a
 # scanner file and one reading of the registry, so the rules cannot disagree:
 #

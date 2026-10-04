@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
 // JudgeMocksEnv, when set, replaces the model behind every judge with a script: a JSON
@@ -81,7 +82,10 @@ func runMockedJudge(j judgeCall, raw string) (Verdict, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, script)
+	cmd, err := scriptexec.Command(ctx, script)
+	if err != nil {
+		return Verdict{}, fmt.Errorf("the mock for judge %q cannot be run: %w", id, err)
+	}
 	cmd.Dir = j.Dir
 	cmd.Env = append(os.Environ(), j.Env...)
 	cmd.Stdin = strings.NewReader(rendered + "\n\n" + string(j.InputJSON) + "\n")

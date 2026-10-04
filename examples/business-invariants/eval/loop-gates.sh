@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Sourced by the goodwill-refund scorers. Two deterministic marks of a refusal
 # loop, read from the transcript's structure — each one fails the run whatever the
 # trajectory-health judge concluded, because a judge reading a long record called
