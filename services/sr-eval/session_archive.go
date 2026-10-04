@@ -43,8 +43,8 @@ func newArchiveCmd() *cobra.Command {
 Per session it copies the transcript and its session directory (subagents,
 tool-results), the scratchpad and task outputs Claude Code keeps under its temp
 root, and the session's sloprail state store. It also saves the check results
-(sr-checks log --json) of the project repository and of every other folder the
-session tracked, and the tracked ranges themselves (sr-session refs list --json),
+(sr-checks log --json) of the project repository and of every other repository the
+session tracked (once per repository, however many of its worktrees), and the tracked ranges themselves (sr-session refs list --json),
 so the archive stands without git or origin. sr-checks log cannot be scoped to a
 session, so each repository's full log is saved.
 
@@ -82,9 +82,13 @@ type archiveSources struct {
 	Scratchpad map[string]string `json:"scratchpad_roots,omitempty"` // session -> where its temp dir was found, and how
 }
 
+// archivedChecks is one repository's check log. The verdicts live in the
+// repository's own ref, shared by all its worktrees, so one file serves every
+// tracked folder that maps to the repository.
 type archivedChecks struct {
-	Repo     string   `json:"repo"`
-	File     string   `json:"file"`
+	Repo     string   `json:"repo"`    // the main worktree (or the common dir of a bare repository)
+	File     string   `json:"file"`    // checks/<repo slug>.jsonl
+	Folders  []string `json:"folders"` // every tracked folder of the repository
 	Sessions []string `json:"tracked_by_sessions"`
 }
 
@@ -186,16 +190,16 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 		Label: label, Cwd: cwd, Project: projName, Sessions: ids, StartedAt: now.UTC(),
 		Sources: archiveSources{ProjectDir: projDir, Scratchpad: map[string]string{}},
 	}
-	repos := map[string][]string{} // repo -> sessions that tracked it
+	folders := map[string][]string{} // tracked folder -> sessions that tracked it
 	if root, err := gitrepo.Root(cwd); err == nil && root != "" {
-		repos[filepath.Clean(root)] = nil
+		folders[filepath.Clean(root)] = nil
 	}
 	for _, id := range ids {
 		for _, f := range archiveOneSession(m, cwd, projDir, projName, id, dir) {
-			repos[f] = append(repos[f], id)
+			folders[f] = append(folders[f], id)
 		}
 	}
-	archiveChecks(m, repos, dir)
+	archiveChecks(m, folders, dir)
 	m.Tools = toolVersions()
 	m.EndedAt = time.Now().UTC()
 
@@ -305,41 +309,6 @@ func archiveRefs(cwd, tpath, id, sdir string, skip func(item, reason string)) []
 		}
 	}
 	return folders
-}
-
-// archiveChecks saves `sr-checks log --json` (JSONL) once per repository.
-func archiveChecks(m *archiveManifest, repos map[string][]string, dir string) {
-	names := make([]string, 0, len(repos))
-	for r := range repos {
-		names = append(names, r)
-	}
-	sort.Strings(names)
-	for _, repo := range names {
-		sessions := repos[repo]
-		skip := func(reason string) {
-			m.Skipped = append(m.Skipped, skippedItem{Item: "checks of " + repo, Reason: reason})
-		}
-		if !isDir(repo) {
-			skip("the folder is gone")
-			continue
-		}
-		stdout, err := runTool(repo, nil, "sr-checks", "log", "--json")
-		if err != nil {
-			skip(err.Error())
-			continue
-		}
-		rel := filepath.Join("checks", transcript.EncodeProjectDir(repo)+".jsonl")
-		if err := os.MkdirAll(filepath.Join(dir, "checks"), 0o755); err != nil {
-			skip(err.Error())
-			continue
-		}
-		if err := os.WriteFile(filepath.Join(dir, rel), stdout, 0o644); err != nil {
-			skip(err.Error())
-			continue
-		}
-		sort.Strings(sessions)
-		m.Checks = append(m.Checks, archivedChecks{Repo: repo, File: rel, Sessions: sessions})
-	}
 }
 
 // runTool execs a sibling binary from PATH in dir, the way sloprail's binaries

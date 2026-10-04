@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -378,7 +379,96 @@ func TestT057_06_TheWorkingDirectoryDefinesTheProject(t *testing.T) {
 	}
 }
 
-func mustWrite(t *testing.T, path, content string) {
+// T057_07: the stored verdicts live in the repository's own ref, shared by all its worktrees, so a
+// session that tracked several worktrees of one repository gets ONE checks file for it (not a copy
+// per worktree), beside one for a second repository; archive.json maps every tracked folder to it.
+func TestT057_07_WorktreesOfOneRepositoryShareOneChecksFile(t *testing.T) {
+	w := newWorld(t)
+	e := w.e
+	const sess = "s-057-07"
+
+	root, err := os.MkdirTemp("", "slop-wt-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	if root, err = filepath.EvalSymlinks(root); err != nil {
+		t.Fatal(err)
+	}
+	wt1, wt2 := filepath.Join(root, "wt1"), filepath.Join(root, "wt2")
+	git(t, w.proj, "worktree", "add", "-q", "-b", "wt-one", wt1)
+	git(t, w.proj, "worktree", "add", "-q", "-b", "wt-two", wt2)
+
+	other := e.Project()
+	e.GitInit(other)
+	e.FileGuard(other, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
+	e.CommitAll(other, "the rule")
+
+	commitIn := func(dir, name string) harness.Turn {
+		return harness.Bash("c-"+name, fmt.Sprintf(
+			"mkdir -p %[1]s/docs && echo %[2]s > %[1]s/docs/%[2]s.md && git -C %[1]s add -A && git -C %[1]s commit -q -m %[2]s", dir, name))
+	}
+	w.session(t, sess, background(sess), commitIn(wt1, "one"), commitIn(wt2, "two"), commitIn(other, "three"))
+
+	dir := w.archive(t, "--session", sess)
+	m := readManifest(t, dir)
+	for _, s := range m.Skipped {
+		if !strings.HasPrefix(s.Item, "session dir") { // the mock leaves no session directory
+			t.Errorf("skipped %+v", s)
+		}
+	}
+	if len(m.Checks) != 2 {
+		t.Fatalf("want one checks entry per repository (2), got %+v", m.Checks)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "checks", "*.jsonl"))
+	if len(files) != 2 {
+		t.Fatalf("want exactly one checks file per repository, got %v", files)
+	}
+
+	realProj, _ := filepath.EvalSymlinks(w.proj)
+	realOther, _ := filepath.EvalSymlinks(other)
+	covered := map[string]bool{}
+	for _, c := range m.Checks {
+		want := e.CLIDirect(c.Repo, "sr-checks", "log", "--json")
+		if want.Code != 0 || !strings.Contains(want.Output, failText) {
+			t.Fatalf("premise: %s has no stored FAIL: %s", c.Repo, want.Output)
+		}
+		if got := readFile(t, filepath.Join(dir, c.File)); got != want.Output {
+			t.Fatalf("%s: archived checks differ from `sr-checks log --json`:\n%s\nvs\n%s", c.Repo, got, want.Output)
+		}
+		for _, f := range c.Folders {
+			covered[f] = true
+		}
+		switch c.Repo {
+		case realProj:
+			if strings.Join(c.Folders, ",") != strings.Join(sorted(realProj, wt1, wt2), ",") {
+				t.Errorf("the project repository's folders: %v", c.Folders)
+			}
+		case realOther:
+			if len(c.Folders) != 1 || c.Folders[0] != realOther {
+				t.Errorf("the second repository's folders: %v", c.Folders)
+			}
+		default:
+			t.Errorf("unexpected repository %s", c.Repo)
+		}
+		if len(c.Sessions) != 1 || c.Sessions[0] != sess {
+			t.Errorf("%s tracked by %v", c.Repo, c.Sessions)
+		}
+	}
+	for _, f := range []string{realProj, wt1, wt2, realOther} {
+		if !covered[f] {
+			t.Errorf("archive.json maps no checks file to the tracked folder %s: %+v", f, m.Checks)
+		}
+	}
+}
+
+func sorted(s ...string) []string {
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
+}
+
+func mustWrite(t*testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
