@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,14 +30,16 @@ const (
 
 // Options configure a run.
 type Options struct {
-	Root       string        // project root holding .sloprail/
+	Root       string        // project root; every .sloprail/tests/*/test.sh below it is a case
 	Jobs       int           // parallel cases (<=0: 4)
 	Timeout    time.Duration // per case (<=0: 5m)
 	LiveJudges bool          // leave SR_CHECKS_JUDGE_MOCKS unset
 	Keep       bool          // keep temp dirs
 	Stderr     io.Writer     // where kept paths are printed
-	// Rules lists the loaded rules ("<nature>:<rule>") of a case workspace. Nil: none.
-	Rules func(dir string, stderr io.Writer) []string
+	// Rules lists the loaded rules ("<nature>:<rule>") active for a case's context. Nil: none.
+	Rules func(c Context, stderr io.Writer) []string
+	// CorePluginDir is the core sloprail plugin folder, installed beside any other plugin under test.
+	CorePluginDir string
 	// BinDirs are prepended to the case PATH (the sloprail binaries).
 	BinDirs []string
 }
@@ -61,28 +62,6 @@ type Result struct {
 	CheckedAt string   `json:"checked_at"`
 }
 
-// Cases returns the case names under root/.sloprail/tests that have a test.sh, sorted.
-func Cases(root string) ([]string, error) {
-	ents, err := os.ReadDir(filepath.Join(root, ".sloprail", "tests"))
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var out []string
-	for _, e := range ents {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(root, ".sloprail", "tests", e.Name(), "test.sh")); err == nil {
-			out = append(out, e.Name())
-		}
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
 // StatusFor maps an exit code and a timeout to a status.
 func StatusFor(exit int, timedOut bool) string {
 	switch {
@@ -98,7 +77,7 @@ func StatusFor(exit int, timedOut bool) string {
 
 // Run runs every case and returns the results in case order.
 func Run(root string, opt Options) ([]Result, error) {
-	names, err := Cases(root)
+	cases, err := Discover(root, opt.CorePluginDir)
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +88,11 @@ func Run(root string, opt Options) ([]Result, error) {
 	if opt.Stderr == nil {
 		opt.Stderr = io.Discard
 	}
-	res := make([]Result, len(names))
+	res := make([]Result, len(cases))
 	sem := make(chan struct{}, jobs)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	for i, n := range names {
+	for i, n := range cases {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
@@ -126,9 +105,9 @@ func Run(root string, opt Options) ([]Result, error) {
 	return res, nil
 }
 
-func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
+func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	start := time.Now()
-	r := Result{CheckID: "sr-test", Subject: name, Kind: "test", Metadata: Metadata{Rules: []string{}, Events: []json.RawMessage{}}}
+	r := Result{CheckID: "sr-test", Subject: c.Subject, Kind: "test", Metadata: Metadata{Rules: []string{}, Events: []json.RawMessage{}}}
 	finish := func(status, out string) Result {
 		r.Status, r.Output = status, out
 		r.Metadata.DurationMS = time.Since(start).Milliseconds()
@@ -141,22 +120,26 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 	}
 	if opt.Keep {
 		mu.Lock()
-		fmt.Fprintf(opt.Stderr, "sr-test: kept %s (%s)\n", dir, name)
+		fmt.Fprintf(opt.Stderr, "sr-test: kept %s (%s)\n", dir, c.Subject)
 		mu.Unlock()
 	} else {
 		defer os.RemoveAll(dir)
 	}
-	if err := copyTree(filepath.Join(root, ".sloprail"), filepath.Join(dir, ".sloprail")); err != nil {
-		return finish(Error, "copy .sloprail: "+err.Error())
+	casePath := c.Dir
+	if len(c.Plugins) == 0 {
+		// A project case runs against a copy of the .sloprail/ it belongs to.
+		if err := copyTree(c.SloprailDir, filepath.Join(dir, ".sloprail")); err != nil {
+			return finish(Error, "copy .sloprail: "+err.Error())
+		}
+		casePath = filepath.Join(dir, ".sloprail", "tests", c.Name)
 	}
-	casePath := filepath.Join(dir, ".sloprail", "tests", name)
 	eventsFile := filepath.Join(dir, ".sr-test-events.jsonl")
 	if err := os.WriteFile(eventsFile, nil, 0o644); err != nil {
 		return finish(Error, err.Error())
 	}
 	if opt.Rules != nil {
 		var errBuf bytes.Buffer
-		if rs := opt.Rules(dir, &errBuf); rs != nil {
+		if rs := opt.Rules(Context{Dir: dir, Plugins: c.Plugins}, &errBuf); rs != nil {
 			r.Metadata.Rules = rs
 		}
 	}
@@ -173,7 +156,11 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return finish(Error, err.Error())
 	}
-	env := append(caseEnv(os.Environ()), "HOME="+home, "SR_TEST_CASE_DIR="+casePath, "SR_EVENTS_FILE="+eventsFile, "PATH="+pathWith(opt.BinDirs))
+	env := append(caseEnv(os.Environ()), "HOME="+home, "SR_TEST_CASE_DIR="+casePath, "SR_EVENTS_FILE="+eventsFile, "PATH="+pathWith(opt.BinDirs),
+		"SR_TEST_TARGET_DIR="+c.Target)
+	if len(c.Plugins) > 0 {
+		env = append(env, "SR_TEST_PLUGIN_DIR="+strings.Join(c.Plugins, string(os.PathListSeparator)))
+	}
 	if !opt.LiveJudges {
 		env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
 	}

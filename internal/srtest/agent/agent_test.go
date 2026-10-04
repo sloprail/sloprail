@@ -49,7 +49,7 @@ func TestWriteProjectSettingsExcludesFromGit(t *testing.T) {
 
 func TestCheckoutRootFindsThisCheckout(t *testing.T) {
 	t.Setenv("SR_TEST_CHECKOUT", "")
-	r, err := checkoutRoot()
+	r, err := CheckoutRoot()
 	if err != nil || !isCheckout(r) {
 		t.Fatalf("%q %v", r, err)
 	}

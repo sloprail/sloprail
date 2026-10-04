@@ -42,7 +42,7 @@ func TestStatusMapping(t *testing.T) {
 		"c-error": "echo bad >&2; exit 2",
 		"d-other": "exit 7",
 	})
-	rs, err := Run(root, Options{Rules: func(string, io.Writer) []string { return nil }})
+	rs, err := Run(root, Options{Rules: func(Context, io.Writer) []string { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestParallel(t *testing.T) {
 func TestDoctor(t *testing.T) {
 	root := project(t, map[string]string{"x": `echo '{"kind":"GateChecked","rule":"p/g1","outcome":"refused"}' >> "$SR_EVENTS_FILE"
 echo '{"kind":"ContextActivated","rule":"c1"}' >> "$SR_EVENTS_FILE"`})
-	rs, _ := Run(root, Options{Rules: func(string, io.Writer) []string {
+	rs, _ := Run(root, Options{Rules: func(Context, io.Writer) []string {
 		return []string{"gate:p/g1", "gate:g2", "context:c1", "file-guard:f"}
 	}})
 	got := strings.Join(Uncovered(rs), ",")

@@ -37,7 +37,7 @@ type Result struct {
 
 // Command returns `agent <agent.sh> [--prompt P] [--session ID]`.
 func Command() *cobra.Command {
-	var prompt, session string
+	var prompt, session, harness string
 	cmd := &cobra.Command{
 		Use:   "agent <agent.sh>",
 		Short: "Run a scripted agent (claude mock) here, with sloprail's plugins, and print what the rules decided",
@@ -50,7 +50,7 @@ func Command() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
-			res, err := Run(Options{Script: args[0], Prompt: prompt, Session: session})
+			res, err := Run(Options{Script: args[0], Prompt: prompt, Session: session, Harness: harness})
 			if err != nil {
 				fmt.Fprintln(c.ErrOrStderr(), "sr-test agent:", err)
 				os.Exit(2)
@@ -59,6 +59,7 @@ func Command() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&prompt, "prompt", "", "the prompt for the agent's turn")
+	cmd.Flags().StringVar(&harness, "harness", "", "harness to mock: claude, codex or cursor (default: detected from the project or plugin under test)")
 	cmd.Flags().StringVar(&session, "session", "", "session id; a repeat of one id in the same directory continues it (default: a fresh id)")
 	return cmd
 }
@@ -68,14 +69,25 @@ type Options struct {
 	Script  string
 	Prompt  string
 	Session string
+	Harness string // claude|codex|cursor; "" detects it
 }
 
 // Run executes one mock turn.
 func Run(o Options) (*Result, error) {
-	mock, err := harnessmock.Path()
+	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
+	// The harness is decided in one place (harnessmock.Select) from what the case targets.
+	target := os.Getenv("SR_TEST_TARGET_DIR")
+	if target == "" {
+		target = cwd
+	}
+	sel, err := harnessmock.Select(o.Harness, target)
+	if err != nil {
+		return nil, err
+	}
+	mock := sel.Path
 	script, err := filepath.Abs(o.Script)
 	if err != nil {
 		return nil, err
@@ -83,13 +95,11 @@ func Run(o Options) (*Result, error) {
 	if _, err := os.Stat(script); err != nil {
 		return nil, fmt.Errorf("agent script: %w", err)
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	root, err := checkoutRoot()
-	if err != nil {
-		return nil, err
+	var root string
+	if len(PluginDirs()) == 0 {
+		if root, err = CheckoutRoot(); err != nil {
+			return nil, err
+		}
 	}
 
 	// A stable home per working directory, so a repeat of a session id resumes it.
@@ -107,10 +117,21 @@ func Run(o Options) (*Result, error) {
 	if err := os.MkdirAll(mkt, 0o755); err != nil {
 		return nil, err
 	}
-	if err := harnessmock.LocalMarketplace(root, mkt); err != nil {
+	enabled := []string{pluginKey}
+	if pdirs := PluginDirs(); len(pdirs) > 0 {
+		// Plugin case: install the plugin(s) under test from their local folders.
+		names, err := harnessmock.LocalPluginMarketplace(marketplaceName, mkt, pdirs)
+		if err != nil {
+			return nil, err
+		}
+		enabled = nil
+		for _, n := range names {
+			enabled = append(enabled, n+"@"+marketplaceName)
+		}
+	} else if err := harnessmock.LocalMarketplace(root, mkt); err != nil {
 		return nil, err
 	}
-	settings, err := harnessmock.Settings([]string{pluginKey}, map[string]string{marketplaceName: mkt})
+	settings, err := harnessmock.Settings(enabled, map[string]string{marketplaceName: mkt})
 	if err != nil {
 		return nil, err
 	}
@@ -219,10 +240,10 @@ func findSession(cfg, id string) string {
 	return m[0]
 }
 
-// checkoutRoot is the sloprail checkout whose marketplace/ the plugins come
+// CheckoutRoot is the sloprail checkout whose marketplace/ the plugins come
 // from: $SR_TEST_CHECKOUT, else the checkout the running binary sits in or was
 // built from.
-func checkoutRoot() (string, error) {
+func CheckoutRoot() (string, error) {
 	if r := os.Getenv("SR_TEST_CHECKOUT"); r != "" {
 		if isCheckout(r) {
 			return r, nil
@@ -304,4 +325,16 @@ func writeProjectSettings(cwd string, body []byte) error {
 	}
 	_, err = f.WriteString(prefix + entry + "\n")
 	return err
+}
+
+// PluginDirs are the plugin folders under test: $SR_TEST_PLUGIN_DIR, a path list set by `sr-test run`
+// for a case that belongs to a plugin's .sloprail/. Empty: the sloprail plugins of the local checkout.
+func PluginDirs() []string {
+	var out []string
+	for _, d := range filepath.SplitList(os.Getenv("SR_TEST_PLUGIN_DIR")) {
+		if d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
 }

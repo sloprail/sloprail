@@ -103,3 +103,36 @@ func Settings(enabled []string, marketplaces map[string]string) ([]byte, error) 
 	}
 	return json.MarshalIndent(map[string]any{"enabledPlugins": en, "extraKnownMarketplaces": mk}, "", "  ")
 }
+
+// LocalPluginMarketplace writes into dir a marketplace named marketplace whose plugins are the given
+// local plugin folders (each linked under plugins/<name>); a plugin's name is its plugin.json name,
+// else its folder name. It returns the plugin names in order.
+func LocalPluginMarketplace(marketplace, dir string, pluginDirs []string) ([]string, error) {
+	var names []string
+	var entries []any
+	for _, pd := range pluginDirs {
+		name := filepath.Base(pd)
+		if raw, err := os.ReadFile(filepath.Join(pd, ".claude-plugin", "plugin.json")); err == nil {
+			var m struct{ Name string }
+			if json.Unmarshal(raw, &m) == nil && m.Name != "" {
+				name = m.Name
+			}
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "plugins"), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(pd, filepath.Join(dir, "plugins", name)); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+		entries = append(entries, map[string]any{"name": name, "source": "./plugins/" + name})
+	}
+	body, err := json.MarshalIndent(map[string]any{"name": marketplace, "owner": map[string]any{"name": "sr-test"}, "plugins": entries}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+		return nil, err
+	}
+	return names, os.WriteFile(filepath.Join(dir, ".claude-plugin", "marketplace.json"), body, 0o644)
+}

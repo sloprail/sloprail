@@ -1,0 +1,19 @@
+package e2e
+
+import (
+	"os"
+	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
+
+// sr-test discovers .sloprail/ folders below the root and runs each case in its own context.
+var New = harness.New
+
+// TestMain removes the binary build dir when this package's tests finish.
+// Without it every e2e package leaks 15M for the life of the machine.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	harness.Cleanup()
+	os.Exit(code)
+}
