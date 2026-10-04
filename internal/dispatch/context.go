@@ -191,6 +191,12 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 	// safe reading: an enter that declined and an enter that crashed both leave
 	// the context not freshly entered by THIS occurrence, and neither should
 	// invent a payload. The caller leaves the context's prior state as it was.
+	if !res.Passed && res.Unrunnable {
+		// An enter that could not RUN (a script that lost its shebang or execute bit) is not a
+		// decline: reading it as one would leave the context out of force, and the guarding it
+		// carries with it. Refuse, with the diagnosis (the file and the fix).
+		return nil, false, refuse(res.Reason), nil
+	}
 	if !res.Passed {
 		// Not activated by this trigger. The caller leaves the context's state
 		// (active flag and payload) exactly as it was — enter declining is not the

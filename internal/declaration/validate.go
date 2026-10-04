@@ -431,12 +431,18 @@ func validateChecks(checks []Check) []Problem {
 	return problems
 }
 
-// validateScripts refuses a declared script that exists but cannot be exec'd
-// directly (no shebang, not executable, non-standard interpreter). A script that
-// does not exist is not this check's business: absence surfaces where it is run.
+// validateScripts reports a declared script that exists but cannot be exec'd
+// directly (no shebang, not executable, non-standard interpreter). It is an
+// ENVIRONMENT fault, not a declaration one: the rule stays loaded and enforced,
+// and the exec path refuses every action it guards with the same error until the
+// file is fixed. Dropping the rule instead would disarm it on a `chmod -x` (not a
+// write, so no hook sees it) until the next session hook reported it. A script
+// that does not exist is not this check's business: absence surfaces where it is run.
 func validateScripts(dir, where, script string) []Problem {
 	if err := scriptexec.VerifyDeclared(dir, script); err != nil {
-		return []Problem{prob(ErrBadScript, where, "%v", err)}
+		p := prob(ErrBadScript, where, "%v", err)
+		p.Fault = FaultEnvironment
+		return []Problem{p}
 	}
 	return nil
 }

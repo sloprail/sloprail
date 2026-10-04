@@ -10,13 +10,15 @@ import (
 
 // Every script sloprail runs is exec'd DIRECTLY — no `sh <file>` fallback — so it must be
 // executable and start with a shebang naming a standard interpreter. A rule whose declared
-// script is not fails to LOAD; a script that is only reached at run time (a judge mock) is
-// refused when it is exec'd. Both name the file and the fix.
+// script is not stays LOADED and enforced: it is reported (`sr-file declarations`, the next
+// session hook) and the action it guards is refused at run time, both naming the file and the
+// fix. A script only reached at run time (a judge mock) is refused when it is exec'd likewise.
 
 // T001_20: a declared script without a shebang, without the execute bit, or with an
-// interpreter outside /bin and /usr/bin makes the rule fail to load — reported by
-// `sr-file declarations` and at the next session hook — and a sound sibling still loads.
-func TestT001_20_AScriptWithoutShebangOrExecBitFailsToLoad(t *testing.T) {
+// interpreter outside /bin and /usr/bin is REPORTED by `sr-file declarations` and at the next
+// session hook (the rule stays loaded and refuses what it guards), and a sound sibling is not
+// reported.
+func TestT001_20_AScriptWithoutShebangOrExecBitIsReported(t *testing.T) {
 	e, proj := session(t)
 	guard := "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n"
 	e.FileGuard(proj, "fine", guard, map[string]string{"check.sh": "#!/usr/bin/env bash\nexit 0\n"})
@@ -42,17 +44,20 @@ func TestT001_20_AScriptWithoutShebangOrExecBitFailsToLoad(t *testing.T) {
 
 	decl := e.CLIDirect(proj, "sr-file", "declarations", proj)
 	if decl.Code != 1 {
-		t.Fatalf("sr-file declarations: exit %d, want 1 for rules that cannot load:\n%s", decl.Code, decl.Output)
+		t.Fatalf("sr-file declarations: exit %d, want 1 for rules whose script cannot run:\n%s", decl.Code, decl.Output)
 	}
 	for _, c := range cases {
-		contains(t, decl.Output, "file-guard/"+c.name, "check.sh", c.want)
+		contains(t, decl.Output, "file-guard/"+c.name, "check.sh", c.want, "loaded and enforced")
+	}
+	if strings.Contains(decl.Output, "could not be loaded") {
+		t.Errorf("an unrunnable script was reported as an unloadable rule:\n%s", decl.Output)
 	}
 	if strings.Contains(decl.Output, "file-guard/fine") {
 		t.Errorf("the sound rule was reported as invalid:\n%s", decl.Output)
 	}
 
 	start := e.CLI(proj, "session", "start")
-	contains(t, start.Output, "not loaded", "check.sh")
+	contains(t, start.Output, "loaded and enforced", "check.sh")
 }
 
 // T001_21: a script reached only at run time is refused when exec'd. The judge mock

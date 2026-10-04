@@ -5,6 +5,11 @@
 // start it, and a bash script run by dash fails in ways that read as a refusal
 // of the guarded action.
 //
+// A declared script that fails Verify is REPORTED (declaration.Loaded.Degraded: `sr-file
+// declarations`, the next session hook) and REFUSED at run time, naming the file and the fix; its
+// rule stays loaded and enforced. Dropping the rule instead would disarm it on a `chmod -x`, which
+// is not a write and so never reaches a hook.
+//
 // Only declared SCRIPT paths are affected (a check's `script`/`prepare`, a rule's
 // `subjects`, a context's `enter`/`exit`, a judge mock, an sr-test `test.sh`),
 // never an inline command.

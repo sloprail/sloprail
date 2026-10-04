@@ -176,6 +176,12 @@ type scriptResult struct {
 	// could not be started or was killed. Read only where an exit code other
 	// than zero carries meaning of its own (a prerequisite's `when`).
 	Code int
+
+	// Unrunnable is set when the script could not be run at all (its file is not
+	// executable or has no shebang, it could not be started, it was killed on the
+	// timeout), as against one that ran and declined with a non-zero exit. A caller
+	// where "declined" would permit something (a context's enter) must refuse on it.
+	Unrunnable bool
 }
 
 // runScriptExec is the production runScript: it runs the script as `sh -c` from
@@ -199,9 +205,10 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	// default here keeps the expired message's duration honest.
 	if err := scriptexec.VerifyDeclared(s.Dir, s.Script); err != nil {
 		return scriptResult{
-			Passed: false,
-			Reason: fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
-			Code:   -1,
+			Passed:     false,
+			Reason:     fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
+			Code:       -1,
+			Unrunnable: true,
 		}, nil
 	}
 	stdout, stderr, code, expired, signal, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
@@ -217,7 +224,8 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Reason: fmt.Sprintf(
 				"the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.",
 				s.Script, startErr),
-			Code: -1,
+			Code:       -1,
+			Unrunnable: true,
 		}, nil
 	}
 	if expired {
@@ -226,7 +234,8 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Reason: fmt.Sprintf(
 				"the check %q was killed after %s without answering, and the action was refused because a check that did not answer must not be read as approval.%s",
 				s.Script, defaultCheckTimeout, quoted(stderr)),
-			Code: -1,
+			Code:       -1,
+			Unrunnable: true,
 		}, nil
 	}
 	if code == 0 {

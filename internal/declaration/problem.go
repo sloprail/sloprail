@@ -78,8 +78,9 @@ var (
 	// ErrBadScript: a declared script (a check's `script`/`prepare`, `subjects`,
 	// a context's `enter`/`exit`) exists but cannot be exec'd directly — no
 	// shebang, not executable, or an interpreter outside /bin and /usr/bin.
-	// Scripts are never run as `sh <file>`, so the rule could not run
-	// as written. Declaration fault.
+	// Scripts are never run as `sh <file>`, so the rule cannot run as written.
+	// Environment fault: the rule stays loaded and enforced, it is reported
+	// (Loaded.Degraded), and at run time the exec path refuses what it guards.
 	ErrBadScript = errors.New("declaration: script cannot be run directly")
 
 	// ErrMalformed: the declaration could not be read or parsed at all. There is

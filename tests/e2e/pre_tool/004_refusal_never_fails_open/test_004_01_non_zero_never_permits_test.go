@@ -74,14 +74,13 @@ func TestT004_01_StderrRefusalReachesTheAgent(t *testing.T) {
 	}
 }
 
-// T004_02: a gate whose declared script cannot be exec'd directly does not LOAD, and says so.
+// T004_02: a check that cannot be run at all refuses.
 //
-// Scripts are run directly, never as `sh <file>`: one that is not executable (chmod 000 here,
-// beyond even a readable file missing its execute bit) or has no shebang makes the rule fail to
-// load, like any other declaration fault. It is reported to the agent at the next session hook,
-// naming the file and the fix, not silently permitted: a rule that did not load is not a rule
-// that approved. (A script that LOADS and then fails at run time still refuses: T004_03 on.)
-func TestT004_02_UnrunnableCheckDoesNotLoadAndIsReported(t *testing.T) {
+// The gate's script has no readable, executable form (chmod 000). The rule stays loaded and
+// enforced, so the write is REFUSED at run time with a message naming the file and the fix; the
+// problem is also reported at the next session start. Scripts are run directly, never as
+// `sh <file>`, so a script that cannot be exec'd never runs and never approves.
+func TestT004_02_UnrunnableCheckRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -94,22 +93,34 @@ func TestT004_02_UnrunnableCheckDoesNotLoadAndIsReported(t *testing.T) {
 	}
 
 	start := e.CLI(proj, "session", "start")
-	for _, want := range []string{"not loaded", "unrunnable", "executable"} {
+	for _, want := range []string{"loaded and enforced", "unrunnable", "executable"} {
 		if !strings.Contains(start.Output, want) {
-			t.Errorf("the session start does not report the unloadable gate (missing %q):\n%s", want, start.Output)
+			t.Errorf("the session start does not report the unrunnable gate (missing %q):\n%s", want, start.Output)
+		}
+	}
+	got := e.Run(proj, "s-004-02", "write a note", Turns("done",
+		Write("w1", "any/notes.md", "hello"),
+	))
+	if !got.Refused() {
+		t.Fatalf("a check that could not run permitted the write:\n%s", got.Output)
+	}
+	for _, want := range []string{"refuse.sh", "executable", "chmod +x"} {
+		if !got.Saw(want) {
+			t.Errorf("the refusal does not name the file and the fix (missing %q):\n%s", want, got.Output)
 		}
 	}
 }
 
-// T004_02b: the negative control for T004_02: a script missing ONLY its execute bit is no longer
-// run through its `#!` interpreter either. It is the same load error, and the report names the fix
-// (`chmod +x`). The script never runs, so its own refusal never reaches the agent.
-func TestT004_02b_MissingExecuteBitAloneIsALoadErrorNamingTheFix(t *testing.T) {
+// T004_02b: a script missing ONLY its execute bit (readable, with a `#!` line) is refused too: it
+// is never run through its interpreter, so its own verdict is never read, and the refusal names the
+// fix. An agent can `chmod -x` a gate's script (not a write, so no hook sees it); the gate must keep
+// refusing, not stop applying.
+func TestT004_02b_MissingExecuteBitRefusesNamingTheFix(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "chmod-forgotten", bindEveryWrite, map[string]string{
-		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"refused by the script\"}'\nexit 1\n",
+		"refuse.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n",
 	})
 	script := filepath.Join(proj, ".sloprail", "gate", "chmod-forgotten", "refuse.sh")
 	if err := os.Chmod(script, 0o644); err != nil {
@@ -117,7 +128,7 @@ func TestT004_02b_MissingExecuteBitAloneIsALoadErrorNamingTheFix(t *testing.T) {
 	}
 
 	start := e.CLI(proj, "session", "start")
-	for _, want := range []string{"not loaded", "chmod-forgotten", "chmod +x"} {
+	for _, want := range []string{"loaded and enforced", "chmod-forgotten", "chmod +x"} {
 		if !strings.Contains(start.Output, want) {
 			t.Errorf("the session start does not report the missing execute bit (missing %q):\n%s", want, start.Output)
 		}
@@ -125,8 +136,13 @@ func TestT004_02b_MissingExecuteBitAloneIsALoadErrorNamingTheFix(t *testing.T) {
 	got := e.Run(proj, "s-004-02b", "write a note", Turns("done",
 		Write("w1", "any/notes.md", "hello"),
 	))
-	if got.Saw("refused by the script") {
-		t.Errorf("a script without its execute bit was run through its interpreter:\n%s", got.Output)
+	if !got.Refused() {
+		t.Fatalf("a gate whose script lost its execute bit permitted the write:\n%s", got.Output)
+	}
+	for _, want := range []string{"refuse.sh", "chmod +x"} {
+		if !got.Saw(want) {
+			t.Errorf("the refusal does not name the file and the fix (missing %q):\n%s", want, got.Output)
+		}
 	}
 }
 
