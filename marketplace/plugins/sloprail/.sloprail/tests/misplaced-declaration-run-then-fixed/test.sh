@@ -27,5 +27,8 @@ echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and (.tool_use_id
   fail "the fixing commands were refused by a gate"
 c2=$(result_of c2)
 echo "$c2" | jq -e '.[0]!=true' >/dev/null || fail "sr-checks run (c2) over the moved declaration was refused: $c2"
+# the logged refusal carries the reason too
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/misplaced-declaration" and .outcome=="refused")] | length>=1 and (.[0].reason|contains(".sloprail/file-guard/structure.yaml"))' >/dev/null ||
+  fail "the logged refusal does not name .sloprail/file-guard/structure.yaml"
 test -f .sloprail/file-guard/structure.yaml
 test ! -e .sloprail/structure.yaml

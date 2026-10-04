@@ -21,3 +21,5 @@ echo "$(result_of c2)" | jq -e '.[1]|contains("content-may-be-unresolvable")|not
 echo "$(result_of c3)" | jq -e '.[0]!=true' >/dev/null || fail "c3: the corrected hook was refused: $(result_of c3)"
 # the log shows the same three decisions
 echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/authoring-slop" and .on=="sr-checks run")] | map(.outcome)==["refused","refused","passed"]' >/dev/null || fail "FileGuardChecked outcomes are not refused, refused, passed"
+# the logged refusals carry their reasons: the grep's own rule, then the judge's reasoning
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/authoring-slop" and .outcome=="refused")] | (.[0].reason|contains("content-may-be-unresolvable")) and (.[1].reason|contains("never refuses anything"))' >/dev/null || fail "the logged refusals do not carry the grep rule and the judge reasoning"
