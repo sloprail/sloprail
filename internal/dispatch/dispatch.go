@@ -128,6 +128,10 @@ type Request struct {
 	// isolation. Not load-bearing for the verdict.
 	GuardName string
 
+	// Qualified is the rule's `<plugin>/<nature>/<name>` (`<nature>/<name>` in-repo): what a
+	// judge is identified by under SR_CHECKS_JUDGE_MOCKS. Empty falls back to the nature and GuardName.
+	Qualified string
+
 	// Workspace is the tree being guarded, passed into a check's environment as
 	// SR_WORKSPACE so a script can resolve a workspace-relative path (a goal's
 	// verify.sh under <workspace>/goal/…) and key its own `sr-session state`. The
@@ -349,7 +353,7 @@ func (r Runner) withDefaults() Runner {
 		r.runScript = runScriptExec
 	}
 	if r.runJudge == nil {
-		r.runJudge = runJudgeAgent
+		r.runJudge = runJudgeMaybeMocked
 	}
 	return r
 }

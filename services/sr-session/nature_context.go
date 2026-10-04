@@ -16,6 +16,7 @@ import (
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/srevents"
 )
 
 // This file is the CONTEXT-LIFECYCLE half of the new nature dispatch (3b): a
@@ -210,6 +211,9 @@ func runContextEnters(
 				// it was (an already-active context stays active with its payload).
 				continue
 			}
+			if !current.Active {
+				srevents.Emit(srevents.Event{Kind: srevents.ContextActivated, Rule: srevents.Rule(c.Origin.Plugin, c.Name), On: fired.Kind, ToolUseID: scope.ToolUseID})
+			}
 			recordContextState(cmd, store, contextMap, c.Name, natures.ContextState{Active: true, Payload: payload})
 		}
 	}
@@ -281,6 +285,7 @@ func runContextExits(
 		}
 		// Done (clean exit): mark inactive, KEEPING the last payload so a later cycle
 		// can still read what the closed context last measured.
+		srevents.Emit(srevents.Event{Kind: srevents.ContextDeactivated, Rule: srevents.Rule(c.Origin.Plugin, c.Name), On: stop.Kind})
 		recordContextState(cmd, store, contextMap, c.Name, natures.ContextState{Active: false, Payload: current.Payload})
 	}
 }

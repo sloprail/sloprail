@@ -17,6 +17,7 @@ import (
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/srevents"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -97,7 +98,7 @@ func natureDispatchStop(cmd *cobra.Command, p HookPayload, reg *module.Registry)
 // unresolved sentinel rather than an anchor guessed from this process's own
 // directory.
 func natureHookScope(cmd *cobra.Command, p HookPayload) hookScope {
-	scope := hookScope{}
+	scope := hookScope{ToolUseID: p.ToolUseID}
 	if p.Cwd != "" {
 		scope.Workspace = workspaceAnchor(p.Cwd)
 	}
@@ -252,6 +253,8 @@ func runGatesForEvents(
 				Refused:     true,
 				Reason:      fmt.Sprintf("the gate %s could not be evaluated (%v); refusing because a gate that could not decide must not be read as approval", g.Attribution(), err),
 			})
+			srevents.Emit(srevents.Event{Kind: srevents.GateChecked, Rule: srevents.Rule(g.Origin.Plugin, g.Name),
+				Outcome: srevents.Refused, ToolUseID: scope.ToolUseID, Reason: err.Error()})
 			recordGateVerdict(cmd, store, gatesMap, g.Name, natures.GateStatusFail)
 			continue
 		}
@@ -287,6 +290,7 @@ func runGatesForEvents(
 				Gates:          gatesMap,
 				Dir:            g.Dir,
 				GuardName:      g.Name,
+				Qualified:      g.Qualified(),
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
 				// The re-entry provenance to hand a check that spawns sr-agent: this
@@ -297,6 +301,7 @@ func runGatesForEvents(
 				// any outer entry, so a nested launch carries the whole chain.
 				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 			})
+			emitGate(g, e, scope, verdict, err)
 			if err != nil {
 				// The runner itself could not decide (a programming error, not a check
 				// refusal — the runner turns a check that cannot run into a refusal

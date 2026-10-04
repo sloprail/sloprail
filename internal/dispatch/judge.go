@@ -71,6 +71,9 @@ type judgeCall struct {
 	InputJSON []byte // the FileJudgeInput/GateJudgeInput as JSON, for rendering
 	GuardName string
 
+	// Qualified is the rule's `<plugin>/<nature>/<name>`, for SR_CHECKS_JUDGE_MOCKS.
+	Qualified string
+
 	// Model is the check's own modelset for this judge, in sr-agent's --model
 	// format. Empty means the engine default (defaultJudgeModel); judgeCommand
 	// resolves it. Carried per-call rather than read from a const so a rule can

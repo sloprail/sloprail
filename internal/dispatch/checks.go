@@ -209,6 +209,7 @@ func (r Runner) judgeCall(req Request, c declaration.Check, p Prepared) (judgeCa
 		Template:        c.Judge,
 		InputJSON:       input,
 		GuardName:       req.GuardName,
+		Qualified:       req.qualified(),
 		Model:           c.Model,
 		Timeout:         timeout,
 		LaunchedBy:      req.LaunchedBy,

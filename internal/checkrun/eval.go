@@ -281,6 +281,7 @@ type ruleRun struct {
 	result      FileGuardResult
 	refused     bool
 	settled     bool // result is final
+	nothing     bool // the rule had nothing to run: it decided nothing unless it refused
 }
 
 // evaluateChangesets evaluates every file-guard over rng and returns each refusal, in
@@ -350,7 +351,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		}
 		rrs, r, refused := ev.prepare(g)
 		if len(rrs) == 0 {
-			skipped[i] = &ruleRun{g: g, result: r, refused: refused, settled: true}
+			skipped[i] = &ruleRun{g: g, result: r, refused: refused, settled: true, nothing: true}
 			return
 		}
 		prepared[i] = rrs
@@ -385,6 +386,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 			refusals = append(refusals, o.result)
 		}
 	}
+	emitFileGuardEvents(out)
 	for _, o := range out {
 		if o != nil && o.tree != nil {
 			fmt.Fprintf(ev.log(o.g), "sloprail: file-guard %s: cheap checks %s, judges %s\n", o.g.Attribution(),
@@ -781,6 +783,7 @@ func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Ran
 		Subagent:       ev.params.Subagent,
 		Dir:            g.Dir,
 		GuardName:      g.Name,
+		Qualified:      g.Qualified(),
 		Workspace:      ev.params.Workspace,
 		ProjectRoot:    tree,
 		SessionID:      ev.params.SessionID,

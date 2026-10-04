@@ -118,7 +118,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// loaded structure (the project's and each plugin's) is combined by scope.
 	// Blocks immediately on a refusal.
 	if len(loaded.Structures) > 0 {
-		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root(), reg); reason != "" {
+		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root(), reg, p.ToolUseID); reason != "" {
 			return natureVerdict{Blocked: reason}
 		}
 	}
@@ -189,7 +189,7 @@ func gateRefusal(results []gateResult, events []event.Event, workspace string) s
 // since a gate the engine could not compile has not established that any path is
 // forbidden — the same "an unloadable rule blocks nothing" the rest of the
 // dispatch keeps.
-func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event, root string, reg *module.Registry) string {
+func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event, root string, reg *module.Registry, toolUseID string) string {
 	compiled, err := dispatchcore.CompileStructureSet(structures)
 	if err != nil {
 		// Structure gates that loaded but will not compile are a disagreement
@@ -210,7 +210,9 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 			}
 			continue
 		}
-		if allowed, reason := compiled.Decide(path); !allowed {
+		allowed, reason := compiled.Decide(path)
+		emitStructure(allowed, reason, e.Kind, toolUseID)
+		if !allowed {
 			return reason
 		}
 	}
