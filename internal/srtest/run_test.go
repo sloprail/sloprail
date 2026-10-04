@@ -20,7 +20,7 @@ func project(t *testing.T, cases map[string]string) string {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(d, "test.sh"), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(d, "test.sh"), []byte("#!/usr/bin/env bash\n"+body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -170,9 +170,10 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 
 	ctx, cancel := context.WithTimeout(context.Background(), orDefault(opt.Timeout))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "test.sh")
+	// Run the file itself, by its shebang: `sh test.sh` is a different shell (on macOS bash in POSIX
+	// mode, whose echo interprets backslashes), so a case would pass or fail by platform.
+	cmd := exec.CommandContext(ctx, filepath.Join(casePath, "test.sh"))
 	cmd.Dir = dir
-	cmd.Args = []string{"sh", filepath.Join(casePath, "test.sh")}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second
