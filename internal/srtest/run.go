@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/ambientenv"
 )
 
 // Status of one case.
@@ -167,7 +169,11 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second
-	env := append(os.Environ(), "CASE="+casePath, "SR_EVENTS_FILE="+eventsFile, "PATH="+pathWith(opt.BinDirs))
+	home := filepath.Join(dir, ".sr-test-home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return finish(Error, err.Error())
+	}
+	env := append(caseEnv(os.Environ()), "HOME="+home, "SR_TEST_CASE_DIR="+casePath, "SR_EVENTS_FILE="+eventsFile, "PATH="+pathWith(opt.BinDirs))
 	if !opt.LiveJudges {
 		env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
 	}
@@ -201,6 +207,21 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 		}
 	}
 	return finish(status, out)
+}
+
+// caseEnv is the ambient environment a case starts from: the enclosing session's identity, every
+// CLAUDE_CODE_*, SR_* and SLOPRAIL_* variable and HOME are dropped, so a case sees only what sr-test
+// sets for it (and passes the same locally and in CI).
+func caseEnv(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range ambientenv.Hermetic(environ) {
+		key, _, _ := strings.Cut(kv, "=")
+		if key == "HOME" || strings.HasPrefix(key, "CLAUDE_CODE_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 func orDefault(d time.Duration) time.Duration {

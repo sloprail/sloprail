@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/srtest/agent"
 	"github.com/sloprail/sloprail/internal/version"
 )
 
@@ -30,6 +31,6 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.AddCommand(newRunCmd(), newDoctorCmd())
-	addAgent(root)
+	root.AddCommand(agent.Command())
 	return root
 }

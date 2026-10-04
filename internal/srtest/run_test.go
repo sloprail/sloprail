@@ -60,7 +60,7 @@ func TestStatusMapping(t *testing.T) {
 
 func TestEnvAndEvents(t *testing.T) {
 	root := project(t, map[string]string{"e": `
-test -f "$CASE/test.sh" || exit 1
+test -f "$SR_TEST_CASE_DIR/test.sh" || exit 1
 test "$SR_CHECKS_JUDGE_MOCKS" = "{}" || exit 1
 test -f .sloprail/tests/e/test.sh || exit 1
 echo '{"kind":"GateChecked","rule":"g","outcome":"permitted"}' >> "$SR_EVENTS_FILE"
