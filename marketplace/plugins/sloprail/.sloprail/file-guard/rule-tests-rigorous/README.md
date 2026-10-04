@@ -21,7 +21,9 @@ refusal ending it:
    - a mock judge script (`judge*.sh`) reads its stdin: a mock that prints one fixed verdict decides
      nothing.
 2. **A judge, `judge.md.j2`** — it reads the whole case and the rules it covers (every rule folder
-   of the same `.sloprail` whose name the case mentions), and fails the case unless, per rule:
+   of the same `.sloprail` whose name the case mentions, in its own nature: a gate is covered by a case that
+   asserts `GateChecked` events, a file-guard by `FileGuardChecked`, a context by `ContextActivated`, since a
+   gate and a file-guard can share a name), and fails the case unless, per rule:
    - there is a refusal AND a permit, each asserted on the rule's decision;
    - the refusal is for the rule's actual reason, not an incidental word;
    - recovery is shown where the rule tells the agent what to do instead;

@@ -31,13 +31,22 @@ tree_sha() {
 
 # covered_rules <case dir, tree-relative> -> "<nature>/<rule>" per line: every rule folder of the same
 # `.sloprail` root whose name the case's code mentions. A rule the case never names is not covered by it.
+# A rule is covered through its own nature: a gate by a case that asserts GateChecked events, a file-guard by
+# FileGuardChecked, a context by ContextActivated. A gate and a file-guard share a name (authoring-slop,
+# misplaced-declaration, grounded-rule-changes), so the name alone does not say which one the case proves.
 # A comment is not code, and a line that maps judge ids to mock scripts (SR_CHECKS_JUDGE_MOCKS) names every
 # judge the flow meets, not the rule under test, so neither counts.
 covered_rules() {
-  local case_abs="$SR_TREE/$1" root nature d name code
+  local case_abs="$SR_TREE/$1" root nature d name code kind
   root="$(root_abs "$1")"
   code="$(grep -rhv -E '^[[:space:]]*#|SR_CHECKS_JUDGE_MOCKS' "$case_abs" 2>/dev/null)"
   for nature in file-guard gate context; do
+    case "$nature" in
+      gate) kind=GateChecked ;;
+      file-guard) kind=FileGuardChecked ;;
+      *) kind=ContextActivated ;;
+    esac
+    printf '%s\n' "$code" | grep -qF -e "$kind" || continue
     for d in "$root/.sloprail/$nature"/*/; do
       [ -d "$d" ] || continue
       name="$(basename "$d")"
