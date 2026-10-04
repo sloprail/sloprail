@@ -449,6 +449,7 @@ func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOn
 		lastTip[r.Folder+"\x00"+r.Head] = r.HeadSHA
 	}
 	views := newRepoViews()
+	homes := newBranchHomes(views, folders, ranges)
 	var errs []error
 	for _, f := range folders {
 		if p.AgentID != "" && f.AgentID != p.AgentID { // the root observes every folder of the session; a sub-agent its own
@@ -481,7 +482,7 @@ func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOn
 			continue
 		}
 		// Before this hook refreshes a tip: every branch that moved or stands at a commit the session made.
-		if err := trackSessionBranches(reg, rs.ID, folder, f, hasHead, lastTip, tipsIn[folder], observed); err != nil {
+		if err := trackSessionBranches(reg, rs.ID, folder, f, hasHead, lastTip, tipsIn[folder], observed, homes); err != nil {
 			errs = append(errs, err)
 		}
 		switch {
@@ -506,12 +507,83 @@ func trackMissingOf(reg sessionstate.Store, rs rootSession, p HookPayload, ownOn
 	return errors.Join(errs...)
 }
 
+// branchHomes names, per repository, the one folder of the session that answers for a branch the
+// session moved. A branch lives in the repository's shared ref namespace, so every worktree of it
+// sees every branch; attaching a moved branch to each of them would make a sibling that never
+// stood on it (a stale sub-agent worktree whose rules no longer load) answer for it, and would
+// re-attach it there after an untrack. The home is, in order: the session folder that has the
+// branch checked out; the folder already holding a row for it (the root's before any other);
+// the root folder, else the first folder that claims it.
+type branchHomes struct {
+	views   *repoViews
+	folders []sessionstate.Folder
+	rows    map[string][]string // repo\x00branch -> the folders holding a row, in row order
+	home    map[string]string   // repo\x00branch -> decided home
+}
+
+func newBranchHomes(views *repoViews, folders []sessionstate.Folder, ranges []sessionstate.TrackedRange) *branchHomes {
+	h := &branchHomes{views: views, folders: folders, rows: map[string][]string{}, home: map[string]string{}}
+	for _, r := range ranges {
+		k := repoOf(r.Folder) + "\x00" + r.Head
+		h.rows[k] = append(h.rows[k], filepath.Clean(r.Folder))
+	}
+	return h
+}
+
+// isHome reports whether folder answers for branch. The session's root folder always may: it is the
+// parent, whose own commits on a branch a sub-agent later checked out must not be lost to the
+// sub-agent's narrower range (observeFolder already skips the branch where the other worktree's
+// range covers it).
+func (h *branchHomes) isHome(folder, branch string) bool {
+	for _, f := range h.folders {
+		if f.Role == sessionstate.FolderRoot && filepath.Clean(f.Path) == folder {
+			return true
+		}
+	}
+	k := repoOf(folder) + "\x00" + branch
+	if home, ok := h.home[k]; ok {
+		return home == folder
+	}
+	home := ""
+	session := map[string]string{} // real path -> the session folder spelled so
+	for _, f := range h.folders {
+		session[realPath(f.Path)] = filepath.Clean(f.Path)
+	}
+	for _, w := range h.views.view(folder).worktrees {
+		if w.branch == branch && session[w.path] != "" {
+			home = session[w.path]
+		}
+	}
+	if home == "" {
+		for _, c := range h.rows[k] {
+			if home == "" {
+				home = c
+			}
+			for _, f := range h.folders {
+				if f.Role == sessionstate.FolderRoot && filepath.Clean(f.Path) == c {
+					home = c
+				}
+			}
+		}
+	}
+	if home == "" {
+		home = folder
+		for _, f := range h.folders {
+			if c := filepath.Clean(f.Path); f.Role == sessionstate.FolderRoot && repoOf(c) == repoOf(folder) {
+				home = c
+			}
+		}
+	}
+	h.home[k] = home
+	return home == folder
+}
+
 // trackSessionBranches tracks every local branch of folder whose observed tip moved during the
 // session and has commits beyond the default branch, or stands at a tip the session recorded
 // earlier (a branch it made, reset away, and recreated at the old SHA: nothing but the session
 // remembers the commit). Its commits stay owed until verified. Nothing is tracked where no
 // file-guard loads. A tracked branch that moved has its tip refreshed.
-func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f sessionstate.Folder, hasHead map[string]bool, lastTip map[string]string, tips map[string]bool, observed []observedBranch) error {
+func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f sessionstate.Folder, hasHead map[string]bool, lastTip map[string]string, tips map[string]bool, observed []observedBranch, homes *branchHomes) error {
 	guards := 0 // 0 unknown, 1 loads, -1 none
 	for _, b := range observed {
 		if b.name == detachedObserved || b.sha == f.BaseRef || b.foreign {
@@ -520,6 +592,9 @@ func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f se
 		key := folder + "\x00" + b.name
 		if hasHead[key] && !b.moved {
 			continue
+		}
+		if !homes.isHome(folder, b.name) {
+			continue // a sibling worktree sees the branch, but another folder answers for it
 		}
 		if !(b.moved && ahead(folder, b.sha, f.BaseRef)) && !tips[b.sha] {
 			continue
