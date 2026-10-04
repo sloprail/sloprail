@@ -30,10 +30,13 @@ const (
 	Error = "error"
 )
 
+// DefaultJobs is how many cases run in parallel when --jobs is not given.
+const DefaultJobs = 5
+
 // Options configure a run.
 type Options struct {
 	Root       string        // project root; every case below it (see Discover) is run
-	Jobs       int           // parallel cases (<=0: 4)
+	Jobs       int           // parallel cases (<=0: DefaultJobs)
 	Timeout    time.Duration // per case (<=0: 5m)
 	Only       []string      // run only cases whose subject contains one of these (empty: all)
 	Owners     []string      // run only cases owned by one of these ("gate/<rule>", "file-guard/structure"; empty: all)
@@ -98,7 +101,7 @@ func Run(root string, opt Options) ([]Result, error) {
 	}
 	jobs := opt.Jobs
 	if jobs <= 0 {
-		jobs = 4
+		jobs = DefaultJobs
 	}
 	if opt.Stderr == nil {
 		opt.Stderr = io.Discard
@@ -208,6 +211,15 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	if !opt.LiveJudges {
 		env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
 	}
+	// The runner provisions the project's repository and the commit identity, so a case sets up
+	// neither. A case may still re-run `git init` (harmless) or override the identity (its own
+	// GIT_AUTHOR_* exports, `git -c user.name=...`).
+	env = append(env, TestIdentityEnv()...)
+	initCmd := exec.CommandContext(ctx, "git", "init", "-q")
+	initCmd.Dir, initCmd.Env = proj, env
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		return finish(Error, "git init in the project: "+err.Error()+"\n"+strings.TrimSpace(string(out)))
+	}
 	var buf bytes.Buffer
 	var runErr error
 	// The case was just written (copied) by this process, and cases run in parallel: on Linux an exec of a
@@ -272,6 +284,20 @@ func caseEnv(environ []string) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// The identity the runner gives every case's git commits.
+const (
+	TestGitName  = "sr-test"
+	TestGitEmail = "sr-test@sloprail.invalid"
+)
+
+// TestIdentityEnv is the author and committer identity of a case's commits, as environment.
+func TestIdentityEnv() []string {
+	return []string{
+		"GIT_AUTHOR_NAME=" + TestGitName, "GIT_AUTHOR_EMAIL=" + TestGitEmail,
+		"GIT_COMMITTER_NAME=" + TestGitName, "GIT_COMMITTER_EMAIL=" + TestGitEmail,
+	}
 }
 
 func orDefault(d time.Duration) time.Duration {

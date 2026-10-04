@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -67,11 +68,16 @@ func TestDiscoverPluginUnderTestIsCoreInstallsOnce(t *testing.T) {
 
 func TestRunNestedContexts(t *testing.T) {
 	root := nestedTree(t)
-	var seen []Context
+	var (
+		seenMu sync.Mutex
+		seen   []Context
+	)
 	rs, err := Run(root, Options{
 		CorePluginDir: filepath.Join(root, "core"),
 		Rules: func(c Context, _ io.Writer) []string {
+			seenMu.Lock()
 			seen = append(seen, c)
+			seenMu.Unlock()
 			return []string{"gate:" + filepath.Base(c.Dir)[:2]}
 		},
 	})
