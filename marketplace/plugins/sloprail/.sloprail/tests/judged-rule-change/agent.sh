@@ -8,7 +8,6 @@ write_() { tu "$1" Write "$(jq -nc --arg p "$2" --arg c "$3" '{file_path:$p,cont
 finish() { echo '{"type":"result","subtype":"success","result":"done","is_error":false}'; }
 
 
-fixed="$(printf "%s" "x" )"
 case $n in
   0) bash_ b1 "mkdir -p .sloprail/gate/demo && printf '#!/bin/sh\\nexit 0\\n' > .sloprail/gate/demo/ok.sh && git add -A && git -c user.name=t -c user.email=t@t commit -q -m demo-script" ;;
   *) finish ;;
