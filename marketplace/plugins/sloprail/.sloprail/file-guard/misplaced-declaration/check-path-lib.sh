@@ -27,7 +27,12 @@ lib_check() {
   *) return 0 ;;
   esac
   # A path can hold several folders (a case's fixture under <rule>/tests/<case>/): the last is the nearest.
+  # But a case FOLDER is data: a fixture it holds, a nested `.sloprail/` included, is never a declaration, so
+  # the exemption is tested before descending into a nested folder, not only on what is left after it.
   while :; do
+    case "$rest" in
+    gate/*/tests/*/* | file-guard/*/tests/*/* | context/*/tests/*/* | file-guard/structure.tests/*/*) return 0 ;;
+    esac
     case "$rest" in
     .sloprail/*) root="${root}.sloprail/"; rest="${rest#.sloprail/}" ;;
     */.sloprail/*) root="${root}.sloprail/${rest%%/.sloprail/*}/"; rest="${rest#*/.sloprail/}" ;;
