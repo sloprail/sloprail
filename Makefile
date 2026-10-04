@@ -287,6 +287,7 @@ REST_PKGS := \
   ./tests/e2e/engine_repo_judges/... \
   ./tests/e2e/declarations/... \
   ./tests/e2e/authoring/... \
+  ./tests/e2e/ruletest/... \
   ./tests/e2e/harness/...
 
 # Sharded e2e for CI. The whole suite run with -p 1 (the disk constraint above)

@@ -496,7 +496,7 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n  sr-checks test [<rule>...]                   run the cases beside the project's own rules (no model, no harness): refuse/permit over commits, trajectories of normalized events, stubbed judges\n  sr-checks doctor [<rule>...]                 every project rule loads, has a refuse and a permit case (judges stubbed both ways), and its cases pass\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
@@ -527,6 +527,47 @@
           {
             "name": "head",
             "usage": "The head revision: a branch, tag or sha (required)"
+          }
+        ]
+      },
+      {
+        "path": "sr-checks doctor",
+        "use": "doctor [<rule>...]",
+        "short": "Check that every project rule loads and is proved by cases, then run them",
+        "long": "Check a project's own rules before any judge runs.\n\nFor each rule: the declaration loads (the loader's own faults are reported by name); it has at least one\ncase that expects a refusal and one that expects a permit (a context: one case that leaves it active and\none that leaves it inactive); each judge it declares is stubbed to pass in one case and to fail in\nanother; and then every case runs, as sr-checks test runs it. Rules with missing cases are listed with\nwhat is missing. Exits 1 on any fault.\n\n  --allow-untested   a rule with no cases at all is reported but does not fail the run (the rollout\n                     switch: existing rules are grandfathered until their first case; a rule that has\n                     any case must be fully covered and passing)\n  --no-run           only check declarations and coverage, run nothing\n  --rules-dir, --plugin, --keep, --json   as for sr-checks test",
+        "flags": [
+          {
+            "name": "allow-untested",
+            "default": "false",
+            "usage": "A rule with no cases at all does not fail the run"
+          },
+          {
+            "name": "json",
+            "default": "false",
+            "usage": "Print the results as JSON"
+          },
+          {
+            "name": "keep",
+            "default": "false",
+            "usage": "Keep each case's sandbox and print where it is"
+          },
+          {
+            "name": "live-judges",
+            "default": "false",
+            "usage": "Ask the real judges instead of the canned ones (judge-accuracy runs)"
+          },
+          {
+            "name": "no-run",
+            "default": "false",
+            "usage": "Only check declarations and coverage; run no case"
+          },
+          {
+            "name": "plugin",
+            "usage": "Name the directory as a plugin's"
+          },
+          {
+            "name": "rules-dir",
+            "usage": "The .sloprail directory to read (default: the repository's)"
           }
         ]
       },
@@ -600,6 +641,37 @@
             "name": "trailers",
             "default": "false",
             "usage": "Resolve the Sloprail-Cites-* lines of a commit message read from stdin, as JSON lines"
+          }
+        ]
+      },
+      {
+        "path": "sr-checks test",
+        "use": "test [<rule>...]",
+        "short": "Run the cases beside a project's own rules: no model, no harness, only bash and git",
+        "long": "Run the test cases kept beside a project's rules (.sloprail/<nature>/<name>/tests/<case>/) and\nreport what the engine did with each.\n\nA case is a folder:\n\n  case.yaml        expect: refuse|permit, reason_contains, judges: {<judge file>: {pass, reasoning}}, with:, contexts:\n  setup.sh         pure bash + git: builds the repository (cwd is a fresh temp repo that already holds the rule)\n  trajectory.yaml  optional: an ordered list of NORMALIZED sloprail events (the flat event model), run:\n                   steps that change the repository between them, sub-agent starts/stops, Stop\n\nWithout a trajectory the case judges base..HEAD through the real file-guard path (what sr-checks run\ndoes). With one, each event goes through the same dispatch the hooks use: contexts activate and\npersist across events, gates refuse, a Stop runs the real Stop path. The case is written in the\nengine's own events, so it holds whichever harness the project runs on.\n\nJudges never call a model: each is answered from the case's canned verdict, and a case that reaches a\njudge it does not stub fails. --live-judges asks the real judges instead (judge-accuracy runs: the case's\nexpectation is then checked against the live verdict; reason_contains is skipped).\n\nThe rules are named by <nature>/<name> or the bare name; none runs every rule that has cases. Exits 1\nwhen any case fails.\n\n  --rules-dir  the .sloprail directory to read (default: the repository's)\n  --plugin     name the directory as a plugin's (its rules are qualified <plugin>/<nature>/<name>)\n  --keep       leave each case's sandbox in place and print where (to look at the repository it built)\n  --json       print the results as JSON",
+        "flags": [
+          {
+            "name": "json",
+            "default": "false",
+            "usage": "Print the results as JSON"
+          },
+          {
+            "name": "keep",
+            "default": "false",
+            "usage": "Keep each case's sandbox and print where it is"
+          },
+          {
+            "name": "live-judges",
+            "default": "false",
+            "usage": "Ask the real judges instead of the canned ones (judge-accuracy runs)"
+          },
+          {
+            "name": "plugin",
+            "usage": "Name the directory as a plugin's"
+          },
+          {
+            "name": "rules-dir",
+            "usage": "The .sloprail directory to read (default: the repository's)"
           }
         ]
       },

@@ -1165,6 +1165,10 @@ func (e *Env) GitInitUnborn(dir string) {
 	if !e.ciVerifyGate {
 		e.DisablePluginGuardrail(dir, "sloprail/gate/ci-verify-required")
 	}
+	// rule-tests refuses a commit that changes a rule without its cases, which no package
+	// here is about but its own (tests/e2e/ruletest drives the binaries directly): every
+	// package that commits rules in a session has it off, as with the gate above.
+	e.DisablePluginGuardrail(dir, "sloprail/file-guard/rule-tests")
 	if e.noShippedGuards {
 		e.DisablePluginGuardrail(dir, shippedFileGuards...)
 		e.DisablePluginGuardrail(dir, shippedGates...)
