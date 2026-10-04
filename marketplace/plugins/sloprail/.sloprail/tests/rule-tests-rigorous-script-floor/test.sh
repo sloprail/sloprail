@@ -8,22 +8,23 @@ set -euo pipefail
 F="$SR_TEST_CASE_DIR/fixtures"
 git init -q .
 mkdir -p .sloprail/gate/demo .sloprail/tests/demo-case
-cp "$F/demo-gate.yaml" .sloprail/gate/demo/gate.yaml
+cat "$F/demo-gate.yaml" > .sloprail/gate/demo/gate.yaml
 printf '#!/usr/bin/env bash\necho "{\\"reason\\":\\"forbidden/ is read-only; write under allowed/ instead\\"}"\nexit 1\n' > .sloprail/gate/demo/refuse.sh
 mkdir -p .sloprail/file-guard
 cp -R "$SR_TEST_CASE_DIR/../../file-guard/rule-tests-rigorous" .sloprail/file-guard/
+chmod -R u+w .sloprail/file-guard
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a demo gate"
 BASE=$(git rev-parse HEAD)
 export SR_CHECKS_JUDGE_MOCKS='{"file-guard/rule-tests-rigorous/judge":"'"$SR_TEST_CASE_DIR"'/judge-rigor.sh"}'
 
-cp "$F/sloppy-case.txt" .sloprail/tests/demo-case/test.sh
+cat "$F/sloppy-case.txt" > .sloprail/tests/demo-case/test.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a sloppy case"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 [ "$status" -ne 0 ]
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="rule-tests-rigorous")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("does not start with a shebang")) and (.[0].reason|contains("never asserts on the events")) and (.[0].reason|contains("|| true"))' "$SR_EVENTS_FILE" >/dev/null
 
 # the recovery the refusal asked for
-cp "$F/fixed-case.txt" .sloprail/tests/demo-case/test.sh
+cat "$F/fixed-case.txt" > .sloprail/tests/demo-case/test.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "fix the case"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="rule-tests-rigorous")] | length==2 and .[1].outcome=="passed"' "$SR_EVENTS_FILE" >/dev/null

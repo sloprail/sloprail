@@ -8,14 +8,15 @@ F="$SR_TEST_CASE_DIR/fixtures"
 git init -q .
 mkdir -p .sloprail/file-guard .sloprail/gate/legacy .sloprail/gate/demo .sloprail/tests/unrelated .sloprail/tests/demo-case
 cp -R "$SR_TEST_CASE_DIR/../../file-guard/rule-tests-pass" .sloprail/file-guard/
-cp "$F/legacy-gate.yaml" .sloprail/gate/legacy/gate.yaml
-cp "$F/legacy-check.txt" .sloprail/gate/legacy/refuse.sh
+chmod -R u+w .sloprail/file-guard
+cat "$F/legacy-gate.yaml" > .sloprail/gate/legacy/gate.yaml
+cat "$F/legacy-check.txt" > .sloprail/gate/legacy/refuse.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a project with a legacy gate"
 BASE=$(git rev-parse HEAD)
 
-cp "$F/demo-gate.yaml" .sloprail/gate/demo/gate.yaml
-cp "$F/demo-refuse.txt" .sloprail/gate/demo/refuse.sh
-cp "$F/unrelated-case.txt" .sloprail/tests/unrelated/test.sh
+cat "$F/demo-gate.yaml" > .sloprail/gate/demo/gate.yaml
+cat "$F/demo-refuse.txt" > .sloprail/gate/demo/refuse.sh
+cat "$F/unrelated-case.txt" > .sloprail/tests/unrelated/test.sh
 chmod +x .sloprail/gate/demo/refuse.sh .sloprail/tests/unrelated/test.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a new gate and an unrelated case"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
@@ -23,8 +24,8 @@ sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="rule-tests-pass")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("gate/demo")) and (.[0].reason|contains("no sr-test case exercises")) and (.[0].reason|contains("legacy")|not)' "$SR_EVENTS_FILE" >/dev/null
 
 # the recovery: a case that makes the gate refuse and permit
-cp "$F/demo-case-test.txt" .sloprail/tests/demo-case/test.sh
-cp "$F/demo-case-agent.txt" .sloprail/tests/demo-case/agent.sh
+cat "$F/demo-case-test.txt" > .sloprail/tests/demo-case/test.sh
+cat "$F/demo-case-agent.txt" > .sloprail/tests/demo-case/agent.sh
 chmod +x .sloprail/tests/demo-case/test.sh .sloprail/tests/demo-case/agent.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a case for the demo gate"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?

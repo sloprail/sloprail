@@ -38,6 +38,17 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null 2
 paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')" ||
   refuse "the changeset's files could not be read, so the sr-test cases could not be run"
 
+# Where the cases run. The committed tree (SR_TREE) is what is judged; but a plugin's cases call `sr-test agent`,
+# which installs the plugin and the core plugin from the checkout it sits in, and that collides with a
+# snapshot of the same plugin. So when the workspace IS the judged commit and has no local change, run there:
+# the same bytes, in the checkout sr-test expects. Otherwise run the snapshot.
+tree="$SR_TREE"
+if [ -n "${SR_WORKSPACE:-}" ] && [ -n "${SR_HEAD:-}" ] &&
+  [ "$(git -C "$SR_WORKSPACE" rev-parse HEAD 2>/dev/null)" = "$SR_HEAD" ] &&
+  [ -z "$(git -C "$SR_WORKSPACE" status --porcelain 2>/dev/null)" ]; then
+  tree="$SR_WORKSPACE"
+fi
+
 work="$(mktemp -d)" || refuse "could not make a scratch directory to run the sr-test cases"
 trap 'rm -rf "$work"' EXIT
 
@@ -45,8 +56,8 @@ trap 'rm -rf "$work"' EXIT
 failures=""
 while IFS= read -r root; do
   [ -n "$root" ] || continue
-  abs="$SR_TREE"
-  [ "$root" = "." ] || abs="$SR_TREE/$root"
+  abs="$tree"
+  [ "$root" = "." ] || abs="$tree/$root"
   [ -d "$abs/.sloprail/tests" ] || continue
   out="$work/run.jsonl"
   err="$work/run.err"
@@ -81,8 +92,8 @@ changed="$(printf '%s\n' "$paths" | awk '{
 missing=""
 while IFS="	" read -r root nature rule; do
   [ -n "$rule" ] || continue
-  abs="$SR_TREE"
-  [ "$root" = "." ] || abs="$SR_TREE/$root"
+  abs="$tree"
+  [ "$root" = "." ] || abs="$tree/$root"
   # only a rule that still stands: a deleted rule has no declaration at head
   [ -f "$abs/.sloprail/$nature/$rule/$nature.yaml" ] || continue
   printf '%s\t%s\t%s\n' "$root" "$nature" "$rule" >>"$work/rules.tsv"
@@ -91,8 +102,8 @@ done <<<"$changed"
 if [ -s "$work/rules.tsv" ]; then
   while IFS= read -r root; do
     awk -F'\t' -v r="$root" '$1 == r' "$work/rules.tsv" | grep -q . || continue
-    abs="$SR_TREE"
-    [ "$root" = "." ] || abs="$SR_TREE/$root"
+    abs="$tree"
+    [ "$root" = "." ] || abs="$tree/$root"
     sr-test doctor --jobs 8 "$abs" >"$work/doctor.out" 2>"$work/doctor.err"
     if ! grep -q -E '^(uncovered: |every rule is covered)' "$work/doctor.out"; then
       refuse "sr-test doctor could not tell which rules the cases exercise under $root/.sloprail:
