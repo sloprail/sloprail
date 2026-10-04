@@ -66,11 +66,15 @@ func newRunCmd() *cobra.Command {
 }
 
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	c := &cobra.Command{
 		Use:   "doctor [path]",
 		Short: "List the rules that have no case",
 		Long: "List every rule folder holding a declaration (and the structure gate) whose tests/ (structure.tests/) holds no case, as\n" +
-			"\"uncovered: <nature>:<rule>\". Deterministic: nothing is run; a case's owner is the folder it sits in.\n\n" + caseLayout,
+			"\"uncovered: <nature>:<rule>\". Deterministic: nothing is run; a case's owner is the folder it sits in.\n\n" +
+			"--json prints one JSON object per uncovered rule instead ({\"nature\", \"rule\", \"dir\", \"qualified\": dir is the\n" +
+			".sloprail's parent relative to the path, \".\" for its own) and exits 0 whether or not any is uncovered: a non-zero\n" +
+			"status then means the scan itself failed, and no output means every rule is covered.\n\n" + caseLayout,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := "."
@@ -80,6 +84,19 @@ func newDoctorCmd() *cobra.Command {
 			root, err := filepath.Abs(root)
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				rules, err := srtest.UncoveredRules(root)
+				if err != nil {
+					return err
+				}
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				for _, r := range rules {
+					if err := enc.Encode(r); err != nil {
+						return err
+					}
+				}
+				return nil
 			}
 			un, err := srtest.Uncovered(root)
 			if err != nil {
@@ -95,6 +112,8 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&asJSON, "json", false, "one JSON object per uncovered rule (nature, rule, dir, qualified); exit 0 unless the scan failed")
+	return c
 }
 
 // caseLayout documents where a case lives and how its result is named (shared by the commands' help).
