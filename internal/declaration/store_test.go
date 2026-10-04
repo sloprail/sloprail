@@ -1378,3 +1378,25 @@ func TestLoad_Script_OtherNaturesStayLoadedAndReported(t *testing.T) {
 		assert.Contains(t, d.Reason, "chmod +x")
 	}
 }
+
+// Degraded is reported in qualified-name order, whatever order the folders were read in.
+func TestLoad_Degraded_IsSortedByQualifiedName(t *testing.T) {
+	files := map[string]string{}
+	for _, n := range []string{"zeta", "alpha", "mid"} {
+		files["file-guard/"+n+"/file-guard.yaml"] = "match: \"**/*.md\"\nchecks:\n  - script: ./c.sh\n"
+	}
+	root := writeDecl(t, files)
+	for _, n := range []string{"zeta", "alpha", "mid"} {
+		p := filepath.Join(root, "file-guard", n, "c.sh")
+		require.NoError(t, os.WriteFile(p, []byte("exit 0\n"), 0o755))
+		require.NoError(t, os.Chmod(p, 0o755))
+	}
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, loaded.Degraded, 3)
+	var got []string
+	for _, d := range loaded.Degraded {
+		got = append(got, d.Name)
+	}
+	assert.Equal(t, []string{"alpha", "mid", "zeta"}, got)
+}

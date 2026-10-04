@@ -162,7 +162,9 @@ type Loaded struct {
 	// fault (a declared script that lost its shebang or execute bit): reported where
 	// Invalid is, never dropped, because a rule that stopped loading would stop
 	// refusing. At run time the exec path refuses what such a rule guards until the
-	// file is fixed. Sorted by qualified name.
+	// file is fixed. Only declarations that are in force: one displaced (Shadowed) or
+	// disabled is neither loaded nor enforced, so it is not reported here. Sorted by
+	// qualified name.
 	Degraded []Invalid
 
 	// Invalid are the declarations that could not be loaded, across every nature,
@@ -607,6 +609,7 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 
 	// -- 4. apply the project's disable list to loaded AND invalid --
 	applyDisable(&out, cfg)
+	keepDegradedInForce(&out)
 
 	// -- 5. report literal scope overlaps among the plugin structures still in
 	// force (after disabling, so switching one off silences its overlap) --
@@ -867,11 +870,37 @@ func parseYAML(path string, data []byte, dst any) []Problem {
 // claiming during resolution (first writer wins), not by the final order, so a
 // name-sort here reorders the winners without changing who won. The Shadowed slice
 // is sorted too, so a report of displacements is stable across runs.
+// keepDegradedInForce drops a Degraded entry whose declaration lost precedence (Shadowed): it is
+// not loaded, so there is nothing enforced for the report to be about.
+func keepDegradedInForce(l *Loaded) {
+	inForce := map[string]bool{}
+	for _, g := range l.FileGuards {
+		inForce[g.Origin.Qualified(NatureFileGuard, g.Name)] = true
+	}
+	for _, g := range l.Gates {
+		inForce[g.Origin.Qualified(NatureGate, g.Name)] = true
+	}
+	for _, c := range l.Contexts {
+		inForce[c.Origin.Qualified(NatureContext, c.Name)] = true
+	}
+	for _, sg := range l.Structures {
+		inForce[sg.Origin.Qualified(NatureStructure, "")] = true
+	}
+	kept := l.Degraded[:0]
+	for _, iv := range l.Degraded {
+		if inForce[iv.Qualified()] {
+			kept = append(kept, iv)
+		}
+	}
+	l.Degraded = kept
+}
+
 func sortLoaded(l *Loaded) {
 	sort.Slice(l.FileGuards, func(i, j int) bool { return l.FileGuards[i].Name < l.FileGuards[j].Name })
 	sort.Slice(l.Gates, func(i, j int) bool { return l.Gates[i].Name < l.Gates[j].Name })
 	sort.Slice(l.Contexts, func(i, j int) bool { return l.Contexts[i].Name < l.Contexts[j].Name })
 	sort.Slice(l.Invalid, func(i, j int) bool { return l.Invalid[i].Qualified() < l.Invalid[j].Qualified() })
+	sort.Slice(l.Degraded, func(i, j int) bool { return l.Degraded[i].Qualified() < l.Degraded[j].Qualified() })
 	sort.Slice(l.Shadowed, func(i, j int) bool { return l.Shadowed[i].Qualified() < l.Shadowed[j].Qualified() })
 }
 

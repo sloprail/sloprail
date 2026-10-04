@@ -560,7 +560,7 @@ func quoted(stderr []byte) string {
 }
 
 // resolveScriptPath is the absolute path of a script named relative to the guard
-// folder, for a helper that needs it outside the `sh -c` cwd. Kept small and
+// folder, for a helper that needs it outside the script's working directory. Kept small and
 // separate because the judge path builds a prompt naming files and wants the
 // absolute form.
 func resolveScriptPath(dir, script string) string {

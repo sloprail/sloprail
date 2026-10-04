@@ -12,8 +12,8 @@ import (
 // This file is the CONTEXT-LIFECYCLE half of the runner's job: running a
 // context's `enter` and `exit` scripts (dot-dir-file-store/main.tsp
 // ContextDeclaration). It sits beside checks.go because a context's enter/exit
-// are the same kind of executable a check is — an arbitrary `sh -c` from the
-// context's own folder, the payload on stdin, fail-closed if it will not run —
+// are the same kind of executable a check is — a script run directly (no shell)
+// from the context's own folder, the payload on stdin, fail-closed if it will not run —
 // and reusing the same runShell substrate is what keeps a lifecycle script and a
 // check behaving identically when the machinery breaks.
 //
