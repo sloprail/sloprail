@@ -22,6 +22,7 @@ type flags struct {
 	timeout    time.Duration
 	liveJudges bool
 	only       []string
+	rule       []string
 	keep       bool
 }
 
@@ -29,6 +30,7 @@ func addFlags(c *cobra.Command, f *flags) {
 	c.Flags().IntVar(&f.jobs, "jobs", 4, "cases run in parallel")
 	c.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "per-case timeout")
 	c.Flags().StringSliceVar(&f.only, "only", nil, "run only cases whose subject contains one of these")
+	c.Flags().StringSliceVar(&f.rule, "rule", nil, "run only the cases of these rules: <nature>/<rule> (gate/cite-before-commit, file-guard/structure)")
 	c.Flags().BoolVar(&f.liveJudges, "live-judges", false, "let judges call a real model (SR_CHECKS_JUDGE_MOCKS stays unset)")
 	c.Flags().BoolVar(&f.keep, "keep", false, "keep each case's temp dir and print its path on stderr")
 }
@@ -37,7 +39,8 @@ func newRunCmd() *cobra.Command {
 	var f flags
 	c := &cobra.Command{
 		Use:   "run [path]",
-		Short: "Run every **/.sloprail/tests/*/test.sh below path; one JSONL result per case on stdout",
+		Short: "Run every case below path; one JSONL result per case on stdout",
+		Long:  caseLayout,
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			results, err := execute(cmd, args, f)
@@ -63,30 +66,48 @@ func newRunCmd() *cobra.Command {
 }
 
 func newDoctorCmd() *cobra.Command {
-	var f flags
-	c := &cobra.Command{
+	return &cobra.Command{
 		Use:   "doctor [path]",
-		Short: "Run the cases, then list the rules no case exercised",
-		Args:  cobra.MaximumNArgs(1),
+		Short: "List the rules that have no case",
+		Long: "List every rule folder holding a declaration (and the structure gate) whose tests/ (structure.tests/) holds no case, as\n" +
+			"\"uncovered: <nature>:<rule>\". Deterministic: nothing is run; a case's owner is the folder it sits in.\n\n" + caseLayout,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			results, err := execute(cmd, args, f)
+			root := "."
+			if len(args) > 0 {
+				root = args[0]
+			}
+			root, err := filepath.Abs(root)
 			if err != nil {
 				return err
 			}
-			un := srtest.Uncovered(results)
+			un, err := srtest.Uncovered(root)
+			if err != nil {
+				return err
+			}
 			for _, u := range un {
 				fmt.Fprintln(cmd.OutOrStdout(), "uncovered: "+u)
 			}
 			if len(un) > 0 {
-				return fmt.Errorf("sr-test: %d rule(s) no case exercises", len(un))
+				return fmt.Errorf("sr-test: %d rule(s) have no case", len(un))
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "every rule is covered")
 			return nil
 		},
 	}
-	addFlags(c, &f)
-	return c
 }
+
+// caseLayout documents where a case lives and how its result is named (shared by the commands' help).
+const caseLayout = `A case lives in its OWNING rule's folder, and has exactly one owner (the folder it sits in):
+
+  .sloprail/<gate|file-guard|context>/<rule>/tests/<case>/test.sh
+  .sloprail/file-guard/structure.tests/<case>/test.sh        (the structure gate, one file)
+
+Any .sloprail/ below the path counts (a plugin's included). Each result line carries
+  owner    "<nature>/<rule>" within its .sloprail/ ("gate/cite-before-commit", "file-guard/structure")
+  subject  "<owner>:<case>" in the root .sloprail/, "<dir of the .sloprail's parent>:<owner>:<case>" below it
+           (marketplace/plugins/sloprail:gate/cite-before-commit:<case>)
+In a case: SR_TEST_CASE_DIR is a copy of the case folder, SR_TEST_SLOPRAIL_DIR the original .sloprail/.`
 
 func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error) {
 	root := "."
@@ -108,7 +129,7 @@ func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error
 		core = filepath.Join(co, "marketplace", "plugins", "sloprail")
 	}
 	return srtest.Run(root, srtest.Options{CorePluginDir: core,
-		Root: root, Jobs: f.jobs, Only: f.only, Timeout: f.timeout, LiveJudges: f.liveJudges, Keep: f.keep,
+		Root: root, Jobs: f.jobs, Only: f.only, Owners: f.rule, Timeout: f.timeout, LiveJudges: f.liveJudges, Keep: f.keep,
 		Stderr: cmd.ErrOrStderr(), BinDirs: bins, Rules: loadRules,
 	})
 }
@@ -126,7 +147,7 @@ func loadRules(c srtest.Context, w io.Writer) []string {
 	} else {
 		var origins []declaration.Origin
 		for _, p := range c.Plugins {
-			origins = append(origins, declaration.Origin{Plugin: pluginName(p), Root: p})
+			origins = append(origins, declaration.Origin{Plugin: srtest.PluginName(p), Root: p})
 		}
 		l, err = declaration.NewWithPlugins(checkrun.DotDir(c.Dir), origins).Load(reg)
 		if err != nil {
@@ -148,16 +169,6 @@ func loadRules(c srtest.Context, w io.Writer) []string {
 		out = append(out, "structure:"+qual(s.Origin.Plugin, "structure"))
 	}
 	return out
-}
-
-func pluginName(dir string) string {
-	if raw, err := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
-		var m struct{ Name string }
-		if json.Unmarshal(raw, &m) == nil && m.Name != "" {
-			return m.Name
-		}
-	}
-	return filepath.Base(dir)
 }
 
 func qual(plugin, name string) string {

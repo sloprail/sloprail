@@ -123,6 +123,9 @@ const (
 	fileGate      = "gate.yaml"
 	fileContext   = "context.yaml"
 	fileStructure = "structure.yaml"
+	// dirStructureTests is the folder beside structure.yaml holding the structure gate's sr-test cases.
+	// A rule's own cases sit in its folder's tests/, which is never read (only the nature's yaml is).
+	dirStructureTests = "structure.tests"
 )
 
 // Loaded is everything a load produced: the declarations in force, by nature, and
@@ -762,7 +765,8 @@ func parseStructure(root string, origin Origin) (*StructureGate, []Invalid, erro
 // declaration, each carrying the nature's yaml plus its scripts. A stray FILE in
 // the nature directory (structure.yaml is the one legitimate case, and it sits in
 // file-guard/) is not a name and is skipped here; structure.yaml is read by its
-// own parseStructure, not through this enumeration.
+// own parseStructure, not through this enumeration. The folder structure.tests/ (the
+// structure gate's sr-test cases) is skipped the same way: it is no rule.
 func natureNames(root, dir string) ([]string, error) {
 	entries, err := os.ReadDir(natureDir(root, dir))
 	if os.IsNotExist(err) {
@@ -774,6 +778,10 @@ func natureNames(root, dir string) ([]string, error) {
 	var names []string
 	for _, e := range entries {
 		if !e.IsDir() {
+			continue
+		}
+		// structure.tests/ holds the structure gate's sr-test cases: not a rule.
+		if dir == dirFileGuard && e.Name() == dirStructureTests {
 			continue
 		}
 		names = append(names, e.Name())
