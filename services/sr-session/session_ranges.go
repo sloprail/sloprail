@@ -666,6 +666,11 @@ func autoWatchGitRefs() bool {
 // trackAtHook is the tracking every hook runs for its agent's folders (the root's store holds
 // the registry): the current branch, and the branches the session committed on.
 func trackAtHook(p HookPayload) {
+	if !autoWatchGitRefs() {
+		// Nothing here is read by anything else: it only adds auto rows. Dropping the rows an
+		// earlier run left is the Stop's verification's business (trackMissingOf), the one reader.
+		return
+	}
 	rs, err := resolveRootSession(p)
 	if err != nil {
 		return
@@ -740,6 +745,9 @@ func checkedOutOnly(folder, sha string, rows []sessionstate.TrackedRange) bool {
 // trackFolders makes sure the current branch of this agent's folders is tracked: the tree it
 // stands in and the folders registered for it.
 func trackFolders(reg sessionstate.Store, rs rootSession, p HookPayload) error {
+	if !autoWatchGitRefs() {
+		return nil // only ever adds auto rows: no folder walk when auto-watching is off
+	}
 	folders, err := reg.Folders(rs.ID)
 	if err != nil {
 		return err
