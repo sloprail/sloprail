@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # Shared by task-body-is-human-authored's scripts (body-changed.sh, body-is-stated.sh,
 # resolve-cited-messages.sh), so they never disagree about what the body IS.
 #

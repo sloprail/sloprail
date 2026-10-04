@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # Sourced by pin-still-matches-head.sh and pinned-text.sh, so both read a pin the
 # same way. An sr:invariant marker's fqn is a pinned spec reference:
 #   <repo>@<sha>:<path>#L<start>-<end>
