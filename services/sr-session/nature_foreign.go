@@ -29,9 +29,11 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 }
 
 // dispatchForeignGates decides a call by the direct gates of each foreign repo it
-// targets. Per repo it costs one stat of `<root>/.sloprail` (no cache); a repo without
-// one is nobody's to refuse. A `.sloprail` that cannot be loaded refuses: a gate that
-// may exist was not consulted. Only the repo's own declarations load — its plugins are
+// targets. Finding the repos costs a git root lookup per target; per repo, one stat of
+// `<root>/.sloprail` (no cache); a repo without one is nobody's to refuse. A
+// `.sloprail` that cannot be checked or read, or has a declaration that does not load,
+// refuses: a gate that may exist was not consulted. A foreign gate's `require` on a
+// context or another gate sees none (foreign contexts are not entered). Only the repo's own declarations load — its plugins are
 // not applied (see the issue "Foreign repo plugins are not loaded at pre-tool").
 //
 // The repo is the workspace its gates run in, and the paths its gates see are relative
@@ -72,11 +74,17 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 
 	for _, root := range roots {
 		if _, err := os.Stat(filepath.Join(root, ".sloprail")); err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose .sloprail could not be checked (%v), so whether its gates allow it is unknown. Refusing.", root, err)}
 		}
 		loaded, err := declaration.New(filepath.Join(root, ".sloprail")).Load(reg)
 		if err != nil {
 			return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose sloprail declarations could not be read, so whether its gates allow it is unknown. Refusing.", root)}
+		}
+		if len(loaded.Invalid) > 0 {
+			return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose sloprail declaration %s could not be loaded, so whether its gates allow it is unknown. Refusing.", root, loaded.Invalid[0].Attribution())}
 		}
 		if len(loaded.Gates) == 0 {
 			continue
@@ -104,13 +112,15 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 }
 
 // foreignEvents is the events of a call that belong to the repo at root: the file
-// events under it, their paths made relative to it, and every other event (the call
-// targets the repo, which is why it is judged at all).
+// events under it with paths made relative to it, and each command event narrowed to
+// the invocations that run in it.
 func foreignEvents(events []event.Event, p HookPayload, root string) []event.Event {
 	var out []event.Event
 	for _, e := range events {
 		if !isPreFileEvent(e.Kind) {
-			out = append(out, e)
+			if ce, ok := commandEventFor(e, p, root); ok {
+				out = append(out, ce)
+			}
 			continue
 		}
 		path := absEventPath(p, eventPath(e))
@@ -129,6 +139,61 @@ func foreignEvents(events []event.Event, p HookPayload, root string) []event.Eve
 		out = append(out, event.Event{Kind: e.Kind, Fields: fields})
 	}
 	return out
+}
+
+// commandEventFor narrows a command event to the invocations that run inside the repo
+// at root (an invocation whose directory cannot be known is dropped), and reports
+// false when none does. Events of other kinds pass unchanged.
+func commandEventFor(e event.Event, p HookPayload, root string) (event.Event, bool) {
+	list, isCommand := e.Fields[commandmod.FieldInvocations].([]any)
+	if !isCommand {
+		return e, true
+	}
+	var kept []any
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		inv := commandmod.Invocation{}
+		inv.Bin, _ = m[commandmod.KeyBin].(string)
+		inv.Cwd, _ = m[commandmod.KeyCwd].(string)
+		if argv, ok := m[commandmod.KeyArgv].([]any); ok {
+			for _, a := range argv {
+				if s, ok := a.(string); ok {
+					inv.Argv = append(inv.Argv, s)
+				}
+			}
+		}
+		if dir, ok := invocationDir(inv, p.Cwd); ok && owningRepo(filepath.Join(dir, "x")) == root {
+			kept = append(kept, item)
+		}
+	}
+	if len(kept) == 0 {
+		return event.Event{}, false
+	}
+	fields := make(map[string]any, len(e.Fields))
+	for k, v := range e.Fields {
+		fields[k] = v
+	}
+	fields[commandmod.FieldInvocations] = kept
+	return event.Event{Kind: e.Kind, Fields: fields}, true
+}
+
+// invocationDir is the directory an invocation runs in: where the line started, moved
+// by `cd` ahead of it and by git's `-C`. ok is false when the line does not say.
+func invocationDir(inv commandmod.Invocation, base string) (string, bool) {
+	if inv.Cwd == "" {
+		return "", false
+	}
+	dir := base
+	if inv.Cwd != "." {
+		dir = joinDir(dir, inv.Cwd)
+	}
+	if d, _, _, ok := gitTarget(inv, base); ok {
+		dir = d
+	}
+	return dir, true
 }
 
 // absEventPath is a file event's path as an absolute one: the extraction reports a
@@ -156,15 +221,9 @@ func commandTargetDirs(p HookPayload) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, inv := range commandmod.ExtractCommand(in.Command).Invocations {
-		if inv.Cwd == "" {
+		dir, ok := invocationDir(inv, p.Cwd)
+		if !ok {
 			continue
-		}
-		dir := p.Cwd
-		if inv.Cwd != "." {
-			dir = joinDir(dir, inv.Cwd)
-		}
-		if d, _, _, ok := gitTarget(inv, p.Cwd); ok {
-			dir = d
 		}
 		if !seen[dir] {
 			seen[dir] = true

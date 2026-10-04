@@ -141,3 +141,38 @@ func TestT061_06_UnreadableSiblingDeclarationsRefuse(t *testing.T) {
 		t.Errorf("the refusal does not name the sibling and say it could not be read:\n%s", res.Output)
 	}
 }
+
+// T061_07: a command line that runs git in B and ALSO commits in A is judged for B only by the
+// part that runs in B: A's commit is not B's to refuse.
+func TestT061_07_OnlyTheInvocationsInTheSiblingAreItsToJudge(t *testing.T) {
+	e := New(t)
+	a, b := projectA(e), sibling(e, true, noCommitGate)
+	res := e.Run(a, "s-061-07", "status in the sibling, commit here", Turns("done",
+		Bash("c", fmt.Sprintf("git -C %s status -q && git commit -q --allow-empty -m x", b)),
+	))
+	if res.Refused() {
+		t.Fatalf("A's own commit was refused by B's gate:\n%s", res.Output)
+	}
+}
+
+// T061_08: one gate in B that does not load refuses a Write and a Bash command into B, naming B.
+func TestT061_08_OneBrokenSiblingGateRefuses(t *testing.T) {
+	e := New(t)
+	a, b := projectA(e), sibling(e, true, lockedGate)
+	e.Gate(b, "broken", "on: [this is not a gate\n", nil)
+	res := e.Run(a, "s-061-08", "write into the sibling", Turns("done",
+		Write("w1", filepath.Join(b, "open", "x.txt"), "fine"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a write into a sibling with a broken gate was not refused:\n%s", res.Output)
+	}
+	if !res.Saw(filepath.Base(b)) || !res.Saw("could not be loaded") {
+		t.Errorf("the refusal does not name the sibling and the unloaded declaration:\n%s", res.Output)
+	}
+	res = e.Run(a, "s-061-08b", "commit in the sibling", Turns("done",
+		Bash("c", fmt.Sprintf("git -C %s commit -q --allow-empty -m x", b)),
+	))
+	if !res.Refused() {
+		t.Fatalf("a command into a sibling with a broken gate was not refused:\n%s", res.Output)
+	}
+}
