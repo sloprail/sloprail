@@ -27,7 +27,7 @@ type flags struct {
 }
 
 func addFlags(c *cobra.Command, f *flags) {
-	c.Flags().IntVar(&f.jobs, "jobs", 4, "cases run in parallel")
+	c.Flags().IntVar(&f.jobs, "jobs", srtest.DefaultJobs, "cases run in parallel")
 	c.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "per-case timeout")
 	c.Flags().StringSliceVar(&f.only, "only", nil, "run only cases whose subject contains one of these")
 	c.Flags().StringSliceVar(&f.rule, "rule", nil, "run only the cases of these rules: <nature>/<rule> (gate/cite-before-commit, file-guard/structure)")
