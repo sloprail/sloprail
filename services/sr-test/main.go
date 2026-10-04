@@ -1,7 +1,11 @@
-// Command sr-test runs a project's end-to-end rule tests: .sloprail/tests/<case>/test.sh.
+// Command sr-test runs a project's end-to-end rule tests. A case lives in its owning rule's folder:
+// .sloprail/<nature>/<rule>/tests/<case>/test.sh (or .sloprail/file-guard/structure.tests/<case>/test.sh).
 //
-//	sr-test run [path]      run every case, one JSONL result per case on stdout
-//	sr-test doctor [path]   run, then list the rules no case ever exercised
+// The result subject is "<owner>:<case>" (root .sloprail/) or "<dir>:<owner>:<case>" (nested), and each
+// result also carries "owner" ("gate/<rule>", "file-guard/structure").
+//
+//	sr-test run [path]      run every case (--only <substring of subject>, --rule <nature>/<rule>), one JSONL result each
+//	sr-test doctor [path]   list the rules with no case (deterministic; nothing is run)
 //	sr-test agent <agent.sh>  (inside a test.sh) run the harness mock
 package main
 
