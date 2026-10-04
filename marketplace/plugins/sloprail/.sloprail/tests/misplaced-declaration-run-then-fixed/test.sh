@@ -30,5 +30,13 @@ echo "$c2" | jq -e '.[0]!=true' >/dev/null || fail "sr-checks run (c2) over the 
 # the logged refusal carries the reason too
 echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/misplaced-declaration" and .outcome=="refused")] | length>=1 and (.[0].reason|contains(".sloprail/file-guard/structure.yaml"))' >/dev/null ||
   fail "the logged refusal does not name .sloprail/file-guard/structure.yaml"
+# the permit side of the file-guard is in the log: after the move it passed
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/misplaced-declaration" and .on=="sr-checks run")] | length>=2 and .[0].outcome=="refused" and .[-1].outcome=="passed"' >/dev/null ||
+  fail "misplaced-declaration did not go from refused to passed in the log"
+# the PreFileWrite gate: refuses .sloprail/structure.yaml with where it belongs, permits .sloprail/file-guard/structure.yaml
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/misplaced-declaration" and .tool_use_id=="gw1")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains(".sloprail/file-guard/structure.yaml"))' >/dev/null ||
+  fail "gw1: the gate did not refuse .sloprail/structure.yaml naming .sloprail/file-guard/structure.yaml"
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/misplaced-declaration" and .tool_use_id=="gw2")] | length==1 and .[0].outcome=="permitted"' >/dev/null ||
+  fail "gw2: the gate refused .sloprail/file-guard/structure.yaml"
 test -f .sloprail/file-guard/structure.yaml
 test ! -e .sloprail/structure.yaml

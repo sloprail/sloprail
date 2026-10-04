@@ -37,8 +37,11 @@ variant no-trigger $'# sr:ci verify\non:\n  push:\njobs:\n  v:\n    runs-on: ubu
 refused_with no-trigger "a 'pull_request' trigger"
 jq -es 'all(.[]|select(.rule=="sloprail/ci-verify-step" and .outcome=="refused"); (.reason|contains("a step that runs")|not))' "$SR_EVENTS_FILE" >/dev/null || fail "no-trigger: the refusal also names the step, which is there"
 
-# 3. both halves: passes (the same file, nothing else changed but the trigger)
-variant complete $'# sr:ci verify\non:\n  pull_request:\njobs:\n  v:\n    runs-on: ubuntu-latest\n    steps:\n      - run: sr-checks verify --base main --head HEAD'
+# 3. the fix, committed on top of the refused branch: the trigger is added and nothing else changes
+mkdir -p .github/workflows
+printf '%s\n' $'# sr:ci verify\non:\n  pull_request:\njobs:\n  v:\n    runs-on: ubuntu-latest\n    steps:\n      - run: sr-checks verify --base main --head HEAD' > .github/workflows/sloprail.yml
+git add .github/workflows/sloprail.yml
+git -c user.name=t -c user.email=t@t commit -q -m "add the pull_request trigger"
 : > "$SR_EVENTS_FILE"
-sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 || fail "complete: the workflow that keeps the promise was refused"
-jq -es 'any(.[]; .kind=="FileGuardChecked" and .rule=="sloprail/ci-verify-step" and .outcome=="passed") and (any(.[]; .kind=="FileGuardChecked" and .outcome=="refused")|not)' "$SR_EVENTS_FILE" >/dev/null || fail "complete: ci-verify-step did not pass it"
+sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 || fail "fixed: the workflow that keeps the promise was refused"
+jq -es 'any(.[]; .kind=="FileGuardChecked" and .rule=="sloprail/ci-verify-step" and .outcome=="passed") and (any(.[]; .kind=="FileGuardChecked" and .outcome=="refused")|not)' "$SR_EVENTS_FILE" >/dev/null || fail "fixed: ci-verify-step did not pass it"
