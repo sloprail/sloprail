@@ -176,11 +176,17 @@ func runCase(root, name string, opt Options, mu *sync.Mutex) Result {
 			rulesDir = root
 		}
 		if rs := opt.Rules(rulesDir, &errBuf); rs != nil {
-			for i, rule := range rs {
-				if plugin != "" {
+			if plugin != "" {
+				// the loader also reads the machine's enabled plugins: only this plugin's own rules (bare
+				// in its folder) belong to it
+				own := rs[:0:0]
+				for _, rule := range rs {
 					nat, name, _ := strings.Cut(rule, ":")
-					rs[i] = nat + ":" + plugin + "/" + strings.TrimPrefix(name, plugin+"/")
+					if !strings.Contains(name, "/") {
+						own = append(own, nat+":"+plugin+"/"+name)
+					}
 				}
+				rs = own
 			}
 			r.Metadata.Rules = rs
 		}
