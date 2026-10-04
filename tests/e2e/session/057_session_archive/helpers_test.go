@@ -124,9 +124,13 @@ func git(t *testing.T, dir string, args ...string) string {
 }
 
 type manifest struct {
-	Label    string   `json:"label"`
-	Cwd      string   `json:"cwd"`
-	Sessions []string `json:"sessions"`
+	Sources struct {
+		Scratchpad map[string]string `json:"scratchpad_roots"`
+	} `json:"sources"`
+	Tools    map[string]string `json:"tool_versions"`
+	Label    string            `json:"label"`
+	Cwd      string            `json:"cwd"`
+	Sessions []string          `json:"sessions"`
 	Checks   []struct {
 		Repo     string   `json:"repo"`
 		File     string   `json:"file"`

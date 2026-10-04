@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -102,7 +103,7 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 		if got := readFile(t, filepath.Join(dir, c.File)); got != want.Output {
 			t.Fatalf("%s: archived checks differ from `sr-checks log --json`:\n%s\nvs\n%s", c.Repo, got, want.Output)
 		}
-		if len(c.Sessions) == 1 && c.Sessions[0] != sess {
+		if len(c.Sessions) != 1 || c.Sessions[0] != sess {
 			t.Fatalf("%s tracked by %v", c.Repo, c.Sessions)
 		}
 	}
@@ -171,7 +172,7 @@ func TestT057_02_AllSessionsLabelAndInto(t *testing.T) {
 		t.Fatalf("a path as a label was accepted: %d %s", r.Code, r.Output)
 	}
 	// --session and --all-sessions exclude each other; one of them is required
-	if r := w.archiveIn(t, w.proj, "--session", "x", "--all-sessions", "--into", w.into); r.Code == 0 {
+	if r := w.archiveIn(t, w.proj, "--session", "s-057-02a", "--all-sessions", "--into", w.into); r.Code == 0 || !strings.Contains(r.Output, "exclusive") {
 		t.Fatalf("both flags accepted: %s", r.Output)
 	}
 	if r := w.archiveIn(t, w.proj, "--into", w.into); r.Code == 0 {
@@ -199,7 +200,26 @@ func TestT057_03_ANestedRepositoryInTheScratchpad(t *testing.T) {
 	mustWrite(t, filepath.Join(w.tempDir(t, sess), "scratchpad", "linked", "x.txt"), "in a linked worktree\n")
 	mustWrite(t, filepath.Join(w.tempDir(t, sess), "scratchpad", "linked", ".git"), "gitdir: /nonexistent/.git/worktrees/linked\n")
 
+	// and what a copy cannot hold: a named pipe, a symlink to a directory
+	pad := filepath.Join(w.tempDir(t, sess), "scratchpad")
+	if err := syscall.Mkfifo(filepath.Join(pad, "pipe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(pad, filepath.Join(pad, "loop")); err != nil {
+		t.Fatal(err)
+	}
+
 	dir := w.archive(t, "--session", sess)
+
+	for _, odd := range []string{"scratchpad/pipe", "scratchpad/loop"} {
+		var found bool
+		for _, s := range readManifest(t, dir).Skipped {
+			found = found || (strings.Contains(s.Item, odd+": not a regular file") && s.Reason == "not copied")
+		}
+		if !found || exists(filepath.Join(dir, sess, "tmp", odd)) {
+			t.Errorf("%s: want it reported as skipped and not copied (found %v)", odd, found)
+		}
+	}
 
 	for _, c := range []string{"clone/file.txt", "empty-clone/wip.txt"} {
 		if !exists(filepath.Join(dir, sess, "tmp", "scratchpad", c)) {
@@ -239,6 +259,12 @@ func TestT057_04_SymlinkedRoots(t *testing.T) {
 	w := newWorld(t)
 	const sess = "s-057-04"
 	w.session(t, sess) // no background task: the transcript does not name the temp dir
+	// the session directory (sub-agent records) is itself a symlink to where Claude Code kept it
+	realSessDir := filepath.Join(filepath.Dir(w.e.TmpDir()), "real-session-dir")
+	mustWrite(t, filepath.Join(realSessDir, "subagents", "agent-a.jsonl"), "behind a symlink too\n")
+	if err := os.Symlink(realSessDir, strings.TrimSuffix(w.e.TranscriptPath(w.proj, sess), ".jsonl")); err != nil {
+		t.Fatal(err)
+	}
 
 	// the temp dir exists only under the env's temp root, which is reached through a symlink
 	projName := filepath.Base(filepath.Dir(w.e.TranscriptPath(w.proj, sess)))
@@ -270,6 +296,9 @@ func TestT057_04_SymlinkedRoots(t *testing.T) {
 	dir := strings.TrimSpace(r.Output)
 	if got := readFile(t, filepath.Join(dir, sess, "tmp", "scratchpad", "notes.txt")); got != "behind a symlink\n" {
 		t.Fatalf("the scratchpad behind symlinks: %q", got)
+	}
+	if got := readFile(t, filepath.Join(dir, sess, "session-dir", "subagents", "agent-a.jsonl")); got != "behind a symlink too\n" {
+		t.Fatalf("the session directory behind a symlink: %q", got)
 	}
 	if len(stateFiles(t, dir, sess)) != 1 || !exists(filepath.Join(dir, sess, "transcript.jsonl")) {
 		t.Fatalf("the session is not whole when the project is reached through a symlink")
