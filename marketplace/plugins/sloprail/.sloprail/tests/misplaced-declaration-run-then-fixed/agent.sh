@@ -12,7 +12,7 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 # agent writes the declaration one level too high from inside a script, so no gate stops it. The Stop
 # does not block on a range that was never judged; the agent judges its own commits with sr-checks run.
 MK=$'mkdir -p .sloprail\nprintf \'allow:\\n  - glob: ".sloprail/**"\\n\' > .sloprail/structure.yaml\n'
-DOCS="$(dirname "$CLAUDE_CODE_PLUGIN_CACHE_DIR")/marketplace/marketplace/plugins/sloprail/skills/authoring-guardrails"
+DOCS="$SR_TEST_PLUGINS_DIR/sloprail/skills/authoring-guardrails"
 RUN='sr-checks run --base $(git rev-list --max-parents=0 HEAD) --head HEAD'
 case $n in
   0) write_ w1 mk.sh "$MK" ;;

@@ -123,6 +123,7 @@ func Run(o Options) (*Result, error) {
 		return nil, err
 	}
 	enabled := []string{pluginKey}
+	pluginsDir := filepath.Join(mkt, "marketplace", "plugins") // the shared marketplace links the checkout's marketplace/ here
 	if pdirs := PluginDirs(); len(pdirs) > 0 {
 		// Plugin case: install the plugin(s) under test from their local folders.
 		names, err := harnessmock.LocalPluginMarketplace(marketplaceName, mkt, pdirs)
@@ -130,6 +131,7 @@ func Run(o Options) (*Result, error) {
 			return nil, err
 		}
 		enabled = nil
+		pluginsDir = filepath.Join(mkt, "plugins")
 		for _, n := range names {
 			enabled = append(enabled, n+"@"+marketplaceName)
 		}
@@ -174,6 +176,7 @@ func Run(o Options) (*Result, error) {
 	cmd.Stdout = stream
 	cmd.Stderr = stream
 	cmd.Env = append(ambientenv.Session(os.Environ()),
+		"SR_TEST_PLUGINS_DIR="+pluginsDir, // <dir>/<plugin> is each installed plugin's root, whichever way it was installed
 		"CLAUDE_CONFIG_DIR="+cfg,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+plugins,
 		"CLAUDE_CODE_TMPDIR="+tmp,

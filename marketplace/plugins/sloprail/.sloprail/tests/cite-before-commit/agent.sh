@@ -6,7 +6,7 @@ bash_() { tu "$1" Bash "$(jq -nc --arg c "$2" '{command:$c}')"; }
 write_() { tu "$1" Write "$(jq -nc --arg p "$2" --arg c "$3" '{file_path:$p,content:$c}')"; }
 read_() { tu "$1" Read "$(jq -nc --arg p "$DOCS/$2" '{file_path:$p}')"; }
 finish() { echo '{"type":"result","subtype":"success","result":"done","is_error":false}'; }
-DOCS="$(dirname "$CLAUDE_CODE_PLUGIN_CACHE_DIR")/marketplace/marketplace/plugins/sloprail/skills/authoring-guardrails"
+DOCS="$SR_TEST_PLUGINS_DIR/sloprail/skills/authoring-guardrails"
 
 RUN='sr-checks run --base $(git rev-list --max-parents=0 HEAD) --head HEAD'
 GIT='git -c user.name=t -c user.email=t@t'

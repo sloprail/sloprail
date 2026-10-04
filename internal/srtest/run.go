@@ -34,6 +34,7 @@ type Options struct {
 	Root       string        // project root; every .sloprail/tests/*/test.sh below it is a case
 	Jobs       int           // parallel cases (<=0: 4)
 	Timeout    time.Duration // per case (<=0: 5m)
+	Only       []string      // run only cases whose subject contains one of these (empty: all)
 	LiveJudges bool          // leave SR_CHECKS_JUDGE_MOCKS unset
 	Keep       bool          // keep temp dirs
 	Stderr     io.Writer     // where kept paths are printed
@@ -81,6 +82,18 @@ func Run(root string, opt Options) ([]Result, error) {
 	cases, err := Discover(root, opt.CorePluginDir)
 	if err != nil {
 		return nil, err
+	}
+	if len(opt.Only) > 0 {
+		var keep []Case
+		for _, c := range cases {
+			for _, o := range opt.Only {
+				if strings.Contains(c.Subject, o) {
+					keep = append(keep, c)
+					break
+				}
+			}
+		}
+		cases = keep
 	}
 	jobs := opt.Jobs
 	if jobs <= 0 {
@@ -172,7 +185,7 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 		return finish(Error, err.Error())
 	}
 	env := append(caseEnv(os.Environ()), "HOME="+home, "SR_TEST_CASE_DIR="+casePath, "SR_EVENTS_FILE="+eventsFile, "PATH="+pathWith(opt.BinDirs),
-		"SR_TEST_TARGET_DIR="+c.Target)
+		"SR_TEST_TARGET_DIR="+c.Target, "SR_TEST_SLOPRAIL_DIR="+c.SloprailDir)
 	if len(c.Plugins) > 0 {
 		env = append(env, "SR_TEST_PLUGIN_DIR="+strings.Join(c.Plugins, string(os.PathListSeparator)))
 	}

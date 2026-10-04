@@ -7,7 +7,7 @@ set -euo pipefail
 F="$SR_TEST_CASE_DIR/fixtures"
 git init -q .
 mkdir -p .sloprail/file-guard .sloprail/gate/legacy .sloprail/gate/demo .sloprail/tests/unrelated .sloprail/tests/demo-case
-cp -R "$SR_TEST_CASE_DIR/../../file-guard/rule-tests-pass" .sloprail/file-guard/
+cp -R "$SR_TEST_SLOPRAIL_DIR/file-guard/rule-tests-pass" .sloprail/file-guard/
 chmod -R u+w .sloprail/file-guard
 cat "$F/legacy-gate.yaml" > .sloprail/gate/legacy/gate.yaml
 cat "$F/legacy-check.txt" > .sloprail/gate/legacy/refuse.sh

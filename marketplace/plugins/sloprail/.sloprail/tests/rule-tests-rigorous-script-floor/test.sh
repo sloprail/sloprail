@@ -11,7 +11,7 @@ mkdir -p .sloprail/gate/demo .sloprail/tests/demo-case
 cat "$F/demo-gate.yaml" > .sloprail/gate/demo/gate.yaml
 printf '#!/usr/bin/env bash\necho "{\\"reason\\":\\"forbidden/ is read-only; write under allowed/ instead\\"}"\nexit 1\n' > .sloprail/gate/demo/refuse.sh
 mkdir -p .sloprail/file-guard
-cp -R "$SR_TEST_CASE_DIR/../../file-guard/rule-tests-rigorous" .sloprail/file-guard/
+cp -R "$SR_TEST_SLOPRAIL_DIR/file-guard/rule-tests-rigorous" .sloprail/file-guard/
 chmod -R u+w .sloprail/file-guard
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a demo gate"
 BASE=$(git rev-parse HEAD)

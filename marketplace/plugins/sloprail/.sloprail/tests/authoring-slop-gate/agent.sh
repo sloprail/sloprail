@@ -6,7 +6,7 @@ bash_() { tu "$1" Bash "$(jq -nc --arg c "$2" '{command:$c}')"; }
 write_() { tu "$1" Write "$(jq -nc --arg p "$2" --arg c "$3" '{file_path:$p,content:$c}')"; }
 read_() { tu "$1" Read "$(jq -nc --arg p "$DOCS/$2" '{file_path:$p}')"; }
 finish() { echo '{"type":"result","subtype":"success","result":"done","is_error":false}'; }
-DOCS="$(dirname "$CLAUDE_CODE_PLUGIN_CACHE_DIR")/marketplace/marketplace/plugins/sloprail/skills/authoring-guardrails"
+DOCS="$SR_TEST_PLUGINS_DIR/sloprail/skills/authoring-guardrails"
 
 # a hook that reads the written bytes without asking whether the engine could compute them
 BAD=$'#!/usr/bin/env bash\nevent="$(cat)"\nprintf \'%s\' "$event" | jq -r \'.event.newContent\' | grep -q TODO && exit 1\nexit 0\n'

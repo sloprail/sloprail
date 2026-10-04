@@ -21,12 +21,14 @@ type flags struct {
 	jobs       int
 	timeout    time.Duration
 	liveJudges bool
+	only       []string
 	keep       bool
 }
 
 func addFlags(c *cobra.Command, f *flags) {
 	c.Flags().IntVar(&f.jobs, "jobs", 4, "cases run in parallel")
 	c.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "per-case timeout")
+	c.Flags().StringSliceVar(&f.only, "only", nil, "run only cases whose subject contains one of these")
 	c.Flags().BoolVar(&f.liveJudges, "live-judges", false, "let judges call a real model (SR_CHECKS_JUDGE_MOCKS stays unset)")
 	c.Flags().BoolVar(&f.keep, "keep", false, "keep each case's temp dir and print its path on stderr")
 }
@@ -106,7 +108,7 @@ func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error
 		core = filepath.Join(co, "marketplace", "plugins", "sloprail")
 	}
 	return srtest.Run(root, srtest.Options{CorePluginDir: core,
-		Root: root, Jobs: f.jobs, Timeout: f.timeout, LiveJudges: f.liveJudges, Keep: f.keep,
+		Root: root, Jobs: f.jobs, Only: f.only, Timeout: f.timeout, LiveJudges: f.liveJudges, Keep: f.keep,
 		Stderr: cmd.ErrOrStderr(), BinDirs: bins, Rules: loadRules,
 	})
 }

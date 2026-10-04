@@ -8,7 +8,7 @@ tu() { jq -nc --arg id "$1" --arg name "$2" --argjson input "$3" '{type:"assista
 write_() { tu "$1" Write "$(jq -nc --arg p "$2" --arg c "$3" '{file_path:$p,content:$c}')"; }
 read_() { tu "$1" Read "$(jq -nc --arg p "$DOCS/$2" '{file_path:$p}')"; }
 finish() { echo '{"type":"result","subtype":"success","result":"done","is_error":false}'; }
-DOCS="$(dirname "$CLAUDE_CODE_PLUGIN_CACHE_DIR")/marketplace/marketplace/plugins/sloprail/skills/authoring-guardrails"
+DOCS="$SR_TEST_PLUGINS_DIR/sloprail/skills/authoring-guardrails"
 
 steps=("tu s1 Skill '{\"skill\":\"sloprail:authoring-guardrails\"}'")
 add() { # id path content doc...
