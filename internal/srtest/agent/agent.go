@@ -29,10 +29,15 @@ const (
 
 // Result is the JSON object `sr-test agent` prints.
 type Result struct {
-	Exit    int               `json:"exit"`
-	Session string            `json:"session"`
-	Stream  string            `json:"stream"`
-	Events  []json.RawMessage `json:"events"`
+	Exit    int    `json:"exit"`
+	Session string `json:"session"`
+	Stream  string `json:"stream"`
+	// ConfigDir and PluginCache are the hermetic Claude config dir and plugin cache the run used.
+	// Exported as CLAUDE_CONFIG_DIR and CLAUDE_CODE_PLUGIN_CACHE_DIR, they let a case with no agent
+	// turn (sr-checks run over a range) load the same plugins from this folder's .claude settings.
+	ConfigDir   string            `json:"config_dir"`
+	PluginCache string            `json:"plugin_cache"`
+	Events      []json.RawMessage `json:"events"`
 }
 
 // Command returns `agent <agent.sh> [--prompt P] [--session ID]`.
@@ -43,7 +48,7 @@ func Command() *cobra.Command {
 		Short: "Run a scripted agent (claude mock) here, with sloprail's plugins, and print what the rules decided",
 		Long: "Runs a10n-claude-mock in the current directory, executing <agent.sh> once per turn, with a hermetic\n" +
 			"config dir and sloprail's plugins enabled from the local marketplace. Prints one JSON object\n" +
-			"{exit, session, stream, events}: the mock's exit code, the transcript path, the stream output path and\n" +
+			"{exit, session, stream, config_dir, plugin_cache, events}: the mock's exit code, the transcript path, the stream output path and\n" +
 			"this run's events. Appends the events to $SR_EVENTS_FILE when set. Exits 0 whenever the agent ran, 2\n" +
 			"when it could not run.",
 		Args:          cobra.ExactArgs(1),
@@ -182,7 +187,7 @@ func Run(o Options) (*Result, error) {
 			return nil, fmt.Errorf("append to SR_EVENTS_FILE: %w", werr)
 		}
 	}
-	return &Result{Exit: code, Session: findSession(cfg, o.Session), Stream: streamPath, Events: events}, nil
+	return &Result{Exit: code, Session: findSession(cfg, o.Session), Stream: streamPath, ConfigDir: cfg, PluginCache: plugins, Events: events}, nil
 }
 
 // readEvents returns the file's JSON lines (none if the file was never created).
