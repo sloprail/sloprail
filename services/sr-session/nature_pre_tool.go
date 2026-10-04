@@ -34,7 +34,7 @@ type natureVerdict struct {
 	Blocked string
 }
 
-// dispatchNaturePreTool runs the new-format gate and structure-gate dispatch for a
+// dispatchOwnNaturePreTool runs the new-format gate and structure-gate dispatch for a
 // pre-tool hook, and reports the first refusal to block on (or "" to permit).
 //
 // It extracts the pre-action events itself from the payload — the same modules the
@@ -47,7 +47,7 @@ type natureVerdict struct {
 // The FIRST refusal (structure gate checked before gates, then gates in name
 // order) is what blocks — a pre-tool hook can only deny once, and denying on the
 // first refusal is the same shape the old path takes.
-func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
+func dispatchOwnNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	grounds := requiresCitation(loaded)
