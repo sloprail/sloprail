@@ -1008,12 +1008,25 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		}
 	}
 	if len(notes) > 0 {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+strings.Join(notes, "; "))
+		// An untracked range is a decision already made: nothing here is for the agent to act on,
+		// so the Stop names how many there are and where to see them, never each one.
+		line := untrackedCountLine(len(notes))
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+line)
 		if len(out) > 0 {
-			out = append(out, "Not verified, because it was untracked: "+strings.Join(notes, "; ")+".")
+			out = append(out, line+".")
 		}
 	}
 	return out
+}
+
+// untrackedCountLine is the one short line the Stop carries for the ranges it does not verify
+// because they are untracked.
+func untrackedCountLine(n int) string {
+	noun := "refs"
+	if n == 1 {
+		noun = "ref"
+	}
+	return fmt.Sprintf("%d %s not verified because they are untracked (`sr-session refs list` shows them)", n, noun)
 }
 
 // identityRefusal is the Stop's answer when the session it belongs to cannot be named: the
