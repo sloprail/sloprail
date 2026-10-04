@@ -136,7 +136,7 @@ Edit of a file inside the context's folder, and a command made only of `chmod`
 paths inside that folder, go through. Anything else in the same call, or any
 other command, is still refused until the script is fixed. `sr-file delete`,
 `rm` and `mv` of the script are not exempt, nor is a `chmod` that removes the
-bit: only an Edit or Write of it, and `chmod +x` or `sr-file edit|write` on it.
+bit: only an Edit or Write of it, and `chmod [-R] <mode> <path>` with one symbolic clause that adds `x` (`+x`, `u+x`, `ug+x`, `+rx`) or an octal mode with an execute bit, or `sr-file edit|write <path> [--flag]...` (path first, bare `--flag` words only), on it.
 
 A script that runs and exits non-zero is still a decline, and refuses nothing.
 

@@ -99,7 +99,8 @@ func repairInvocation(inv map[string]any, folder, workspace string) bool {
 			return false
 		}
 		for _, w := range argv[3:] {
-			if !strings.HasPrefix(w, "--") {
+			// a bare `--flag` only: `--` (end of options) and `--k=v` (a value that could name another file) are not
+			if len(w) <= 2 || !strings.HasPrefix(w, "--") || strings.Contains(w, "=") {
 				return false
 			}
 		}
@@ -127,7 +128,13 @@ func addsExecute(mode string) bool {
 		return true
 	}
 	if octalMode.MatchString(mode) {
-		for _, d := range mode {
+		// the permission bits are the LAST three digits: a leading special-bits digit (1644 = sticky, no execute)
+		// is not an execute bit
+		perms := mode
+		if len(perms) > 3 {
+			perms = perms[len(perms)-3:]
+		}
+		for _, d := range perms {
 			if (d-'0')&1 != 0 {
 				return true
 			}
