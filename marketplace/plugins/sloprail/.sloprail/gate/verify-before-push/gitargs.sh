@@ -4,8 +4,8 @@
 # command line wrote but the engine could not resolve (a `$(...)`, a variable the line never assigned):
 #   GAP_FREE  a word was lost among the global options or where the subcommand stands, and is not the
 #             value of an option that takes one. It may have been any option, or the subcommand itself.
-#   GAP_VAL   a word was lost where a global option's value stands (`-C $D push`): the folder (or
-#             config, or git-dir) git runs with is unknown.
+#   GAP_VAL   a word was lost where a global option's value stands (`-C $D push`, `-c k=$V`): the folder
+#             git runs in (or its config) is unknown.
 #   GAP_REST  a word was lost after the subcommand (a remote, a refspec, a path, a message). REST holds
 #             a marker word ($'\001gap') at its place.
 # Each is "" or 1. The engine reports them as `.gaps` (argv positions), never as an argument, so
@@ -26,8 +26,9 @@ git_split() {
         i=$((i + 1))
         if [ "$i" -lt "$n" ]; then
           if [ "${args[$i]}" = "$gap" ]; then
-            # only the options that move git need the folder: -c / --namespace do not
-            case "$a" in -C | --git-dir | --work-tree) GAP_VAL=1 ;; esac
+            # any option's value: an unquoted lost word may split into more words at run time
+            # (`-c $A push` with A='x=y -C /other'), so it is not known to be only a value
+            GAP_VAL=1
             GOPTS+=("")
           elif [ "${args[$i]:0:1}" = "~" ] || [[ "${args[$i]}" == *[\*\?\[]* ]]; then
             # tilde is not expanded and a glob is not matched by the engine: the word is the shell's to

@@ -87,9 +87,9 @@ for inv in "${invs[@]}"; do
   # one the command runs in. Fail closed.
   [ -z "$GAP_FREE" ] || fail "a 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal"
   [ "$SUB" = commit ] || continue
-  [ -z "$GAP_VAL" ] || fail "the commit's -C folder is a variable, \$(...) or ~ that could not be resolved"
+  [ -z "$GAP_VAL" ] || fail "an option value of the commit (-C <dir>, -c <key=value>, --git-dir ...) is a variable, \$(...), ~ or glob that could not be resolved"
 
-  amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
+  lostword="" amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
   args=(${REST[@]+"${REST[@]}"})
   j=0
   while [ "$j" -lt "${#args[@]}" ]; do
@@ -164,12 +164,15 @@ for inv in "${invs[@]}"; do
           esac
         done
         ;;
-      $'\001gap') fail "the commit names a path through a variable or \$(...) that could not be resolved" ;;
+      $'\001gap') lostword=1 ;;
       *) paths+=("$a") ;;
     esac
   done
   [ -z "$help" ] || continue
   [ -z "$dry" ] || continue
+  # An argument the engine could not resolve (a `--author="$A"`, a `$FLAGS`, a pathspec in a variable)
+  # may name paths: early feedback only, CI's verify and the file-guards at Stop judge the commit.
+  [ -z "$lostword" ] || echo "cite-before-commit: an argument of this commit could not be resolved, so the paths it commits may not all be checked; the file-guards will check the citation at Stop and in CI." >&2
   [ -z "$amend" ] || amending=1
 
   # A folder this gate cannot tell (a variable the line did not assign to a literal, a substitution, an

@@ -580,9 +580,17 @@ func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map
 		// variable is tracked from then on. So does an option it cannot read.
 		for _, as := range cmd.Args {
 			if as.Name == nil && as.Value != nil {
-				if o, err := expand.Literal(cfg, as.Value); err != nil || !isLiteral(as.Value) || (strings.HasPrefix(o, "-") && strings.ContainsAny(o, "nluic")) {
+				o, err := expand.Literal(cfg, as.Value)
+				if err != nil || !isLiteral(as.Value) || (strings.HasPrefix(o, "-") && strings.ContainsAny(o, "nluic")) {
 					current.vars = nil
 					current.noVars = true
+					continue
+				}
+				// A quoted `"NAME=value"` parses as a plain word, not an assignment: it assigns all the same.
+				if name, val, ok := strings.Cut(o, "="); ok && !strings.HasPrefix(o, "-") && validEnvName(name) {
+					current.vars = nil
+					current.noVars = true
+					current.env = withEnv(current.env, map[string]string{name: val})
 				}
 			}
 		}

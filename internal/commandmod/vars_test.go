@@ -87,6 +87,9 @@ func TestVars_UnresolvableWordsLeaveAGap(t *testing.T) {
 		{"a subscripted assignment", `D=/x; a[D=1]=q; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
 		{"a := in a case word", `D=; case ${D:=/y} in *) ;; esac; git -C "$D" push`, []string{"git", "-C", "push"}, []int{2}},
 		{"a := in a redirect", `D=; : > ${D:=/y}; git -C "$D" push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a quoted export assignment", `D=/x; export "D=/y"; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a quoted declare assignment", `D=/x; declare 'D=/y'; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
+		{"a split quoted export", `D=/x; export D"=/y"; git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
 		{"find's placeholder", `find /y -name .git -exec git -C {} push \;`, []string{"git", "-C", "push"}, []int{2}},
 		{"a backgrounded assignment sets nothing here", `D=/x & git -C $D push`, []string{"git", "-C", "push"}, []int{2}},
 	}
