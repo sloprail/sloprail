@@ -76,6 +76,8 @@ func TestUnrunnableScript_RefusesInEveryRole(t *testing.T) {
 			require.True(t, v.Refused, "a context enter that cannot run was read as a decline")
 			assert.False(t, active)
 			named(v.Reason)
+			assert.Contains(t, v.Reason, `"goal-tracking" context could not be entered`, "names the context")
+			assert.Contains(t, v.Reason, "cannot be judged", "says why it is a refusal and not a decline")
 
 			exit := exitReq()
 			exit.Dir, exit.Exit = dir, "./x.sh"
@@ -109,4 +111,35 @@ func TestRunScriptExec_NoShellSyntax(t *testing.T) {
 	assert.True(t, res.Passed, res.Reason)
 	got, _ := os.ReadFile(mark)
 	assert.Equal(t, "one two\n", string(got))
+}
+
+// The control: an enter that RUNS and exits non-zero is a decline, never a refusal; and one
+// whose declared file is gone is unrunnable (refused), not a decline.
+func TestEnterContext_DeclineIsNotARefusalButMissingIs(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "no.sh"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	r := Runner{}.withDefaults()
+	req := enterReq(natures.ContextState{})
+	req.Dir, req.Enter = dir, "./no.sh"
+	_, active, v, err := r.EnterContext(req)
+	require.NoError(t, err)
+	assert.False(t, v.Refused, "a script that ran and declined refused")
+	assert.False(t, active)
+
+	req.Enter = "./gone.sh"
+	_, _, v, err = r.EnterContext(req)
+	require.NoError(t, err)
+	require.True(t, v.Refused, "a missing enter read as a decline")
+	assert.Contains(t, v.Reason, "gone.sh")
+}
+
+func TestContextScriptFault(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ok.sh"), []byte("#!/bin/sh\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "noexec.sh"), []byte("#!/bin/sh\n"), 0o644))
+	assert.NoError(t, ContextScriptFault(dir, "./ok.sh"))
+	assert.NoError(t, ContextScriptFault(dir, "./ok.sh arg"))
+	assert.ErrorContains(t, ContextScriptFault(dir, "./noexec.sh"), "chmod +x")
+	assert.ErrorContains(t, ContextScriptFault(dir, "./missing.sh"), "not found")
+	assert.NoError(t, ContextScriptFault(dir, ""))
 }

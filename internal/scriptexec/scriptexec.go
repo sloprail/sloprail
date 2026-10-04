@@ -7,7 +7,10 @@
 //
 // A declared script that fails Verify is REPORTED (declaration.Loaded.Degraded: `sr-file
 // declarations`, the next session hook) and REFUSED at run time, naming the file and the fix; its
-// rule stays loaded and enforced. Dropping the rule instead would disarm it on a `chmod -x`, which
+// rule stays loaded and enforced. For a context's `enter` that means the event that triggered it is
+// refused (a Pre* event denied, a Post* one refused at the Stop), and every Stop is refused while an
+// enter or exit cannot run: an enter that cannot run is not a decline, it never reads as approval.
+// Dropping the rule instead would disarm it on a `chmod -x`, which
 // is not a write and so never reaches a hook.
 //
 // Only declared SCRIPT paths are affected (a check's `script`/`prepare`, a rule's

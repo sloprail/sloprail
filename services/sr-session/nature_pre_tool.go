@@ -109,8 +109,16 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	gatesMap := loadGatesMap(cmd, store)
 
 	// Context enters on the pre-action events, before anything reads context[].
-	// A context does not block; this only populates the map (and persists it).
-	runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap, nil)
+	// A context's enter populates the map (and persists it); a verdict does not block. But an
+	// enter that could not run is no decline: it denies the event that triggered it, because
+	// the context stays off and what it guards would silently go unjudged.
+	enterRefused := contextRefusalReasons(runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap, nil))
+	withEnter := func(rest string) string {
+		if rest != "" {
+			enterRefused = append(enterRefused, rest)
+		}
+		return strings.Join(enterRefused, "\n")
+	}
 
 	// The structure gates next: a write outside the allowlist is refused before
 	// any gate or file-guard is consulted — the cheapest "may you write here at
@@ -119,14 +127,14 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// Blocks immediately on a refusal.
 	if len(loaded.Structures) > 0 {
 		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root(), reg, p.ToolUseID); reason != "" {
-			return natureVerdict{Blocked: reason}
+			return natureVerdict{Blocked: withEnter(reason)}
 		}
 	}
 
 	// Then the gates bound to these pre-events. Every file the call would change
 	// is asked about (runGatesForEvents), and the one deny names each refused
 	// file; the first refusal of any other kind (a command, a tool) is what blocks.
-	if reason := gateRefusal(runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
+	if reason := withEnter(gateRefusal(runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap, grounded.notes), events, scope.Workspace)); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}
 	// Permitted: the cited changes this call makes are pending until the next

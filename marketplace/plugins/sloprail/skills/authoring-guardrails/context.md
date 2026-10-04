@@ -107,6 +107,30 @@ A paired gate then reads that registry back with `sr-session state list --owner
 <this-context>` — the one read that crosses the per-guardrail boundary. See
 [state-management.md](state-management.md).
 
+## An `enter` that cannot run refuses its trigger, it is not a decline
+
+A non-zero exit is a decline, and a decline is quiet. A script that **cannot
+run at all** (missing, not executable, no `#!` line, a bad interpreter, killed
+on the timeout) is a different thing and is never read as a decline: a context
+left off by a broken `enter` would silently disarm every rule that reads it
+(`context.<name>.active` in a match, a file-guard narrowed by it), although the
+mode was meant to be on. So:
+
+- on a **Pre\*** trigger the event is **refused** (a PreToolUse deny, the same
+  as a gate's), with a reason naming the context, the script and the fix
+  (`chmod +x`, or add `#!/usr/bin/env bash`): the context could not be entered,
+  so what it guards cannot be judged;
+- a **Post\*** trigger (PostFile\*, PostTagWrite) cannot deny, since the work is
+  done; it is handled at the **Stop**, which is refused with the same reason;
+- a Stop is also refused while a declared `enter` **or** `exit` cannot run,
+  even for a context that never triggered, until the script is fixed. (An
+  `exit` that cannot run keeps the context active, the guarding direction; the
+  Stop refusal makes the fault visible.)
+- an `enter` that runs but prints something that is not a flat JSON object is
+  refused the same way.
+
+A script that runs and exits non-zero is still a decline, and refuses nothing.
+
 ## `exit`: may the context deactivate?
 
 `exit` is consulted on a **Stop** while the context is active, and it decides one

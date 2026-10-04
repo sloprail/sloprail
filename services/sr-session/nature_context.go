@@ -34,7 +34,11 @@ import (
 // REPLACES the context's payload — a script growing a list reads
 // currentContext.payload and returns the grown version. A clean enter sets the
 // context ACTIVE and stores the (replaced) payload; a non-zero enter declines to
-// (re-)activate on this trigger and leaves the prior state as it was.
+// (re-)activate on this trigger and leaves the prior state as it was. An enter that
+// CANNOT RUN (missing, not executable, no shebang, killed) is not a decline: it
+// refuses the event that triggered it (a Pre* kind is denied, a Post* kind refuses the
+// Stop that handled it), because a context left off silently disarms every rule that
+// reads it. runContextEnters returns those refusals to its callers.
 //
 // # exit, at Stop, PURE lifecycle
 //
@@ -132,8 +136,9 @@ func runContextEnters(
 	contextMap map[string]natures.ContextState,
 	gatesMap map[string]natures.GateState,
 	histories map[string]*dispatchcore.FileHistory,
-) {
+) []contextRefusal {
 	runner := dispatchcore.Runner{}
+	var refused []contextRefusal
 
 	for _, c := range contexts {
 		if isLaunchedBy(os.Getenv, c.Name) {
@@ -201,10 +206,14 @@ func runContextEnters(
 				continue
 			}
 			if v.Refused {
-				// enter produced unreadable output (fail-closed): report and leave the
-				// context's state as it was. Never blocks — a context does not block.
+				// enter could not run, or printed output that is no flat JSON object. That is
+				// not a decline: the context stays as it was (not entered), and a rule that
+				// reads it would silently not fire. So the trigger is REFUSED (the caller
+				// denies a Pre* event, and blocks the Stop that handled a Post* one), and the
+				// reason is still reported on stderr.
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q: %s\n", c.Name, v.Reason)
-				continue
+				refused = append(refused, contextRefusal{Context: c.Name, Reason: v.Reason})
+				break // one refusal per context per dispatch: the next occurrence would say the same
 			}
 			if !active {
 				// enter declined to (re-)activate on this trigger: leave the state as
@@ -217,6 +226,53 @@ func runContextEnters(
 			recordContextState(cmd, store, contextMap, c.Name, natures.ContextState{Active: true, Payload: payload})
 		}
 	}
+	return refused
+}
+
+// contextRefusal is a context whose enter could not be run, with the reason to give the agent.
+type contextRefusal struct {
+	Context string
+	Reason  string
+}
+
+// contextRefusalReasons renders the refusals as the texts a deny or a Stop block carries.
+func contextRefusalReasons(rs []contextRefusal) []string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, r.Reason+" (context "+r.Context+")")
+	}
+	return out
+}
+
+// brokenContextScripts is the Stop-time sweep over every declared context's enter and exit:
+// one whose script cannot run is refused, so the turn cannot end with the mode silently off,
+// even for a context that was never triggered (nothing else would have said so). It reads the
+// files, not the history, so it stops refusing the moment the script is fixed. A context whose
+// enter already refused at this Stop (seen) is not named twice.
+func brokenContextScripts(contexts []declaration.Context, seen []contextRefusal) []string {
+	done := map[string]bool{}
+	for _, r := range seen {
+		done[r.Context] = true
+	}
+	var out []string
+	for _, c := range contexts {
+		for _, s := range []struct{ role, script string }{{"enter", c.Enter}, {"exit", c.Exit}} {
+			if s.role == "enter" && done[c.Name] {
+				continue
+			}
+			if err := dispatchcore.ContextScriptFault(c.Dir, s.script); err != nil {
+				consequence := "it is never entered, so what it guards cannot be judged"
+				if s.role == "exit" {
+					consequence = "it can never be closed, so what it guards stays in force unjudged"
+				}
+				out = append(out, fmt.Sprintf(
+					"the %q context's %s script %q cannot run (%v); %s. This turn is refused until the script is fixed "+
+						"(it must exist, be executable (`chmod +x`) and start with `#!/usr/bin/env bash`) (context %s)",
+					c.Name, s.role, s.script, err, consequence, c.Name))
+			}
+		}
+	}
+	return out
 }
 
 // runContextExits runs every ACTIVE context's `exit` at Stop, flipping the ones

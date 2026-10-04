@@ -3,10 +3,13 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
 // This file is the CONTEXT-LIFECYCLE half of the runner's job: running a
@@ -152,9 +155,14 @@ type ContextExitRequest struct {
 // (neither activated nor its payload changed) because a mechanism that failed
 // decided nothing.
 //
+// That refusal is NOT a decline and must not be read as one: a context left inactive by a
+// broken enter silently disarms every rule that reads it. The caller (services/sr-session)
+// therefore refuses the event that triggered the enter (a Pre* kind is denied; a Post* kind
+// is refused at the Stop that handles it), and the context's state is untouched.
+//
 // The returns: (payload, active, verdict, err). active is meaningful only when
-// verdict is a pass. When verdict.Refused, the script could not run and the
-// caller should report verdict.Reason and leave the context's state as it was.
+// verdict is a pass. When verdict.Refused, the script could not run (or printed output that
+// is not a flat JSON object) and the caller must refuse the trigger with verdict.Reason.
 func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, active bool, v Verdict, err error) {
 	r = r.withDefaults()
 
@@ -192,10 +200,11 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 	// the context not freshly entered by THIS occurrence, and neither should
 	// invent a payload. The caller leaves the context's prior state as it was.
 	if !res.Passed && res.Unrunnable {
-		// An enter that could not RUN (a script that lost its shebang or execute bit) is not a
-		// decline: reading it as one would leave the context out of force, and the guarding it
-		// carries with it. Refuse, with the diagnosis (the file and the fix).
-		return nil, false, refuse(res.Reason), nil
+		// An enter that could not RUN (a script that lost its shebang or execute bit, is gone,
+		// or was killed on the timeout) is not a decline: reading it as one would leave the
+		// context out of force, and what it guards silently unjudged. Refuse, with the
+		// diagnosis (the file and the fix). The caller refuses the event that triggered it.
+		return nil, false, refuse(unenterableReason(req.Name, req.Enter, res.Reason)), nil
 	}
 	if !res.Passed {
 		// Not activated by this trigger. The caller leaves the context's state
@@ -219,8 +228,9 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 		// context whose enter emits garbage is a bug the author must see, not a
 		// silent activation with an empty payload.
 		return nil, false, refuse(fmt.Sprintf(
-			"the %q context's enter script produced output this engine could not read as a flat JSON object (%v); "+
-				"refusing to (re-)activate it rather than storing a payload the rule did not intend", req.Name, perr)), nil
+			"the %q context could not be entered: its enter script %q produced output this engine could not read as a flat JSON object (%v). "+
+				"A context that cannot be entered cannot be judged, so what it guards cannot be judged either: this is refused rather than read as \"not active\". "+
+				"Fix: make the script print nothing, or one flat JSON object, on success", req.Name, req.Enter, perr)), nil
 	}
 	return replaced, true, pass(), nil
 }
@@ -327,4 +337,35 @@ func gatesMap(g map[string]natures.GateState) map[string]natures.GateState {
 		return map[string]natures.GateState{}
 	}
 	return g
+}
+
+// unenterableReason is the refusal for an enter that could not run: the context, the script, the
+// diagnosis (cause carries the file and its fix for a script that lost its shebang or execute
+// bit), and why this is a refusal rather than a decline.
+func unenterableReason(context, script, cause string) string {
+	return fmt.Sprintf(
+		"the %q context could not be entered: its enter script %q could not run (%s). "+
+			"A context that cannot be entered cannot be judged, so what it guards cannot be judged either: "+
+			"this is refused rather than read as \"not active\". "+
+			"Fix: the script must exist, be executable (`chmod +x`) and start with `#!/usr/bin/env bash`",
+		context, script, cause)
+}
+
+// ContextScriptFault reports why a context's declared enter or exit script cannot run, or nil
+// when it can (or may: a bare word is a program on PATH, left to the exec). Unlike
+// scriptexec.VerifyDeclared, a script file that does not exist is a fault here: a context whose
+// enter or exit is missing is never entered or never closed, and nothing else says so.
+func ContextScriptFault(dir, script string) error {
+	if strings.TrimSpace(script) == "" {
+		return nil
+	}
+	if err := scriptexec.VerifyDeclared(dir, script); err != nil {
+		return err
+	}
+	if p := scriptexec.Path(dir, script); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			return fmt.Errorf("%s was not found (%v)", p, err)
+		}
+	}
+	return nil
 }
