@@ -73,6 +73,6 @@ happened — not what a mock was scripted to produce.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(newRunCmd())
+	cmd.AddCommand(newRunCmd(), newArchiveCmd())
 	return cmd
 }
