@@ -30,13 +30,18 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	return dispatchForeignGates(cmd, p, reg, scope)
 }
 
-// dispatchForeignGates decides a call by the direct gates of each foreign repo it
-// targets. Finding the repos costs a git root lookup per target; per repo, one stat of
-// `<root>/.sloprail` (no cache); a repo without one is nobody's to refuse. A
-// `.sloprail` that cannot be checked or read, or has a declaration that does not load,
-// refuses: a gate that may exist was not consulted. A foreign gate's `require` on a
-// context or another gate sees none (foreign contexts are not entered). Only the repo's own declarations load — its plugins are
-// not applied (see the issue "Foreign repo plugins are not loaded at pre-tool").
+// dispatchForeignGates decides a call by the structure gate and the own gates of each
+// foreign repo it targets, whether or not the session's project declares anything.
+// Finding the repos costs a git root lookup per target (once per path); per repo, one
+// stat of `<root>/.sloprail` (no cache) and one load of its declarations. A repo without
+// a `.sloprail` is nobody's to refuse. A `.sloprail` that cannot be checked or read, or
+// has an own declaration that does not load, refuses: a gate that may exist was not
+// consulted.
+//
+// The load is plugin-aware, so the repo's plugin structure gates apply as they always
+// did; only gates the repo declares itself run (a plugin's gates are not loaded, see
+// #235), and a plugin declaration that does not load does not refuse. A foreign gate's
+// `require` on a context or another gate sees none (foreign contexts are not entered).
 //
 // The repo is the workspace its gates run in, and the paths its gates see are relative
 // to it. Its verdicts and contexts stay out of the session's state: a gate name may
