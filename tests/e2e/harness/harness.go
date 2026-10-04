@@ -137,12 +137,12 @@ func (e *Env) autoWatchEnv() []string {
 	return []string{"SR_AUTO_WATCH_GIT_REFS=1"}
 }
 
-// WithoutAutoWatch leaves SR_AUTO_WATCH_GIT_REFS unset, which is how production runs: nothing is
-// tracked unless the agent runs `sr-session refs track`.
 // SetAutoWatch turns SR_AUTO_WATCH_GIT_REFS on or off for this Env's subsequent runs, to model a
 // session that ran with it on and continues with it off.
 func (e *Env) SetAutoWatch(on bool) { e.autoWatchOff = !on }
 
+// WithoutAutoWatch leaves SR_AUTO_WATCH_GIT_REFS unset, which is how production runs: nothing is
+// tracked unless the agent runs `sr-session refs track`.
 func WithoutAutoWatch() Option { return func(e *Env) { e.autoWatchOff = true } }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent

@@ -2182,7 +2182,6 @@ func pruneUnmovedAuto(reg sessionstate.Store, sessionID string) error {
 	return nil
 }
 
-// foreignPrunedReason is why a row a worktree made for another worktree's branch is dropped.
 const autoOffReason = "pruned: auto-watching git refs is off (SR_AUTO_WATCH_GIT_REFS is unset)"
 
 // dropAutoRows untracks every tracked range the engine added on its own. Rows the agent added
@@ -2203,6 +2202,7 @@ func dropAutoRows(reg sessionstate.Store, sessionID string) error {
 	return nil
 }
 
+// foreignPrunedReason is why a row a worktree made for another worktree's branch is dropped.
 const foreignPrunedReason = "pruned: the branch is checked out in another worktree"
 
 // pruneForeignAuto untracks, once, every row the engine tracked by itself for a branch that is
