@@ -20,6 +20,16 @@ refuse() {
 [ "$(printf '%s' "$payload" | jq -r '.event.kind // ""')" = "Changeset" ] ||
   refuse "expected a Changeset event, so the sr-test cases could not be run"
 [ -n "${SR_TREE:-}" ] || refuse "SR_TREE is unset, so the committed sr-test cases could not be run"
+# sr-test: on PATH, else beside sr-checks (they ship together), else in the checkout's bin/
+if ! command -v sr-test >/dev/null 2>&1; then
+  for d in "$(dirname "$(command -v sr-checks 2>/dev/null || echo /nonexistent/x)")" "${SR_WORKSPACE:-/nonexistent}/bin"; do
+    if [ -x "$d/sr-test" ]; then
+      PATH="$d:$PATH"
+      export PATH
+      break
+    fi
+  done
+fi
 command -v sr-test >/dev/null 2>&1 ||
   refuse "sr-test is not on PATH, so the cases could not be run. Install sloprail's binaries (make build) and commit again."
 printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null 2>&1 ||
