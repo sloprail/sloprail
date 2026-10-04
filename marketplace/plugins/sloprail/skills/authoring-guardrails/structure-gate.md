@@ -31,7 +31,9 @@ deny:
   - regex: '\.tmp$'
 ```
 
-Allow `.sloprail/**` unless the rules are deliberately frozen. The gate covers
+Allow `.sloprail/**` unless the rules are deliberately frozen. A repository that keeps
+`.sloprail/` folders below the root (`marketplace/plugins/<p>/.sloprail/`) allows `**/.sloprail/**`
+instead, which also covers the root one. The gate covers
 `.sloprail/` like any other path, so a structure that leaves it out refuses the
 next edit to itself and to every rule beside it.
 

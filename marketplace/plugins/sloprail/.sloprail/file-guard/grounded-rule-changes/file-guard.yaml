@@ -27,7 +27,7 @@
 # carries no citation), so a gate requiring one would refuse every legitimate rule
 # edit and send the agent through `sr-file` for each, and one that only warns is
 # noise on every rule an agent writes. The refusal names what to do.
-match: .sloprail/**
+match: "**/.sloprail/**"
 deletions: include
 require:
   - citation: {source_types: [user, tool_result]}
