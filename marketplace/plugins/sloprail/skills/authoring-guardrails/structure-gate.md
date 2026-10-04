@@ -75,6 +75,13 @@ A plugin's `allow`/`deny` only ever decide paths inside its scope. Outside it, a
 plugin's structure has no say at all — a plugin can lock down its own folders,
 never the rest of the project.
 
+## Its test cases
+
+The structure gate is one file, so its `sr-test` cases sit in the sibling folder
+`.sloprail/file-guard/structure.tests/<case>/test.sh` (`sr-test` owner: `file-guard/structure`).
+That folder is not a rule: the loader ignores it, and the misplaced-declaration rule lets
+anything under it be written.
+
 ## How a write is decided
 
 For each path being written, in this order:
