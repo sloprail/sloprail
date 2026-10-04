@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # A mock of the rule-tests-rigorous judge that decides from its input: the judge's prompt carries each case
 # file inside <case-file> tags and the OWNING rule's files inside a <rule name="..."> tag. It refuses a prompt
-# that does not hand it the owner (the plugin p demo gate), and otherwise passes the case only if some case file
+# that does not hand it the owner (the plugin's demo gate, named p/demo, or q/demo once the plugin is renamed), and otherwise passes the case only if some case file
 # asserts a permitted/passed outcome.
 input="$(cat)"
-if ! printf '%s\n' "$input" | grep -q -F '<rule name="p/demo">'; then
-  echo '{"pass":false,"reasoning":"RULE TEST NOT RIGOROUS: the judge was not given the owning rule p/demo"}'
+if ! printf '%s\n' "$input" | grep -q -E '<rule name="[pq]/demo">'; then
+  echo '{"pass":false,"reasoning":"RULE TEST NOT RIGOROUS: the judge was not given the owning rule p/demo or q/demo"}'
   exit 0
 fi
 case_text="$(printf '%s\n' "$input" | awk '/<case-file /{on=1} on{print} /<\/case-file>/{on=0}')"

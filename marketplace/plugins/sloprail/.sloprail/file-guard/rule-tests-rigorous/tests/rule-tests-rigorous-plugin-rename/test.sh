@@ -32,3 +32,9 @@ git add -A && git -c user.name=t -c user.email=t@t commit -q -m "rename the plug
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 [ "$status" -ne 0 ]
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==2 and .[1].outcome=="refused" and (.[1].reason|contains("asserts no event of its owning rule q/demo"))' "$SR_EVENTS_FILE" >/dev/null
+
+# the recovery the refusal asks for: the case asserts the gate events of q/demo, and the rule passes the net range
+cat "$F/renamed-case.txt" > plugins/p/.sloprail/gate/demo/tests/demo-case/test.sh
+git add -A && git -c user.name=t -c user.email=t@t commit -q -m "assert q/demo"
+sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
+jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==3 and .[2].outcome=="passed"' "$SR_EVENTS_FILE" >/dev/null
