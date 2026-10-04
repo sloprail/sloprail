@@ -204,7 +204,7 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 		// or was killed on the timeout) is not a decline: reading it as one would leave the
 		// context out of force, and what it guards silently unjudged. Refuse, with the
 		// diagnosis (the file and the fix). The caller refuses the event that triggered it.
-		return nil, false, refuse(unenterableReason(req.Name, req.Enter, res.Reason)), nil
+		return nil, false, refuse(unenterableReason(req.Name, req.Enter, res.Cause)), nil
 	}
 	if !res.Passed {
 		// Not activated by this trigger. The caller leaves the context's state
@@ -340,13 +340,11 @@ func gatesMap(g map[string]natures.GateState) map[string]natures.GateState {
 }
 
 // unenterableReason is the refusal for an enter that could not run: the context, the script, the
-// diagnosis (cause carries the file and its fix for a script that lost its shebang or execute
-// bit), and why this is a refusal rather than a decline.
+// bare cause (for a script that lost its shebang or execute bit it carries the file and its fix),
+// and why this is a refusal rather than a decline.
 func unenterableReason(context, script, cause string) string {
 	return fmt.Sprintf(
-		"the %q context could not be entered: its enter script %q could not run (%s). "+
-			"A context that cannot be entered cannot be judged, so what it guards cannot be judged either: "+
-			"this is refused rather than read as \"not active\". "+
+		"context %q: enter script %s cannot run (%s); the context could not be entered, so what it guards cannot be judged. "+
 			"Fix: the script must exist, be executable (`chmod +x`) and start with `#!/usr/bin/env bash`",
 		context, script, cause)
 }

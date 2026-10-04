@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // An `enter` that cannot run is not a decline. A decline (the script ran and exited non-zero)
@@ -204,4 +206,108 @@ func TestT035_24_UnrunnableEnterOnTagRefusesTheStop(t *testing.T) {
 		t.Fatalf("the Stop passed though the tag-triggered enter could not run")
 	}
 	wantAll(t, "the Stop refusal", strings.Join(blocks, "\n"), "research-run", "enter.sh", "chmod +x")
+}
+
+// A context that triggers on every tool call must not make its own repair impossible: the call
+// that fixes the script is never refused for the fault, and nothing else is exempt.
+const onEveryTool = `on:
+  - event: PreToolUse
+enter: ./enter.sh
+exit: ./exit.sh
+`
+
+// T035_25: a non-executable enter on a broad trigger: a write elsewhere is refused, `chmod +x`
+// on the script is PERMITTED, then the next write is permitted, the context is active and the
+// Stop passes.
+func TestT035_25_ChmodRepairIsNeverRefused(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.Context(proj, "guarded", onEveryTool, map[string]string{"enter.sh": enterActivates, "exit.sh": exitNever})
+	e.CommitAll(proj, "before the session")
+	chmodScript(t, proj, "guarded", "enter.sh", 0o644)
+	script := filepath.Join(proj, ".sloprail", "context", "guarded", "enter.sh")
+
+	sess := "s-035-25"
+	got := e.Run(proj, sess, "fix and write", Turns("done",
+		Write("w1", "before.txt", "x"),
+		Bash("b1", "chmod +x "+script),
+		Write("w2", "after.txt", "y"),
+	))
+	if len(got.Refusals()) == 0 || !strings.Contains(got.Refusals()[0], "enter.sh") {
+		t.Fatalf("the write before the repair was not refused for the broken enter:\n%s", got.Output)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "before.txt")); err == nil {
+		t.Errorf("the write before the repair landed")
+	}
+	if _, err := os.Stat(filepath.Join(proj, "after.txt")); err != nil {
+		t.Errorf("the write after the repair did not land: %v", err)
+	}
+	if info, err := os.Stat(script); err != nil || info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("the chmod did not take effect: %v", err)
+	}
+	if active, _ := e.ContextState(proj, sess, "guarded"); !active {
+		t.Errorf("the repaired context did not enter")
+	}
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Errorf("the Stop was refused after the repair: %v", blocks)
+	}
+}
+
+// T035_26: a script that lost its shebang is repaired by a write to it.
+func TestT035_26_WriteRepairIsNeverRefused(t *testing.T) {
+	// The plugin's own gate wants its docs read before a rule file is touched; not what this tests.
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutShipped("sloprail/gate/read-script-checks-doc"))
+	proj := e.Project()
+	e.GitInit(proj)
+	e.Context(proj, "guarded", onEveryTool, map[string]string{"enter.sh": enterActivates, "exit.sh": exitNever})
+	script := filepath.Join(proj, ".sloprail", "context", "guarded", "enter.sh")
+	if err := os.WriteFile(script, []byte("cat >/dev/null\nprintf '{\"on\":\"yes\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.CommitAll(proj, "before the session")
+
+	sess := "s-035-26"
+	e.Run(proj, sess, "fix and write", Turns("done",
+		Write("w1", "before.txt", "x"),
+		Write("w2", ".sloprail/context/guarded/enter.sh", enterActivates),
+		Write("w3", "after.txt", "y"),
+	))
+	if _, err := os.Stat(filepath.Join(proj, "before.txt")); err == nil {
+		t.Errorf("the write before the repair landed")
+	}
+	if body, _ := os.ReadFile(script); !strings.HasPrefix(string(body), "#!") {
+		t.Errorf("the write that restores the shebang was refused:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "after.txt")); err != nil {
+		t.Errorf("the write after the repair did not land: %v", err)
+	}
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Errorf("the Stop was refused after the repair: %v", blocks)
+	}
+}
+
+// T035_27: the exemption is narrow: a chmod of another file, or a chain doing more than the
+// repair, is still refused.
+func TestT035_27_NoOtherCommandIsExempt(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.Context(proj, "guarded", onEveryTool, map[string]string{"enter.sh": enterActivates, "exit.sh": exitNever})
+	e.CommitAll(proj, "before the session")
+	chmodScript(t, proj, "guarded", "enter.sh", 0o644)
+	script := filepath.Join(proj, ".sloprail", "context", "guarded", "enter.sh")
+
+	e.Run(proj, "s-035-27", "try", Turns("done",
+		Bash("b1", "chmod +x build.sh && touch built.txt"),
+		Bash("b2", "chmod +x "+script+" && touch other.txt"),
+	))
+	for _, f := range []string{"built.txt", "other.txt"} {
+		if _, err := os.Stat(filepath.Join(proj, f)); err == nil {
+			t.Errorf("%s: a command that was not only the repair ran", f)
+		}
+	}
+	if info, err := os.Stat(script); err == nil && info.Mode().Perm()&0o111 != 0 {
+		t.Errorf("the chained chmod ran: it was exempt")
+	}
 }

@@ -212,6 +212,11 @@ func runContextEnters(
 				// denies a Pre* event, and blocks the Stop that handled a Post* one), and the
 				// reason is still reported on stderr.
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q: %s\n", c.Name, v.Reason)
+				if repairsContext(events, c, scope.Workspace) {
+					// The call repairs the context's own script: refusing it would make the fault
+					// unfixable. The Stop sweep still refuses while the fault stands.
+					continue
+				}
 				refused = append(refused, contextRefusal{Context: c.Name, Reason: v.Reason})
 				break // one refusal per context per dispatch: the next occurrence would say the same
 			}

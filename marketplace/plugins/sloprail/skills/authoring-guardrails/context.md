@@ -129,6 +129,13 @@ mode was meant to be on. So:
 - an `enter` that runs but prints something that is not a flat JSON object is
   refused the same way.
 
+The repair of the context's own script is never refused, so a context that
+triggers on every tool call cannot lock the agent out of fixing it: a Write or
+Edit of a file inside the context's folder, and a command made only of `chmod`
+(or `sr-file edit|write`) on paths inside that folder, go through. Anything else
+in the same call, or any other command, is still refused until the script is
+fixed.
+
 A script that runs and exits non-zero is still a decline, and refuses nothing.
 
 ## `exit`: may the context deactivate?

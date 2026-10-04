@@ -862,14 +862,6 @@ func parseYAML(path string, data []byte, dst any) []Problem {
 	return nil
 }
 
-// sortLoaded orders every slice in a Loaded by name, so two loads of the same
-// project produce the same order — a diff of two reports is signal, not the noise
-// directory iteration order would inject.
-//
-// Sorting the loaded slices AFTER precedence is safe: precedence is decided by
-// claiming during resolution (first writer wins), not by the final order, so a
-// name-sort here reorders the winners without changing who won. The Shadowed slice
-// is sorted too, so a report of displacements is stable across runs.
 // keepDegradedInForce drops a Degraded entry whose declaration lost precedence (Shadowed): it is
 // not loaded, so there is nothing enforced for the report to be about.
 func keepDegradedInForce(l *Loaded) {
@@ -895,6 +887,14 @@ func keepDegradedInForce(l *Loaded) {
 	l.Degraded = kept
 }
 
+// sortLoaded orders every slice in a Loaded by name, so two loads of the same
+// project produce the same order — a diff of two reports is signal, not the noise
+// directory iteration order would inject.
+//
+// Sorting the loaded slices AFTER precedence is safe: precedence is decided by
+// claiming during resolution (first writer wins), not by the final order, so a
+// name-sort here reorders the winners without changing who won. The Shadowed slice
+// is sorted too, so a report of displacements is stable across runs.
 func sortLoaded(l *Loaded) {
 	sort.Slice(l.FileGuards, func(i, j int) bool { return l.FileGuards[i].Name < l.FileGuards[j].Name })
 	sort.Slice(l.Gates, func(i, j int) bool { return l.Gates[i].Name < l.Gates[j].Name })

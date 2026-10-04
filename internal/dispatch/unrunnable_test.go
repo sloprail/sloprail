@@ -76,8 +76,9 @@ func TestUnrunnableScript_RefusesInEveryRole(t *testing.T) {
 			require.True(t, v.Refused, "a context enter that cannot run was read as a decline")
 			assert.False(t, active)
 			named(v.Reason)
-			assert.Contains(t, v.Reason, `"goal-tracking" context could not be entered`, "names the context")
+			assert.Contains(t, v.Reason, `context "goal-tracking": enter script ./x.sh cannot run`, "names the context")
 			assert.Contains(t, v.Reason, "cannot be judged", "says why it is a refusal and not a decline")
+			assert.NotContains(t, v.Reason, "check", "an enter is not a check")
 
 			exit := exitReq()
 			exit.Dir, exit.Exit = dir, "./x.sh"

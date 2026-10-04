@@ -183,6 +183,10 @@ type scriptResult struct {
 	// timeout), as against one that ran and declined with a non-zero exit. A caller
 	// where "declined" would permit something (a context's enter) must refuse on it.
 	Unrunnable bool
+
+	// Cause is, for an Unrunnable result, the diagnosis alone (the file and what is wrong with it,
+	// no framing sentence about a check or an action), for a caller that words its own refusal.
+	Cause string
 }
 
 // runScriptExec is the production runScript: it execs the declared script directly
@@ -206,6 +210,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	// default here keeps the expired message's duration honest.
 	if err := scriptexec.VerifyDeclared(s.Dir, s.Script); err != nil {
 		return scriptResult{
+			Cause:      err.Error(),
 			Passed:     false,
 			Reason:     fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
 			Code:       -1,
@@ -215,6 +220,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	argv, err := scriptexec.Argv(s.Dir, s.Script)
 	if err != nil {
 		return scriptResult{
+			Cause:      err.Error(),
 			Passed:     false,
 			Reason:     fmt.Sprintf("the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.", s.Script, err),
 			Code:       -1,
@@ -227,6 +233,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			// The declared script is not there (renamed, or the wrong name): say so plainly,
 			// the one fact the author needs to find it.
 			return scriptResult{
+				Cause:  fmt.Sprintf("it was not found: %v", startErr),
 				Passed: false,
 				Reason: fmt.Sprintf(
 					"the check %q was not found: %v. The action was refused because a check that cannot run must not be read as approval.",
@@ -242,6 +249,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 		// and refused at the call site; folding it into a refusal keeps every
 		// script outcome one shape.
 		return scriptResult{
+			Cause:  startErr.Error(),
 			Passed: false,
 			Reason: fmt.Sprintf(
 				"the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.",
@@ -252,6 +260,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	}
 	if expired {
 		return scriptResult{
+			Cause:  fmt.Sprintf("it was killed after %s without answering", defaultCheckTimeout),
 			Passed: false,
 			Reason: fmt.Sprintf(
 				"the check %q was killed after %s without answering, and the action was refused because a check that did not answer must not be read as approval.%s",
