@@ -37,10 +37,11 @@ lib_check() {
   dot="${root}.sloprail"
 
   case "$rest" in
-  # sr-test cases: the owning rule's tests/ and the structure gate's structure.tests/. A case is data
+  # sr-test cases: a case FOLDER under the owning rule's tests/ or the structure gate's structure.tests/ (a file
+  # directly in tests/ is no case). A case is data
   # (its own fixtures, declaration-named files included), never a declaration. There is no top-level
   # .sloprail/tests/: that, like any stray folder, is judged by the rules below.
-  gate/*/tests/* | file-guard/*/tests/* | context/*/tests/* | file-guard/structure.tests/*) return 0 ;;
+  gate/*/tests/*/* | file-guard/*/tests/*/* | context/*/tests/*/* | file-guard/structure.tests/*/*) return 0 ;;
   config.yaml | config.yml) return 0 ;;
   file-guard/structure.yaml | file-guard/structure.yml) return 0 ;;
   file-guard/*/file-guard.yaml | gate/*/gate.yaml | context/*/context.yaml) return 0 ;;
