@@ -252,7 +252,9 @@ exit 1
 	cfg := filepath.Join(proj, ".sloprail", "config.yaml")
 	res := e.Run(proj, "s-016-07", "write, switch the rule off, write again", Turns("done",
 		Write("t1", "before.md", "a"),
-		Bash("t2", "cp staged-config.yaml "+shellQuote(cfg)),
+		// Switching a rule off is a change to the project's rules: the shipped grounded-rule-changes gate
+		// matches the config at any path spelling, so the copy cites the user's own prompt.
+		Bash("t2", "sr-session trajectory cite 'write, switch the rule off, write again' && cp staged-config.yaml "+shellQuote(cfg)),
 		Write("t3", "after.md", "b"),
 	))
 
