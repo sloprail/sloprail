@@ -164,6 +164,7 @@ for inv in "${invs[@]}"; do
           esac
         done
         ;;
+      $'\001gap') fail "the commit names a path through a variable or \$(...) that could not be resolved" ;;
       *) paths+=("$a") ;;
     esac
   done

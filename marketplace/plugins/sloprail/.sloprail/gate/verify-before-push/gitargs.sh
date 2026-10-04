@@ -6,7 +6,8 @@
 #             value of an option that takes one. It may have been any option, or the subcommand itself.
 #   GAP_VAL   a word was lost where a global option's value stands (`-C $D push`): the folder (or
 #             config, or git-dir) git runs with is unknown.
-#   GAP_REST  a word was lost after the subcommand (a remote, a refspec, a path, a message).
+#   GAP_REST  a word was lost after the subcommand (a remote, a refspec, a path, a message). REST holds
+#             a marker word ($'\001gap') at its place.
 # Each is "" or 1. The engine reports them as `.gaps` (argv positions), never as an argument, so
 # nothing here mistakes the next word for the lost one.
 git_split() {
@@ -25,7 +26,8 @@ git_split() {
         i=$((i + 1))
         if [ "$i" -lt "$n" ]; then
           if [ "${args[$i]}" = "$gap" ]; then
-            GAP_VAL=1
+            # only the options that move git need the folder: -c / --namespace do not
+            case "$a" in -C | --git-dir | --work-tree) GAP_VAL=1 ;; esac
             GOPTS+=("")
           elif [ "${args[$i]:0:1}" = "~" ] || [[ "${args[$i]}" == *[\*\?\[]* ]]; then
             # tilde is not expanded and a glob is not matched by the engine: the word is the shell's to
@@ -42,7 +44,10 @@ git_split() {
         SUB="$a"
         i=$((i + 1))
         while [ "$i" -lt "$n" ]; do
-          if [ "${args[$i]}" = "$gap" ]; then GAP_REST=1; else REST+=("${args[$i]}"); fi
+          # the marker stays in REST, where the lost word stood, so the word after it is not read as
+          # its value (`-m "$M" -a`)
+          if [ "${args[$i]}" = "$gap" ]; then GAP_REST=1; fi
+          REST+=("${args[$i]}")
           i=$((i + 1))
         done
         return 0

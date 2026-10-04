@@ -181,7 +181,7 @@ func (c *cwd) applyAssigns(cfg *expand.Config, assigns []*syntax.Assign, declare
 // does not follow; seeing one forgets every known variable.
 var varWriters = map[string]bool{
 	"read": true, "mapfile": true, "readarray": true, "getopts": true, "unset": true, "let": true,
-	"source": true, ".": true, "command": true, "builtin": true, "exec": true, "wait": true,
+	"source": true, ".": true, "command": true, "builtin": true, "exec": true, "wait": true, "trap": true,
 }
 
 // startCwd is the effective directory nothing has yet moved out of: the empty,
@@ -501,6 +501,11 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 // cwdForStmtHere is cwdForStmt in the shell it was handed.
 func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*syntax.Stmt]cwd) {
 	out[stmt] = *current
+	// An arithmetic or `:=` expansion anywhere in the statement (a word, a redirect, a case or
+	// for word list, a test) may assign a variable.
+	if mayAssign(stmt) {
+		current.vars = nil
+	}
 
 	switch cmd := stmt.Cmd.(type) {
 	case *syntax.CallExpr:
@@ -630,6 +635,10 @@ func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map
 			// whatever statement follows this one.
 			cwdForStmt(cfg, cmd.X, ptr(*current), out)
 			cwdForStmt(cfg, cmd.Y, ptr(*current), out)
+			// zsh (and bash with lastpipe) runs the last element in the current shell.
+			if assignsVars(cmd.Y) {
+				current.vars = nil
+			}
 		default:
 			// `&&`, `||`: X first, then Y — the left-to-right order
 			// BinaryCmd's own left associativity already puts them in (see
@@ -683,6 +692,10 @@ func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map
 		// reason (a body with no cd leaves current unchanged, so running it
 		// twice is the same as running it once, is the same as not running it
 		// at all).
+		if assignsVars(cmd) {
+			// A later iteration reads what an earlier one assigned.
+			current.vars = nil
+		}
 		*current = cwdForSequence(cfg, cmd.Cond, *current, out)
 		zeroTimes := *current
 		onceOrMore := cwdForSequence(cfg, cmd.Do, *current, out)
@@ -701,6 +714,9 @@ func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map
 		if wi, ok := cmd.Loop.(*syntax.WordIter); ok && wi.Name != nil {
 			current.setVar(wi.Name.Value, "", false)
 		} else if _, ok := cmd.Loop.(*syntax.CStyleLoop); ok {
+			current.vars = nil
+		}
+		if assignsVars(cmd) {
 			current.vars = nil
 		}
 		zeroTimes := *current
@@ -865,12 +881,13 @@ func forgetsVars(cfg *expand.Config, c *cwd, call *syntax.CallExpr) bool {
 	if mayAssign(call) || !isLiteral(call.Args[0]) {
 		return true
 	}
-	first, err := expand.Literal(cfg, call.Args[0])
-	if err != nil {
+	fields, err := expand.Fields(cfg, call.Args[0])
+	if err != nil || len(fields) != 1 {
 		return true
 	}
-	if first == "source" || first == "." {
-		c.noVars = true // the sourced file may define a function
+	first := fields[0]
+	if first == "source" || first == "." || first == "trap" {
+		c.noVars = true // the sourced file may define a function; a trap assigns at any point
 	}
 	if first == "printf" {
 		for _, a := range call.Args[1:] {
@@ -888,11 +905,50 @@ func mayAssign(n syntax.Node) bool {
 	found := false
 	syntax.Walk(n, func(n syntax.Node) bool {
 		switch x := n.(type) {
-		case *syntax.ArithmExp, *syntax.ArithmCmd:
+		case *syntax.ArithmExp, *syntax.ArithmCmd, *syntax.BinaryArithm, *syntax.UnaryArithm, *syntax.ParenArithm:
 			found = true
-		case *syntax.ParamExp:
-			if x.Exp != nil && (x.Exp.Op == syntax.AssignUnset || x.Exp.Op == syntax.AssignUnsetOrNull) {
+		case *syntax.Assign:
+			if x.Index != nil {
 				found = true
+			}
+		case *syntax.BinaryTest:
+			switch x.Op {
+			case syntax.TsEql, syntax.TsNeq, syntax.TsLeq, syntax.TsGeq, syntax.TsLss, syntax.TsGtr:
+				found = true // operands are arithmetic
+			}
+		case *syntax.ParamExp:
+			if x.Index != nil || x.Slice != nil || (x.Exp != nil && (x.Exp.Op == syntax.AssignUnset || x.Exp.Op == syntax.AssignUnsetOrNull)) {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// assignsVars reports whether anything under n may assign a shell variable: a NAME=value, a
+// declaration, a builtin that writes one, a command it cannot read, or an assigning expansion.
+// Used for loop bodies (a later iteration reads what an earlier one set) and the last element of
+// a pipeline.
+func assignsVars(root syntax.Node) bool {
+	if mayAssign(root) {
+		return true
+	}
+	found := false
+	syntax.Walk(root, func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.Assign, *syntax.DeclClause, *syntax.LetClause:
+			found = true
+		case *syntax.ForClause:
+			if n != root {
+				found = true
+			}
+		case *syntax.CallExpr:
+			if len(x.Args) > 0 {
+				w, err := expand.Fields(safeConfig(), x.Args[0])
+				if !isLiteral(x.Args[0]) || err != nil || len(w) != 1 || varWriters[w[0]] || w[0] == "eval" || w[0] == "trap" {
+					found = true
+				}
 			}
 		}
 		return !found
