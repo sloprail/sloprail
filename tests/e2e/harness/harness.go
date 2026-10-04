@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/ambientenv"
+	"github.com/sloprail/sloprail/internal/harnessmock"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -799,34 +800,8 @@ func (e *Env) localMarketplace() string {
 		e.t.Fatalf("harness: temp marketplace: %v", err)
 	}
 	e.t.Cleanup(func() { os.RemoveAll(dir) })
-	raw, err := os.ReadFile(filepath.Join(e.repoRoot, ".claude-plugin", "marketplace.json"))
-	if err != nil {
-		e.t.Fatalf("harness: read marketplace.json: %v", err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		e.t.Fatalf("harness: parse marketplace.json: %v", err)
-	}
-	plugins, _ := doc["plugins"].([]any)
-	for _, p := range plugins {
-		pm, _ := p.(map[string]any)
-		if _, isString := pm["source"].(string); isString {
-			continue
-		}
-		pm["source"] = "./marketplace/plugins/" + fmt.Sprint(pm["name"])
-	}
-	body, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		e.t.Fatalf("harness: encode marketplace.json: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
-		e.t.Fatalf("harness: mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".claude-plugin", "marketplace.json"), body, 0o644); err != nil {
-		e.t.Fatalf("harness: write marketplace.json: %v", err)
-	}
-	if err := os.Symlink(filepath.Join(e.repoRoot, "marketplace"), filepath.Join(dir, "marketplace")); err != nil {
-		e.t.Fatalf("harness: link marketplace: %v", err)
+	if err := harnessmock.LocalMarketplace(e.repoRoot, dir); err != nil {
+		e.t.Fatalf("harness: %v", err)
 	}
 	return dir
 }
