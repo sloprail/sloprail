@@ -176,3 +176,87 @@ func TestT061_08_OneBrokenSiblingGateRefuses(t *testing.T) {
 		t.Fatalf("a command into a sibling with a broken gate was not refused:\n%s", res.Output)
 	}
 }
+
+const noDeleteGate = `on:
+  - event: PreFileDelete
+    match: event.path startsWith "locked/"
+checks:
+  - script: ./check.sh
+`
+
+// T061_09: project A with no declarations at all does not let a write into B skip B's structure
+// gate (the session's own dispatch has nothing to do and returns early).
+func TestT061_09_SiblingStructureGateAppliesWhenTheSessionProjectHasNoDeclarations(t *testing.T) {
+	e := New(t)
+	a, b := projectA(e), sibling(e, false, "")
+	e.StructureGate(b, "allow:\n  - glob: \"docs/**\"\n")
+	res := e.Run(a, "s-061-09", "write into the sibling", Turns("done",
+		Write("w1", filepath.Join(b, "src", "main.go"), "package main"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a write outside B's structure was not refused:\n%s", res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(b, "src", "main.go")); err == nil {
+		t.Errorf("the refused write landed")
+	}
+	res = e.Run(a, "s-061-09b", "write into the sibling", Turns("done",
+		Write("w1", filepath.Join(b, "docs", "note.md"), "# note"),
+	))
+	if res.Refused() {
+		t.Fatalf("a write B's structure allows was refused:\n%s", res.Output)
+	}
+}
+
+// T061_10: an Edit of a file in B's locked/ is refused by B's gate.
+func TestT061_10_EditIntoSiblingIsRefusedByItsGate(t *testing.T) {
+	e := New(t)
+	a, b := projectA(e), sibling(e, true, lockedGate)
+	e.WriteFile(b, "locked/x.txt", "old\n")
+	res := e.Run(a, "s-061-10", "edit in the sibling", Turns("done",
+		Edit("e1", filepath.Join(b, "locked", "x.txt"), "old", "new"),
+	))
+	if !res.Refused() {
+		t.Fatalf("an Edit of B's locked/ file was not refused:\n%s", res.Output)
+	}
+	if !res.Saw("sibling-rule") || !res.Saw(filepath.Base(b)) {
+		t.Errorf("the refusal does not carry B's reason and name B:\n%s", res.Output)
+	}
+	if body, _ := os.ReadFile(filepath.Join(b, "locked", "x.txt")); string(body) != "old\n" {
+		t.Errorf("the refused edit landed: %q", body)
+	}
+}
+
+// T061_11: deleting a file in B's locked/ is refused by B's PreFileDelete gate.
+func TestT061_11_DeleteInSiblingIsRefusedByItsGate(t *testing.T) {
+	e := New(t)
+	a, b := projectA(e), sibling(e, true, noDeleteGate)
+	e.WriteFile(b, "locked/x.txt", "keep\n")
+	res := e.Run(a, "s-061-11", "delete in the sibling", Turns("done",
+		Bash("d", fmt.Sprintf("rm %s", filepath.Join(b, "locked", "x.txt"))),
+	))
+	if !res.Refused() {
+		t.Fatalf("a delete in B's locked/ was not refused:\n%s", res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(b, "locked", "x.txt")); err != nil {
+		t.Errorf("the refused delete removed the file: %v", err)
+	}
+}
+
+// T061_12: a symlinked path into B is B's: the gate refuses a write through the link.
+func TestT061_12_SymlinkedPathIntoSiblingIsRefusedByItsGate(t *testing.T) {
+	e := New(t)
+	a, b := projectA(e), sibling(e, true, lockedGate)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(b, link); err != nil {
+		t.Fatal(err)
+	}
+	res := e.Run(a, "s-061-12", "write through a symlink into the sibling", Turns("done",
+		Write("w1", filepath.Join(link, "locked", "x.txt"), "no"),
+	))
+	if !res.Refused() {
+		t.Fatalf("a write through a symlink into B's locked/ was not refused:\n%s", res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(b, "locked", "x.txt")); err == nil {
+		t.Errorf("the refused write landed")
+	}
+}

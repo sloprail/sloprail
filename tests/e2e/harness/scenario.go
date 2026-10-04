@@ -54,6 +54,15 @@ func Write(id, path, content string) Turn {
 	})}
 }
 
+// Edit returns a turn where the agent replaces text in a file.
+func Edit(id, path, oldString, newString string) Turn {
+	return Turn{jsonl: toolUse(id, "Edit", map[string]string{
+		"file_path":  path,
+		"old_string": oldString,
+		"new_string": newString,
+	})}
+}
+
 // Bash returns a turn where the agent runs a shell command.
 func Bash(id, command string) Turn {
 	return Turn{jsonl: toolUse(id, "Bash", map[string]string{"command": command})}

@@ -73,6 +73,19 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 		add(owningRepo(filepath.Join(dir, "x")))
 	}
 
+	// The foreign repo's structure gate, which the own dispatch consults only when the
+	// session's project has a structure of its own: a project with no declarations at
+	// all still must not let a write into a sibling skip the sibling's structure.
+	for _, e := range fileEvents {
+		if path, ok := writePath(e); ok {
+			if abs := absEventPath(p, path); outsideProject(p.Root(), abs) {
+				if reason := checkForeignStructure(p.Root(), abs, reg); reason != "" {
+					return natureVerdict{Blocked: reason}
+				}
+			}
+		}
+	}
+
 	for _, root := range roots {
 		if _, err := os.Stat(filepath.Join(root, ".sloprail")); err != nil {
 			if os.IsNotExist(err) {
