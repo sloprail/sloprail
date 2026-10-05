@@ -49,6 +49,13 @@ import (
 // seventeen times in a row. A sub-agent in a worktree of its own owns that tree
 // and is gated on it.
 //
+// A folder the session registered (not its own tree) where a BACKGROUND sub-agent the registry
+// holds as running has worked is that agent's half-done work, which the root must not commit and
+// so cannot act on a refusal for: the root's Stop names it ("being worked on by sub-agent <id>")
+// and does not refuse, as the tracked ranges leave a running background agent's ranges unjudged.
+// Anything else (a foreground, unknown, stale, gone or finished agent) is refused as ever. The
+// store attributes by folder, not by path, so the root's own tree is never excused this way.
+//
 // A loop breaker ends it: after the project's stop_hook_block_cap refusals in a
 // row for the SAME uncommitted set the gate says so on stderr and stops refusing,
 // so a Stop refusal cannot become a deny loop the agent can only escape by
@@ -98,6 +105,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 		if err != nil {
 			return failClosed(err) // a registry that could not be read is not "nothing else was committed"
 		}
+		busy := foldersOfRunningAgents(cmd, p, others)
 		for _, f := range others {
 			if key := treeKey(f.Path); covered[key] {
 				continue
@@ -111,6 +119,12 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			o, refusal := owedIn(f.Path, loaded.FileGuards)
 			if refusal != "" {
 				return refusal
+			}
+			if agent, ok := busy[treeKey(f.Path)]; ok && len(o) > 0 {
+				// A sub-agent the registry holds as running is mid-work here: the root must not commit its
+				// half-done work, so this is said, not refused. Once it stops, the folder is owed again.
+				noteBeingWorkedOn(cmd, f.Path, agent)
+				continue
 			}
 			for _, u := range o {
 				u.Path = filepath.Join(f.Path, u.Path)
@@ -350,4 +364,72 @@ func treeKey(path string) string {
 		path = real
 	}
 	return filepath.Clean(path)
+}
+
+// foldersOfRunningAgents maps the trees (treeKey) among folders that a background sub-agent the
+// registry holds as running has worked in to that agent's id. The policy is the tracked ranges':
+// only a background agent that settleAgents still waits for counts; an agent the registry does not
+// know, a foreground one, a stale one, one whose process is gone is not there, so its folder is
+// owed as ever. Only the root's Stop defers (a sub-agent's own Stop never does), and anything that
+// cannot be read yields no folder: a doubt is a refusal.
+//
+// A silent agent not yet stale is waited for, as for ranges. The store attributes by folder, not by path: a folder where the root and a running agent both
+// wrote is the agent's, and the root's own tree is never asked about (the agent there shares the
+// root's work, which must stay owed).
+func foldersOfRunningAgents(cmd *cobra.Command, p HookPayload, folders []sessionstate.Folder) map[string]string {
+	busy := map[string]string{}
+	if p.AgentID != "" || len(folders) == 0 {
+		return busy
+	}
+	rs, err := resolveRootSession(p)
+	if err != nil {
+		return busy
+	}
+	if _, err := os.Stat(rs.Path); err != nil {
+		return busy
+	}
+	root, err := sessionstate.Open(rs.Path)
+	if err != nil {
+		return busy
+	}
+	defer root.Close()
+	plan := settleAgents(cmd, root, rs.ID, p, agentClock())
+	if len(plan.Waiting) == 0 {
+		return busy
+	}
+	agents, err := root.Agents(rs.ID)
+	if err != nil {
+		return busy
+	}
+	for _, a := range agents {
+		if !plan.Waiting[a.AgentID] || !a.Running() || !a.Background {
+			continue
+		}
+		mark := func(folder string) {
+			if _, taken := busy[treeKey(folder)]; !taken {
+				busy[treeKey(folder)] = a.AgentID
+			}
+		}
+		for _, f := range a.Folders {
+			mark(f)
+		}
+		for _, r := range a.Ranges {
+			mark(r.Folder)
+		}
+		for _, f := range folders {
+			if f.AgentID == a.AgentID {
+				mark(f.Path)
+			}
+		}
+	}
+	return busy
+}
+
+// noteBeingWorkedOn says, without refusing, that a folder's uncommitted work is a running
+// sub-agent's: shown to the user when the Stop passes, appended to a refusal that exists anyway.
+func noteBeingWorkedOn(cmd *cobra.Command, folder, agent string) {
+	line := fmt.Sprintf("uncommitted changes in %s are being worked on by sub-agent %s; not yours to commit until it stops", folder, agent)
+	if !addStopNotice(cmd, line) {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: "+line)
+	}
 }
