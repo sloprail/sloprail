@@ -29,6 +29,18 @@ func statusOf(t *testing.T, s Store, agent string) Agent {
 	return Agent{}
 }
 
+func TestAgents_FoldersAreRecordedOncePerAgentAndListed(t *testing.T) {
+	s := openTemp(t)
+	require.NoError(t, s.StartAgent(sig("a1", t0)))
+	require.NoError(t, s.StartAgent(sig("a2", t0)))
+	require.NoError(t, s.NoteAgentFolder("s", "a1", "/r/two"))
+	require.NoError(t, s.NoteAgentFolder("s", "a1", "/r/one"))
+	require.NoError(t, s.NoteAgentFolder("s", "a1", "/r/one"))
+	assert.Equal(t, []string{"/r/one", "/r/two"}, statusOf(t, s, "a1").Folders)
+	assert.Empty(t, statusOf(t, s, "a2").Folders)
+	assert.Error(t, s.NoteAgentFolder("s", "", "/r"))
+}
+
 func TestAgents_StartMakesARunningAgentAndRecordsItsFacts(t *testing.T) {
 	s := openTemp(t)
 	require.NoError(t, s.StartAgent(AgentSignal{SessionID: "s", AgentID: "a1", AgentType: "Explore", TranscriptPath: "/t/a1.jsonl", OwnerPID: 7, OwnerProcStart: "p", At: t0}))

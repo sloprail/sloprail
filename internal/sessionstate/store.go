@@ -120,6 +120,8 @@ type Store interface {
 	EndAgent(sessionID, agentID, status string, at time.Time) error
 	MarkAgentStale(sessionID, agentID string, at time.Time) error
 	NewAgentSignal(sessionID, signal string) (bool, error)
+	// NoteAgentFolder records a folder (git root) a sub-agent worked in; Agents lists them.
+	NoteAgentFolder(sessionID, agentID, folder string) error
 	Agents(sessionID string) ([]Agent, error)
 
 	// Close releases the database.
