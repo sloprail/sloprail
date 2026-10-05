@@ -43,6 +43,15 @@ var harnessKeys = map[string]bool{
 	"CLAUDE_CODE_PLUGIN_CACHE_DIR":    true,
 	"CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": true,
 	"SLOP_SUBBIN_DIR":                 true,
+
+	// Where the platform keeps a user's data and config. The operator's own value points at
+	// their REAL session stores and archives; a launcher that gives the process its own HOME
+	// means that HOME to decide, so an ambient XDG_* / LocalAppData must not override it.
+	"XDG_DATA_HOME":   true,
+	"XDG_CONFIG_HOME": true,
+	"XDG_STATE_HOME":  true,
+	"XDG_CACHE_HOME":  true,
+	"LocalAppData":    true,
 }
 
 // Session returns environ without the enclosing Claude Code session's identity

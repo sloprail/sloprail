@@ -94,6 +94,7 @@ func TestDispatch_UnreadableDeclarationStoreDoesNotBlockTheTurn(t *testing.T) {
 		t.Skip("root lists a 0000 directory, so the store cannot be made unreadable")
 	}
 
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("s"), 0o644))
 	runGit(t, proj, "add", ".")

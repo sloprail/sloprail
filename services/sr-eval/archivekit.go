@@ -16,36 +16,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
-// dataHome mirrors services/sr-session/statedir.go's own — the two packages
-// cannot import each other (separate `package main`s; see go.mod's own
-// reasoning: what passes between these binaries is exec, not import), so the
-// small, stable part (the cross-platform XDG lookup) is duplicated rather than
-// promoted to a shared internal/ package for one four-branch function.
-func dataHome() (string, error) {
-	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
-		return dir, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locate home directory: %w", err)
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(home, "Library", "Application Support"), nil
-	case "windows":
-		if dir := os.Getenv("LocalAppData"); dir != "" {
-			return dir, nil
-		}
-		return filepath.Join(home, "AppData", "Local"), nil
-	default:
-		return filepath.Join(home, ".local", "share"), nil
-	}
-}
+// dataHome is the platform data directory, resolved once in internal/sessionpath so the
+// test-process guard (a test must never reach the real one) covers the eval archive too.
+func dataHome() (string, error) { return sessionpath.DataHome() }
 
 // ensureArchiveRepo makes sure root exists and is a git repository, creating
 // both on first use. A plain directory of run folders would still be

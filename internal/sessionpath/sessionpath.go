@@ -32,6 +32,17 @@ const AppName = "sloprail"
 // Deliberately outside the guarded project: state written into the tree would
 // show up in the very diffs the engine reads, and in the user's git status.
 func DataHome() (string, error) {
+	root, err := dataHome()
+	if err != nil {
+		return "", err
+	}
+	if err := refuseRealStoreInTest(root); err != nil {
+		panic(err)
+	}
+	return root, nil
+}
+
+func dataHome() (string, error) {
 	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
 		return dir, nil
 	}

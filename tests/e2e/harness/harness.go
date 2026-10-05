@@ -1471,17 +1471,15 @@ func (e *Env) SubagentRecordPaths(projDir, sessionID string) []string {
 
 // dataHome mirrors the engine's own platform data directory, for the sandboxed
 // home the mock ran under.
+//
+// Derived from home alone: HostEnv drops an ambient XDG_DATA_HOME / LocalAppData, so a process
+// the harness spawns never sees one, and mirroring it here would point a test at the operator's
+// real store instead of the sandbox.
 func dataHome(home string) string {
-	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
-		return dir
-	}
 	switch runtime.GOOS {
 	case "darwin":
 		return filepath.Join(home, "Library", "Application Support")
 	case "windows":
-		if dir := os.Getenv("LocalAppData"); dir != "" {
-			return dir
-		}
 		return filepath.Join(home, "AppData", "Local")
 	default:
 		return filepath.Join(home, ".local", "share")

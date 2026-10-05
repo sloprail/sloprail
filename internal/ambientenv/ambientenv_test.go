@@ -33,3 +33,13 @@ func TestHermeticAlsoDropsSloprailAndConfig(t *testing.T) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
 }
+
+// An operator's XDG_DATA_HOME / LocalAppData names their real session stores: Hermetic must not
+// let it override the HOME a launcher gives the process (see sessionpath.DataHome).
+func TestHermeticDropsPlatformDataLocations(t *testing.T) {
+	got := Hermetic([]string{"XDG_DATA_HOME=/real/data", "XDG_CONFIG_HOME=/real/cfg", "XDG_STATE_HOME=/s",
+		"XDG_CACHE_HOME=/c", "LocalAppData=C:/real", "HOME=/h"})
+	if !slices.Equal(got, []string{"HOME=/h"}) {
+		t.Fatalf("got %v, want only HOME", got)
+	}
+}

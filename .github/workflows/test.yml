@@ -211,15 +211,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # git is the subject of the change-detection half — every baseline, every
-      # tree diff. A runner with no identity fails those with a message about
-      # committing rather than about the engine.
-      - if: needs.changes.outputs.code-changed == 'true'
-        name: git identity
-        run: |
-          git config --global user.email ci@sloprail.invalid
-          git config --global user.name  sloprail CI
-
       # The mock the e2e suites drive, at the version pinned in
       # tests/e2e/harness/MOCK_VERSION — the same `make mock` a contributor
       # runs, built from source (harness-mocks is public), so CI and local
