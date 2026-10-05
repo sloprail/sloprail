@@ -3,6 +3,7 @@ package gitrepo
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -176,4 +177,55 @@ func TestSnapshot_LockFailureLeavesNothingBehind(t *testing.T) {
 	root := s.root
 	assert.Error(t, s.Remove())
 	assert.NoDirExists(t, root)
+}
+
+// A holder that never lets go is reported by name after the bound, not waited for for ever.
+func TestSnapshot_LockWaitIsBounded(t *testing.T) {
+	dir := initRepo(t)
+	head := commit(t, dir, "a.txt", "x")
+	old := worktreeLockWait
+	worktreeLockWait = 300 * time.Millisecond
+	t.Cleanup(func() { worktreeLockWait = old })
+
+	require.NoError(t, withWorktreeLock(dir, func() error {
+		_, err := AddSnapshot(dir, t.TempDir(), head)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), worktreeLockFile)
+		assert.Contains(t, err.Error(), "still held after")
+		assert.Contains(t, err.Error(), strconv.Itoa(os.Getpid()))
+		return nil
+	}))
+}
+
+// 20 workers adding, sweeping and removing one repository finish in bounded time, none failing:
+// the lock is never held while waiting for another lock.
+func TestSnapshot_ParallelAddRemoveSweepIsBounded(t *testing.T) {
+	dir := initRepo(t)
+	head := commit(t, dir, "a.txt", "x")
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 20*2)
+	for w := 0; w < 20; w++ {
+		parent := t.TempDir()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s, err := AddSnapshot(dir, parent, head)
+			errs <- err
+			SweepStaleSnapshots(dir)
+			if err == nil {
+				errs <- s.Remove()
+			}
+		}()
+	}
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(90 * time.Second):
+		t.Fatal("parallel add/remove/sweep did not finish: lock deadlock")
+	}
+	close(errs)
+	for err := range errs {
+		assert.NoError(t, err)
+	}
 }

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // worktreeLockFile lives in the repository's common git directory, so every process working on
@@ -29,20 +31,42 @@ func withWorktreeLock(dir string, fn func() error) error {
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(dir, common)
 	}
-	f, err := os.OpenFile(filepath.Join(common, worktreeLockFile), os.O_CREATE|os.O_RDWR, 0o644)
+	path := filepath.Join(common, worktreeLockFile)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return fmt.Errorf("gitrepo: worktree lock: %w", err)
 	}
 	defer f.Close()
-	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-		if err != syscall.EINTR {
-			break
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("gitrepo: worktree lock: %w", err)
+	if err := acquireLock(f, path); err != nil {
+		return err
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	// The holder's pid, for the message of whoever times out waiting.
+	_ = f.Truncate(0)
+	_, _ = f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0)
 	return fn()
+}
+
+// worktreeLockWait bounds how long a caller waits for the lock. Each critical section is a
+// few git calls, so a wait this long means a holder is stuck, and that is reported, not waited out.
+var worktreeLockWait = 2 * time.Minute
+
+// acquireLock polls a non-blocking flock until worktreeLockWait passes.
+func acquireLock(f *os.File, path string) error {
+	deadline := time.Now().Add(worktreeLockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EINTR {
+			return fmt.Errorf("gitrepo: worktree lock %s: %w", path, err)
+		}
+		if time.Now().After(deadline) {
+			holder, _ := os.ReadFile(path)
+			return fmt.Errorf("gitrepo: worktree lock %s still held after %s by pid %s",
+				path, worktreeLockWait, strings.TrimSpace(string(holder)))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
