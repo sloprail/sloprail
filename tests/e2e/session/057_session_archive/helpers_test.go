@@ -134,6 +134,7 @@ type manifest struct {
 	Checks   []struct {
 		Repo     string   `json:"repo"`
 		File     string   `json:"file"`
+		Folders  []string `json:"folders"`
 		Sessions []string `json:"tracked_by_sessions"`
 	} `json:"checks"`
 	Skipped []struct {

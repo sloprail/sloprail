@@ -26,7 +26,7 @@ const reclaimThreshold = 16 << 20
 // version it is at: a store left uncompacted by a step that lost a race with the live session's own
 // writes, or written by a build without the bound, is repaired by the next open instead of staying
 // huge for good.
-const bloatedCitations = 1 << 20
+const bloatedCitations = 16 << 20
 
 // compactStoredCitations rewrites the citation history and the cycle record within their bounds
 // and, when that frees a lot of space, compacts the file so a store that was gigabytes opens at its

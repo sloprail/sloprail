@@ -19,7 +19,7 @@ func TestOpen_AHistoryPastTheBoundIsCompactedWhateverTheVersion(t *testing.T) {
 	s, err := Open(path)
 	require.NoError(t, err)
 	var points []json.RawMessage
-	for i := 1; i <= 100; i++ {
+	for i := 1; i <= 300; i++ {
 		points = append(points, uncited(t, "f", "t", i, "nohup "+strings.Repeat("é", 20000)))
 	}
 	raw, err := json.Marshal(map[string][]json.RawMessage{"a.md": points, "b.md": points, "c.md": points})
@@ -36,7 +36,7 @@ func TestOpen_AHistoryPastTheBoundIsCompactedWhateverTheVersion(t *testing.T) {
 	assert.Less(t, len(got), 10_000)
 	var h map[string][]json.RawMessage
 	require.NoError(t, json.Unmarshal([]byte(got), &h))
-	assert.Equal(t, []int{1, 100}, atsOf(t, h["a.md"]))
+	assert.Equal(t, []int{1, 300}, atsOf(t, h["a.md"]))
 }
 
 func TestHeadAndTailAreWholeCharacters(t *testing.T) {
