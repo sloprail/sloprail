@@ -87,6 +87,7 @@ for inv in "${invs[@]}"; do
   # one the command runs in. Fail closed.
   [ -z "$GAP_FREE" ] || fail "a 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal, so it may be a commit. Use the literal subcommand and options: git -C <literal dir> commit ..."
   [ "$SUB" = commit ] || continue
+  [ -z "$GAP_BIN" ] || fail "a word in front of 'git' in this commit (a wrapper's option or environment held in a variable or \$(...)) could not be resolved, so the folder and environment the commit runs in are unknown"
   [ -z "$GAP_VAL" ] || fail "an option value of the commit (-C <dir>, -c <key=value>, --git-dir ...) is a variable, \$(...), ~ or glob that could not be resolved"
 
   lostword="" amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
@@ -210,7 +211,7 @@ for inv in "${invs[@]}"; do
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
     split_git "$prev"
     [ -z "$GAP_FREE" ] || fail "a 'git' command this line runs before the commit has an option or subcommand that could not be resolved, so it may move the index. Use the literal subcommand and options"
-    if [ -n "$GAP_VAL" ] && { [ "$SUB" = add ] || [ "$SUB" = rm ] || [[ "$movers" == *" $SUB "* ]]; }; then
+    if [ -n "$GAP_BIN$GAP_VAL" ] && { [ "$SUB" = add ] || [ "$SUB" = rm ] || [[ "$movers" == *" $SUB "* ]]; }; then
       fail "the 'git $SUB' this line runs before the commit has a -C folder that could not be resolved"
     fi
     git_redirected "$prev" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree) on a git command it runs before the commit, which moves git to a repository this gate does not replay"

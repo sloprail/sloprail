@@ -12,7 +12,12 @@ fail() { echo "$1" >&2; echo "$RESULT" | jq -c '.events[]|select(.rule=="sloprai
 verdict() { echo "$RESULT" | jq -e --arg id "$1" --arg out "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/checks-ref-sr-only" and .tool_use_id==$id)] | length==1 and .[0].outcome==$out' >/dev/null; }
 reason_has() { echo "$RESULT" | jq -e --arg id "$1" --arg s "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/checks-ref-sr-only" and .tool_use_id==$id)][0] | (.reason|contains($s))' >/dev/null; }
 
-for id in h1 h2 h3 h4 h5; do
+verdict p1 permitted || fail "p1: a lost word in front of a plain git status was refused"
+for id in h3 h4; do
+  verdict $id refused || fail "$id: a ref write behind a wrapper with a lost word was not refused"
+  reason_has $id "in front of this" || fail "$id: the refusal does not name the word in front of git"
+done
+for id in h1 h2 h5; do
   verdict $id refused || fail "$id: a git command with a hidden subcommand was not refused"
   reason_has $id "literal subcommand" || fail "$id: the refusal does not tell the agent to use the literal subcommand"
 done

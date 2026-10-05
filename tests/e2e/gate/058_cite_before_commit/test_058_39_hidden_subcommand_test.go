@@ -17,6 +17,9 @@ func TestT058_39_HiddenSubcommandFailsClosed(t *testing.T) {
 		"timeout $T git commit -q --allow-empty -m x",
 		"env -S \"$A\" git commit -q --allow-empty -m x",
 		"env $E git commit -q --allow-empty -m x",
+		"timeout -k $K 5 git commit -q --allow-empty -m x",
+		"timeout $T -- git commit -q --allow-empty -m x",
+		"env -iS 'git commit -q --allow-empty -m x'",
 	} {
 		e, proj := project(t)
 		oth := other(t, e)
@@ -25,7 +28,9 @@ func TestT058_39_HiddenSubcommandFailsClosed(t *testing.T) {
 		if !res.Refused() {
 			t.Fatalf("%q was not refused:\n%s", c, res.Output)
 		}
-		has(t, res.Output, "literal subcommand")
+		if i < 4 {
+			has(t, res.Output, "literal subcommand")
+		}
 	}
 }
 

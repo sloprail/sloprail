@@ -10,13 +10,15 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 case $n in
   0) bash_ h1 'git $UNSET_SUB' ;;
   1) bash_ h2 'git "$(echo update-ref)" refs/heads/x HEAD' ;;
-  2) bash_ h3 'timeout $UNSET_T git status' ;;
-  3) bash_ h4 'env $UNSET_E git status' ;;
+  2) bash_ h3 'timeout $UNSET_T git update-ref refs/heads/x HEAD' ;;
+  3) bash_ h4 'env $UNSET_E git update-ref refs/heads/x HEAD' ;;
   # the same ref hidden behind a variable subcommand, then written out literally
   4) bash_ h5 'git $UNSET_SUB show-ref sloprail/checks' ;;
   5) bash_ r1 'git show-ref sloprail/checks' ;;
   6) bash_ r2 'git update-ref refs/sloprail/checks HEAD' ;;
   # a literal subcommand with a substitution only in an argument is decided and permitted
-  7) bash_ l1 'git log -1 --format=%s "$(git rev-parse HEAD)"' ;;
+  # a word lost in front of a command that is not a ref write is none of this gate's business: decided and permitted
+  7) bash_ p1 'timeout $UNSET_T git status -s' ;;
+  8) bash_ l1 'git log -1 --format=%s "$(git rev-parse HEAD)"' ;;
   *) finish ;;
 esac

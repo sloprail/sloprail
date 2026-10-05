@@ -76,7 +76,7 @@ type wrapper struct {
 var wrappers = map[string]wrapper{
 	"sudo":   {takesValue: map[string]bool{"-u": true, "--user": true, "-g": true, "--group": true, "-C": true, "-p": true, "--prompt": true, "-h": true, "--host": true, "-D": true, "--chdir": true, "-R": true}},
 	"doas":   {takesValue: map[string]bool{"-u": true, "-C": true}},
-	"env":    {takesValue: map[string]bool{"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true}},
+	"env":    {takesValue: map[string]bool{"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true, "-P": true, "-a": true, "--argv0": true}},
 	"xargs":  {takesValue: map[string]bool{"-a": true, "--arg-file": true, "-d": true, "--delimiter": true, "-E": true, "-I": true, "-i": true, "--replace": true, "-L": true, "-l": true, "-n": true, "--max-args": true, "-P": true, "--max-procs": true, "-s": true, "--max-chars": true}},
 	"nohup":  {},
 	"ionice": {takesValue: map[string]bool{"-c": true, "-n": true, "-p": true}},
@@ -724,34 +724,107 @@ func interpreterPayload(argv []word) (string, bool) {
 // re-parsed for. Only the options that stand before the first bare word are
 // env's own; a payload word that is not literal is the floor, as for `sh -c`.
 func envSplitPayload(argv []word) (string, bool) {
+	take := func(i int, rest string) (string, bool) {
+		if !argv[i].literal {
+			return "", false
+		}
+		if rest == "" {
+			if i+1 >= len(argv) || argv[i+1].gapBefore || !argv[i+1].literal {
+				return "", false
+			}
+			rest = argv[i+1].value
+		}
+		return envUnescape(rest)
+	}
 	for i := 1; i < len(argv); i++ {
 		a := argv[i]
 		switch {
 		case a.value == "--":
 			return "", false
-		case a.value == "-S" || a.value == "--split-string":
-			if !a.literal || i+1 >= len(argv) || argv[i+1].gapBefore || !argv[i+1].literal {
-				return "", false
-			}
-			return argv[i+1].value, true
 		case strings.HasPrefix(a.value, "--split-string="):
 			if !a.literal {
 				return "", false
 			}
-			return strings.TrimPrefix(a.value, "--split-string="), true
-		case strings.HasPrefix(a.value, "-S") && !strings.HasPrefix(a.value, "--"):
-			if !a.literal {
-				return "", false
-			}
-			return a.value[2:], true
-		case a.value == "-u" || a.value == "--unset" || a.value == "-C" || a.value == "--chdir":
+			return envUnescape(strings.TrimPrefix(a.value, "--split-string="))
+		case a.value == "--split-string":
+			return take(i, "")
+		case a.value == "--unset" || a.value == "--chdir" || a.value == "--default-signal" || a.value == "--argv0":
 			i++
-		case strings.HasPrefix(a.value, "-") && a.value != "-":
+		case strings.HasPrefix(a.value, "-") && !strings.HasPrefix(a.value, "--") && a.value != "-":
+			// a short-flag cluster: `-iS`, `-uX`, `-S'cmd'`
+			for k := 1; k < len(a.value); k++ {
+				switch a.value[k] {
+				case 'S':
+					return take(i, a.value[k+1:])
+				case 'u', 'C', 'P', 'a':
+					if k == len(a.value)-1 {
+						i++
+					}
+					k = len(a.value)
+				}
+			}
+		case strings.HasPrefix(a.value, "-"):
 		default:
 			return "", false
 		}
 	}
 	return "", false
+}
+
+// envClusterTakesValue reports whether arg is an `env` short-flag cluster (`-iS`, `-iu`) whose last
+// letter takes the next word as its value.
+func envClusterTakesValue(prog, arg string) bool {
+	if basename(prog) != "env" || len(arg) < 3 || arg[0] != '-' || arg[1] == '-' {
+		return false
+	}
+	switch arg[len(arg)-1] {
+	case 'S', 'u', 'C', 'P', 'a':
+		return true
+	}
+	return false
+}
+
+// isDuration reports whether a word reads as a timeout duration (`5`, `1.5`, `10s`, `2m`).
+func isDuration(w string) bool {
+	w = strings.TrimRight(w, "smhd")
+	if w == "" {
+		return false
+	}
+	for _, r := range w {
+		if (r < '0' || r > '9') && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// envUnescape reads the escapes `env -S` honours in its string: a backslash then `_`, `t`, `n`,
+// `v`, `f` or `r` is a separator, `c` ends the string, any other character is itself. A `$`
+// (env expands ${VAR}) is the floor: the command cannot be known.
+func envUnescape(p string) (string, bool) {
+	if strings.Contains(p, "$") {
+		return "", false
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		if p[i] != '\\' {
+			b.WriteByte(p[i])
+			continue
+		}
+		i++
+		if i >= len(p) {
+			return "", false
+		}
+		switch p[i] {
+		case '_', 't', 'n', 'v', 'f', 'r':
+			b.WriteByte(' ')
+		case 'c':
+			return b.String(), true
+		default:
+			b.WriteByte(p[i])
+		}
+	}
+	return b.String(), true
 }
 
 // isCommandStringFlag reports whether a flag word is the one naming a command
@@ -923,6 +996,11 @@ func unwrap(argv []word) []word {
 			if !enabled {
 				return nil
 			}
+			// A word lost before the `--` or right after it stood where the
+			// duration does, unless the next word is itself the duration.
+			if positionals > 0 && i+1 < len(argv) && (argv[i].gapBefore || argv[i+1].gapBefore) && !isDuration(argv[i+1].value) {
+				positionals = 0
+			}
 			return afterPositionals(argv, i+1, positionals)
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
@@ -938,7 +1016,10 @@ func unwrap(argv []word) []word {
 			// duration, or took the place of it, so this word is the program.
 			// Reading it as the duration would report its argument as the
 			// program and hide the real program from every rule about it.
-			if argv[i].gapBefore {
+			//
+			// But a word that reads as a duration is the duration even after
+			// a gap: the lost word was then an option's value (`-k $K 5 cmd`).
+			if argv[i].gapBefore && !isDuration(arg) {
 				positionals = 0
 			}
 			// A bare word the wrapper itself consumes — timeout's duration.
@@ -989,7 +1070,7 @@ func unwrap(argv []word) []word {
 		//
 		// And a value that was dropped as unresolvable (`-u "$U" npm`) is not
 		// the next word either: that word carries the gap, and it is the program.
-		if w.consumesNextWord(arg) && argv[i].literal && !(i+1 < len(argv) && argv[i+1].gapBefore) {
+		if (w.consumesNextWord(arg) || envClusterTakesValue(argv[0].value, arg)) && argv[i].literal && !(i+1 < len(argv) && argv[i+1].gapBefore) {
 			i++
 		}
 	}

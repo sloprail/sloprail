@@ -18,6 +18,35 @@ func TestHidden_ALostWrapperWordDoesNotHideTheProgram(t *testing.T) {
 	assert.Empty(t, inv.Gaps)
 }
 
+// A lost word among a wrapper's options or before its duration never hides the program.
+func TestHidden_LostWrapperOptionValuesKeepTheProgram(t *testing.T) {
+	for _, line := range []string{
+		`timeout -k $K 5 git push`, `timeout -s $S 5 git push`, `timeout -s KILL -k $K 5 git push`,
+		`timeout --signal=$S 5 git push`, `timeout --kill-after=$K 5 git push`, `timeout --kill-after $K 5 git push`,
+		`timeout -s$S 5 git push`, `timeout $T -- git push`, `timeout -- $T git push`, `timeout 5 -k $K git push`,
+		`timeout $T git push`,
+	} {
+		t.Run(line, func(t *testing.T) {
+			assert.Equal(t, []string{"git", "push"}, firstInv(t, line, "git").Argv)
+		})
+	}
+}
+
+// env -S: separators and clusters are read as env reads them; a `$` is the floor.
+func TestHidden_EnvSplitStringEscapesAndClusters(t *testing.T) {
+	for _, line := range []string{
+		`env -S 'git\_push'`, `env -S 'git\tpush'`, `env -iS 'git push'`, `env -P /bin -S 'git push'`,
+		`env -iu X -S 'git push'`,
+	} {
+		t.Run(line, func(t *testing.T) {
+			assert.Equal(t, []string{"git", "push"}, firstInv(t, line, "git").Argv)
+		})
+	}
+	for _, inv := range ExtractCommand(`env -S 'git ${X}'`).Invocations {
+		assert.NotEqual(t, "git", inv.Bin)
+	}
+}
+
 // `builtin cd` and `command cd` move the shell like `cd`: a resolved target is
 // the directory of what follows, an unresolved one makes it unknown.
 func TestHidden_BuiltinAndCommandCdMoveTheShell(t *testing.T) {

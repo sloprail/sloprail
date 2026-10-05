@@ -18,6 +18,10 @@ func TestT057_15_HiddenSubcommandFailsClosed(t *testing.T) {
 		"env -S \"$A\" git push -q origin HEAD:refs/heads/work",
 		"env $E git push -q origin HEAD:refs/heads/work",
 		"nice $N git push -q origin HEAD:refs/heads/work",
+		"timeout -k $K 5 git push -q origin HEAD:refs/heads/work",
+		"timeout $T -- git push -q origin HEAD:refs/heads/work",
+		"env -iS 'git push -q origin HEAD:refs/heads/work'",
+		"env -S 'git\\_push -q origin HEAD:refs/heads/work'",
 	} {
 		e, proj, _ := project(t, docsRule)
 		oth, pushed := unverifiedOther(t, e)
@@ -26,12 +30,26 @@ func TestT057_15_HiddenSubcommandFailsClosed(t *testing.T) {
 		if !res.Refused() {
 			t.Fatalf("%q was not refused:\n%s", c, res.Output)
 		}
-		if !strings.Contains(res.Output, "literal subcommand") {
+		if i < 4 && !strings.Contains(res.Output, "literal subcommand") {
 			t.Fatalf("%q: the refusal does not tell the agent to use the literal subcommand:\n%s", c, res.Output)
 		}
 		if pushed() {
 			t.Fatalf("%q: commits were pushed", c)
 		}
+	}
+}
+
+// T057_18: a word lost in front of `git` (a wrapper's value) or in an argument of a command that is not a
+// push is none of the gates' business: it is not refused.
+func TestT057_18_LostWordsAroundANonPushAreNotRefused(t *testing.T) {
+	e, proj, _ := project(t, docsRule)
+	res := e.Run(proj, "s-057-18", "look around", Turns("done",
+		Bash("a", "timeout $T git status -s"),
+		Bash("b", "nice -n $N git log -1"),
+		Bash("c", "git status -s \"$X\""),
+	))
+	if res.Refused() {
+		t.Fatalf("a non-push with a lost word was refused:\n%s", res.Output)
 	}
 }
 

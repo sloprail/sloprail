@@ -74,6 +74,7 @@ while [ "$i" -lt "$n" ]; do
   [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal, so it could not be checked against the results ref. Use the literal subcommand and options. $msg"
   case "$SUB" in
     update-ref | symbolic-ref | push | fetch | pull | fast-import)
+      [ -z "$GAP_BIN" ] || refuse "A word in front of this 'git $SUB' (a wrapper's option or environment held in a variable or \$(...)) could not be resolved, so it could not be checked against the results ref. Write the command without it. $msg"
       [ -z "$GAP_REST" ] || refuse "This 'git $SUB' names a ref through a variable or \$(...) that could not be resolved, so it could not be checked against the results ref. Write the ref out literally. $msg"
       ;;
   esac
