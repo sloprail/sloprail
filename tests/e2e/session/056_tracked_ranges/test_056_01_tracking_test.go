@@ -108,7 +108,7 @@ func TestT056_02_ThePrePushGateStillRefusesTheUnjudgedRange(t *testing.T) {
 	))
 
 	if got := e.Git(proj, "ls-remote", "origin", "refs/heads/work"); strings.TrimSpace(got) != "" {
-		t.Fatalf("an unjudged range was pushed past the pre-push gate: %s", got)
+		t.Fatalf("an unjudged range was pushed past the push gate: %s", got)
 	}
 	if got := e.AllBlockingErrorsFrom(proj, sess, "Stop"); len(got) != 0 {
 		t.Fatalf("the Stop refused the unjudged range the gate refused:\n%s", strings.Join(got, "\n"))

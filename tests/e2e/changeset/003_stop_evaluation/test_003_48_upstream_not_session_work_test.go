@@ -105,7 +105,7 @@ func TestT003_48_ASessionCommitThatLandedUpstreamIsNotInTheLocalRangeCIOnPushCov
 
 	e.Run(proj, "s-003-48c", "push", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
-		Bash("p1", "sh "+shipScript(e, proj, "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin")), // a script: the verify-before-push gate reads the command line, not the script
+		Bash("p1", "sh "+shipScript(e, proj, "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin")), // a script: the push gate, if enabled, reads the command line, not the script
 	))
 	if got := stopRefusals(e, proj, "s-003-48c"); got != "" {
 		t.Fatalf("the local Stop judged a commit that landed on the default branch (CI on push covers it):\n%s", got)
@@ -122,7 +122,7 @@ func TestT003_48_AFeatureBranchFastForwardedToMainIsNotInTheLocalRangeCIOnPushCo
 	e.Run(proj, "s-003-48d", "push", Turns("done",
 		Bash("b1", "git switch -q -c feat"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
-		Bash("p1", "sh "+shipScript(e, proj, "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin")), // a script: the verify-before-push gate reads the command line, not the script
+		Bash("p1", "sh "+shipScript(e, proj, "git push -q origin HEAD:refs/heads/"+main+" && git fetch -q origin")), // a script: the push gate, if enabled, reads the command line, not the script
 	))
 	if got := stopRefusals(e, proj, "s-003-48d"); got != "" {
 		t.Fatalf("the local Stop judged a feature-branch commit that landed on the default branch (CI on push covers it):\n%s", got)
@@ -139,7 +139,7 @@ func TestT003_48_ACommitPushedFastForwardInOneCommandIsNotInTheLocalRangeCIOnPus
 	script := "mkdir -p docs && echo 'FORBIDDEN words' > docs/a.md && git add -A && git commit -q -m 'add a' && git push -q origin HEAD:refs/heads/" + main
 	e.WriteFile(proj, "../ship.sh", script)
 	e.Run(proj, "s-003-48e", "commit and push", Turns("done",
-		Bash("p1", "sh "+filepath.Join(filepath.Dir(proj), "ship.sh")), // one hook window: the verify-before-push gate reads the command line, not the script
+		Bash("p1", "sh "+filepath.Join(filepath.Dir(proj), "ship.sh")), // one hook window: the push gate, if enabled, reads the command line, not the script
 	))
 	if got := stopRefusals(e, proj, "s-003-48e"); got != "" {
 		t.Fatalf("the local Stop judged a commit that landed on the default branch (CI on push covers it):\n%s", got)
