@@ -23,7 +23,21 @@ path_subject() {
       ;;
     *) return 1 ;;
   esac
-  IFS=/ read -r a b c <<<"$rest"
+  # split by parameter expansion, not `read`: read stops at a newline, and a path may hold one
+  a="${rest%%/*}"
+  b=""
+  c=""
+  case "$rest" in
+    */*)
+      b="${rest#*/}"
+      case "$b" in
+        */*)
+          c="${b#*/}"
+          b="${b%%/*}"
+          ;;
+      esac
+      ;;
+  esac
   if [ "$a" = file-guard ]; then
     if [ "$b" = structure.yaml ] && [ -z "$c" ]; then
       printf '%s.sloprail/file-guard/structure.tests\n' "$root"
@@ -55,7 +69,14 @@ rule_split() {
       ;;
     *) return 1 ;;
   esac
-  IFS=/ read -r a b <<<"$rest"
+  a="${rest%%/*}"
+  b=""
+  case "$rest" in
+    */*)
+      b="${rest#*/}"
+      b="${b%%/*}"
+      ;;
+  esac
   if [ "$a" = file-guard ] && [ "$b" = structure.tests ]; then
     CASE_NATURE=structure CASE_RULE=structure
     return 0

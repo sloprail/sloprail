@@ -17,7 +17,7 @@ match: 'path matches "(^|/)[.]sloprail/((gate|file-guard|context)/[^/]+/.|file-g
 # its own; a rule with no case standing is a subject with nothing to judge and passes. A deleted case is not a
 # changed file, so it is no reason to judge; the cases that remain are judged when the rule's other files
 # changed. The fingerprint carries what the
-# verdict reads beside the changed files: the rule's own files and ALL its case folders (read from SR_TREE), so
+# verdict reads beside the changed files: the rule's own files, ALL its case folders and the plugin's manifest (read from SR_TREE), so
 # editing any case, or the rule, judges that rule once.
 subjects: ./subjects.sh
 

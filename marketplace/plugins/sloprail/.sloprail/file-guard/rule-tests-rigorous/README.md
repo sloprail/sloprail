@@ -49,7 +49,8 @@ are judged when anything else of the rule changed. Two checks, in order, first r
    verdict is one line: the engine carries only the first line of a judge's reasoning to the agent. The case's rule is the
    folder: events of other rules it may mention are ignored.
 
-The verdict is cached per rule on the rule's own files plus all its case folders (`subjects.sh` fingerprint),
+The verdict is cached per rule on the rule's own files, all its case folders and the plugin's `plugin.json` (its name is in the event name a
+case must assert) (`subjects.sh` fingerprint),
 so editing any case or the rule judges that rule once.
 
 Turn it off from the project's `.sloprail/config.yaml`:

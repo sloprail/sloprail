@@ -31,10 +31,12 @@ sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==1 and .[0].outcome=="passed"' "$SR_EVENTS_FILE" >/dev/null
 [ "$(cat "$SR_EVENTS_FILE.judges")" = "judged demo cases=2" ]
 
-# the rule alone changes: the rule is judged again, once more
+# the rule alone changes (the range starts after the cases): the rule is selected by its own file and judged
+# again, once more
+PASSED=$(git rev-parse HEAD)
 printf '# the refusal text\n' >> .sloprail/gate/demo/refuse.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "touch the rule"
-sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
+sr-checks run --base "$PASSED" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==2 and .[1].outcome=="passed"' "$SR_EVENTS_FILE" >/dev/null
 [ "$(wc -l < "$SR_EVENTS_FILE.judges" | tr -d ' ')" = 2 ]
 

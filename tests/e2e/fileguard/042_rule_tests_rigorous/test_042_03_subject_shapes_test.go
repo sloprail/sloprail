@@ -45,6 +45,29 @@ func TestT042_13_StructureFileJudgesItsCases(t *testing.T) {
 	}
 }
 
+// T042_16: a stray file under a rule's tests/ (or under structure.tests/) is no case but still selects its
+// rule: the sloppy case standing in the base is judged and named.
+func TestT042_16_StrayFileSelectsItsRule(t *testing.T) {
+	for name, c := range map[string]struct{ stray, sloppy, want string }{
+		"rule": {".sloprail/gate/demo/tests/stray.txt", ".sloprail/gate/demo/tests/sloppy/test.sh", ".sloprail/gate/demo/tests/sloppy is not a rigorous"},
+		"structure": {".sloprail/file-guard/structure.tests/stray.txt", ".sloprail/file-guard/structure.tests/sloppy/test.sh",
+			".sloprail/file-guard/structure.tests/sloppy is not a rigorous"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, proj := floorSession(t)
+			e.WriteFile(proj, c.sloppy, sloppyCase)
+			e.CommitAll(proj, "a sloppy case")
+			base := strings.TrimSpace(e.Git(proj, "rev-parse", "HEAD"))
+			e.WriteFile(proj, c.stray, "not a case\n")
+			e.CommitAll(proj, "a stray file")
+			got := strings.Join(e.CheckRunRange(proj, "s-042", base, "HEAD"), "\n")
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("a stray file did not select its rule:\n%s", got)
+			}
+		})
+	}
+}
+
 // T042_15: a changed file whose name holds a tab still selects its rule whole (paths are NUL-delimited): the
 // case folder it sits in has no test.sh, and the refusal says so naming that case.
 func TestT042_15_TabInAPathStillSelectsTheRule(t *testing.T) {
