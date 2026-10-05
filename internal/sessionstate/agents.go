@@ -38,7 +38,7 @@ type Agent struct {
 	OwnerProcStart string
 	// Ranges are the tracked ranges the agent owns (session_refs rows with its agent_id).
 	Ranges []TrackedRange
-	// Folders are the git roots the agent has been seen working in (session_agent_folders),
+	// Folders are the git roots the agent has been seen working in (history-moving git targets, files written; session_agent_folders),
 	// whoever registered them.
 	Folders []string
 }
