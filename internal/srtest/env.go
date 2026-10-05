@@ -19,22 +19,6 @@ var callerKeys = []string{
 	"A10N_CLAUDE_MOCK",
 }
 
-// liveJudgeKeys are the variables copied from the caller only with --live-judges: what a real
-// `claude` (run by a judge) needs to authenticate and to reach the network. HOME is the case's fake
-// one, so credentials must come through these, not through the caller's ~/.claude.
-var liveJudgeKeys = []string{
-	// API key / token / endpoint.
-	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
-	// Bedrock / Vertex / Foundry routing and their credentials.
-	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
-	"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION",
-	"ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION",
-	// Proxy and TLS trust, without which a network-restricted machine cannot reach the API.
-	"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "no_proxy", "all_proxy",
-	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
-	"CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
-}
-
 // systemPath is what PATH always ends with: the base system tools (cat, mkdir, env...), never the
 // caller's whole PATH.
 const systemPath = "/usr/bin:/bin"
@@ -44,14 +28,10 @@ const systemPath = "/usr/bin:/bin"
 var toolNames = []string{"jq", "git", "bash"}
 
 // toolDirs are the directories of the programs a case needs that the system path may not hold: jq,
-// git and bash, the pinned mock claude, and, with live judges, the real claude.
-func toolDirs(live bool) []string {
-	names := append([]string{}, toolNames...)
-	if live {
-		names = append(names, "claude")
-	}
+// git and bash, and the pinned mock claude.
+func toolDirs() []string {
 	var dirs []string
-	for _, n := range names {
+	for _, n := range toolNames {
 		if p, err := exec.LookPath(n); err == nil {
 			dirs = append(dirs, filepath.Dir(p))
 		}
@@ -70,19 +50,14 @@ type envSpec struct {
 	Target, SloprailDir string   // SR_TEST_TARGET_DIR, SR_TEST_SLOPRAIL_DIR
 	Plugins             []string // SR_TEST_PLUGIN_DIR
 	BinDirs, ToolDirs   []string // PATH = BinDirs + ToolDirs + systemPath
-	LiveJudges          bool
 }
 
 // caseEnv builds one case's environment: the allowlisted variables of the caller, then what sr-test sets.
 func caseEnv(caller []string, s envSpec) []string {
-	keys := append([]string{}, callerKeys...)
-	if s.LiveJudges {
-		keys = append(keys, liveJudgeKeys...)
-	}
 	var env []string
 	for _, kv := range caller {
 		k, _, _ := strings.Cut(kv, "=")
-		for _, a := range keys {
+		for _, a := range callerKeys {
 			if k == a {
 				env = append(env, kv)
 				break
@@ -105,9 +80,8 @@ func caseEnv(caller []string, s envSpec) []string {
 	if len(s.Plugins) > 0 {
 		env = append(env, "SR_TEST_PLUGIN_DIR="+strings.Join(s.Plugins, string(os.PathListSeparator)))
 	}
-	if !s.LiveJudges {
-		env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
-	}
+	// An unmocked judge is always an error: a case never reaches a model.
+	env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
 	return env
 }
 

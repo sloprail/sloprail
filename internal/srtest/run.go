@@ -34,14 +34,13 @@ const DefaultJobs = 5
 
 // Options configure a run.
 type Options struct {
-	Root       string        // project root; every case below it (see Discover) is run
-	Jobs       int           // parallel cases (<=0: DefaultJobs)
-	Timeout    time.Duration // per case (<=0: 5m)
-	Only       []string      // run only cases whose subject contains one of these (empty: all)
-	Owners     []string      // run only cases owned by one of these ("gate/<rule>", "file-guard/structure"; empty: all)
-	LiveJudges bool          // leave SR_CHECKS_JUDGE_MOCKS unset
-	Keep       bool          // keep temp dirs
-	Stderr     io.Writer     // where kept paths are printed
+	Root    string        // project root; every case below it (see Discover) is run
+	Jobs    int           // parallel cases (<=0: DefaultJobs)
+	Timeout time.Duration // per case (<=0: 5m)
+	Only    []string      // run only cases whose subject contains one of these (empty: all)
+	Owners  []string      // run only cases owned by one of these ("gate/<rule>", "file-guard/structure"; empty: all)
+	Keep    bool          // keep temp dirs
+	Stderr  io.Writer     // where kept paths are printed
 	// Rules lists the loaded rules ("<nature>:<rule>") active for a case's context. Nil: none.
 	Rules func(c Context, stderr io.Writer) []string
 	// CorePluginDir is the core sloprail plugin folder, installed beside any other plugin under test.
@@ -100,7 +99,7 @@ func Run(root string, opt Options) ([]Result, error) {
 		}
 		cases = keep
 	}
-	opt.toolDirs = toolDirs(opt.LiveJudges)
+	opt.toolDirs = toolDirs()
 	jobs := opt.Jobs
 	if jobs <= 0 {
 		jobs = DefaultJobs
@@ -218,7 +217,7 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	// neither. A case may still re-run `git init` (harmless) or override the identity (its own
 	// GIT_AUTHOR_* exports, `git -c user.name=...`).
 	env := caseEnv(os.Environ(), envSpec{Home: home, GitConfig: gitconfig, Tmp: tmp, CaseDir: casePath, EventsFile: eventsFile,
-		Target: c.Target, SloprailDir: c.SloprailDir, Plugins: c.Plugins, BinDirs: opt.BinDirs, ToolDirs: opt.toolDirs, LiveJudges: opt.LiveJudges})
+		Target: c.Target, SloprailDir: c.SloprailDir, Plugins: c.Plugins, BinDirs: opt.BinDirs, ToolDirs: opt.toolDirs})
 	initCmd := exec.CommandContext(ctx, "git", "init", "-q")
 	initCmd.Dir, initCmd.Env = proj, env
 	if out, err := initCmd.CombinedOutput(); err != nil {

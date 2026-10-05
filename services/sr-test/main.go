@@ -14,7 +14,7 @@
 // GIT_AUTHOR_* / GIT_COMMITTER_*. A test.sh needs no `git init` nor `-c user.name=...`; it may
 // still run them, or export its own identity, to override. HOME is a fake empty directory,
 // SR_TEST_CASE_DIR is the case's own folder (outside the project), SR_EVENTS_FILE collects the
-// events, and SR_CHECKS_JUDGE_MOCKS={} makes an unmocked judge an error (unless --live-judges).
+// events, and SR_CHECKS_JUDGE_MOCKS={} makes an unmocked judge an error (a case never reaches a model).
 package main
 
 import (

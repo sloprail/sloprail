@@ -18,12 +18,11 @@ import (
 )
 
 type flags struct {
-	jobs       int
-	timeout    time.Duration
-	liveJudges bool
-	only       []string
-	rule       []string
-	keep       bool
+	jobs    int
+	timeout time.Duration
+	only    []string
+	rule    []string
+	keep    bool
 }
 
 func addFlags(c *cobra.Command, f *flags) {
@@ -31,7 +30,6 @@ func addFlags(c *cobra.Command, f *flags) {
 	c.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "per-case timeout")
 	c.Flags().StringSliceVar(&f.only, "only", nil, "run only cases whose subject contains one of these")
 	c.Flags().StringSliceVar(&f.rule, "rule", nil, "run only the cases of these rules: <nature>/<rule> (gate/cite-before-commit, file-guard/structure)")
-	c.Flags().BoolVar(&f.liveJudges, "live-judges", false, "let judges call a real model (SR_CHECKS_JUDGE_MOCKS stays unset)")
 	c.Flags().BoolVar(&f.keep, "keep", false, "keep each case's temp dir and print its path on stderr")
 }
 
@@ -128,8 +126,8 @@ Any .sloprail/ below the path counts (a plugin's included). Each result line car
            (marketplace/plugins/sloprail:gate/cite-before-commit:<case>)
 In a case: SR_TEST_CASE_DIR is a copy of the case folder, SR_TEST_SLOPRAIL_DIR the original .sloprail/.
 The environment is built from scratch, not inherited: a fake HOME, its own TMPDIR, a PATH of the sloprail binaries, jq, git, bash and
-the mock claude plus /usr/bin:/bin, git reading only the case's own config, and nothing else from the caller (--live-judges also
-passes the credentials and proxy settings a real judge needs).`
+the mock claude plus /usr/bin:/bin, git reading only the case's own config, and nothing else from the caller (credentials and proxy settings
+included: a judge is always a mock script, see SR_CHECKS_JUDGE_MOCKS).`
 
 func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error) {
 	root := "."
@@ -151,7 +149,7 @@ func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error
 		core = filepath.Join(co, "marketplace", "plugins", "sloprail")
 	}
 	return srtest.Run(root, srtest.Options{CorePluginDir: core,
-		Root: root, Jobs: f.jobs, Only: f.only, Owners: f.rule, Timeout: f.timeout, LiveJudges: f.liveJudges, Keep: f.keep,
+		Root: root, Jobs: f.jobs, Only: f.only, Owners: f.rule, Timeout: f.timeout, Keep: f.keep,
 		Stderr: cmd.ErrOrStderr(), BinDirs: bins, Rules: loadRules,
 	})
 }

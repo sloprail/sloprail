@@ -22,13 +22,13 @@ var callerAmbient = []string{
 	"ANTHROPIC_API_KEY=k", "HTTPS_PROXY=http://p", "CLAUDE_CODE_OAUTH_TOKEN=t",
 }
 
-func spec(live bool) envSpec {
+func spec() envSpec {
 	return envSpec{Home: "/case/home", GitConfig: "/case/gitconfig", Tmp: "/case/tmp", CaseDir: "/case/case", EventsFile: "/case/events.jsonl",
-		Target: "/t", SloprailDir: "/s", BinDirs: []string{"/sr/bin"}, ToolDirs: []string{"/opt/homebrew/bin", "/sr/bin"}, LiveJudges: live}
+		Target: "/t", SloprailDir: "/s", BinDirs: []string{"/sr/bin"}, ToolDirs: []string{"/opt/homebrew/bin", "/sr/bin"}}
 }
 
 func TestCaseEnvIsBuiltFromScratch(t *testing.T) {
-	got := envMap(caseEnv(callerAmbient, spec(false)))
+	got := envMap(caseEnv(callerAmbient, spec()))
 	for _, k := range []string{"FOO", "GIT_DIR", "XDG_CONFIG_HOME", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "SR_WORKSPACE", "LANG",
 		"ANTHROPIC_API_KEY", "HTTPS_PROXY", "CLAUDE_CODE_OAUTH_TOKEN"} {
 		if v, ok := got[k]; ok {
@@ -60,25 +60,8 @@ func TestCaseEnvIsBuiltFromScratch(t *testing.T) {
 	}
 }
 
-func TestCaseEnvLiveJudgesPassTheirListedVariablesOnly(t *testing.T) {
-	got := envMap(caseEnv(callerAmbient, spec(true)))
-	for k, v := range map[string]string{"ANTHROPIC_API_KEY": "k", "HTTPS_PROXY": "http://p", "CLAUDE_CODE_OAUTH_TOKEN": "t"} {
-		if got[k] != v {
-			t.Errorf("%s=%q, want %q", k, got[k], v)
-		}
-	}
-	if _, ok := got["SR_CHECKS_JUDGE_MOCKS"]; ok {
-		t.Error("SR_CHECKS_JUDGE_MOCKS set with live judges")
-	}
-	for _, k := range []string{"FOO", "GIT_DIR", "CLAUDECODE", "LANG"} {
-		if _, ok := got[k]; ok {
-			t.Errorf("%s leaked", k)
-		}
-	}
-}
-
 func TestCaseEnvPluginDirs(t *testing.T) {
-	s := spec(false)
+	s := spec()
 	s.Plugins = []string{"/p1", "/p2"}
 	if got := envMap(caseEnv(nil, s))["SR_TEST_PLUGIN_DIR"]; got != "/p1:/p2" {
 		t.Errorf("SR_TEST_PLUGIN_DIR=%q", got)

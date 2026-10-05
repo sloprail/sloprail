@@ -100,18 +100,14 @@ echo "$(cd "$TMPDIR/.." && pwd -P)|$(cd .. && pwd -P)|$(basename "$TMPDIR")|$TMP
 	}
 }
 
-// TestSrTestLiveJudgesPassOnlyTheirListedVariables: with --live-judges the credentials and network settings
-// a real judge needs come through; anything else still does not, and without the flag none of them do.
-func TestSrTestLiveJudgesPassOnlyTheirListedVariables(t *testing.T) {
-	probe := `test "${ANTHROPIC_API_KEY-}" = "$WANT_KEY" || { echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY-}"; exit 1; }
-test "${HTTPS_PROXY-}" = "$WANT_PROXY" || { echo "HTTPS_PROXY=${HTTPS_PROXY-}"; exit 1; }
+// TestSrTestCredentialsDoNotReachACase: a judge is always a mock script, so the caller's credentials and
+// network settings are not passed to a case (nor is anything else not on the allowlist).
+func TestSrTestCredentialsDoNotReachACase(t *testing.T) {
+	probe := `test -z "${ANTHROPIC_API_KEY-}" || { echo "ANTHROPIC_API_KEY leaked"; exit 1; }
+test -z "${HTTPS_PROXY-}" || { echo "HTTPS_PROXY leaked"; exit 1; }
 test -z "${FOO-}" || { echo "FOO leaked"; exit 1; }`
 	caller := []string{"ANTHROPIC_API_KEY=k-123", "HTTPS_PROXY=http://proxy.invalid:1", "FOO=bar"}
 	root := t.TempDir()
-	tcase(t, root, "live", "WANT_KEY=k-123 WANT_PROXY=http://proxy.invalid:1\n"+probe)
-	want(t, runCasesEnv(t, root, caller, "--live-judges"), "live", "pass")
-
-	none := t.TempDir()
-	tcase(t, none, "mocked", "WANT_KEY= WANT_PROXY=\n"+probe)
-	want(t, runCasesEnv(t, none, caller), "mocked", "pass")
+	tcase(t, root, "mocked", probe)
+	want(t, runCasesEnv(t, root, caller), "mocked", "pass")
 }

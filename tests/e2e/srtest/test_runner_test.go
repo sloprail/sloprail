@@ -359,18 +359,13 @@ echo '{"pass":true,"reasoning":"the-mock-allows-this"}'
 	}
 }
 
-// TestSrTestLiveJudgesLeavesTheMocksUnset: by default a case has SR_CHECKS_JUDGE_MOCKS={}; with
-// --live-judges the variable is not set at all, so a judge may reach a model.
-func TestSrTestLiveJudgesLeavesTheMocksUnset(t *testing.T) {
+// TestSrTestJudgeMocksAreAlwaysSet: a case always has SR_CHECKS_JUDGE_MOCKS={}, so an unmocked judge is an
+// error and no case reaches a model.
+func TestSrTestJudgeMocksAreAlwaysSet(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
 	tcase(t, root, "mocks", `test "${SR_CHECKS_JUDGE_MOCKS-UNSET}" = "{}"`)
 	got, _ := runCases(t, e, root)
-	want(t, got, "mocks", "pass")
-
-	live := t.TempDir()
-	tcase(t, live, "mocks", `test "${SR_CHECKS_JUDGE_MOCKS-UNSET}" = UNSET`)
-	got, _ = runCases(t, e, live, "--live-judges")
 	want(t, got, "mocks", "pass")
 }
 
