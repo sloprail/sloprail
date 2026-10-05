@@ -40,6 +40,7 @@ type citationPeek struct {
 	After        json.RawMessage `json:"after"`
 	Cites        json.RawMessage `json:"cites"`
 	By           string          `json:"by"`
+	At           int64           `json:"at"`
 }
 
 func (p citationPeek) cited() bool {
@@ -47,9 +48,21 @@ func (p citationPeek) cited() bool {
 	return len(c) > 0 && string(c) != "null" && string(c) != "[]"
 }
 
+func (p citationPeek) noFrom() bool {
+	f := bytes.TrimSpace(p.From)
+	return len(f) == 0 || string(f) == "null"
+}
+
+// anchor reports whether the point only says where the file stood: foreign, from nowhere, no
+// citation. The session's first hook leaves one for each file already dirty; compaction leaves
+// one for what it drops (see CompactCitationPoints).
+func (p citationPeek) anchor() bool {
+	return p.Foreign && p.noFrom() && !p.BetweenTurns && !p.Whole && !p.cited() && p.By == ""
+}
+
 // sameStretch reports whether b names the very stretch a does: the same kind of point from the same
 // state to the same state, neither cited. A later hook that finds the file still not as the agent
-// left it records that again; it is one stretch, not one more per cycle.
+// left it records that again.
 func sameStretch(a, b citationPeek) bool {
 	return !a.cited() && !b.cited() && !a.Whole && !b.Whole &&
 		a.Foreign == b.Foreign && a.BetweenTurns == b.BetweenTurns &&
@@ -65,50 +78,77 @@ func canonJSON(m json.RawMessage) []byte {
 	return bytes.TrimSpace(m)
 }
 
-// CompactCitationPoints bounds one path's history, oldest first: a point that repeats the stretch
-// before it is folded into it (the first stays, with the newest "by"), a "by" is bounded, and each
-// kind keeps its newest MaxUncitedPoints / MaxCitedPoints. Order is kept. A point that fails to
-// parse is kept as it is.
+type keptPoint struct {
+	raw   json.RawMessage
+	peek  citationPeek
+	ok    bool
+	cited bool
+	drop  bool
+}
+
+// CompactCitationPoints bounds one path's history, oldest first. Order is kept, and so is what the
+// walk over the history (dispatch.FileHistory) needs of it:
+//
+//   - a stretch recorded again and again keeps its first two sightings and the newest: the second
+//     sighting is what says the file went back to where it started and forth again, and a third
+//     adds nothing the second did not;
+//   - each kind keeps its newest MaxUncitedPoints / MaxCitedPoints; what is dropped is replaced by
+//     ONE anchor, a foreign point from nowhere standing where the newest dropped point left the
+//     file, so what follows is measured from the state it was really measured from and no stretch
+//     is invented across the gap. Anchors are not counted against the bound;
+//   - a "by" is bounded (BoundBy).
+//
+// A point that fails to parse is kept as it is.
 func CompactCitationPoints(points []json.RawMessage) []json.RawMessage {
-	type kept struct {
-		raw   json.RawMessage
-		peek  citationPeek
-		ok    bool
-		cited bool
-	}
-	var out []kept
+	var out []keptPoint
 	for _, raw := range points {
 		var pk citationPeek
 		ok := json.Unmarshal(raw, &pk) == nil
-		if ok && len(out) > 0 {
-			if last := &out[len(out)-1]; last.ok && sameStretch(last.peek, pk) {
-				if pk.By != last.peek.By {
-					last.peek.By = pk.By
-					last.raw = withBy(last.raw, pk.By)
-				}
+		it := keptPoint{raw: raw, peek: pk, ok: ok, cited: ok && pk.cited()}
+		if ok && !it.cited && len(out) >= 2 {
+			last, before := &out[len(out)-1], out[len(out)-2]
+			if last.ok && before.ok && sameStretch(last.peek, pk) && sameStretch(before.peek, pk) {
+				*last = it // the newest sighting stands for the ones between
 				continue
 			}
 		}
-		out = append(out, kept{raw: raw, peek: pk, ok: ok, cited: ok && pk.cited()})
+		out = append(out, it)
 	}
-	// Newest of each kind stay: walk from the end counting.
+
 	uncited, cited := 0, 0
-	keep := make([]bool, len(out))
 	for i := len(out) - 1; i >= 0; i-- {
 		switch {
+		case !out[i].ok || out[i].peek.anchor():
 		case out[i].cited:
-			cited++
-			keep[i] = cited <= MaxCitedPoints
-		case out[i].ok:
-			uncited++
-			keep[i] = uncited <= MaxUncitedPoints
+			if cited++; cited > MaxCitedPoints {
+				out[i].drop = true
+			}
 		default:
-			keep[i] = true
+			if uncited++; uncited > MaxUncitedPoints {
+				out[i].drop = true
+			}
+		}
+	}
+	var newest *keptPoint
+	for i := range out {
+		if out[i].drop && (newest == nil || out[i].peek.At >= newest.peek.At) {
+			newest = &out[i]
 		}
 	}
 	var res []json.RawMessage
-	for i, k := range out {
-		if !keep[i] {
+	if newest != nil {
+		for i := range out {
+			if out[i].ok && out[i].peek.anchor() { // folded into the new anchor
+				out[i].drop = true
+				if out[i].peek.At > newest.peek.At {
+					newest = &out[i]
+				}
+			}
+		}
+		res = append(res, anchorAt(newest.peek))
+	}
+	for _, k := range out {
+		if k.drop {
 			continue
 		}
 		raw := k.raw
@@ -120,6 +160,21 @@ func CompactCitationPoints(points []json.RawMessage) []json.RawMessage {
 		res = append(res, raw)
 	}
 	return res
+}
+
+// anchorAt is the foreign point that stands where p left the file.
+func anchorAt(p citationPeek) json.RawMessage {
+	after := p.After
+	if len(bytes.TrimSpace(after)) == 0 || string(bytes.TrimSpace(after)) == "null" {
+		after = json.RawMessage(`{"exists":false}`)
+	}
+	b, _ := json.Marshal(map[string]any{
+		"foreign": true,
+		"before":  json.RawMessage(`{"exists":false}`),
+		"after":   after,
+		"at":      p.At,
+	})
+	return b
 }
 
 // withBy is the point with its "by" replaced, every other field as it was.
@@ -145,20 +200,7 @@ func withBy(raw json.RawMessage, by string) json.RawMessage {
 // command that itself contains one is bounded as two; what it keeps is still only text a refusal
 // shows.
 func BoundBy(by string) string {
-	parts := strings.Split(by, "; ")
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range parts {
-		p = CutEntry(p)
-		if p != "" && !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
-	}
-	if len(out) > MaxByEntries {
-		out = out[len(out)-MaxByEntries:]
-	}
-	return strings.Join(out, "; ")
+	return strings.Join(LastEntries(strings.Split(by, "; ")), "; ")
 }
 
 // CutEntry cuts one named command at MaxByEntryLen bytes, on a rune boundary, marking the cut.
@@ -174,27 +216,29 @@ func CutEntry(s string) string {
 	return s[:cut] + "…"
 }
 
-// LastEntries keeps the newest MaxByEntries of a list of named commands, each cut.
+// LastEntries keeps the newest MaxByEntries distinct entries of a list of named commands, oldest
+// first, each cut. A command named again counts as newest.
 func LastEntries(in []string) []string {
 	seen := map[string]bool{}
-	var out []string
-	for _, s := range in {
-		s = CutEntry(s)
+	var rev []string
+	for i := len(in) - 1; i >= 0 && len(rev) < MaxByEntries; i-- {
+		s := CutEntry(in[i])
 		if s != "" && !seen[s] {
 			seen[s] = true
-			out = append(out, s)
+			rev = append(rev, s)
 		}
 	}
-	if len(out) > MaxByEntries {
-		out = out[len(out)-MaxByEntries:]
+	out := make([]string, len(rev))
+	for i, s := range rev {
+		out[len(rev)-1-i] = s
 	}
 	return out
 }
 
 // CompactCitations rewrites a whole stored history (a JSON object of path to list of points) within
-// the bounds. It reads the object path by path and holds only the compacted result, so a history
-// that grew to gigabytes is not decoded into memory twice over. It returns the new text and
-// whether it differs from raw.
+// the bounds. It reads the object point by point and keeps only what each path's compaction needs,
+// so a history that grew to gigabytes is not decoded into memory twice over. It returns the new
+// text and whether it differs from raw.
 func CompactCitations(raw string) (string, bool, error) {
 	if strings.TrimSpace(raw) == "" {
 		return raw, false, nil
@@ -212,8 +256,27 @@ func CompactCitations(raw string) (string, bool, error) {
 			return raw, false, fmt.Errorf("sessionstate: read the citation history: %w", err)
 		}
 		path, _ := tok.(string)
+		tok, err = dec.Token()
+		if err == nil && tok == nil {
+			continue // a path with no list: nothing to keep
+		}
+		if err != nil || tok != json.Delim('[') {
+			return raw, false, fmt.Errorf("sessionstate: the citation history of %q is not a list", path)
+		}
 		var points []json.RawMessage
-		if err := dec.Decode(&points); err != nil {
+		for dec.More() {
+			var p json.RawMessage
+			if err := dec.Decode(&p); err != nil {
+				return raw, false, fmt.Errorf("sessionstate: read the citation history of %q: %w", path, err)
+			}
+			points = append(points, p)
+			if len(points) >= 4*(MaxUncitedPoints+MaxCitedPoints) {
+				// A list this long is compacted as it is read: what it holds beyond the bounds is
+				// never all in memory at once.
+				points = CompactCitationPoints(points)
+			}
+		}
+		if _, err := dec.Token(); err != nil { // the closing ]
 			return raw, false, fmt.Errorf("sessionstate: read the citation history of %q: %w", path, err)
 		}
 		points = CompactCitationPoints(points)
@@ -226,8 +289,7 @@ func CompactCitations(raw string) (string, bool, error) {
 		first = false
 		key, _ := json.Marshal(path)
 		out.Write(key)
-		out.WriteByte(':')
-		out.WriteByte('[')
+		out.WriteString(":[")
 		for i, p := range points {
 			if i > 0 {
 				out.WriteByte(',')
@@ -265,7 +327,7 @@ func CompactCycle(raw string) (string, bool) {
 			continue
 		}
 		bounded := LastEntries(list)
-		if len(bounded) == len(list) && equalStrings(bounded, list) {
+		if equalStrings(bounded, list) {
 			continue
 		}
 		changed = true

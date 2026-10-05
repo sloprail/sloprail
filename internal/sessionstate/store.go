@@ -208,6 +208,7 @@ func open(path string) (*store, error) {
 		db.Close()
 		return nil, err
 	}
+	maintain(db)
 	return &store{db: db}, nil
 }
 

@@ -58,11 +58,12 @@ func TestHistoryStaysOneStretchWhileTheFileStaysAsAnotherLeftIt(t *testing.T) {
 		cycle(i, "left\n", "changed by a job\n", fmt.Sprintf("nohup job-%d %s", i, long))
 	}
 	pts := historyIn(store, true)["a.md"]
-	require.Len(t, pts, 1)
+	require.Len(t, pts, 2, "the first sighting and the newest")
 	assert.True(t, pts[0].BetweenTurns)
 	assert.Equal(t, int64(10), pts[0].At, "the first sighting stays")
-	assert.LessOrEqual(t, len(pts[0].By), 150, "a refusal names what ran; it does not quote its script")
-	assert.Contains(t, pts[0].By, "job-300", "and names the newest work")
+	assert.Equal(t, int64(3000), pts[1].At)
+	assert.LessOrEqual(t, len(pts[1].By), 150, "a refusal names what ran; it does not quote its script")
+	assert.Contains(t, pts[1].By, "job-300", "and names the newest work")
 	assert.Less(t, len(storedCitations(t, store)), 2_000)
 }
 
@@ -74,7 +75,8 @@ func TestHistoryOfAFileThatKeepsChangingIsBounded(t *testing.T) {
 		cycle(i, fmt.Sprintf("v%d\n", i-1), fmt.Sprintf("v%d\n", i), "nohup a-long-running-job")
 	}
 	pts := historyIn(store, true)["a.md"]
-	assert.Len(t, pts, sessionstate.MaxUncitedPoints)
+	assert.Len(t, pts, sessionstate.MaxUncitedPoints+1, "the newest stretches and the anchor standing for the rest")
+	assert.True(t, pts[0].Foreign && pts[0].From == nil, "what was dropped leaves a point from nowhere")
 	assert.Equal(t, int64(4000), pts[len(pts)-1].At, "the newest stretch is kept")
 	assert.Less(t, len(storedCitations(t, store)), 40_000)
 }
