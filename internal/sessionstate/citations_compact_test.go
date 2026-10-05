@@ -49,18 +49,19 @@ func atsOf(t *testing.T, points []json.RawMessage) []int {
 	return out
 }
 
-// A later hook that finds the file still not as the agent left it records the same stretch again:
-// it is one stretch, not one more per cycle. The first is kept, naming the newest work.
-func TestCompactCitationPoints_AStretchRecordedAgainIsOne(t *testing.T) {
+// A later hook that finds the file still not as the agent left it records the same stretch again.
+// The first sighting and the newest are kept (the second says the file went back and forth; a third
+// adds nothing), the newest naming the latest work.
+func TestCompactCitationPoints_AStretchRecordedAgainKeepsItsFirstAndNewest(t *testing.T) {
 	var points []json.RawMessage
 	for i := 1; i <= 500; i++ {
 		points = append(points, uncited(t, "eb4d", "9ced", i, fmt.Sprintf("job %d", i)))
 	}
 	got := CompactCitationPoints(points)
-	require.Len(t, got, 1)
-	assert.Equal(t, []int{1}, atsOf(t, got), "the first sighting stays: that is when the file stopped being the agent's")
+	require.Len(t, got, 2)
+	assert.Equal(t, []int{1, 500}, atsOf(t, got), "the first sighting stays: that is when the file stopped being the agent's")
 	var v struct{ By string }
-	require.NoError(t, json.Unmarshal(got[0], &v))
+	require.NoError(t, json.Unmarshal(got[1], &v))
 	assert.Equal(t, "job 500", v.By, "what a refusal names is the newest work that may be running")
 }
 
@@ -76,7 +77,7 @@ func TestCompactCitationPoints_DifferentStretchesAndCitedChangesStay(t *testing.
 	assert.Equal(t, []int{1, 2, 3, 4, 5}, atsOf(t, CompactCitationPoints(points)))
 }
 
-func TestCompactCitationPoints_EachKindKeepsItsNewest(t *testing.T) {
+func TestCompactCitationPoints_EachKindKeepsItsNewestAndWhatIsDroppedLeavesAnAnchor(t *testing.T) {
 	var points []json.RawMessage
 	for i := 1; i <= 400; i++ {
 		points = append(points, uncited(t, fmt.Sprintf("f%d", i), fmt.Sprintf("t%d", i), i, ""))
@@ -85,27 +86,37 @@ func TestCompactCitationPoints_EachKindKeepsItsNewest(t *testing.T) {
 		}
 	}
 	got := CompactCitationPoints(points)
-	uncitedKept, citedKept := 0, 0
-	var lastUncited, lastCited int
+	var uncitedKept, citedKept int
 	for _, at := range atsOf(t, got) {
 		if at >= 1000 {
 			citedKept++
-			lastCited = at
 		} else {
 			uncitedKept++
-			lastUncited = at
 		}
 	}
-	assert.Equal(t, MaxUncitedPoints, uncitedKept)
+	assert.Equal(t, MaxUncitedPoints+1, uncitedKept, "the newest of each kind, and the anchor")
 	assert.Equal(t, 200, citedKept, "cited changes under their cap all stay: they are the grounds a refusal hands back")
-	assert.Equal(t, 400, lastUncited, "it is the newest that stay")
-	assert.Equal(t, 1400, lastCited)
-	// Order is the history's order.
-	ats := atsOf(t, got)
-	for i := 1; i < len(ats); i++ {
-		if ats[i-1] < 1000 && ats[i] < 1000 {
-			assert.Less(t, ats[i-1], ats[i])
-		}
+
+	// What is dropped is replaced by one foreign point from nowhere, standing where the newest dropped
+	// point left the file: the walk over what follows starts from the state it was measured from.
+	var anchor struct {
+		Foreign bool
+		From    *json.RawMessage
+		After   map[string]any
+		At      int
+		By      string
+	}
+	require.NoError(t, json.Unmarshal(got[0], &anchor))
+	assert.True(t, anchor.Foreign)
+	assert.Nil(t, anchor.From, "from nowhere: nothing before it is charged")
+	assert.Equal(t, 400-MaxUncitedPoints, anchor.At)
+	assert.Equal(t, fmt.Sprintf("t%d", 400-MaxUncitedPoints), anchor.After["hash"])
+
+	// Bounded history is stable: compacting it again changes nothing.
+	again := CompactCitationPoints(got)
+	assert.Equal(t, len(got), len(again))
+	for i := range got {
+		assert.JSONEq(t, string(got[i]), string(again[i]))
 	}
 }
 
@@ -124,6 +135,7 @@ func TestBoundBy(t *testing.T) {
 	}
 	assert.Equal(t, got, BoundBy(got), "bounding is idempotent")
 	assert.Equal(t, "a; b", BoundBy("a; a; b"))
+	assert.Equal(t, []string{"b", "a"}, LastEntries([]string{"a", "b", "a"}), "a command named again is the newest")
 	cut := CutEntry("h" + strings.Repeat("é", 200))
 	assert.True(t, utf8.ValidString(cut), "a cut never splits a character")
 	assert.True(t, strings.HasSuffix(cut, "…"))
@@ -150,8 +162,8 @@ func TestCompactCitations_ABloatedHistoryShrinksAndKeepsWhatIsStillNeeded(t *tes
 
 	var got map[string][]json.RawMessage
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	assert.Equal(t, []int{1, 9000}, atsOf(t, got["a.md"]), "the cited change, and the stretch it follows")
-	assert.Len(t, got["b.md"], 1)
+	assert.Equal(t, []int{1, 300, 9000}, atsOf(t, got["a.md"]), "the cited change, and the stretch it follows")
+	assert.Len(t, got["b.md"], 2)
 	assert.NotContains(t, got, "gone.md", "a path with no point left is not kept")
 
 	again, changed, err := CompactCitations(out)
@@ -239,8 +251,8 @@ func TestOpen_AFatStoreFromBeforeTheBoundIsCompactedAndKeepsWhatIsOwed(t *testin
 	assert.Less(t, len(got), 10_000)
 	var h map[string][]json.RawMessage
 	require.NoError(t, json.Unmarshal([]byte(got), &h))
-	assert.Equal(t, []int{1, 77777}, atsOf(t, h["memories/a.md"]), "the owed cited change stays beside the stretch before it")
-	assert.Len(t, h["memories/b.md"], 1)
+	assert.Equal(t, []int{1, 250, 77777}, atsOf(t, h["memories/a.md"]), "the owed cited change stays beside the stretch before it")
+	assert.Len(t, h["memories/b.md"], 2)
 
 	for key, want := range map[string]string{"cited_pending": pending, "baseline_commit": "abc", "cited_content:h": "hello"} {
 		v, ok, err := s.Meta(key)

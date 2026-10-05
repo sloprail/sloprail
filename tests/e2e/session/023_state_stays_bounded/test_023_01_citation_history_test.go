@@ -88,8 +88,8 @@ func TestT023_01_ManyTurnsKeepTheCitationHistoryBounded(t *testing.T) {
 	if len(pts) == 0 {
 		t.Fatalf("the engine recorded nothing of a file that changed between turns: %s", raw)
 	}
-	if len(pts) > sessionstate.MaxUncitedPoints {
-		t.Errorf("the history of one file holds %d points after 90 turns, more than its bound of %d", len(pts), sessionstate.MaxUncitedPoints)
+	if len(pts) > sessionstate.MaxUncitedPoints+1 {
+		t.Errorf("the history of one file holds %d points after 90 turns, more than its bound of %d (and an anchor)", len(pts), sessionstate.MaxUncitedPoints)
 	}
 	if len(raw) > 50_000 {
 		t.Errorf("the history is %d bytes after 90 turns; it must stay the size of the work in the tree", len(raw))
@@ -182,11 +182,11 @@ func TestT023_02_AFatStoreIsCompactedAtTheNextHook(t *testing.T) {
 		t.Errorf("the cited change was lost by the migration: %s", got)
 	}
 	for _, p := range []string{"memories/b.md", "memories/c.md"} {
-		if len(h[p]) != 1 {
-			t.Errorf("%s: the repeated stretch was not folded into one: %d points", p, len(h[p]))
+		if len(h[p]) != 2 {
+			t.Errorf("%s: the repeated stretch was not folded to its first and newest: %d points", p, len(h[p]))
 		}
 	}
-	if st, _ := os.Stat(dbPath); st == nil || st.Size() > 5_000_000 {
-		t.Errorf("the store still occupies %v bytes", st.Size())
+	if st, err := os.Stat(dbPath); err != nil || st.Size() > 5_000_000 {
+		t.Errorf("the store still occupies too much: %v %v", st, err)
 	}
 }
