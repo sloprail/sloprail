@@ -213,3 +213,12 @@ func TestStructureSet_Empty(t *testing.T) {
 	assert.False(t, compileSet(t, fxMdmap).Empty())
 	assert.False(t, compileSet(t, fxProject).Empty())
 }
+
+// Deciders names the gate whose verdict a write gets, by its disable key.
+func TestStructureSet_Deciders(t *testing.T) {
+	set := compileSet(t, fxProject, fxMdmap, fxADR, fxShadowADR)
+	assert.Equal(t, []string{"mdmap/structure"}, set.Deciders(".mdmap/x.txt"))
+	assert.Equal(t, []string{"structure"}, set.Deciders("docs/a.md"))
+	assert.ElementsMatch(t, []string{"adr/structure", "shadow-adr/structure"}, set.Deciders("docs/x/.adr/a.md"))
+	assert.Empty(t, compileSet(t).Deciders("a.go"))
+}

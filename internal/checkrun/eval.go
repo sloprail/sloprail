@@ -61,6 +61,9 @@ import (
 // Params is everything one evaluation of the file-guards is given. Nothing here knows about a
 // session's store or a hook: the caller states the range and where the transcript is.
 type Params struct {
+	// On names where the check ran, for the rule-decision log: "Stop", "sr-checks run",
+	// "sr-checks verify", "sr-checks show". Empty: "Stop", the in-session default.
+	On string
 	// Err receives the diagnostics (stderr); nil discards them.
 	Err    io.Writer
 	Guards []declaration.FileGuard
@@ -281,6 +284,7 @@ type ruleRun struct {
 	result      FileGuardResult
 	refused     bool
 	settled     bool // result is final
+	nothing     bool // the rule had nothing to run: it decided nothing unless it refused
 }
 
 // evaluateChangesets evaluates every file-guard over rng and returns each refusal, in
@@ -350,7 +354,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		}
 		rrs, r, refused := ev.prepare(g)
 		if len(rrs) == 0 {
-			skipped[i] = &ruleRun{g: g, result: r, refused: refused, settled: true}
+			skipped[i] = &ruleRun{g: g, result: r, refused: refused, settled: true, nothing: true}
 			return
 		}
 		prepared[i] = rrs
@@ -385,6 +389,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 			refusals = append(refusals, o.result)
 		}
 	}
+	emitFileGuardEvents(out, p.On, p.FailuresOnly)
 	for _, o := range out {
 		if o != nil && o.tree != nil {
 			fmt.Fprintf(ev.log(o.g), "sloprail: file-guard %s: cheap checks %s, judges %s\n", o.g.Attribution(),
@@ -781,6 +786,7 @@ func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Ran
 		Subagent:       ev.params.Subagent,
 		Dir:            g.Dir,
 		GuardName:      g.Name,
+		Qualified:      g.Qualified(),
 		Workspace:      ev.params.Workspace,
 		ProjectRoot:    tree,
 		SessionID:      ev.params.SessionID,

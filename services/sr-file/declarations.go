@@ -130,7 +130,7 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 	printNature(out, "contexts", contextNames(loaded))
 	printStructures(out, loaded)
 
-	if len(loaded.Invalid) == 0 {
+	if len(loaded.Invalid) == 0 && len(loaded.Degraded) == 0 {
 		return nil
 	}
 
@@ -138,11 +138,24 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 	// a refusal forwards, and the command exits 1 via errRefused so main prints no
 	// second line after the report.
 	errOut := cmd.ErrOrStderr()
-	fmt.Fprintf(errOut, "\n%d declaration(s) could not be loaded:\n", len(loaded.Invalid))
-	for _, iv := range loaded.Invalid {
-		fmt.Fprintf(errOut, "  %s (%s):\n", iv.Qualified(), iv.Path)
-		for _, reason := range iv.Reasons {
-			fmt.Fprintf(errOut, "    - %s\n", reason)
+	if len(loaded.Invalid) > 0 {
+		fmt.Fprintf(errOut, "\n%d declaration(s) could not be loaded:\n", len(loaded.Invalid))
+		for _, iv := range loaded.Invalid {
+			fmt.Fprintf(errOut, "  %s (%s):\n", iv.Qualified(), iv.Path)
+			for _, reason := range iv.Reasons {
+				fmt.Fprintf(errOut, "    - %s\n", reason)
+			}
+		}
+	}
+	// Loaded and enforced, but a declared script cannot run: the rule refuses what it guards
+	// until the file is fixed. Still exit 1, so a CI step reading the status sees it.
+	if len(loaded.Degraded) > 0 {
+		fmt.Fprintf(errOut, "\n%d declaration(s) are loaded and enforced but cannot run (they refuse what they guard until fixed):\n", len(loaded.Degraded))
+		for _, iv := range loaded.Degraded {
+			fmt.Fprintf(errOut, "  %s (%s):\n", iv.Qualified(), iv.Path)
+			for _, reason := range iv.Reasons {
+				fmt.Fprintf(errOut, "    - %s\n", reason)
+			}
 		}
 	}
 	return errRefused

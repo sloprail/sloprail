@@ -31,7 +31,9 @@ deny:
   - regex: '\.tmp$'
 ```
 
-Allow `.sloprail/**` unless the rules are deliberately frozen. The gate covers
+Allow `.sloprail/**` unless the rules are deliberately frozen. A repository that keeps
+`.sloprail/` folders below the root (`marketplace/plugins/<p>/.sloprail/`) allows `**/.sloprail/**`
+instead, which also covers the root one. The gate covers
 `.sloprail/` like any other path, so a structure that leaves it out refuses the
 next edit to itself and to every rule beside it.
 
@@ -72,6 +74,13 @@ one of the folders it sits in matches: `**/.adr/` owns `a/b/.adr/x.md` but not
 A plugin's `allow`/`deny` only ever decide paths inside its scope. Outside it, a
 plugin's structure has no say at all — a plugin can lock down its own folders,
 never the rest of the project.
+
+## Its test cases
+
+The structure gate is one file, so its `sr-test` cases sit in the sibling folder
+`.sloprail/file-guard/structure.tests/<case>/test.sh` (`sr-test` owner: `file-guard/structure`).
+That folder is not a rule: the loader ignores it, and the misplaced-declaration rule lets
+anything under it be written.
 
 ## How a write is decided
 

@@ -32,6 +32,9 @@ type hookScope struct {
 	// that reads the trajectory needs the record itself, so it is carried
 	// separately.
 	Transcript string
+
+	// ToolUseID is the tool call a pre-tool hook decides on, for the decision log.
+	ToolUseID string
 }
 
 // env is the environment to run one guardrail's hook in.

@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/ambientenv"
+	"github.com/sloprail/sloprail/internal/harnessmock"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
@@ -52,7 +53,7 @@ const (
 // other — Go names an installed binary after its directory, and a directory
 // called `session` would install as `session` while the proxy looked for
 // `sr-session`. Listed once here so a new service is added in one place.
-var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks", "sr-eval"}
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks", "sr-eval", "sr-test"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {
@@ -822,34 +823,8 @@ func (e *Env) localMarketplace() string {
 		e.t.Fatalf("harness: temp marketplace: %v", err)
 	}
 	e.t.Cleanup(func() { os.RemoveAll(dir) })
-	raw, err := os.ReadFile(filepath.Join(e.repoRoot, ".claude-plugin", "marketplace.json"))
-	if err != nil {
-		e.t.Fatalf("harness: read marketplace.json: %v", err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		e.t.Fatalf("harness: parse marketplace.json: %v", err)
-	}
-	plugins, _ := doc["plugins"].([]any)
-	for _, p := range plugins {
-		pm, _ := p.(map[string]any)
-		if _, isString := pm["source"].(string); isString {
-			continue
-		}
-		pm["source"] = "./marketplace/plugins/" + fmt.Sprint(pm["name"])
-	}
-	body, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		e.t.Fatalf("harness: encode marketplace.json: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
-		e.t.Fatalf("harness: mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".claude-plugin", "marketplace.json"), body, 0o644); err != nil {
-		e.t.Fatalf("harness: write marketplace.json: %v", err)
-	}
-	if err := os.Symlink(filepath.Join(e.repoRoot, "marketplace"), filepath.Join(dir, "marketplace")); err != nil {
-		e.t.Fatalf("harness: link marketplace: %v", err)
+	if err := harnessmock.LocalMarketplace(e.repoRoot, dir); err != nil {
+		e.t.Fatalf("harness: %v", err)
 	}
 	return dir
 }
@@ -1530,6 +1505,17 @@ func (e *Env) WriteFile(projDir, rel, body string) {
 	}
 }
 
+// scriptBody gives a `.sh` fixture the shebang sloprail demands of every script it
+// runs (it execs them directly, never as `sh <file>`), when the test's body is
+// shell text without one. A test about the missing shebang writes its file with
+// WriteFile instead, which never touches the body.
+func scriptBody(name, body string) string {
+	if strings.HasSuffix(name, ".sh") && !strings.HasPrefix(body, "#!") {
+		return "#!/bin/sh\n" + body
+	}
+	return body
+}
+
 // WriteExecutable writes a file into a project with the executable bit set — for
 // a script a rule will run that lives in the tree rather than beside a rule's own
 // declaration (a goal's verify.sh under goal/<name>/, which a gate's check execs).
@@ -1541,7 +1527,7 @@ func (e *Env) WriteExecutable(projDir, rel, body string) {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
 	}
-	if err := os.WriteFile(full, []byte(body), 0o755); err != nil {
+	if err := os.WriteFile(full, []byte(scriptBody(rel, body)), 0o755); err != nil {
 		e.t.Fatalf("harness: write executable %s: %v", rel, err)
 	}
 }
@@ -1597,7 +1583,7 @@ func (e *Env) Gate(projDir, name, gateYAML string, files map[string]string) {
 		e.t.Fatalf("harness: write gate.yaml: %v", err)
 	}
 	for file, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(scriptBody(file, body)), 0o755); err != nil {
 			e.t.Fatalf("harness: write gate file %s: %v", file, err)
 		}
 	}
@@ -1757,7 +1743,7 @@ func (e *Env) FileGuard(projDir, name, guardYAML string, files map[string]string
 		e.t.Fatalf("harness: write file-guard.yaml: %v", err)
 	}
 	for file, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(scriptBody(file, body)), 0o755); err != nil {
 			e.t.Fatalf("harness: write file-guard file %s: %v", file, err)
 		}
 	}
@@ -1780,7 +1766,7 @@ func (e *Env) Context(projDir, name, contextYAML string, files map[string]string
 		e.t.Fatalf("harness: write context.yaml: %v", err)
 	}
 	for file, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(scriptBody(file, body)), 0o755); err != nil {
 			e.t.Fatalf("harness: write context file %s: %v", file, err)
 		}
 	}

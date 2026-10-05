@@ -69,7 +69,9 @@ needing_paths() {
   fi
   while IFS=$'\t' read -r status path old; do
     [ -n "$path" ] || continue
-    if [ "$path" = ".sloprail/config.yaml" ] || [ "$old" = ".sloprail/config.yaml" ]; then
+    case "/$path" in */.sloprail/config.yaml) is_config=1 ;; *) is_config="" ;; esac
+    case "/$old" in */.sloprail/config.yaml) is_config=1 ;; esac
+    if [ -n "$is_config" ]; then
       printf '%s\n' "$path"
       continue
     fi

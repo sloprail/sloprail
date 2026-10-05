@@ -158,6 +158,15 @@ type Loaded struct {
 	// agent meets it.
 	ScopeOverlaps []ScopeOverlap
 
+	// Degraded are declarations that ARE loaded and enforced but carry an environment
+	// fault (a declared script that lost its shebang or execute bit): reported where
+	// Invalid is, never dropped, because a rule that stopped loading would stop
+	// refusing. At run time the exec path refuses what such a rule guards until the
+	// file is fixed. Only declarations that are in force: one displaced (Shadowed) or
+	// disabled is neither loaded nor enforced, so it is not reported here. Sorted by
+	// qualified name.
+	Degraded []Invalid
+
 	// Invalid are the declarations that could not be loaded, across every nature,
 	// sorted by their qualified name. Reported rather than fatal: the engine loads
 	// every sound declaration and refuses only the ones that are not.
@@ -527,31 +536,48 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 		soundStructures []StructureGate
 	)
 	invalid := append([]Invalid(nil), parseInvalid...)
+	var degraded []Invalid
 	for _, g := range parsedFileGuards {
-		if problems := ValidateFileGuard(g, env); Disabling(problems) {
+		problems := ValidateFileGuard(g, env)
+		if Disabling(problems) {
 			invalid = append(invalid, newInvalidWithOrigin(NatureFileGuard, g.Name, fileGuardPath(originRoot(s.root, g.Origin), g.Name), g.Origin, problems...))
 			continue
+		}
+		if len(problems) > 0 {
+			degraded = append(degraded, newInvalidWithOrigin(NatureFileGuard, g.Name, fileGuardPath(originRoot(s.root, g.Origin), g.Name), g.Origin, problems...))
 		}
 		soundFileGuards = append(soundFileGuards, g)
 	}
 	for _, g := range parsedGates {
-		if problems := ValidateGate(g, env); Disabling(problems) {
+		problems := ValidateGate(g, env)
+		if Disabling(problems) {
 			invalid = append(invalid, newInvalidWithOrigin(NatureGate, g.Name, gatePath(originRoot(s.root, g.Origin), g.Name), g.Origin, problems...))
 			continue
+		}
+		if len(problems) > 0 {
+			degraded = append(degraded, newInvalidWithOrigin(NatureGate, g.Name, gatePath(originRoot(s.root, g.Origin), g.Name), g.Origin, problems...))
 		}
 		soundGates = append(soundGates, g)
 	}
 	for _, c := range parsedContexts {
-		if problems := ValidateContext(c, env); Disabling(problems) {
+		problems := ValidateContext(c, env)
+		if Disabling(problems) {
 			invalid = append(invalid, newInvalidWithOrigin(NatureContext, c.Name, contextPath(originRoot(s.root, c.Origin), c.Name), c.Origin, problems...))
 			continue
+		}
+		if len(problems) > 0 {
+			degraded = append(degraded, newInvalidWithOrigin(NatureContext, c.Name, contextPath(originRoot(s.root, c.Origin), c.Name), c.Origin, problems...))
 		}
 		soundContexts = append(soundContexts, c)
 	}
 	for _, sg := range parsedStructures {
-		if problems := ValidateStructureGate(sg, env); Disabling(problems) {
+		problems := ValidateStructureGate(sg, env)
+		if Disabling(problems) {
 			invalid = append(invalid, newInvalidWithOrigin(NatureStructure, "", structurePath(originRoot(s.root, sg.Origin)), sg.Origin, problems...))
 			continue
+		}
+		if len(problems) > 0 {
+			degraded = append(degraded, newInvalidWithOrigin(NatureStructure, "", structurePath(originRoot(s.root, sg.Origin)), sg.Origin, problems...))
 		}
 		soundStructures = append(soundStructures, sg)
 	}
@@ -559,6 +585,7 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	// -- 3. resolve precedence; a displaced declaration is Shadowed, not loaded --
 	var out Loaded
 	out.Invalid = invalid
+	out.Degraded = degraded
 	// A protected plugin rule is claimed first, so a project declaration of the same
 	// nature and name is the one displaced (and reported as Shadowed): a project
 	// cannot override the rule that judges its own changes to its rules.
@@ -582,6 +609,7 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 
 	// -- 4. apply the project's disable list to loaded AND invalid --
 	applyDisable(&out, cfg)
+	keepDegradedInForce(&out)
 
 	// -- 5. report literal scope overlaps among the plugin structures still in
 	// force (after disabling, so switching one off silences its overlap) --
@@ -834,6 +862,31 @@ func parseYAML(path string, data []byte, dst any) []Problem {
 	return nil
 }
 
+// keepDegradedInForce drops a Degraded entry whose declaration lost precedence (Shadowed): it is
+// not loaded, so there is nothing enforced for the report to be about.
+func keepDegradedInForce(l *Loaded) {
+	inForce := map[string]bool{}
+	for _, g := range l.FileGuards {
+		inForce[g.Origin.Qualified(NatureFileGuard, g.Name)] = true
+	}
+	for _, g := range l.Gates {
+		inForce[g.Origin.Qualified(NatureGate, g.Name)] = true
+	}
+	for _, c := range l.Contexts {
+		inForce[c.Origin.Qualified(NatureContext, c.Name)] = true
+	}
+	for _, sg := range l.Structures {
+		inForce[sg.Origin.Qualified(NatureStructure, "")] = true
+	}
+	kept := l.Degraded[:0]
+	for _, iv := range l.Degraded {
+		if inForce[iv.Qualified()] {
+			kept = append(kept, iv)
+		}
+	}
+	l.Degraded = kept
+}
+
 // sortLoaded orders every slice in a Loaded by name, so two loads of the same
 // project produce the same order — a diff of two reports is signal, not the noise
 // directory iteration order would inject.
@@ -847,6 +900,7 @@ func sortLoaded(l *Loaded) {
 	sort.Slice(l.Gates, func(i, j int) bool { return l.Gates[i].Name < l.Gates[j].Name })
 	sort.Slice(l.Contexts, func(i, j int) bool { return l.Contexts[i].Name < l.Contexts[j].Name })
 	sort.Slice(l.Invalid, func(i, j int) bool { return l.Invalid[i].Qualified() < l.Invalid[j].Qualified() })
+	sort.Slice(l.Degraded, func(i, j int) bool { return l.Degraded[i].Qualified() < l.Degraded[j].Qualified() })
 	sort.Slice(l.Shadowed, func(i, j int) bool { return l.Shadowed[i].Qualified() < l.Shadowed[j].Qualified() })
 }
 
@@ -991,6 +1045,15 @@ func applyDisable(out *Loaded, cfg config) {
 		invalid = append(invalid, iv)
 	}
 	out.Invalid = invalid
+
+	degraded := out.Degraded[:0]
+	for _, iv := range out.Degraded {
+		if cfg.isDisabled(iv.Qualified()) {
+			continue
+		}
+		degraded = append(degraded, iv)
+	}
+	out.Degraded = degraded
 }
 
 // ProjectStructure is the project's own structure gate, or nil when the project

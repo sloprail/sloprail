@@ -181,6 +181,9 @@ func reportLoadCheck(cmd *cobra.Command, loaded declaration.Loaded) {
 	if len(loaded.Invalid) > 0 {
 		failed = fmt.Sprintf(", %d could not load (above)", len(loaded.Invalid))
 	}
+	if len(loaded.Degraded) > 0 {
+		failed += fmt.Sprintf(", %d cannot run a declared script and refuse what they guard (above)", len(loaded.Degraded))
+	}
 	if broken := reportJudgeTemplates(cmd, loaded); broken > 0 {
 		failed += fmt.Sprintf(", %d judge template(s) cannot be rendered (above)", broken)
 	}

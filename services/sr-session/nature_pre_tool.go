@@ -109,8 +109,16 @@ func dispatchOwnNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Reg
 	gatesMap := loadGatesMap(cmd, store)
 
 	// Context enters on the pre-action events, before anything reads context[].
-	// A context does not block; this only populates the map (and persists it).
-	runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap, nil)
+	// A context's enter populates the map (and persists it); a verdict does not block. But an
+	// enter that could not run is no decline: it denies the event that triggered it, because
+	// the context stays off and what it guards would silently go unjudged.
+	enterRefused := contextRefusalReasons(runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap, nil))
+	withEnter := func(rest string) string {
+		if rest != "" {
+			enterRefused = append(enterRefused, rest)
+		}
+		return strings.Join(enterRefused, "\n")
+	}
 
 	// The structure gates next: a write outside the allowlist is refused before
 	// any gate or file-guard is consulted — the cheapest "may you write here at
@@ -118,15 +126,15 @@ func dispatchOwnNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Reg
 	// loaded structure (the project's and each plugin's) is combined by scope.
 	// Blocks immediately on a refusal.
 	if len(loaded.Structures) > 0 {
-		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root(), reg); reason != "" {
-			return natureVerdict{Blocked: reason}
+		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root(), reg, p.ToolUseID); reason != "" {
+			return natureVerdict{Blocked: withEnter(reason)}
 		}
 	}
 
 	// Then the gates bound to these pre-events. Every file the call would change
 	// is asked about (runGatesForEvents), and the one deny names each refused
 	// file; the first refusal of any other kind (a command, a tool) is what blocks.
-	if reason := gateRefusal(runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
+	if reason := withEnter(gateRefusal(runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap, grounded.notes), events, scope.Workspace)); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}
 	// Permitted: the cited changes this call makes are pending until the next
@@ -189,7 +197,7 @@ func gateRefusal(results []gateResult, events []event.Event, workspace string) s
 // since a gate the engine could not compile has not established that any path is
 // forbidden — the same "an unloadable rule blocks nothing" the rest of the
 // dispatch keeps.
-func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event, root string, reg *module.Registry) string {
+func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event, root string, reg *module.Registry, toolUseID string) string {
 	compiled, err := dispatchcore.CompileStructureSet(structures)
 	if err != nil {
 		// Structure gates that loaded but will not compile are a disagreement
@@ -209,7 +217,11 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 			// (dispatchForeignGates), which also runs when this project has none.
 			continue
 		}
-		if allowed, reason := compiled.Decide(path); !allowed {
+		allowed, reason := compiled.Decide(path)
+		for _, rule := range compiled.Deciders(path) {
+			emitStructure(rule, allowed, reason, e.Kind, toolUseID)
+		}
+		if !allowed {
 			return reason
 		}
 	}

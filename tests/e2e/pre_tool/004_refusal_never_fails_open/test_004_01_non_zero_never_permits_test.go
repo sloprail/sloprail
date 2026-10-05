@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,19 +76,10 @@ func TestT004_01_StderrRefusalReachesTheAgent(t *testing.T) {
 
 // T004_02: a check that cannot be run at all refuses.
 //
-// Exit 126 with no output — the shell saying it could not run the command at
-// all. The mechanism failing must not read as approval.
-//
-// The fixture is chmod 000, not merely a missing execute bit: a script
-// missing only its OWN execute bit but otherwise readable is run through its
-// `#!` interpreter (scriptCall.command in internal/dispatch/exec.go) — a file
-// freshly written by an editor or a Write tool is created without the
-// execute bit, and refusing on that alone used to cost an extra turn on every
-// single rule authored, purely to `chmod +x` a script whose shebang already
-// says how to run it. chmod 000 removes read permission too, so nothing —
-// not even the fallback interpreter — can open it, which is the genuinely
-// unrunnable case this test pins. scriptRefusalReason diagnoses exit 126 with
-// a message naming the fix.
+// The gate's script has no readable, executable form (chmod 000). The rule stays loaded and
+// enforced, so the write is REFUSED at run time with a message naming the file and the fix; the
+// problem is also reported at the next session start. Scripts are run directly, never as
+// `sh <file>`, so a script that cannot be exec'd never runs and never approves.
 func TestT004_02_UnrunnableCheckRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -95,58 +87,62 @@ func TestT004_02_UnrunnableCheckRefuses(t *testing.T) {
 	e.Gate(proj, "unrunnable", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\nexit 0\n",
 	})
-
-	// chmod 000: no read, no execute — genuinely unrunnable, not merely
-	// missing its own execute bit (which the engine now runs through the
-	// script's interpreter instead of refusing).
 	script := filepath.Join(proj, ".sloprail", "gate", "unrunnable", "refuse.sh")
 	if err := os.Chmod(script, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
 
+	start := e.CLI(proj, "session", "start")
+	for _, want := range []string{"loaded and enforced", "unrunnable", "executable"} {
+		if !strings.Contains(start.Output, want) {
+			t.Errorf("the session start does not report the unrunnable gate (missing %q):\n%s", want, start.Output)
+		}
+	}
 	got := e.Run(proj, "s-004-02", "write a note", Turns("done",
 		Write("w1", "any/notes.md", "hello"),
 	))
-
 	if !got.Refused() {
 		t.Fatalf("a check that could not run permitted the write:\n%s", got.Output)
 	}
-	if !got.Saw("executable") {
-		t.Errorf("the refusal does not say what to fix (expected it to mention being executable):\n%s", got.Output)
+	for _, want := range []string{"refuse.sh", "executable", "chmod +x"} {
+		if !got.Saw(want) {
+			t.Errorf("the refusal does not name the file and the fix (missing %q):\n%s", want, got.Output)
+		}
 	}
 }
 
-// T004_02b: the property my earlier fix introduced — a script missing ONLY its
-// own execute bit, but otherwise readable and carrying a `#!` interpreter
-// line, is RUN (through that interpreter) rather than refused. The negative
-// control for T004_02: without this, "chmod 000 refuses" could be pinning the
-// wrong thing (any non-executable file refuses) rather than the right one
-// (only a GENUINELY unrunnable file refuses).
-func TestT004_02b_MissingExecuteBitAloneStillRuns(t *testing.T) {
+// T004_02b: a script missing ONLY its execute bit (readable, with a `#!` line) is refused too: it
+// is never run through its interpreter, so its own verdict is never read, and the refusal names the
+// fix. An agent can `chmod -x` a gate's script (not a write, so no hook sees it); the gate must keep
+// refusing, not stop applying.
+func TestT004_02b_MissingExecuteBitRefusesNamingTheFix(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "chmod-forgotten", bindEveryWrite, map[string]string{
-		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"refused by the script\"}'\nexit 1\n",
+		"refuse.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n",
 	})
-
 	script := filepath.Join(proj, ".sloprail", "gate", "chmod-forgotten", "refuse.sh")
 	if err := os.Chmod(script, 0o644); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
 
+	start := e.CLI(proj, "session", "start")
+	for _, want := range []string{"loaded and enforced", "chmod-forgotten", "chmod +x"} {
+		if !strings.Contains(start.Output, want) {
+			t.Errorf("the session start does not report the missing execute bit (missing %q):\n%s", want, start.Output)
+		}
+	}
 	got := e.Run(proj, "s-004-02b", "write a note", Turns("done",
 		Write("w1", "any/notes.md", "hello"),
 	))
-
 	if !got.Refused() {
-		t.Fatalf("the script's own refusal did not reach the engine — a missing execute bit alone must not itself refuse:\n%s", got.Output)
+		t.Fatalf("a gate whose script lost its execute bit permitted the write:\n%s", got.Output)
 	}
-	if !got.Saw("refused by the script") {
-		t.Errorf("the script ran but its own reason did not reach the agent — expected the script's OWN refusal, not a \"not executable\" one:\n%s", got.Output)
-	}
-	if got.Saw("chmod +x it") {
-		t.Errorf("the refusal is the generic \"not executable\" one, not the script's own — the execute bit alone must not block running it:\n%s", got.Output)
+	for _, want := range []string{"refuse.sh", "chmod +x"} {
+		if !got.Saw(want) {
+			t.Errorf("the refusal does not name the file and the fix (missing %q):\n%s", want, got.Output)
+		}
 	}
 }
 

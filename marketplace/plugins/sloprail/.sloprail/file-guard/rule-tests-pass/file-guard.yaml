@@ -1,0 +1,20 @@
+# rule-tests-pass: when anything under a `.sloprail/` changes, the sr-test cases it can break must pass, and
+# a rule the change adds or edits must have a case. A rule change that breaks a case, or a new rule nobody
+# proves fires, is refused here, not discovered later. The argument lives in README.md.
+#
+# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's).
+# deletions: include, so deleting a rule's last case (or a rule) is seen: the deleted case is then not run, and
+# the rule that lost its case is refused.
+deletions: include
+match: 'path matches "(^|/)[.]sloprail/."'
+
+# One subject per touched `.sloprail` root (its id is the root's dir, "." for the repo root), whose
+# fingerprint is the rules plus the tests of that root: every file of its `.sloprail/`, read from SR_TREE.
+# Editing any of them judges the root again.
+subjects: ./subjects.sh
+
+checks:
+  # Script only: running cases is deterministic and asks no model. Per root it runs `sr-test run` over the
+  # cases the change can break (only the touched cases when only tests changed, all of the root's cases when
+  # anything else did), then `sr-test doctor` for the rules the change added or edited.
+  - script: ./check.sh

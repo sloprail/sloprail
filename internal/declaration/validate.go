@@ -10,6 +10,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/scriptexec"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -100,6 +101,8 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
 	problems = append(problems, validateNoTranscriptRequire(g)...)
 	problems = append(problems, validateChecks(g.Checks)...)
+	problems = append(problems, validateScripts(g.Dir, "subjects", g.Subjects)...)
+	problems = append(problems, validateCheckScripts(g.Dir, g.Checks)...)
 
 	// The at-least-one rule, identical to the gate's. Both are optional
 	// individually; a guard with neither require nor checks is refused — it would
@@ -132,6 +135,7 @@ func ValidateGate(g Gate, env Env) []Problem {
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
 	problems = append(problems, validateCitationTriggers(g.Require, gateEvents(g.On), ExpandGateEvent)...)
 	problems = append(problems, validateChecks(g.Checks)...)
+	problems = append(problems, validateCheckScripts(g.Dir, g.Checks)...)
 
 	// The one at-least-one rule. Both are optional individually; a gate with
 	// neither is refused.
@@ -172,6 +176,8 @@ func ValidateContext(c Context, env Env) []Problem {
 		problems = append(problems, prob(ErrMissingField, "exit",
 			"a context must name an exit script — the stage consulted on a Stop that decides whether the context is done"))
 	}
+	problems = append(problems, validateScripts(c.Dir, "enter", c.Enter)...)
+	problems = append(problems, validateScripts(c.Dir, "exit", c.Exit)...)
 
 	return problems
 }
@@ -421,6 +427,33 @@ func validateChecks(checks []Check) []Problem {
 				"a check must set exactly one of script or judge, but sets both"))
 		}
 		problems = append(problems, validateJudgeTuning(c, where)...)
+	}
+	return problems
+}
+
+// validateScripts reports a declared script that exists but cannot be exec'd
+// directly (no shebang, not executable, non-standard interpreter). It is an
+// ENVIRONMENT fault, not a declaration one: the rule stays loaded and enforced,
+// and the exec path refuses every action it guards with the same error until the
+// file is fixed. Dropping the rule instead would disarm it on a `chmod -x` (not a
+// write, so no hook sees it) until the next session hook reported it. A script
+// that does not exist is not this check's business: absence surfaces where it is run.
+func validateScripts(dir, where, script string) []Problem {
+	if err := scriptexec.VerifyDeclared(dir, script); err != nil {
+		p := prob(ErrBadScript, where, "%v", err)
+		p.Fault = FaultEnvironment
+		return []Problem{p}
+	}
+	return nil
+}
+
+// validateCheckScripts applies validateScripts to every check's script and prepare.
+func validateCheckScripts(dir string, checks []Check) []Problem {
+	var problems []Problem
+	for i, c := range checks {
+		where := fmt.Sprintf("check %d", i)
+		problems = append(problems, validateScripts(dir, where+" script", c.Script)...)
+		problems = append(problems, validateScripts(dir, where+" prepare", c.Prepare)...)
 	}
 	return problems
 }

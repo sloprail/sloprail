@@ -7,6 +7,7 @@
 //	sr agent ...      → sr-agent
 //	sr eval ...       → sr-eval
 //	sr checks ...     → sr-checks
+//	sr test ...       → sr-test
 //
 // So `sr session start` and `sr-session start` are the same run of the same
 // binary, reached two ways. The proxy adds one exec and changes nothing else:
@@ -107,6 +108,7 @@ var services = []service{
 	{"agent", "Run an agent, whichever harness is running"},
 	{"eval", "Prove a guardrail's use case against a real agent"},
 	{"checks", "Judge the file-guards over an explicit commit range and show the results"},
+	{"test", "Run a project's end-to-end rule tests through a harness mock"},
 }
 
 // binaryName is the binary a service word dispatches to.

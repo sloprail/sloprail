@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+payload="$(cat)"
+if printf '%s' "$payload" | jq -e '.event.resultKnown and (.event.newContent | contains("title:"))' >/dev/null; then
+  exit 0
+fi
+echo '{"reason":"a note needs a title: line; write it with one"}'
+exit 1

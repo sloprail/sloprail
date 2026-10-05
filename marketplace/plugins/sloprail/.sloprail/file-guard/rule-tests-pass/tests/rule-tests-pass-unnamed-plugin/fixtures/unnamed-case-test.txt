@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+git init -q .
+RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "write an untitled note, then a titled one")
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="unnamed/demo")] | .[0].outcome=="refused" and (.[0].reason|contains("needs a title")) and .[1].outcome=="permitted"' >/dev/null

@@ -60,6 +60,7 @@ type HookPayload struct {
 
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
+	ToolUseID      string          `json:"tool_use_id"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	StopHookActive bool            `json:"stop_hook_active"`
 

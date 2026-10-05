@@ -24,7 +24,8 @@ import (
 //
 // # The order, and why it is load-bearing
 //
-//	0. context ENTERS on the cycle's Post events
+//	0. context ENTERS on the cycle's Post events (an enter that cannot run refuses the turn,
+//	     as does any declared enter/exit script that cannot run: brokenContextScripts)
 //	     — a context that recognises itself only from settled content
 //	       (a goal.yaml whose active:true exists once the write landed) enters
 //	       here, populating context[] BEFORE anything reads it: a file-guard's
@@ -116,7 +117,12 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 0. context enters on the Post file events AND the tag events, populating
 	//    context[] before commit-required, the file-guards and the gates read it. Never blocks.
 	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
-	runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
+	enterRefusals := runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
+	// An enter that could not run is no decline (the context would stay off and the rules reading
+	// it silently not fire): the Stop that handled its Post trigger is refused, and so is any
+	// Stop while a declared enter or exit cannot run (brokenContextScripts).
+	refusals = append(refusals, contextRefusalReasons(enterRefusals)...)
+	refusals = append(refusals, brokenContextScripts(loaded.Contexts, enterRefusals)...)
 
 	// 1. commit required: a file-guard judges commits, so uncommitted work on a
 	//    path some rule selects is refused before anything is judged. See
@@ -171,6 +177,7 @@ func dispatchNatureStopStoreless(cmd *cobra.Command, p HookPayload, reg *module.
 	contextMap := map[string]natures.ContextState{}
 	gatesMap := map[string]natures.GateState{}
 	var refusals []string
+	refusals = append(refusals, brokenContextScripts(loaded.Contexts, nil)...)
 
 	commitOwed := false
 	if reason := commitRequired(cmd, p, loaded.FileGuards, nil, reg); reason != "" {

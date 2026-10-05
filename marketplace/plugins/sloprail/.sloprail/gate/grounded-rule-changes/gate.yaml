@@ -14,9 +14,9 @@
 # can switch rules back ON, but a file under `.sloprail/` is the user's to decide.
 on:
   - event: PreFileWrite
-    match: 'event.path == ".sloprail/config.yaml"'
+    match: 'event.path == ".sloprail/config.yaml" or event.path endsWith "/.sloprail/config.yaml"'
   - event: PreFileDelete
-    match: 'event.path == ".sloprail/config.yaml"'
+    match: 'event.path == ".sloprail/config.yaml" or event.path endsWith "/.sloprail/config.yaml"'
 require:
   - citation: {source_types: [user, tool_result]}
     when: ./always-with-advice.sh

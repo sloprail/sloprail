@@ -181,3 +181,35 @@ func TestContextCitationRequireReadsTheHistory(t *testing.T) {
 	runContextEnters(discard(), reg, []declaration.Context{c}, []event.Event{ev}, hookScope{}, store, ctxMap, loadGatesMap(discard(), store), nil)
 	assert.FileExists(t, marker, "the control: without a history the citation on the event meets it")
 }
+
+// An enter that cannot run is returned as a refusal (the caller denies the trigger), never
+// silently dropped as a decline; one that runs and declines refuses nothing.
+func TestRunContextEnters_UnrunnableEnterIsRefusedDeclineIsNot(t *testing.T) {
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "noexec.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "decline.sh"), []byte("#!/bin/sh\ncat >/dev/null\nexit 1\n"), 0o755))
+	mk := func(name, enter string) declaration.Context {
+		return declaration.Context{Name: name, Dir: dir, Enter: enter, Exit: "./decline.sh",
+			On: []declaration.ContextTrigger{{Event: declaration.AliasPostFileWrite}}}
+	}
+	ev := event.Event{Kind: declaration.KindPostFileCreate, Fields: map[string]any{"path": "a.md"}}
+	contexts := []declaration.Context{mk("broken", "./noexec.sh"), mk("declines", "./decline.sh")}
+	store := openTestStore(t)
+	ctxMap := loadContextMap(discard(), store, contexts)
+
+	refused := runContextEnters(discard(), reg, contexts, []event.Event{ev, ev}, hookScope{}, store, ctxMap, loadGatesMap(discard(), store), nil)
+	require.Len(t, refused, 1, "one refusal per context, only for the one that could not run")
+	assert.Equal(t, "broken", refused[0].Context)
+	assert.Contains(t, refused[0].Reason, "noexec.sh")
+	assert.Contains(t, refused[0].Reason, "chmod +x")
+	assert.False(t, ctxMap["broken"].Active)
+
+	// The Stop sweep names the broken enter once (already refused: not twice) and nothing else.
+	assert.Empty(t, brokenContextScripts(contexts[1:], nil))
+	swept := brokenContextScripts(contexts, nil)
+	require.Len(t, swept, 1)
+	assert.Contains(t, swept[0], "noexec.sh")
+	assert.Empty(t, brokenContextScripts(contexts, refused), "an enter that already refused is not named twice")
+}

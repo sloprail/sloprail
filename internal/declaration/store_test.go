@@ -44,7 +44,7 @@ func writeDecl(t *testing.T, files map[string]string) string {
 	for rel, content := range files {
 		path := filepath.Join(root, rel)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		writeDeclFile(t, path, content)
 	}
 	return root
 }
@@ -1293,4 +1293,110 @@ func TestLoad_FileGuard_PreventiveIsRefusedWithTheSplit(t *testing.T) {
 		assert.Contains(t, msg, "gate")
 		assert.Contains(t, msg, "file-guard")
 	}
+}
+
+// writeDeclFile writes one declaration file. A `.sh` file is a declared script, so
+// it gets what the loader demands of one — the execute bit and a shebang —
+// unless the test is about exactly that (it then writes the file itself).
+func writeDeclFile(t *testing.T, path, content string) {
+	t.Helper()
+	mode := os.FileMode(0o644)
+	if strings.HasSuffix(path, ".sh") {
+		mode = 0o755
+		if !strings.HasPrefix(content, "#!") {
+			content = "#!/bin/sh\n" + content
+		}
+	}
+	require.NoError(t, os.WriteFile(path, []byte(content), mode))
+	require.NoError(t, os.Chmod(path, mode))
+}
+
+// A declared script that exists but cannot be exec'd directly (no shebang, no
+// execute bit, a non-standard interpreter) does NOT drop the rule: it stays loaded
+// and enforced (its exec path refuses what it guards), and is reported in Degraded,
+// naming the file and the fix. Written with os.WriteFile directly: writeDeclFile
+// would repair them.
+func TestLoad_Script_WithoutShebangOrExecBitStaysLoadedAndIsReported(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		mode os.FileMode
+		want string
+	}{
+		"no shebang":     {"exit 0\n", 0o755, "#!/usr/bin/env bash"},
+		"not executable": {"#!/bin/sh\nexit 0\n", 0o644, "chmod +x"},
+		"local interp":   {"#!/usr/local/bin/bash\nexit 0\n", 0o755, "#!/usr/bin/env bash"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := writeDecl(t, map[string]string{
+				"file-guard/g/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - script: ./c.sh\n",
+			})
+			p := filepath.Join(root, "file-guard", "g", "c.sh")
+			require.NoError(t, os.WriteFile(p, []byte(tc.body), tc.mode))
+			require.NoError(t, os.Chmod(p, tc.mode))
+			loaded, err := New(root).Load(testRegistry(t))
+			require.NoError(t, err)
+			assert.Empty(t, loaded.Invalid, "an unrunnable script is not a declaration fault")
+			require.Len(t, loaded.FileGuards, 1, "the rule must stay loaded, or it stops refusing until the next report")
+			require.Len(t, loaded.Degraded, 1)
+			assert.True(t, hasKind(loaded.Degraded[0], ErrBadScript))
+			assert.Equal(t, "g", loaded.Degraded[0].Name)
+			assert.Contains(t, loaded.Degraded[0].Reason, "c.sh")
+			assert.Contains(t, loaded.Degraded[0].Reason, tc.want)
+		})
+	}
+}
+
+// A script that does not exist is not this load check's concern (it is reported
+// where it is run), and an inline command is never inspected.
+func TestLoad_Script_MissingFileStillLoads(t *testing.T) {
+	loadOK(t, map[string]string{
+		"file-guard/g/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - script: sr-checks\n  - script: ./nowhere.sh\n",
+	})
+}
+
+// The same holds for every nature: a gate's check, a context's enter and exit and a rule's
+// subjects script stay loaded when the file loses its shebang or execute bit.
+func TestLoad_Script_OtherNaturesStayLoadedAndReported(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"gate/gt/gate.yaml":       "on:\n  - event: PreFileWrite\n    match: event.path endsWith \".md\"\nchecks:\n  - prepare: ./p.sh\n    judge: ./j.md.j2\n",
+		"gate/gt/j.md.j2":         "judge\n",
+		"context/cx/context.yaml": "on:\n  - event: PostFileWrite\n    match: event.path endsWith \".md\"\nenter: ./enter.sh\nexit: ./exit.sh\n",
+	})
+	for _, rel := range []string{"gate/gt/p.sh", "context/cx/enter.sh", "context/cx/exit.sh"} {
+		p := filepath.Join(root, rel)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o644))
+		require.NoError(t, os.Chmod(p, 0o644))
+	}
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, loaded.Invalid)
+	require.Len(t, loaded.Gates, 1)
+	require.Len(t, loaded.Contexts, 1)
+	require.Len(t, loaded.Degraded, 2)
+	for _, d := range loaded.Degraded {
+		assert.True(t, hasKind(d, ErrBadScript))
+		assert.Contains(t, d.Reason, "chmod +x")
+	}
+}
+
+// Degraded is reported in qualified-name order, whatever order the folders were read in.
+func TestLoad_Degraded_IsSortedByQualifiedName(t *testing.T) {
+	files := map[string]string{}
+	for _, n := range []string{"zeta", "alpha", "mid"} {
+		files["file-guard/"+n+"/file-guard.yaml"] = "match: \"**/*.md\"\nchecks:\n  - script: ./c.sh\n"
+	}
+	root := writeDecl(t, files)
+	for _, n := range []string{"zeta", "alpha", "mid"} {
+		p := filepath.Join(root, "file-guard", n, "c.sh")
+		require.NoError(t, os.WriteFile(p, []byte("exit 0\n"), 0o755))
+		require.NoError(t, os.Chmod(p, 0o755))
+	}
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, loaded.Degraded, 3)
+	var got []string
+	for _, d := range loaded.Degraded {
+		got = append(got, d.Name)
+	}
+	assert.Equal(t, []string{"alpha", "mid", "zeta"}, got)
 }

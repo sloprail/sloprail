@@ -19,7 +19,7 @@
 # copies to `/` when the shell substitution comes back empty. See INSTALL_DIR.
 
 BIN_DIR  := bin
-SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks
+SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks sr-test
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
 # VERSION is what `sr-session --version` (etc.) reports, and what the plugin's
@@ -103,6 +103,7 @@ distribute-local: build
 		codesign --sign - --force "$(INSTALL_DIR)/$$s" 2>/dev/null || true; \
 		echo "  $(INSTALL_DIR)/$$s"; \
 	done
+	@sh install.sh --harness-mock-only "$(INSTALL_DIR)"
 	@case ":$$PATH:" in \
 		*":$(INSTALL_DIR):"*) ;; \
 		*) echo; echo "NOTE: $(INSTALL_DIR) is not on your \$$PATH — add it, or the hooks will not find sr-session.";; \

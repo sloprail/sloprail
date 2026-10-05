@@ -1211,7 +1211,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 	results := checkstore.Open(cache, true)
 	defer results.Close()
 	refusals, outcomes := checkrun.Evaluate(checkrun.Params{
-		Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
+		On: "Stop", Err: io.Discard, Guards: loaded.FileGuards, Root: r.Folder, Range: rng, Cwd: r.Folder,
 		Workspace: r.Folder, AgentID: p.AgentID, Subagent: p.IsSubagent(),
 		Store: results, Verify: true, FailuresOnly: true, RecordedFn: recorded,
 	})

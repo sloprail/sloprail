@@ -127,8 +127,15 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 					if err != nil {
 						continue
 					}
-					if allowed, reason := compiled.Decide(filepath.ToSlash(rel)); !allowed {
-						return natureVerdict{Blocked: fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", root, reason)}
+					allowed, reason := compiled.Decide(filepath.ToSlash(rel))
+					if !allowed {
+						reason = fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", root, reason)
+					}
+					for _, rule := range compiled.Deciders(filepath.ToSlash(rel)) {
+						emitStructure(rule, allowed, reason, e.Kind, scope.ToolUseID)
+					}
+					if !allowed {
+						return natureVerdict{Blocked: reason}
 					}
 				}
 			}
