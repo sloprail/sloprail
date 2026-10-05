@@ -66,6 +66,20 @@ func TestDiscoverPluginUnderTestIsCoreInstallsOnce(t *testing.T) {
 	assert.Equal(t, "pl:file-guard/structure:a", cs[0].Subject)
 }
 
+// A plugin under test that is another checkout's copy of the core plugin (a git worktree, while
+// sr-test was built in the main checkout) is installed once: the copy under test, not both.
+func TestDiscoverPluginUnderTestShadowsAnotherCheckoutsCore(t *testing.T) {
+	root := t.TempDir()
+	putJSON(t, root, "pl/.claude-plugin/plugin.json", `{"name":"sloprail"}`)
+	put(t, root, "pl/.sloprail/file-guard/structure.tests/a/test.sh", "exit 0")
+	core := t.TempDir() // the main checkout's marketplace/plugins/sloprail
+	putJSON(t, core, ".claude-plugin/plugin.json", `{"name":"sloprail"}`)
+	cs, err := Discover(root, core)
+	require.NoError(t, err)
+	require.Len(t, cs, 1)
+	assert.Equal(t, []string{filepath.Join(root, "pl")}, cs[0].Plugins)
+}
+
 func TestRunNestedContexts(t *testing.T) {
 	root := nestedTree(t)
 	var (
@@ -127,4 +141,11 @@ func TestDiscoverLayout(t *testing.T) {
 		"structure||file-guard/structure:s|file-guard/structure",
 		"gate|g|gate/g:a|gate/g",
 	}, got)
+}
+
+func putJSON(t *testing.T, root, rel, body string) {
+	t.Helper()
+	p := filepath.Join(root, rel)
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 }

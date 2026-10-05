@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -117,6 +118,9 @@ func LocalPluginMarketplace(marketplace, dir string, pluginDirs []string) ([]str
 			if json.Unmarshal(raw, &m) == nil && m.Name != "" {
 				name = m.Name
 			}
+		}
+		if slices.Contains(names, name) {
+			continue // one name is installed once: the first folder wins
 		}
 		if err := os.MkdirAll(filepath.Join(dir, "plugins"), 0o755); err != nil {
 			return nil, err
