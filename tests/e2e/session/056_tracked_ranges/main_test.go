@@ -38,9 +38,9 @@ const (
 // project is a committed repository with origin and a committed judged `docs` rule. The harness
 // does not run the checks before Stop (NoAutoCheck): these tests are about what Stop does with
 // a range nobody has judged.
-func project(t *testing.T) (*Env, string) {
+func project(t *testing.T, opts ...harness.Option) (*Env, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
+	e := harness.New(t, append([]harness.Option{harness.WithoutShippedFileGuards(), harness.NoAutoCheck()}, opts...)...)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})

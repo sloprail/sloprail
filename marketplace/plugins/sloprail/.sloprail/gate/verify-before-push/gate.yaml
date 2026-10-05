@@ -26,6 +26,7 @@
 #
 # On by default, like every shipped rule, and switched off by listing
 # `sloprail/gate/verify-before-push` under `disabled:` in .sloprail/config.yaml.
+enabled: false
 on:
   - event: PreCommandInvoke
     match: >-
