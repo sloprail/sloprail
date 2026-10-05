@@ -38,16 +38,18 @@ RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "push the other rep
 fail() { echo "$1" >&2; echo "$RESULT" | jq -c '.events[]|select(.rule=="sloprail/verify-before-push")|{outcome,tool_use_id,reason:(.reason//""|.[0:200])}' >&2; exit 1; }
 verdict() { echo "$RESULT" | jq -e --arg id "$1" --arg out "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/verify-before-push" and .tool_use_id==$id)] | length==1 and .[0].outcome==$out' >/dev/null; }
 reason() { echo "$RESULT" | jq -r --arg id "$1" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/verify-before-push" and .tool_use_id==$id)][0].reason'; }
+# the refusal's own sentence, read from the owner's event (the reason is what says WHY the rule refused)
+reason_has() { echo "$RESULT" | jq -e --arg id "$1" --arg s "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/verify-before-push" and .tool_use_id==$id)][0] | (.reason|contains($s))' >/dev/null; }
 has() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 
 verdict u1 refused || fail "u1: a push from an unassigned variable folder was not refused"
-has "$(reason u1)" 'git -C <literal dir> push' || fail "u1: the refusal does not tell the agent to write the folder literally"
+reason_has u1 'git -C <literal dir> push' || fail "u1: the refusal does not tell the agent to write the folder literally"
 # the variable form is read as OTHER and refused for the same reason as the literal form
 verdict v1 refused || fail "v1: the push through D=<literal> was not refused"
 verdict l1 refused || fail "l1: the literal push was not refused"
 for id in v1 l1; do
-  has "$(reason $id)" "$OTHER" || fail "$id: the refusal does not name the repository $OTHER"
-  has "$(reason $id)" 'sr-checks run --base' || fail "$id: the refusal does not name the run that judges the commits"
+  reason_has $id "$OTHER" || fail "$id: the refusal does not name the repository $OTHER"
+  reason_has $id 'sr-checks run --base' || fail "$id: the refusal does not name the run that judges the commits"
 done
 SESSION=$(echo "$RESULT" | jq -er .session)
 for id in u1 v1 l1; do

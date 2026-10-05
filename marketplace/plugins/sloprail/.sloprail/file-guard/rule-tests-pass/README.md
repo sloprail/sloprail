@@ -10,6 +10,10 @@ A case lives in its owning rule's folder: `.sloprail/<nature>/<rule>/tests/<case
 `file-guard` or `context`), and the structure gate's in `.sloprail/file-guard/structure.tests/<case>/`.
 There is no top-level `.sloprail/tests/`.
 
+A file whose only change is its mode (`chmod +x`, identical bytes) is not a change: it picks no root, no
+case and no rule, so a legacy rule made executable is not refused for having no case. A content change to the
+same file is.
+
 It fires when any file under `**/.sloprail/**` changes in the range, the root project's and a nested
 plugin's alike. One subject per touched `.sloprail` root; one script check, `check.sh`, no model:
 

@@ -15,15 +15,17 @@ fail() { echo "$1" >&2; echo "$RESULT" | jq -c '.events[]|select(.rule=="sloprai
 has() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 verdict() { echo "$RESULT" | jq -e --arg id "$1" --arg out "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/cite-before-commit" and .tool_use_id==$id)] | length==1 and .[0].outcome==$out' >/dev/null; }
 reason() { echo "$RESULT" | jq -r --arg id "$1" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/cite-before-commit" and .tool_use_id==$id)][0].reason'; }
+# the refusal's own sentence, read from the owner's event (the reason is what says WHY the rule refused)
+reason_has() { echo "$RESULT" | jq -e --arg id "$1" --arg s "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/cite-before-commit" and .tool_use_id==$id)][0] | (.reason|contains($s))' >/dev/null; }
 
 verdict u1 refused || fail "u1: a commit through an unresolvable -C folder was not refused"
-has "$(reason u1)" "could not check" || fail "u1: the refusal does not say the commit could not be checked"
-has "$(reason u1)" 'git -C <literal dir> commit' || fail "u1: the refusal does not tell the agent to write the folder literally"
+reason_has u1 "could not check" || fail "u1: the refusal does not say the commit could not be checked"
+reason_has u1 'git -C <literal dir> commit' || fail "u1: the refusal does not tell the agent to write the folder literally"
 for id in v1 v2; do
   verdict $id refused || fail "$id: the uncited commit through D=<literal> was not refused"
-  has "$(reason $id)" "Sloprail-Cites-User" || fail "$id: the refusal does not name the citation trailer"
-  has "$(reason $id)" ".sloprail/gate/demo/gate.yaml" || fail "$id: the refusal does not name the file (the variable folder was not resolved)"
-  case "$(reason $id)" in *"could not check"*) fail "$id: the variable assigned to a literal was treated as unresolvable" ;; esac
+  reason_has $id "Sloprail-Cites-User" || fail "$id: the refusal does not name the citation trailer"
+  reason_has $id ".sloprail/gate/demo/gate.yaml" || fail "$id: the refusal does not name the file (the variable folder was not resolved)"
+  reason_has $id "could not check" && fail "$id: the variable assigned to a literal was treated as unresolvable"
 done
 verdict l1 permitted || fail "l1: the literal commit with the user's quote was refused"
 # only the cited commit landed

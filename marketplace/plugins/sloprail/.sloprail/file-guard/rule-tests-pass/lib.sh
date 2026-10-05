@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Shared by subjects.sh and check.sh. Sourced, never run.
 
+# content_changed_paths: on stdin the Changeset payload -> the paths whose CONTENT changed, one per line. A file
+# that is added, deleted or renamed counts; a modified file counts only when oldContent != newContent. A mode-only
+# change (chmod +x, bytes identical) is not a change of the rule, so it is not listed.
+content_changed_paths() {
+  jq -r '.changeset.files[] | select(.status != "M" or .oldContent != .newContent) | .path'
+}
+
 # roots_of <changed path>... on stdin, one per line -> the distinct tree-relative dirs holding the `.sloprail`
 # the path lives under ("" is the repo root, printed as a line holding a single dot).
 roots_of() {

@@ -11,5 +11,6 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 case $n in
   0) bash_ t1 "git update-ref refs/sloprail/checks HEAD" ;;
   1) bash_ t2 "git show-ref sloprail/checks" ;;
+  2) bash_ t3 "sr-checks show --base HEAD --head HEAD" ;;
   *) finish ;;
 esac
