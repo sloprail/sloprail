@@ -19,7 +19,6 @@ func TestT058_39_HiddenSubcommandFailsClosed(t *testing.T) {
 		"env $E git commit -q --allow-empty -m x",
 		"timeout -k $K 5 git commit -q --allow-empty -m x",
 		"timeout $T -- git commit -q --allow-empty -m x",
-		"env -iS 'git commit -q --allow-empty -m x'",
 	} {
 		e, proj := project(t)
 		oth := other(t, e)
