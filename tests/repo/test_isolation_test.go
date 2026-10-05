@@ -28,14 +28,17 @@ func globalGitConfigWrites(body string) []string {
 	var out []string
 	seen := map[string]bool{}
 	check := func(cmd string, line int) {
-		if !strings.Contains(cmd, "config") || readOnlyConfig.MatchString(cmd) || !writesMachineConfig(cmd) {
-			return
-		}
-		if shellGitConfig.MatchString(cmd) || goGitConfig.MatchString(cmd) {
-			hit := strings.TrimSpace(cmd) + " (line " + strconv.Itoa(line) + ")"
-			if !seen[hit] {
-				seen[hit] = true
-				out = append(out, hit)
+		// each command of a line on its own: a read-only one beside a write must not exempt it
+		for _, seg := range segmentRe.Split(cmd, -1) {
+			if !strings.Contains(seg, "config") || readOnlyConfig.MatchString(seg) || !writesMachineConfig(seg) {
+				continue
+			}
+			if shellGitConfig.MatchString(seg) || goGitConfig.MatchString(seg) {
+				hit := strings.TrimSpace(seg) + " (line " + strconv.Itoa(line) + ")"
+				if !seen[hit] {
+					seen[hit] = true
+					out = append(out, hit)
+				}
 			}
 		}
 	}
@@ -59,7 +62,8 @@ func globalGitConfigWrites(body string) []string {
 		// a shell continuation always joins; a Go call split after "," or "(" joins only while
 		// a call is open, so a table or slice literal is not one command.
 		if strings.HasSuffix(t, `\`) ||
-			(strings.Count(cur, "(") > strings.Count(cur, ")") && (strings.HasSuffix(t, ",") || strings.HasSuffix(t, "("))) {
+			((openCall(cur) || openBrace(cur)) &&
+				(strings.HasSuffix(t, ",") || strings.HasSuffix(t, "(") || strings.HasSuffix(t, "{"))) {
 			continue
 		}
 		check(cur, start)
@@ -70,6 +74,9 @@ func globalGitConfigWrites(body string) []string {
 	}
 	return out
 }
+
+func openCall(s string) bool  { return strings.Count(s, "(") > strings.Count(s, ")") }
+func openBrace(s string) bool { return strings.Count(s, "{") > strings.Count(s, "}") }
 
 // writesMachineConfig: --global / --system, or --file/-f naming a config under a home directory
 // (the XDG ~/.config/git/config included, a repository's own .git/config not).
@@ -91,6 +98,7 @@ var (
 	readOnlyConfig = regexp.MustCompile(`--(get|get-all|get-regexp|list|show-origin)\b|\s-l\b`)
 	shellGitConfig = regexp.MustCompile(`\bgit\b[^|;&]*\bconfig\b`)
 	goGitConfig    = regexp.MustCompile(`"config"\s*,`)
+	segmentRe      = regexp.MustCompile(`&&|\|\||;|\|`)
 )
 
 func TestNothingWritesTheMachinesGitConfig(t *testing.T) {
@@ -143,6 +151,9 @@ func TestGlobalGitConfigWriteDetector(t *testing.T) {
 		"git config \\\n  --global user.name x",
 		"exec.Command(\"git\", \"config\",\n\t\"--global\", \"user.email\")",
 		"git config --file ~/.gitconfig user.email x",
+		"git config --global user.name x && git config --list",
+		"git config --global user.name x; git config --global --list",
+		"args := []string{\n\"config\",\n\"--global\",\n\"user.name\", \"x\",\n}",
 		"x(\n\"git config --global --get a\",\n\"git config --global user.name x\")",
 		"[]string{\n\"git config --list\",\n\"git config --global user.name x\",\n}",
 		"git config --file $HOME/.config/git/config user.email x",
@@ -162,7 +173,6 @@ func TestGlobalGitConfigWriteDetector(t *testing.T) {
 		"git config --global --list --show-origin | grep user",
 		`git -C "$d" -c user.name=t commit -m x`,
 		"# the global config is never written",
-		"[]string{\n\"--global\",\n\"git\",\n\"config\",\n}",
 	}
 	for _, line := range ok {
 		if hits := globalGitConfigWrites(line); len(hits) != 0 {
