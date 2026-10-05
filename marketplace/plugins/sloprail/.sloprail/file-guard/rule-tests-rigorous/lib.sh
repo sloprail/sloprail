@@ -1,10 +1,101 @@
 #!/usr/bin/env bash
-# Shared by subjects.sh, check-case.sh and prepare.sh: where a case lives and which rule owns it.
-# Sourced, never run. Everything reads SR_TREE (the committed head), never the working tree.
+# Shared by subjects.sh, check-case.sh and prepare.sh: where a rule and its cases live. Sourced, never run.
+# Everything reads SR_TREE (the committed head), never the working tree.
 #
-# A case lives in its OWNING rule's folder: the owner is the folder, never inferred from the case's code.
+# The subject is a RULE, and a rule owns its cases. A case lives in its OWNING rule's folder: the owner is the
+# folder, never inferred from the case's code.
 #   <root>/.sloprail/<gate|file-guard|context>/<rule>/tests/<case>/
 #   <root>/.sloprail/file-guard/structure.tests/<case>/        (the structure gate: one file, no folder)
+# A subject's id is the rule's folder, `<root>/.sloprail/<nature>/<rule>`; for the structure gate it is its
+# cases' folder, `<root>/.sloprail/file-guard/structure.tests` (the rule itself is the one file beside it,
+# `<root>/.sloprail/file-guard/structure.yaml`).
+
+# path_subject <tree-relative path> -> prints the id of the subject (the owning rule) the path belongs to: a file
+# of the rule (its declaration, README, scripts, templates) or a file under its tests/ (a case's, or a stray one
+# that is no case). Returns 1, printing nothing, for a path that belongs to no rule.
+path_subject() {
+  local p="$1" root="" rest a b c
+  case "$p" in
+    .sloprail/*) rest="${p#.sloprail/}" ;;
+    */.sloprail/*)
+      root="${p%%/.sloprail/*}/"
+      rest="${p#*/.sloprail/}"
+      ;;
+    *) return 1 ;;
+  esac
+  # split by parameter expansion, not `read`: read stops at a newline, and a path may hold one
+  a="${rest%%/*}"
+  b=""
+  c=""
+  case "$rest" in
+    */*)
+      b="${rest#*/}"
+      case "$b" in
+        */*)
+          c="${b#*/}"
+          b="${b%%/*}"
+          ;;
+      esac
+      ;;
+  esac
+  if [ "$a" = file-guard ]; then
+    if [ "$b" = structure.yaml ] && [ -z "$c" ]; then
+      printf '%s.sloprail/file-guard/structure.tests\n' "$root"
+      return 0
+    fi
+    if [ "$b" = structure.tests ]; then
+      # any file under structure.tests/, a case's or a stray one that is no case, belongs to the structure gate
+      [ -n "$c" ] || return 1
+      printf '%s.sloprail/file-guard/structure.tests\n' "$root"
+      return 0
+    fi
+  fi
+  case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac
+  [ -n "$b" ] && [ -n "$c" ] || return 1
+  printf '%s.sloprail/%s/%s\n' "$root" "$a" "$b"
+}
+
+# rule_split <subject id> -> sets CASE_ROOT (the tree-relative dir that holds the `.sloprail`, "" for the repo
+# root), CASE_NATURE (gate | file-guard | context | structure) and CASE_RULE (the rule's folder name;
+# "structure" for the structure gate). Returns 1 for an id that is no rule.
+rule_split() {
+  local d="$1" rest a b
+  CASE_ROOT="" CASE_NATURE="" CASE_RULE="" CASE_NAME=""
+  case "$d" in
+    .sloprail/*) rest="${d#.sloprail/}" ;;
+    */.sloprail/*)
+      CASE_ROOT="${d%%/.sloprail/*}"
+      rest="${d#*/.sloprail/}"
+      ;;
+    *) return 1 ;;
+  esac
+  a="${rest%%/*}"
+  b=""
+  case "$rest" in
+    */*)
+      b="${rest#*/}"
+      b="${b%%/*}"
+      ;;
+  esac
+  if [ "$a" = file-guard ] && [ "$b" = structure.tests ]; then
+    CASE_NATURE=structure CASE_RULE=structure
+    return 0
+  fi
+  case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac
+  [ -n "$b" ] || return 1
+  CASE_NATURE="$a" CASE_RULE="$b"
+}
+
+# rule_cases <subject id> -> the tree-relative folder of every case of the rule, one per line, sorted
+rule_cases() {
+  local id="$1" d c
+  rule_split "$id" || return 0
+  if [ "$CASE_NATURE" = structure ]; then d="$id"; else d="$id/tests"; fi
+  [ -d "$SR_TREE/$d" ] || return 0
+  find "$SR_TREE/$d" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort | while IFS= read -r c; do
+    printf '%s\n' "${c#"$SR_TREE"/}"
+  done
+}
 
 # case_split <case dir, tree-relative> -> sets CASE_ROOT (the tree-relative dir that holds the `.sloprail`,
 # "" for the repo root), CASE_NATURE (gate | file-guard | context | structure), CASE_RULE (the rule's folder
@@ -79,8 +170,8 @@ owner_kind() {
 }
 
 # owner_files <tree-relative root> <nature> <rule> -> the absolute path of every file that makes up the
-# owning rule (its declaration, README, scripts, templates), one per line, sorted. Its cases (tests/) are
-# not part of the rule: a sibling case is another subject.
+# rule itself (its declaration, README, scripts, templates), one per line, sorted. Its cases (tests/) are
+# not part of this list: they are the rule's cases, listed by rule_cases.
 owner_files() {
   local base
   base="$(root_abs "$1")/.sloprail"
