@@ -21,8 +21,15 @@ import (
 
 // globalGitConfigWrites reports the lines of body that write the global or system git config.
 // Reads (--get*, --list, -l, --show-origin) are fine.
+// joinRe folds a backslash continuation and a Go call split after "," or "(" into one line, so a
+// command spread over several lines is matched like one on a single line.
+var joinRe = regexp.MustCompile(`\\\n\s*|[,(]\n\s*`)
+
 func globalGitConfigWrites(body string) []string {
 	var out []string
+	body = joinRe.ReplaceAllStringFunc(body, func(m string) string {
+		return strings.TrimRight(m, " \t\n\\") + " "
+	})
 	for i, line := range strings.Split(body, "\n") {
 		if t := strings.TrimSpace(line); strings.HasPrefix(t, "//") || strings.HasPrefix(t, "#") {
 			continue // prose about the rule, not a call
@@ -38,7 +45,7 @@ func globalGitConfigWrites(body string) []string {
 }
 
 var (
-	globalScope    = regexp.MustCompile(`--(global|system)\b`)
+	globalScope    = regexp.MustCompile(`--(global|system)\b|(--file|-f)[ =]+"?(~|\$HOME|\$\{HOME\}|/Users/|/home/)[^ ]*gitconfig`)
 	readOnlyConfig = regexp.MustCompile(`--(get|get-all|get-regexp|list|show-origin)\b|\s-l\b`)
 	shellGitConfig = regexp.MustCompile(`\bgit\b[^|;&]*\bconfig\b`)
 	goGitConfig    = regexp.MustCompile(`"config"\s*,`)
@@ -46,7 +53,7 @@ var (
 
 func TestNothingWritesTheMachinesGitConfig(t *testing.T) {
 	root := repoRoot(t)
-	files, err := exec.Command("git", "-C", root, "ls-files").Output()
+	files, err := exec.Command("git", "-C", root, "ls-files", "-co", "--exclude-standard").Output()
 	if err != nil {
 		t.Fatalf("git ls-files: %v", err)
 	}
@@ -72,11 +79,11 @@ func scannedForGitConfig(rel string) bool {
 		return false
 	}
 	switch {
-	case strings.HasPrefix(rel, ".github/workflows/"), rel == "Makefile", strings.HasPrefix(rel, "scripts/"):
+	case strings.HasPrefix(rel, ".github/"), rel == "Makefile", strings.HasPrefix(rel, "scripts/"):
 		return true
 	}
 	switch filepath.Ext(rel) {
-	case ".sh", ".go", ".bash":
+	case ".sh", ".go", ".bash", ".mk":
 		return true
 	}
 	return false
@@ -88,6 +95,9 @@ func TestGlobalGitConfigWriteDetector(t *testing.T) {
 		"          git config --global user.name  sloprail CI",
 		"git -C /x config --system core.autocrlf false",
 		"git config --add --global safe.directory /x",
+		"git config \\\n  --global user.name x",
+		"exec.Command(\"git\", \"config\",\n\t\"--global\", \"user.email\")",
+		"git config --file ~/.gitconfig user.email x",
 		`exec.Command("git", "config", "--global", "user.email", "x")`,
 	}
 	for _, line := range bad {
