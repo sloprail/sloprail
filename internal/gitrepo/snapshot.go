@@ -4,11 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
 )
 
 // Snapshot is a read-only checkout of one commit, for checks to read.
@@ -48,7 +45,6 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	err = addWorktree(dir, s.Path, commit)
 	if err != nil {
 		os.RemoveAll(root)
-		_, _ = run(dir, "worktree", "prune") // the failed attempt must not leave its registration
 		return nil, fmt.Errorf("gitrepo: snapshot of %s: %w", short(commit), err)
 	}
 	if err := setWritable(s.Path, false); err != nil {
@@ -60,49 +56,18 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 	return s, nil
 }
 
-// worktreeAddTries and the backoff bound how long concurrent `git worktree add` calls on one
-// repository (they share .git/worktrees and its locks) are retried: about ten seconds in all.
-const (
-	worktreeAddTries   = 8
-	worktreeAddBackoff = 100 * time.Millisecond
-	worktreeAddCeiling = 2 * time.Second
-)
-
-// addWorktree runs `git worktree add`, retrying with jittered, doubling backoff while git fails
-// with exit 128 (a collision on the shared registration or a lock). Between tries it prunes a
-// registration a dead process left behind and clears the half-made attempt. The last error
-// carries git's stderr.
+// addWorktree runs `git worktree add` under the repository's worktree lock. A failed attempt
+// is cleaned up (half-made directory, its registration) before the error, which carries git's
+// stderr, is returned.
 func addWorktree(dir, path, commit string) error {
-	var err error
-	delay := worktreeAddBackoff
-	for try := 0; try < worktreeAddTries; try++ {
-		if _, err = run(dir, "worktree", "add", "--detach", "--force", path, commit); err == nil {
-			return nil
+	return withWorktreeLock(dir, func() error {
+		_, err := run(dir, "worktree", "add", "--detach", "--force", path, commit)
+		if err != nil {
+			_ = os.RemoveAll(path)
+			_, _ = run(dir, "worktree", "prune")
 		}
-		if !retryableWorktreeAdd(err) {
-			return err
-		}
-		_, _ = run(dir, "worktree", "prune")
-		_ = os.RemoveAll(path)
-		if try == worktreeAddTries-1 {
-			break
-		}
-		time.Sleep(delay/2 + time.Duration(rand.Int63n(int64(delay))))
-		if delay *= 2; delay > worktreeAddCeiling {
-			delay = worktreeAddCeiling
-		}
-	}
-	return err
-}
-
-// retryableWorktreeAdd is true for any git exit error. Concurrent adds on one repository collide
-// in more than one way: exit 128 for a lock or registration ("could not lock", "File exists",
-// "is locked"), and other codes for a racing ref update ("update_ref failed for ref 'HEAD'").
-// The tries are bounded, so a real failure still surfaces with git's stderr. An error that is
-// not git exiting (the binary missing) is not retried.
-func retryableWorktreeAdd(err error) bool {
-	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr)
+		return err
+	})
 }
 
 // Remove deletes the snapshot and its worktree registration. Safe to call twice.
@@ -115,14 +80,21 @@ func (s *Snapshot) Remove() error {
 	if err := setWritable(s.Path, true); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, err)
 	}
-	if _, err := run(s.repo, "worktree", "remove", "--force", s.Path); err != nil {
-		// Already gone is fine; the directory removal and prune below finish the job.
-		errs = append(errs, err)
-	}
-	if err := os.RemoveAll(s.root); err != nil {
-		errs = append(errs, err)
-	}
-	if _, err := run(s.repo, "worktree", "prune"); err != nil {
+	errs = append(errs, withWorktreeLock(s.repo, func() error {
+		var errs []error
+		if _, err := run(s.repo, "worktree", "remove", "--force", s.Path); err != nil {
+			// Already gone is fine; the directory removal and prune below finish the job.
+			errs = append(errs, err)
+		}
+		if err := os.RemoveAll(s.root); err != nil {
+			errs = append(errs, err)
+		}
+		if _, err := run(s.repo, "worktree", "prune"); err != nil {
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
+	}))
+	if err := os.RemoveAll(s.root); err != nil { // also when the lock itself failed
 		errs = append(errs, err)
 	}
 	s.root = ""

@@ -71,7 +71,10 @@ func TestSnapshot_SIGTERMLeavesNoRegistration(t *testing.T) {
 		if err != nil {
 			os.Exit(3)
 		}
-		_ = os.WriteFile(os.Getenv("SR_SNAP_READY"), []byte(s.Path), 0o644)
+		// Written whole, then renamed into place: the parent must never read a half-written path.
+		ready := os.Getenv("SR_SNAP_READY")
+		_ = os.WriteFile(ready+".tmp", []byte(s.Path), 0o644)
+		_ = os.Rename(ready+".tmp", ready)
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	}

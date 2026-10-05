@@ -78,8 +78,14 @@ func ownerAlive(root string) bool {
 }
 
 // SweepStaleSnapshots removes the snapshots of this repository whose owner is dead: made
-// writable, unregistered, deleted, pruned. A live owner's snapshot is never touched.
+// writable, unregistered, deleted, pruned. A live owner's snapshot is never touched. The sweep is
+// housekeeping: when the worktree lock is busy it is skipped (the next snapshot sweeps), so it
+// never adds a wait of its own in front of the caller's real work.
 func SweepStaleSnapshots(dir string) {
+	_ = lockWorktrees(dir, 0, func() error { sweepStale(dir); return nil })
+}
+
+func sweepStale(dir string) {
 	out, err := run(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return
