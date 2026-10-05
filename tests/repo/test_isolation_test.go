@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -19,33 +20,63 @@ import (
 // The identity tests need is given as environment by the Makefile's test targets instead
 // (GIT_AUTHOR_* / GIT_COMMITTER_*), which dies with the process and touches no file.
 
-// globalGitConfigWrites reports the lines of body that write the global or system git config.
-// Reads (--get*, --list, -l, --show-origin) are fine.
-// joinRe folds a backslash continuation and a Go call split after "," or "(" into one line, so a
-// command spread over several lines is matched like one on a single line.
-var joinRe = regexp.MustCompile(`\\\n\s*|[,(]\n\s*`)
-
+// globalGitConfigWrites reports the commands in body that write the global or system git config,
+// with the line each starts on. Reads (--get*, --list, -l, --show-origin) are fine. A command
+// spread over lines (a shell backslash continuation, a Go call split after "," or "(") is judged
+// as one; comment lines are prose and never join anything.
 func globalGitConfigWrites(body string) []string {
 	var out []string
-	body = joinRe.ReplaceAllStringFunc(body, func(m string) string {
-		return strings.TrimRight(m, " \t\n\\") + " "
-	})
-	for i, line := range strings.Split(body, "\n") {
-		if t := strings.TrimSpace(line); strings.HasPrefix(t, "//") || strings.HasPrefix(t, "#") {
-			continue // prose about the rule, not a call
+	check := func(cmd string, line int) {
+		if !strings.Contains(cmd, "config") || readOnlyConfig.MatchString(cmd) || !writesMachineConfig(cmd) {
+			return
 		}
-		if !strings.Contains(line, "config") || !globalScope.MatchString(line) || readOnlyConfig.MatchString(line) {
+		if shellGitConfig.MatchString(cmd) || goGitConfig.MatchString(cmd) {
+			out = append(out, strings.TrimSpace(cmd)+" (line "+strconv.Itoa(line)+")")
+		}
+	}
+	cur, start := "", 0
+	for i, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "//") || strings.HasPrefix(t, "#") {
+			if cur != "" {
+				check(cur, start)
+				cur = ""
+			}
 			continue
 		}
-		if shellGitConfig.MatchString(line) || goGitConfig.MatchString(line) {
-			out = append(out, strings.TrimSpace(line)+" (line "+strconv.Itoa(i+1)+")")
+		if cur == "" {
+			start = i + 1
 		}
+		cur += " " + strings.TrimSuffix(t, `\`)
+		if strings.HasSuffix(t, `\`) || strings.HasSuffix(t, ",") || strings.HasSuffix(t, "(") {
+			continue
+		}
+		check(cur, start)
+		cur = ""
+	}
+	if cur != "" {
+		check(cur, start)
 	}
 	return out
 }
 
+// writesMachineConfig: --global / --system, or --file/-f naming a config under a home directory
+// (the XDG ~/.config/git/config included, a repository's own .git/config not).
+func writesMachineConfig(cmd string) bool {
+	if globalScope.MatchString(cmd) {
+		return true
+	}
+	for _, m := range homeFile.FindAllString(cmd, -1) {
+		if !strings.Contains(m, ".git/config") {
+			return true
+		}
+	}
+	return false
+}
+
 var (
-	globalScope    = regexp.MustCompile(`--(global|system)\b|(--file|-f)[ =]+"?(~|\$HOME|\$\{HOME\}|/Users/|/home/)[^ ]*gitconfig`)
+	globalScope    = regexp.MustCompile(`--(global|system)\b`)
+	homeFile       = regexp.MustCompile(`(--file|-f)[ =]+"?(~|\$HOME|\$\{HOME\}|/Users/|/home/)[^ ]*config\b`)
 	readOnlyConfig = regexp.MustCompile(`--(get|get-all|get-regexp|list|show-origin)\b|\s-l\b`)
 	shellGitConfig = regexp.MustCompile(`\bgit\b[^|;&]*\bconfig\b`)
 	goGitConfig    = regexp.MustCompile(`"config"\s*,`)
@@ -61,6 +92,9 @@ func TestNothingWritesTheMachinesGitConfig(t *testing.T) {
 	for _, rel := range strings.Split(strings.TrimSpace(string(files)), "\n") {
 		if !scannedForGitConfig(rel) {
 			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, rel)); os.IsNotExist(err) {
+			continue // tracked, deleted in the working tree
 		}
 		scanned++
 		for _, hit := range globalGitConfigWrites(readRepoFile(t, root, rel)) {
@@ -98,6 +132,8 @@ func TestGlobalGitConfigWriteDetector(t *testing.T) {
 		"git config \\\n  --global user.name x",
 		"exec.Command(\"git\", \"config\",\n\t\"--global\", \"user.email\")",
 		"git config --file ~/.gitconfig user.email x",
+		"git config --file $HOME/.config/git/config user.email x",
+		"// setup (\nexec.Command(\"git\",\"config\",\"--global\",\"a\")",
 		`exec.Command("git", "config", "--global", "user.email", "x")`,
 	}
 	for _, line := range bad {
