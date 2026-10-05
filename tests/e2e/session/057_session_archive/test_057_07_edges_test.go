@@ -150,9 +150,13 @@ func TestT057_11_ASessionWithoutAStateStoreAndTheToolVersions(t *testing.T) {
 	if !absent {
 		t.Fatalf("the missing state store is not reported: %+v", m.Skipped)
 	}
-	// the project's own repository is archived whatever the session tracked
-	if len(m.Checks) != 1 || !strings.Contains(readFile(t, filepath.Join(dir, m.Checks[0].File)), failText) {
-		t.Fatalf("want the project's stored verdicts, got %+v", m.Checks)
+	// the project's own repository has its file whatever the session tracked, but this session
+	// tracked no range, so it relied on none of the verdicts the other session left there
+	if whole := w.e.CLIDirect(w.proj, "sr-checks", "log", "--json"); !strings.Contains(whole.Output, failText) {
+		t.Fatalf("premise: the repository holds the other session's verdict: %s", whole.Output)
+	}
+	if len(m.Checks) != 1 || readFile(t, filepath.Join(dir, m.Checks[0].File)) != "" {
+		t.Fatalf("want the project's checks file, empty: %+v", m.Checks)
 	}
 	for _, tool := range []string{"sr-eval", "sr-session", "sr-checks", "git"} {
 		if v := m.Tools[tool]; v == "" || v == "unavailable" {
