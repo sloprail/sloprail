@@ -50,6 +50,12 @@ func migrate(db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("sessionstate: read migration %s: %w", files[version], err)
 		}
+		if step := dataSteps[files[version]]; step != nil {
+			// What the store holds, rewritten before the version that says it was is recorded.
+			if err := step(db); err != nil {
+				return fmt.Errorf("sessionstate: migrate %s: %w", files[version], err)
+			}
+		}
 		if err := applyMigration(db, files[version], string(body), version+1); err != nil {
 			return err
 		}

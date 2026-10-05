@@ -25,6 +25,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/pprof"
 
 	"github.com/spf13/cobra"
 
@@ -32,7 +33,16 @@ import (
 )
 
 func main() {
+	// SLOPRAIL_CPUPROFILE=<file> writes a CPU profile of this run (go tool pprof): where a slow hook spends its time.
+	if path := os.Getenv("SLOPRAIL_CPUPROFILE"); path != "" {
+		if f, err := os.Create(path); err == nil {
+			if pprof.StartCPUProfile(f) == nil {
+				defer func() { pprof.StopCPUProfile(); f.Close() }()
+			}
+		}
+	}
 	if err := newRoot().Execute(); err != nil {
+		pprof.StopCPUProfile()
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
