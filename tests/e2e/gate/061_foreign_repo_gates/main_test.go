@@ -14,6 +14,7 @@ var (
 	Turns = harness.Turns
 	Bash  = harness.Bash
 	Write = harness.Write
+	Edit  = harness.Edit
 )
 
 func TestMain(m *testing.M) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
+	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -29,13 +30,18 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	return dispatchForeignGates(cmd, p, reg, scope)
 }
 
-// dispatchForeignGates decides a call by the direct gates of each foreign repo it
-// targets. Finding the repos costs a git root lookup per target; per repo, one stat of
-// `<root>/.sloprail` (no cache); a repo without one is nobody's to refuse. A
-// `.sloprail` that cannot be checked or read, or has a declaration that does not load,
-// refuses: a gate that may exist was not consulted. A foreign gate's `require` on a
-// context or another gate sees none (foreign contexts are not entered). Only the repo's own declarations load — its plugins are
-// not applied (see the issue "Foreign repo plugins are not loaded at pre-tool").
+// dispatchForeignGates decides a call by the structure gate and the own gates of each
+// foreign repo it targets, whether or not the session's project declares anything.
+// Finding the repos costs a git root lookup per target (once per path); per repo, one
+// stat of `<root>/.sloprail` (no cache) and one load of its declarations. A repo without
+// a `.sloprail` is nobody's to refuse. A `.sloprail` that cannot be checked or read, or
+// has an own declaration that does not load, refuses: a gate that may exist was not
+// consulted.
+//
+// The load is plugin-aware, so the repo's plugin structure gates apply as they always
+// did; only gates the repo declares itself run (a plugin's gates are not loaded, see
+// #235), and a plugin declaration that does not load does not refuse. A foreign gate's
+// `require` on a context or another gate sees none (foreign contexts are not entered).
 //
 // The repo is the workspace its gates run in, and the paths its gates see are relative
 // to it. Its verdicts and contexts stay out of the session's state: a gate name may
@@ -56,6 +62,17 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 	fileEvents := extractPreEvents(cmd, p, reg, []string{
 		declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete})
 
+	// The repo owning a path costs a git call: asked once per path per call.
+	owners := map[string]string{}
+	ownerOf := func(path string) string {
+		o, ok := owners[path]
+		if !ok {
+			o = owningRepo(path)
+			owners[path] = o
+		}
+		return o
+	}
+
 	var roots []string
 	seen := map[string]bool{}
 	add := func(owner string) {
@@ -66,11 +83,11 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 	}
 	for _, e := range fileEvents {
 		if path := eventPath(e); path != "" {
-			add(owningRepo(absEventPath(p, path)))
+			add(ownerOf(absEventPath(p, path)))
 		}
 	}
 	for _, dir := range commandTargetDirs(p) {
-		add(owningRepo(filepath.Join(dir, "x")))
+		add(ownerOf(filepath.Join(dir, "x")))
 	}
 
 	for _, root := range roots {
@@ -80,30 +97,67 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 			}
 			return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose .sloprail could not be checked (%v), so whether its gates allow it is unknown. Refusing.", root, err)}
 		}
-		loaded, err := declaration.New(filepath.Join(root, ".sloprail")).Load(reg)
+		// Loaded once for this repo: its structure gate and its gates read the same set.
+		store, _ := natureDeclarationStore(quietCmd(), root)
+		loaded, err := store.Load(reg)
 		if err != nil {
 			return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose sloprail declarations could not be read, so whether its gates allow it is unknown. Refusing.", root)}
 		}
-		if len(loaded.Invalid) > 0 {
-			return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose sloprail declaration %s could not be loaded, so whether its gates allow it is unknown. Refusing.", root, loaded.Invalid[0].Attribution())}
+		for _, iv := range loaded.Invalid {
+			if iv.Origin.Plugin == "" {
+				return natureVerdict{Blocked: fmt.Sprintf("this call targets the project at %s, whose sloprail declaration %s could not be loaded, so whether its gates allow it is unknown. Refusing.", root, iv.Attribution())}
+			}
 		}
-		if len(loaded.Gates) == 0 {
+
+		// The repo's structure gate, for each write into it. It is the session
+		// project's own dispatch that skips this when the project has no structure.
+		if len(loaded.Structures) > 0 {
+			compiled, err := dispatchcore.CompileStructureSet(loaded.Structures)
+			if err == nil {
+				for _, e := range fileEvents {
+					path, ok := writePath(e)
+					if !ok {
+						continue
+					}
+					abs := absEventPath(p, path)
+					if ownerOf(abs) != root {
+						continue
+					}
+					rel, err := filepath.Rel(root, resolveExistingPrefix(abs))
+					if err != nil {
+						continue
+					}
+					if allowed, reason := compiled.Decide(filepath.ToSlash(rel)); !allowed {
+						return natureVerdict{Blocked: fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", root, reason)}
+					}
+				}
+			}
+		}
+
+		// Its own gates only: a plugin's gates are not loaded here (see #235).
+		var gates []declaration.Gate
+		for _, g := range loaded.Gates {
+			if g.Origin.Plugin == "" {
+				gates = append(gates, g)
+			}
+		}
+		if len(gates) == 0 {
 			continue
 		}
 		var bound []string
-		for _, g := range loaded.Gates {
+		for _, g := range gates {
 			for _, trig := range g.On {
 				kinds, _ := declaration.ExpandGateEvent(trig.Event)
 				bound = append(bound, kinds...)
 			}
 		}
-		events := foreignEvents(extractPreEvents(cmd, p, reg, bound), p, root)
+		events := foreignEvents(extractPreEvents(cmd, p, reg, bound), p, root, ownerOf)
 		if len(events) == 0 {
 			continue
 		}
 		scopeB := scope
 		scopeB.Workspace = root
-		results := runGatesForEvents(cmd, reg, loaded.Gates, events, scopeB, nil,
+		results := runGatesForEvents(cmd, reg, gates, events, scopeB, nil,
 			map[string]natures.ContextState{}, map[string]natures.GateState{}, resolveNotes{})
 		if reason := gateRefusal(results, events, root); reason != "" {
 			return natureVerdict{Blocked: fmt.Sprintf("in the project at %s (its own gates govern its tree): %s", root, reason)}
@@ -115,17 +169,17 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 // foreignEvents is the events of a call that belong to the repo at root: the file
 // events under it with paths made relative to it, and each command event narrowed to
 // the invocations that run in it.
-func foreignEvents(events []event.Event, p HookPayload, root string) []event.Event {
+func foreignEvents(events []event.Event, p HookPayload, root string, ownerOf func(string) string) []event.Event {
 	var out []event.Event
 	for _, e := range events {
 		if !isPreFileEvent(e.Kind) {
-			if ce, ok := commandEventFor(e, p, root); ok {
+			if ce, ok := commandEventFor(e, p, root, ownerOf); ok {
 				out = append(out, ce)
 			}
 			continue
 		}
 		path := absEventPath(p, eventPath(e))
-		if owningRepo(path) != root {
+		if ownerOf(path) != root {
 			continue
 		}
 		rel, err := filepath.Rel(root, resolveExistingPrefix(path))
@@ -145,7 +199,7 @@ func foreignEvents(events []event.Event, p HookPayload, root string) []event.Eve
 // commandEventFor narrows a command event to the invocations that run inside the repo
 // at root (an invocation whose directory cannot be known is dropped), and reports
 // false when none does. Events of other kinds pass unchanged.
-func commandEventFor(e event.Event, p HookPayload, root string) (event.Event, bool) {
+func commandEventFor(e event.Event, p HookPayload, root string, ownerOf func(string) string) (event.Event, bool) {
 	list, isCommand := e.Fields[commandmod.FieldInvocations].([]any)
 	if !isCommand {
 		return e, true
@@ -167,7 +221,7 @@ func commandEventFor(e event.Event, p HookPayload, root string) (event.Event, bo
 				}
 			}
 		}
-		if dir, ok := invocationDir(inv, p.Cwd); ok && owningRepo(filepath.Join(dir, "x")) == root {
+		if dir, ok := invocationDir(inv, p.Cwd); ok && ownerOf(filepath.Join(dir, "x")) == root {
 			kept = append(kept, item)
 			raws = append(raws, strings.Join(inv.Argv, " "))
 		}
