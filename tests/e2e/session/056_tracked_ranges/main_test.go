@@ -70,7 +70,7 @@ func refs(e *Env, proj, sess string, args ...string) harness.Result {
 // failingProject is project with the checks run before each Stop (the harness's default) and a
 // judge that refuses what it is asked about: the commit an agent makes in it ends up with a
 // stored FAIL, the one verdict the Stop reports. (A range nobody judged is not reported at Stop;
-// the pre-push gate and CI refuse it.)
+// CI refuses it, and the push gate if enabled.)
 func failingProject(t *testing.T) (*Env, string) {
 	t.Helper()
 	e := harness.New(t, harness.WithoutShippedFileGuards())

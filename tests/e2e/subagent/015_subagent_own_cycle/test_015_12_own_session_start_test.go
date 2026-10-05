@@ -56,7 +56,7 @@ func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T)
 		harness.CommitFile("cc", "docs/c.md", "FORBIDDEN in C", "C: lands on main after A"),
 	))
 	// B and C have landed on the default branch: really pushed to the harness origin (an agent's
-	// own push of them is refused by the push gate, so the harness does it between the turns).
+	// own push of them is refused by the push gate when enabled, so the harness does it between the turns).
 	e.PushBranch(proj, "main")
 	res := e.Run(proj, "s-015-12", "delegate", Turns("root done", Dispatch("d1", "make D", sub, "worktree")))
 
