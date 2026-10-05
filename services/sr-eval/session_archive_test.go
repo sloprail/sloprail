@@ -24,10 +24,12 @@ type archiveWorld struct {
 	cwdSHA, otherSHA                    string // the one commit of each repository
 }
 
-// commitEmpty makes a commit in dir and returns its sha.
+// commitEmpty makes a commit in dir and returns its sha. The message names the directory: two root
+// commits with the same author, tree, message and second are the same object, which made a "stranger"
+// history identical to the base in CI.
 func commitEmpty(t *testing.T, dir string) string {
 	t.Helper()
-	gitOut(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "c")
+	gitOut(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "commit in "+dir+" "+t.Name())
 	return gitOut(t, dir, "rev-parse", "HEAD")
 }
 
