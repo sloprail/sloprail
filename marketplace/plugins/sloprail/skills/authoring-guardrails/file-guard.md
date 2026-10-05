@@ -89,8 +89,8 @@ never the working tree.
   from the local results. **Stop shows failures only**: a stored FAIL (with its
   reasons), a rule that does not load, or a real error refuses it. A range nobody has
   judged yet is not reported at Stop, and passes it silently; run `sr-checks run`
-  before pushing — the pre-push gate and CI `sr-checks verify` refuse an unjudged range.
-- **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below), and optionally a git `pre-push` hook.
+  before pushing — CI `sr-checks verify` (and the push gate, if enabled) refuses an unjudged range.
+- **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (ships off; below), and optionally a git `pre-push` hook.
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
   backstop for anything a session did not track. A squash merge keeps the PR's
   verdict: `verify` reuses a stored verdict of the same rule judged over the same base
@@ -152,14 +152,15 @@ commit required covers its uncommitted work.
 
 ### Before a push: verify-before-push
 
-The shipped gate `sloprail/gate/verify-before-push` is on by default. It refuses an
+The shipped gate `sloprail/gate/verify-before-push` ships **off**: a project opts in with
+`enabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`. CI's required
+`sr-checks verify` is the guarantee; run `sr-checks run` before a PR is ready. Once on, it refuses an
 agent's `git push` until `sr-checks verify --base <merge-base(remote/default, sha)> --head <sha>`
 passes for every ref the push would update, and the refusal names the `sr-checks run` that
-judges the range. It fails closed when a ref, folder or base cannot be resolved. Switch it off
-by listing `sloprail/gate/verify-before-push` under `disabled:` in `.sloprail/config.yaml`.
+judges the range. It fails closed when a ref, folder or base cannot be resolved.
 
 The verdicts live on the `sloprail/checks` branch, and a forged pass there would defeat
-`verify`, so the shipped gate `sloprail/gate/checks-ref-sr-only` (also on by default) refuses
+`verify`, so the shipped gate `sloprail/gate/checks-ref-sr-only` (on by default) refuses
 any agent git command that writes, moves, deletes or pushes that ref, or a file write into
 its storage under `.git`. Reading it and running `sr-checks` stay allowed.
 

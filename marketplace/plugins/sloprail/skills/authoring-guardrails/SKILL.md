@@ -16,8 +16,8 @@ keys, what is in scope for its match, and when it fires.
   --head` hands it `merge-base(base, head)..head` as one changeset and stores the
   verdicts on the `sloprail/checks` branch; Stop and CI only verify them (no
   model). Stop shows failures only (a stored FAIL, a rule that does not load, an
-  error), never "not judged yet": run `sr-checks run` before pushing, the pre-push
-  gate and CI require it. It never acts before a write — prevention is a
+  error), never "not judged yet": run `sr-checks run` before a PR is ready, CI's
+  required `sr-checks verify` requires it (the push gate ships off). It never acts before a write — prevention is a
   gate's job. `deletions: include`/`only` when losing the file is the rule's
   business too (by default a deleted file is skipped).
   → [file-guard.md](file-guard.md)
