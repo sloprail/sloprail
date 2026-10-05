@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-echo "the demo asserts 1 == 2" >&2
-exit 1
