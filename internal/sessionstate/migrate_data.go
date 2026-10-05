@@ -15,6 +15,7 @@ import (
 // of the session while it is rewritten.
 var dataSteps = map[string]func(*sql.DB) error{
 	"009_compact_citations.sql": compactStoredCitations,
+	"010_prune_gone.sql":        pruneRegistry,
 }
 
 // reclaimThreshold is the free space (bytes) a store must hold before it is compacted on disk: a

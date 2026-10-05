@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -109,6 +110,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			return failClosed(err) // a registry that could not be read is not "nothing else was committed"
 		}
 		tBusy := time.Now()
+		ahead := prefetchFolders(others, covered, reg[0])
 		busy := foldersOfRunningAgents(cmd, p, others)
 		debugTiming(cmd, fmt.Sprintf("commit-required/running-agents (%d other folders)", len(others)), tBusy)
 		for _, f := range others {
@@ -117,11 +119,19 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 			} else {
 				covered[key] = true
 			}
-			loaded := newNatureDeclarations(quiet, f.Path, reg[0])
+			read, have := ahead[treeKey(f.Path)]
+			if !have {
+				read = folderRead{loaded: newNatureDeclarations(quiet, f.Path, reg[0])}
+			}
+			loaded := read.loaded
 			if len(loaded.FileGuards) == 0 {
 				continue
 			}
-			o, refusal := owedIn(f.Path, loaded.FileGuards)
+			status := gitrepo.UncommittedChanges
+			if have {
+				status = func(string) ([]gitrepo.Uncommitted, error) { return read.changes, read.err }
+			}
+			o, refusal := owedInWith(status, f.Path, loaded.FileGuards)
 			if refusal != "" {
 				return refusal
 			}
@@ -151,7 +161,57 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 // owedIn is the uncommitted paths of the tree at root that some rule of guards selects, or
 // the refusal for a tree or a rule that could not be read.
 func owedIn(root string, guards []declaration.FileGuard) ([]uncommittedGuarded, string) {
-	changes, err := gitrepo.UncommittedChanges(root)
+	return owedInWith(gitrepo.UncommittedChanges, root, guards)
+}
+
+// folderRead is what the Stop reads of one other folder ahead of walking them: its rules, and,
+// when it has any file-guard, its uncommitted changes.
+type folderRead struct {
+	loaded  declaration.Loaded
+	changes []gitrepo.Uncommitted
+	err     error
+}
+
+// folderWorkers bounds the folders read ahead at once.
+const folderWorkers = 8
+
+// prefetchFolders reads the rules of every other folder of the session, and the status of those that
+// have a file-guard, a few at a time: a session that worked in dozens of repositories otherwise pays
+// one process after another at every Stop. A tree already walked is not read again. A folder with no
+// file-guard costs no git process.
+func prefetchFolders(folders []sessionstate.Folder, covered map[string]bool, reg *module.Registry) map[string]folderRead {
+	var trees []string
+	seen := map[string]bool{}
+	for _, f := range folders {
+		if k := treeKey(f.Path); !covered[k] && !seen[k] {
+			seen[k] = true
+			trees = append(trees, f.Path)
+		}
+	}
+	out := map[string]folderRead{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, folderWorkers)
+	for _, dir := range trees {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			r := folderRead{loaded: newNatureDeclarations(quietCmd(), dir, reg)}
+			if len(r.loaded.FileGuards) > 0 {
+				r.changes, r.err = gitrepo.UncommittedChanges(dir)
+			}
+			mu.Lock()
+			out[treeKey(dir)] = r
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+func owedInWith(status func(string) ([]gitrepo.Uncommitted, error), root string, guards []declaration.FileGuard) ([]uncommittedGuarded, string) {
+	changes, err := status(root)
 	if err != nil {
 		return nil, failClosed(err)
 	}
