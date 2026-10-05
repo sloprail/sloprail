@@ -27,7 +27,7 @@ subject="$(printf '%s' "$input" | jq -r '.subject.files | if type == "array" the
 [ -n "$subject" ] || apply
 while IFS= read -r p; do
   [ -n "$p" ] || continue
-  if printf '%s\n' "$needing" | grep -qxF -- "$p"; then
+  if grep -qxF -- "$p" <<<"$needing"; then
     apply
   fi
 done <<SR_EOF

@@ -27,7 +27,7 @@ refuse() {
 # print one sentence saying what is wrong and how to fix it, and return 1.
 fine() {
   local content="$1"
-  if ! printf '%s' "$content" | grep -q 'CHANGE-ME'; then
+  if ! grep -q 'CHANGE-ME' <<<"$content"; then
     return 0
   fi
   echo "replace this with what $path must hold, and how to fix it"
