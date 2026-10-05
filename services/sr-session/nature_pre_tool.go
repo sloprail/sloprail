@@ -34,7 +34,7 @@ type natureVerdict struct {
 	Blocked string
 }
 
-// dispatchNaturePreTool runs the new-format gate and structure-gate dispatch for a
+// dispatchOwnNaturePreTool runs the new-format gate and structure-gate dispatch for a
 // pre-tool hook, and reports the first refusal to block on (or "" to permit).
 //
 // It extracts the pre-action events itself from the payload — the same modules the
@@ -47,7 +47,7 @@ type natureVerdict struct {
 // The FIRST refusal (structure gate checked before gates, then gates in name
 // order) is what blocks — a pre-tool hook can only deny once, and denying on the
 // first refusal is the same shape the old path takes.
-func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
+func dispatchOwnNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	start := sessionStartOf(store)
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg, start)
 	grounds := requiresCitation(loaded)
@@ -213,9 +213,8 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 			continue
 		}
 		if outsideProject(root, path) {
-			if reason := checkForeignStructure(root, path, reg, e.Kind, toolUseID); reason != "" {
-				return reason
-			}
+			// Another project's tree: its own structure is checked by the foreign pass
+			// (dispatchForeignGates), which also runs when this project has none.
 			continue
 		}
 		allowed, reason := compiled.Decide(path)
@@ -258,63 +257,6 @@ func outsideProject(root, path string) bool {
 		return false
 	}
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// checkForeignStructure decides a write outside this project by the structure
-// of the project that DOES own the path, if any. Each project's structure
-// governs its own tree: this one's has no say over /tmp or a sibling checkout,
-// but a sibling checkout with its own .sloprail/ keeps its rules when written
-// into from here. A path under no git repository, or under one with no
-// declarations, is nobody's to refuse. The owner's declarations load quietly
-// (their load report belongs to that project's own sessions); if they cannot
-// be read at all the write is refused, since a structure that may exist was
-// not consulted.
-func checkForeignStructure(root, path string, reg *module.Registry, on, toolUseID string) string {
-	if reg == nil {
-		return ""
-	}
-	owner := owningRepo(path)
-	if owner == "" {
-		return ""
-	}
-	if real, err := filepath.EvalSymlinks(root); err == nil && real == owner {
-		return ""
-	}
-	if _, err := os.Stat(filepath.Join(owner, ".sloprail")); err != nil {
-		return ""
-	}
-	quiet := &cobra.Command{}
-	quiet.SetOut(io.Discard)
-	quiet.SetErr(io.Discard)
-	store, _ := natureDeclarationStore(quiet, owner)
-	loaded, err := store.Load(reg)
-	if err != nil {
-		reason := fmt.Sprintf("writing to %q, inside %s: that project's sloprail declarations could not be read, so whether its structure allows this write is unknown. Refusing.", path, owner)
-		emitStructure("structure", false, reason, on, toolUseID)
-		return reason
-	}
-	if len(loaded.Structures) == 0 {
-		return ""
-	}
-	compiled, err := dispatchcore.CompileStructureSet(loaded.Structures)
-	if err != nil {
-		return ""
-	}
-	rel, err := filepath.Rel(owner, resolveExistingPrefix(path))
-	if err != nil {
-		return ""
-	}
-	allowed, reason := compiled.Decide(filepath.ToSlash(rel))
-	if !allowed {
-		reason = fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", owner, reason)
-	}
-	for _, rule := range compiled.Deciders(filepath.ToSlash(rel)) {
-		emitStructure(rule, allowed, reason, on, toolUseID)
-	}
-	if !allowed {
-		return reason
-	}
-	return ""
 }
 
 // owningRepo is the resolved root of the git repository containing path — or

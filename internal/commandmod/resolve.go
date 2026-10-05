@@ -14,9 +14,27 @@ import (
 // should match, and one further along would be a value the command never
 // receives. It is simply absent, and the vector is what remains.
 func expandPerWord(cfg *expand.Config, words []*syntax.Word) []field {
+	return expandPerWordWith(cfg, words, false)
+}
+
+// expandPerWordWith is expandPerWord, optionally strict about parameters.
+//
+// Strict is for the argument vector a rule judges. The empty environment makes
+// `$HOME/x` read as `/x` and `${D:-/y}` as `/y`, though the shell the command
+// runs in may well have HOME and D set. A path a gate then resolves is the
+// wrong one, and it fails open. Strict drops any word with a parameter that is
+// not a plain `$NAME` / `${NAME}` the line itself assigned earlier (the names
+// in cfg.Env), so the argument is recorded as lost and its position as a gap.
+func expandPerWordWith(cfg *expand.Config, words []*syntax.Word, strict bool) []field {
 	var fields []field
 	for _, w := range words {
-		lit := isLiteral(w)
+		if strict && !paramsKnown(cfg, w) {
+			fields = append(fields, field{lost: true})
+			continue
+		}
+		// A word made only of literals and variables the line itself assigned is as certain as
+		// a literal one (strict mode only: see paramsKnown).
+		lit := isLiteral(w) || (strict && plainKnown(cfg, w))
 		got, err := expand.Fields(cfg, w)
 		if err != nil {
 			// This word cannot be resolved without running something. It is
@@ -40,6 +58,23 @@ func expandPerWord(cfg *expand.Config, words []*syntax.Word) []field {
 		}
 	}
 	return fields
+}
+
+// paramsKnown reports whether every parameter expansion in w is a plain
+// `$NAME` or `${NAME}` that cfg's environment holds (so the line assigned it).
+// Words with no parameter at all are known.
+func paramsKnown(cfg *expand.Config, w *syntax.Word) bool {
+	known := true
+	syntax.Walk(w, func(n syntax.Node) bool {
+		if p, ok := n.(*syntax.ParamExp); ok {
+			if p.Param == nil || p.Exp != nil || p.Index != nil || p.Slice != nil || p.Repl != nil ||
+				p.Excl || p.Length || p.Width || p.Names != 0 || !cfg.Env.Get(p.Param.Value).IsSet() {
+				known = false
+			}
+		}
+		return known
+	})
+	return known
 }
 
 // field is one expanded word plus what is known about where it came from.
@@ -115,7 +150,7 @@ func resolve(cfg *expand.Config, call *syntax.CallExpr, depth int) []Invocation 
 	// `echo` from `echo $(npm publish)` even though echo is genuinely about
 	// to run. Per-word gives both: what survives is kept, and each survivor
 	// still knows where it came from.
-	fields := expandPerWord(cfg, call.Args)
+	fields := expandPerWordWith(cfg, call.Args, true)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -145,10 +180,13 @@ func resolve(cfg *expand.Config, call *syntax.CallExpr, depth int) []Invocation 
 	}
 
 	argv := make([]word, 0, len(fields))
+	gap := false
 	for _, f := range fields {
 		if f.lost {
 			// An unresolvable argument is omitted rather than guessed at or
 			// given a placeholder. The program is known; this one word is not.
+			// Its position is kept: the next word carries it as gapBefore.
+			gap = true
 			continue
 		}
 		// literal travels with the value rather than being dropped here. An
@@ -156,10 +194,14 @@ func resolve(cfg *expand.Config, call *syntax.CallExpr, depth int) []Invocation 
 		// AST is gone: `sh -c "npm publish"` and `sh -c "np${X}m publish"`
 		// both arrive as the string `npm publish`, and only this flag tells
 		// the certain one from the guess.
-		argv = append(argv, word{value: f.value, literal: f.literal})
+		argv = append(argv, word{value: f.value, literal: f.literal, gapBefore: gap})
+		gap = false
 	}
 	if len(argv) == 0 {
 		return nil
+	}
+	if gap {
+		argv[len(argv)-1].gapAfter = true
 	}
 	// An empty program word — `"" npm publish`, or `"$EDITOR" file.txt` with
 	// EDITOR unset — is filtered in fromArgv, which rejects any vector whose

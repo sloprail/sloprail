@@ -60,6 +60,7 @@ func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(string(payload))
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(cmd.Env, e.autoWatchEnv()...)
 	cmd.Env = append(cmd.Env, e.hookEnv("")...)
 	return cmd
 }

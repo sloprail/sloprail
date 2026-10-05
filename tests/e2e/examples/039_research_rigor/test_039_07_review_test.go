@@ -210,7 +210,7 @@ func TestT039_28_CloneAfterUnresolvableCdRefusedAsUnplaceable(t *testing.T) {
 	src := sourceRepo(t, e, "retry-lib")
 	s := scratch(t)
 	joined := refused(t, e, proj, "s-039-28",
-		SayBash("b1", "#research", "D="+s+"; cd \"$D\" && git clone "+src),
+		SayBash("b1", "#research", "cd \"$UNSET_D\" && git clone "+src),
 		Read("r1", filepath.Join(s, "retry-lib", "lib", "retry.js")),
 		Read("r2", filepath.Join(s, "retry-lib", "lib", "backoff.js")),
 	)

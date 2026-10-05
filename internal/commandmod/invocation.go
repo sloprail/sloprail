@@ -302,11 +302,20 @@ const findPlaceholder = "{}"
 // way `rm ./a*.md` keeps its literal prefix.
 func stripPlaceholders(argv []word) []word {
 	out := make([]word, 0, len(argv))
+	gap := false
 	for _, w := range argv {
 		if w.value == findPlaceholder {
+			// The path find substitutes is unknown: a gap, so `-C {}` is not read as `-C`
+			// followed by the next word.
+			gap = true
 			continue
 		}
+		w.gapBefore = w.gapBefore || gap
+		gap = false
 		out = append(out, w)
+	}
+	if gap && len(out) > 0 {
+		out[len(out)-1].gapAfter = true
 	}
 	return out
 }
@@ -413,6 +422,27 @@ type word struct {
 	// positionally for free, which is why it lives on the element rather than
 	// in a parallel slice that every slice expression would have to re-align.
 	literal bool
+	// gapBefore is true when a word of the source line stood immediately before
+	// this one and was dropped as unresolvable (see expandPerWord). gapAfter is
+	// the same for the end of the vector, where no following word can carry it.
+	// Both slice with the vector, so a wrapper's inner command keeps them.
+	gapBefore, gapAfter bool
+}
+
+// gapsOf lists the positions in argv where an unresolvable word was dropped:
+// i means a word stood immediately before argv[i], len(argv) means after the
+// last. See Invocation.Gaps.
+func gapsOf(argv []word) []int {
+	var gaps []int
+	for i, w := range argv {
+		if w.gapBefore {
+			gaps = append(gaps, i)
+		}
+		if w.gapAfter {
+			gaps = append(gaps, i+1)
+		}
+	}
+	return gaps
 }
 
 // values drops the provenance, for the places that want the vector a rule
@@ -749,7 +779,7 @@ func fromArgv(argv []word, depth int) []Invocation {
 		// A wrapper that changes directory (`env -C /x cat f`) runs what it
 		// wraps there — see wrapperChdir.
 		inner := fromArgv(nested, depth)
-		if dir, known, moves := wrapperChdir(argv[:len(argv)-len(nested)]); moves {
+		if dir, known, moves := wrapperChdir(argv[:len(argv)-len(nested)], nested[0].gapBefore); moves {
 			for i := range inner {
 				inner[i].Cwd = chdirCwd(dir, known, inner[i].Cwd)
 			}
@@ -893,7 +923,10 @@ func unwrap(argv []word) []word {
 		// expands (under the empty environment) to the bare `-C`, but it was
 		// written attached: its value is the unknown part, and the next word
 		// is the program, not the value.
-		if w.consumesNextWord(arg) && argv[i].literal {
+		//
+		// And a value that was dropped as unresolvable (`-u "$U" npm`) is not
+		// the next word either: that word carries the gap, and it is the program.
+		if w.consumesNextWord(arg) && argv[i].literal && !(i+1 < len(argv) && argv[i+1].gapBefore) {
 			i++
 		}
 	}
@@ -970,6 +1003,7 @@ func newInvocation(argv []word) Invocation {
 	return Invocation{
 		Bin:   basename(vals[0]),
 		Argv:  vals,
+		Gaps:  gapsOf(argv),
 		Flags: parseFlags(vals[1:]),
 		// Where the line (or the payload being parsed) started. walkAt
 		// composes it onto the directory its statement runs in, so every

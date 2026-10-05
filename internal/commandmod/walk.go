@@ -74,7 +74,10 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			// exports under the call's own prefix.
 			scope := withEnv(at.env, assignsOf(cfg, node))
 			stdin := stdinOf(stmt)
-			for _, inv := range resolve(cfg, node, depth) {
+			// Words are read against the variables the line assigned before this
+			// statement, and a reference to any other is unresolvable.
+			cfgAt := cfgWith(cfg, at.vars)
+			for _, inv := range resolve(cfgAt, node, depth) {
 				inv.Env = underlay(inv.Env, scope)
 				if inv.Stdin == nil {
 					inv.Stdin = stdin
@@ -91,7 +94,7 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 			// A literal eval payload runs these programs in this shell,
 			// exactly as `sh -c` runs its payload in a child: re-parsed at
 			// depth+1 against the same bound. eval itself is reported above.
-			if text, isEval, ok := evalPayloadText(cfg, node); isEval && ok && depth < maxUnwrapDepth {
+			if text, isEval, ok := evalPayloadText(cfgAt, node); isEval && ok && depth < maxUnwrapDepth {
 				for _, inv := range walkAt(text, depth+1) {
 					inv.Env = underlay(inv.Env, scope)
 					inv.Cwd = composeCwd(at, inv.Cwd)
@@ -143,34 +146,64 @@ var chdirFlags = map[string][2]string{
 // wrapper does not change directory; known is false when it does, to a
 // directory that is not a literal word (`env -C "$D" …`) or starts with `~`,
 // which this package never expands. The last flag wins, as for the programs.
-func wrapperChdir(own []word) (dir string, known, moves bool) {
+func wrapperChdir(own []word, gapAtEnd bool) (dir string, known, moves bool) {
 	flags, ok := chdirFlags[basename(own[0].value)]
+	// A word that was dropped as unresolvable among the wrapper's own words, or between it and the
+	// program (`env -C "$D" cat f`, `nohup $X cat f`), may be the directory or a wrapper of its own
+	// (`$X` = `env -C /y`): what follows moves, to somewhere unknown, unless a later literal option
+	// sets the directory after it.
+	gapSince := gapAtEnd
 	if !ok {
+		for _, w := range own[1:] {
+			gapSince = gapSince || w.gapBefore || w.gapAfter
+		}
+		if gapSince {
+			return "", false, true
+		}
 		return "", false, false
 	}
 	short, long := flags[0], flags[1]
 	set := func(w word) {
 		dir, moves = w.value, true
 		known = w.literal && w.value != "" && !strings.HasPrefix(w.value, "~")
+		gapSince = false
 	}
+	// gapSince is only the gaps AFTER the last directory option, so the walk is in order.
+	gapSince = false
 	for i := 1; i < len(own); i++ {
 		a := own[i]
+		if a.gapBefore || a.gapAfter {
+			gapSince = true
+		}
 		switch {
 		case (a.value == short || a.value == long) && !a.literal:
 			// `-C"$D"` expanded to a bare `-C`: an attached value this
 			// package cannot see (see unwrap). The directory is unknown, and
 			// the next word is the program, not the value.
 			dir, known, moves = "", false, true
+			gapSince = false
 		case a.value == short || a.value == long:
 			if i+1 < len(own) {
 				i++
-				set(own[i])
+				if own[i].gapBefore {
+					// a word was lost between the option and its value
+					dir, known, moves = "", false, true
+					gapSince = false
+				} else {
+					set(own[i])
+				}
 			}
 		case strings.HasPrefix(a.value, long+"="):
 			set(word{value: strings.TrimPrefix(a.value, long+"="), literal: a.literal})
 		case strings.HasPrefix(a.value, short) && !strings.HasPrefix(a.value, "--"):
 			set(word{value: strings.TrimPrefix(a.value, short), literal: a.literal})
 		}
+	}
+	if gapAtEnd {
+		gapSince = true
+	}
+	if gapSince {
+		return "", false, true
 	}
 	return dir, known, moves
 }

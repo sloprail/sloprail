@@ -104,8 +104,10 @@ never the working tree.
 The session keeps a registry of the folders it works in — its own repository, a
 sub-agent's worktree, a repository a `git` command ran in (`git -C ../other commit`)
 — and, per folder, the ranges of commits it answers for. When a folder is found its
-current branch is **tracked automatically**, from where the work started (the merge
-base with the default branch). The agent can change that:
+current branch is **tracked automatically** when `SR_AUTO_WATCH_GIT_REFS=1` is set in the
+environment (opt-in; unset, the engine tracks nothing on its own and only what the agent
+adds with `refs track` is watched), from where the work started (the merge base with the
+default branch). The agent can change that:
 
 ```bash
 sr-session refs list                                        # tracked and untracked ranges
@@ -113,7 +115,7 @@ sr-session refs track   [--folder D] [--base REV] [--head REF]   # track a range
 sr-session refs untrack --reason TEXT [--folder D] [--head REF]  # stop answering for it
 ```
 
-Every branch the session commits on is tracked automatically, at every hook, and a branch
+With `SR_AUTO_WATCH_GIT_REFS=1`, every branch the session commits on is tracked automatically, at every hook, and a branch
 whose tip is a session-made commit that was never verified is tracked even with no new
 commit. A folder the session first observes late only has its branch tips recorded: a branch
 is tracked once its tip moves during the session, never merely because it already carries
@@ -122,6 +124,9 @@ explicit `--base`, the range's base is ALWAYS the merge base with the
 remote default branch, read afresh at every Stop, whatever the session made, pulled or pushed:
 a pull or a fast-forward push leaves nothing of that work in the local range. An explicit
 `--base` is used exactly as given (and must be before the head).
+
+The pre-push gate (`verify-before-push`) and `sr-checks run|verify --base --head` never read the
+session's tracked refs, so they work the same with auto-watching off.
 
 Why so plain: CI is the hermetic guarantee. It verifies a pull request's range
 (`merge-base(target, head)..head`) and a push event's `before..after`, so a session that pushes

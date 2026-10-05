@@ -121,7 +121,30 @@ type Env struct {
 	noAutoCheck  bool
 	keepOrigin   bool
 	subagentStop bool
+
+	// autoWatchOff: see WithoutAutoWatch.
+	autoWatchOff bool
 }
+
+// autoWatchEnv is the opt-in that lets the engine track git refs on its own
+// (SR_AUTO_WATCH_GIT_REFS=1). It is off in production; the suites that cover the automatic
+// tracking (and the Stop verification of what it tracked) run with it on, set here once for
+// every hook and mock process the Env spawns, and WithoutAutoWatch leaves it unset to prove
+// the default.
+func (e *Env) autoWatchEnv() []string {
+	if e.autoWatchOff {
+		return nil
+	}
+	return []string{"SR_AUTO_WATCH_GIT_REFS=1"}
+}
+
+// SetAutoWatch turns SR_AUTO_WATCH_GIT_REFS on or off for this Env's subsequent runs, to model a
+// session that ran with it on and continues with it off.
+func (e *Env) SetAutoWatch(on bool) { e.autoWatchOff = !on }
+
+// WithoutAutoWatch leaves SR_AUTO_WATCH_GIT_REFS unset, which is how production runs: nothing is
+// tracked unless the agent runs `sr-session refs track`.
+func WithoutAutoWatch() Option { return func(e *Env) { e.autoWatchOff = true } }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
 // mock runs. Call before Run/RunFrom. See the field's doc for when to use it.
@@ -1099,6 +1122,7 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 	// it makes the test independent of that layout rather than quietly relying
 	// on it.
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	cmd.Env = append(cmd.Env, e.autoWatchEnv()...)
 	// extraEnv is appended LAST so a caller-supplied variable wins over any
 	// ambient one — a test exercising cite's environment fallback sets
 	// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR this way.
@@ -2801,7 +2825,8 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 	args = append(args, prompt)
 	cmd := exec.Command(e.mock, args...)
 	cmd.Dir = workDir
-	cmd.Env = append(HostEnv(),
+	cmd.Env = append(HostEnv(), e.autoWatchEnv()...)
+	cmd.Env = append(cmd.Env,
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
