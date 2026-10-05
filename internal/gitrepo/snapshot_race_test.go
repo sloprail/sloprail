@@ -164,7 +164,9 @@ func TestSnapshot_LockFailureLeavesNothingBehind(t *testing.T) {
 	require.NoError(t, err)
 
 	// A directory where the lock file belongs makes opening it fail.
-	require.NoError(t, os.Mkdir(filepath.Join(dir, ".git", worktreeLockFile), 0o755))
+	lock := filepath.Join(dir, ".git", worktreeLockFile)
+	require.NoError(t, os.Remove(lock))
+	require.NoError(t, os.Mkdir(lock, 0o755))
 	parent := t.TempDir()
 	_, err = AddSnapshot(dir, parent, head)
 	assert.Error(t, err)
