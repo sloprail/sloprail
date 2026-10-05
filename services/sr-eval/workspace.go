@@ -169,7 +169,7 @@ func (w *workspace) setUp(ctx context.Context, fx Fixture, env []string) error {
 
 // provisionOrigin gives the project a LOCAL bare remote, root/origin.git, as its
 // `origin`, pushes the baseline to it and points origin/HEAD at main — so
-// origin/main, the pre-push gate, `sr-checks run` (which pushes the
+// origin/main, the push gate (when enabled), `sr-checks run` (which pushes the
 // sloprail/checks branch) and `sr-checks verify` all work with no network. It
 // lives in the run's temp dir, so Close removes it with the workspace.
 //

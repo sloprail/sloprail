@@ -28,8 +28,9 @@
 # Limit: this gate sees the command line the agent runs, not the commands inside a script it
 # runs (`sh ship.sh` that pushes). CI verify is the backstop for those.
 #
-# On by default, like every shipped rule, and switched off by listing
-# `sloprail/gate/verify-before-push` under `disabled:` in .sloprail/config.yaml.
+# Ships off. The user said: "Probably we just need to disable this prepush by default." A project opts
+# in with `enabled: [sloprail/gate/verify-before-push]` in .sloprail/config.yaml. CI's required
+# `sr-checks verify` is the guarantee; run `sr-checks run` before a PR is ready.
 enabled: false
 on:
   - event: PreCommandInvoke

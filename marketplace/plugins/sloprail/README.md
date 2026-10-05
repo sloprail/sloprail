@@ -133,11 +133,10 @@ rebase, another clone or CI reads the same results. The Stop hook only verifies:
 refuses uncommitted work on guarded paths, then verifies each range the session
 tracks (`sr-session refs list|track|untrack`). Nothing is tracked automatically unless
 `SR_AUTO_WATCH_GIT_REFS=1` is set in the environment (then a folder's current branch is
-tracked on its own); the pre-push gate below does not depend on tracking. CI runs `sr-checks verify` as a required check. Two gates ship on by default
-around it: `sloprail/gate/verify-before-push` refuses an agent's `git push` until
+tracked on its own); the push gate below (when enabled) does not depend on tracking. CI runs `sr-checks verify` as a required check. Around it, `sloprail/gate/checks-ref-sr-only` ships on, and `sloprail/gate/verify-before-push` ships off: a project opts in with `enabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`; CI's required `sr-checks verify` is the guarantee, so run `sr-checks run` before a PR is ready. Once enabled, `verify-before-push` refuses an agent's `git push` until
 `sr-checks verify` passes for the commits it would send, and `sloprail/gate/checks-ref-sr-only`
 refuses any agent git write to the `sloprail/checks` results branch (only `sr-checks` writes
-it; reading stays allowed; it guards against an agent's accidental write, not a determined forger, since a ref name the shell builds at run time is not in the command's argv). The push gate sees the command line the agent runs, not the commands inside a script it runs; CI verify is the backstop for those. Both are switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
+it; reading stays allowed; it guards against an agent's accidental write, not a determined forger, since a ref name the shell builds at run time is not in the command's argv). The push gate sees the command line the agent runs, not the commands inside a script it runs; CI verify is the backstop for those. `checks-ref-sr-only` is switched off under `disabled:` in `.sloprail/config.yaml`. The setup, a
 `pre-push` hook and the CI job are in
 `skills/authoring-guardrails/file-guard.md`.
 

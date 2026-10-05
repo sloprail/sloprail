@@ -9,7 +9,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// The plugin's sloprail/gate/verify-before-push (on by default) refuses an agent's `git push`
+// The plugin's sloprail/gate/verify-before-push (ships off; enabled here) refuses an agent's `git push`
 // until `sr-checks verify` passes over the commits it would send, and
 // sloprail/gate/checks-ref-sr-only keeps the results branch for sr-checks alone.
 // The helpers below are copied unchanged from the old changeset/003_stop_evaluation package.

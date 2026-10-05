@@ -42,7 +42,7 @@ import (
 //
 // At Stop each tracked range is VERIFIED, never judged: the same deterministic logic as
 // `sr-checks verify`, which calls no model and writes nothing. A range whose judges have not
-// been asked is not reported (the pre-push gate and CI refuse it): the Stop shows failures only.
+// been asked is not reported (CI `sr-checks verify`, and the push gate if enabled, refuse it): the Stop shows failures only.
 
 // trackedHead is the head a folder's current line of work is tracked under: its branch, or the
 // commit for a detached HEAD. ok is false for a repository with no commit.
@@ -650,7 +650,7 @@ func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f se
 // attach git refs to the session on its own: the checked-out branch of each folder, the
 // branches the session committed on, a worktree it discovers. It is OFF by default. What the
 // agent adds with `sr-session refs track` is always watched and verified at Stop; `refs
-// untrack`, the push gate (verify-before-push) and `sr-checks run --base --head` never read
+// untrack`, the push gate (verify-before-push, when enabled) and `sr-checks run --base --head` never read
 // whether anything was auto-watched.
 const autoWatchEnv = "SR_AUTO_WATCH_GIT_REFS"
 
@@ -1223,7 +1223,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 		Store: results, Verify: true, FailuresOnly: true, RecordedFn: recorded,
 	})
 	// The Stop reports failures: a stored FAIL, a rule that does not load, an error. A key with
-	// no stored verdict is not one; the pre-push gate and CI `sr-checks verify` refuse it.
+	// no stored verdict is not one; CI `sr-checks verify` (and the push gate, if enabled) refuse it.
 	refusals = withoutUnjudged(refusals)
 	if len(refusals) == 0 && len(broken) == 0 {
 		vm.put(memoKey, "")

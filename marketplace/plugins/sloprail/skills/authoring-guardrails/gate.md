@@ -195,7 +195,7 @@ flattened list.
 
 ### Example: a shipped command gate
 
-The plugin's `sloprail/gate/verify-before-push` is a command gate with its policy in YAML
+The plugin's `sloprail/gate/verify-before-push` (ships off) is a command gate with its policy in YAML
 and one script. It matches any `git ... push`, and a single `checks:` script asks git
 itself which refs the push would update (`git push --dry-run --porcelain`), then runs
 `sr-checks verify` over each one's range. A push whose commits all have stored passes is
@@ -236,8 +236,10 @@ refuse it, fail closed, telling the agent to use the literal subcommand. A `buil
 is tracked like `cd`, and an `env -S '<literal command>'` payload is read as the command it runs.
 
 `cite-before-commit` and `checks-ref-sr-only` ship **on**; `verify-before-push` ships **off** (since
-v0.4.1) and a project turns it on with `enabled: [sloprail/gate/verify-before-push]`. Any of them is
-turned off with `disabled: [sloprail/gate/<name>]` in `.sloprail/config.yaml`.
+v0.4.1) and a project opts in with `enabled: [sloprail/gate/verify-before-push]` in
+`.sloprail/config.yaml`. CI's required `sr-checks verify` is the guarantee; run `sr-checks run`
+before a PR is ready. The gates that ship on are turned off with `disabled: [sloprail/gate/<name>]`
+in `.sloprail/config.yaml`.
 
 `sloprail/gate/ci-verify-required` is the `Stop` gate that closes the loop on the CI side: a
 file-guard's verdict is only enforced where `sr-checks verify` runs, so a project with at
