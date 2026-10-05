@@ -53,7 +53,7 @@ exit 0
 // passed; otherwise stays active.
 const goalExit = `#!/bin/sh
 input="$(cat)"
-status="$(printf '%s' "$input" | sed -n 's/.*"gates":{[^}]*"goal-verify":{"status":"\([^"]*\)".*/\1/p' | head -1)"
+status="$(printf '%s' "$input" | sed -n 's/.*"goal-verify":{"status":"\([^"]*\)".*/\1/p' | head -1)"
 if [ "$status" = "pass" ]; then
   exit 0   # target met — deactivate
 fi
