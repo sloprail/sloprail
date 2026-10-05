@@ -20,8 +20,8 @@ func TestT057_15_HiddenSubcommandFailsClosed(t *testing.T) {
 		"nice $N git push -q origin HEAD:refs/heads/work",
 		"timeout -k $K 5 git push -q origin HEAD:refs/heads/work",
 		"timeout $T -- git push -q origin HEAD:refs/heads/work",
-		"env -iS 'git push -q origin HEAD:refs/heads/work'",
-		"env -S 'git\\_push -q origin HEAD:refs/heads/work'",
+		"env -iS 'git -C %s push -q origin HEAD:refs/heads/work'",
+		"env -S 'git\\_-C\\_%s\\_push -q origin HEAD:refs/heads/work'",
 	} {
 		e, proj, _ := project(t, docsRule)
 		oth, pushed := unverifiedOther(t, e)
