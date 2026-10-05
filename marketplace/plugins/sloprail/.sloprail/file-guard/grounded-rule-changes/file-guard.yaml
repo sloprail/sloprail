@@ -37,3 +37,6 @@ checks:
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md
+    # Read: the transcript sits outside the project; a short approval ("lgtm") is read against the
+    # assistant messages before the cited line.
+    allowed_tools: [Read]

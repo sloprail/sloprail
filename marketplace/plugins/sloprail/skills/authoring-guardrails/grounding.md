@@ -285,6 +285,17 @@ the whole entry it was taken from, so weigh the quote in its context.
 {% endfor %}</citations>{% else %}**This change cites nothing.**{% endif %}
 ~~~
 
+A citation's `path` and `line` are where the quote sits in the session's JSON-lines
+record, so the messages around it can be found: a short reply ("lgtm", "1. yes") is
+only understood against the assistant message it answers, which may be several
+messages earlier. The engine does not extract that message (which one is the proposal
+is not deterministic); the judge reads the record around `path:line` itself, so give
+the check `allowed_tools: [Read]` (the transcript sits outside the project) and say
+in the rubric that the user's quote is the only authority, the surrounding messages
+only context to interpret it, a short approval grounds exactly what it answered and
+nothing beyond it, and an assistant message alone never grounds anything.
+`grounded-rule-changes` is the worked example.
+
 `call` exists only on a `tool_result` citation, and an `{% if c.call %}` on a key
 that is absent is a render error that refuses the judge, so print it bare as above (an
 absent key renders empty).
