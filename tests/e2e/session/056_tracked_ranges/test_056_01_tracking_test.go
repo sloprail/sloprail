@@ -63,7 +63,7 @@ func TestT056_09_UnpushedCommitsFromBeforeTheSessionAreInItsRange(t *testing.T) 
 }
 
 // T056_02: the Stop reports failures only. A range nobody has judged passes it, silently: it is
-// the pre-push gate's and CI's to refuse, and the Stop asked no model.
+// CI's to refuse (and the push gate's, if enabled), and the Stop asked no model.
 func TestT056_02_AnUnjudgedRangePassesTheStopSilently(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-02"
@@ -97,7 +97,7 @@ func TestT056_02_AStoredFailStillRefusesTheStop(t *testing.T) {
 	}
 }
 
-// T056_02 (c): what the Stop lets through unjudged, the pre-push gate refuses.
+// T056_02 (c): what the Stop lets through unjudged, the push gate (when enabled) refuses.
 func TestT056_02_ThePrePushGateStillRefusesTheUnjudgedRange(t *testing.T) {
 	e, proj := project(t, harness.WithEnabledShipped("sloprail/gate/verify-before-push"))
 	const sess = "s-056-02c"
