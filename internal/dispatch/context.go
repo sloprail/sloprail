@@ -270,9 +270,8 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 // check follows, arriving at "stay active" because of what reads this flag.
 //
 // Returns (done, reason). done is whether to mark the context inactive. reason is
-// a diagnostic naming the fault when the exit script could not run (empty on a
-// clean exit or a plain non-zero "stay active") — for the caller to log, never to
-// block on.
+// the cause when the exit script could not run, including a kill on the timeout (empty on a
+// clean exit or a plain non-zero "stay active"); the Stop refuses on it.
 func (r Runner) ExitContext(req ContextExitRequest) (done bool, reason string, err error) {
 	r = r.withDefaults()
 
@@ -305,11 +304,15 @@ func (r Runner) ExitContext(req ContextExitRequest) (done bool, reason string, e
 		return true, "", nil
 	}
 
-	// Non-zero (or could-not-run): NOT done — stay active. A plain "stay active"
-	// exit carries no diagnostic; a could-not-run carries runScript's reason so the
-	// caller can log a genuine fault. Either way the context stays active, the
-	// more-guarding direction. Never a block.
-	return false, res.Reason, nil
+	// Non-zero or could-not-run: NOT done, the context stays active (the more-guarding
+	// direction). A plain non-zero is the ordinary "not yet" and carries no diagnostic. A script
+	// that could not RUN (missing, not executable, killed on the timeout) never answered, so it
+	// returns its cause: the caller refuses the Stop on it rather than let the context sit open
+	// unannounced.
+	if res.Unrunnable {
+		return false, res.Cause, nil
+	}
+	return false, "", nil
 }
 
 // parseEnterPayload reads enter's stdout as the flat JSON object that REPLACES

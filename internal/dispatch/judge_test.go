@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,7 @@ func TestVerifier_PassExitsZero(t *testing.T) {
 func TestVerifier_FalseIsCleanFail(t *testing.T) {
 	code, stderr := runVerifier(t, `{"pass": false, "reasoning": "the proof is missing"}`)
 	assert.NotEqual(t, 0, code, "a failing verdict must exit non-zero")
-	assert.Contains(t, stderr, "JUDGE-REASON:", "the reasoning is surfaced for the engine to recover")
+	assert.Contains(t, stderr, "JUDGE-REASON-JSON:", "the reasoning is surfaced for the engine to recover")
 	assert.Contains(t, stderr, "the proof is missing")
 	assert.NotContains(t, stderr, "not a boolean", "a real false must not be misread as a malformed verdict")
 }
@@ -163,4 +164,40 @@ func TestJudgeRefusal_OnlyAVerifierReasonIsAVerdict(t *testing.T) {
 	} {
 		assert.True(t, judgeRefusal(nil, []byte(stderr)).NoVerdict, stderr)
 	}
+}
+
+// A multi-line reasoning (a numbered list of every failing item) survives the verifier's
+// output whole: the script JSON-encodes it on the marker line and the reader decodes it.
+func TestVerifier_MultilineReasoningSurvivesRoundTrip(t *testing.T) {
+	want := "1. the ADR is not cited\n2. the migration is missing\n3. the test asserts nothing"
+	verdict, err := json.Marshal(map[string]any{"pass": false, "reasoning": want})
+	require.NoError(t, err)
+	code, stderr := runVerifier(t, string(verdict))
+	assert.Equal(t, 3, code)
+	assert.Equal(t, want, reasonFromVerifierOutput([]byte("sr-agent: verifier (attempt 1/1): "+stderr)))
+
+	pass, err := json.Marshal(map[string]any{"pass": true, "reasoning": "line one\nline two"})
+	require.NoError(t, err)
+	code, stderr = runVerifier(t, string(pass))
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "line one\nline two", passReasonFromVerifierOutput([]byte(stderr)))
+}
+
+func TestReasonFromVerifierOutput_EncodedForms(t *testing.T) {
+	// Multi-line, decoded whole.
+	enc := "sr-agent: verifier (attempt 1/1): JUDGE-REASON-JSON: \"a\\nb\\nc\"\n"
+	assert.Equal(t, "a\nb\nc", reasonFromVerifierOutput([]byte(enc)))
+
+	// Empty encoded reasoning is no reasoning.
+	assert.Equal(t, "", reasonFromVerifierOutput([]byte("JUDGE-REASON-JSON: \"\"\n")))
+	assert.Equal(t, "", passReasonFromVerifierOutput([]byte("JUDGE-PASS-REASON-JSON: \"\"\n")))
+
+	// A marker inside the reasoning's own text is text, not a second reasoning.
+	tricky := "JUDGE-REASON-JSON: \"see JUDGE-REASON: x\\nand JUDGE-REASON-JSON: y\"\n"
+	assert.Equal(t, "see JUDGE-REASON: x\nand JUDGE-REASON-JSON: y", reasonFromVerifierOutput([]byte(tricky)))
+
+	// Old single-line output still reads, and the last reasoning wins across forms.
+	old := "JUDGE-REASON: first try\nJUDGE-REASON-JSON: \"final\\nanswer\"\n"
+	assert.Equal(t, "final\nanswer", reasonFromVerifierOutput([]byte(old)))
+	assert.Equal(t, "plain old pass", passReasonFromVerifierOutput([]byte("JUDGE-PASS-REASON: plain old pass\n")))
 }

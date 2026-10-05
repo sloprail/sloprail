@@ -173,6 +173,20 @@ func TestExitContext_NonZeroStaysActive(t *testing.T) {
 	assert.False(t, done, "a non-zero exit keeps the context active (not done)")
 }
 
+// An exit killed on its timeout never answered: it stays active AND returns its cause, so the
+// Stop refuses instead of passing with the context silently open.
+func TestExitContext_TimedOutReturnsTheCause(t *testing.T) {
+	r := Runner{
+		runScript: func(scriptCall) (scriptResult, error) {
+			return scriptResult{Cause: "it was killed after 2s without answering", Unrunnable: true}, nil
+		},
+	}
+	done, fault, err := r.ExitContext(exitReq())
+	require.NoError(t, err)
+	assert.False(t, done)
+	assert.Contains(t, fault, "killed after 2s")
+}
+
 // exit's stdin carries ContextExitPayload — the Stop flat, currentContext, and
 // gates (so a paired context reads a gate's verdict back).
 func TestExitContext_PayloadShape(t *testing.T) {

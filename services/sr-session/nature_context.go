@@ -281,14 +281,14 @@ func brokenContextScripts(contexts []declaration.Context, seen []contextRefusal)
 }
 
 // runContextExits runs every ACTIVE context's `exit` at Stop, flipping the ones
-// that say done to inactive — WITHOUT blocking the Stop.
+// that say done (a clean exit) to inactive. A plain "not done" never blocks the Stop; an exit
+// that could not finish (killed on its timeout) stays active AND is returned as a refusal.
 //
-// exit is pure lifecycle (the reversal): its verdict only flips `active`. A
-// context that says done (non-zero exit, or an exit that could not run — the
-// more-guarding direction) is marked inactive, keeping its last payload (spec
+// exit is lifecycle (the reversal): its verdict flips `active`. A
+// context that says done is marked inactive, keeping its last payload (spec
 // ContextState: the payload survives after the context goes inactive). A context
-// that stays active is left untouched. Nothing here contributes to a turn block;
-// a Stop gate reading gates[] does that, and it has already run by the time this
+// that stays active is left untouched. A Stop gate reading gates[] does the usual
+// blocking, and it has already run by the time this
 // is called (see runNatureStopCycle).
 //
 // Runs AFTER the Stop gates so a gate requiring a context reads it still active,
@@ -301,8 +301,9 @@ func runContextExits(
 	store sessionstate.Store,
 	contextMap map[string]natures.ContextState,
 	gatesMap map[string]natures.GateState,
-) {
+) []string {
 	runner := dispatchcore.Runner{}
+	var refusals []string
 
 	for _, c := range contexts {
 		current := contextMap[c.Name]
@@ -314,8 +315,12 @@ func runContextExits(
 		if isLaunchedBy(os.Getenv, c.Name) {
 			continue
 		}
+		if dispatchcore.ContextScriptFault(c.Dir, c.Exit) != nil {
+			// A script that cannot be run at all is already named by brokenContextScripts.
+			continue
+		}
 
-		done, _, err := runner.ExitContext(dispatchcore.ContextExitRequest{
+		done, fault, err := runner.ExitContext(dispatchcore.ContextExitRequest{
 			Exit:           c.Exit,
 			Event:          stop,
 			TranscriptPath: scope.Transcript,
@@ -334,14 +339,18 @@ func runContextExits(
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q exit: %v\n", c.Name, err)
 			continue
 		}
+		if fault != "" {
+			// An exit that could not run (killed on its timeout, or the file went bad since the
+			// sweep) never answered: the context stays active and the turn is refused, never
+			// passed with the mode silently left open.
+			refusals = append(refusals, fmt.Sprintf(
+				"the %q context's exit script %q could not finish (%s); the context stays active, so what it guards stays in force unjudged. "+
+					"This turn is refused until the exit answers (context %s)", c.Name, c.Exit, fault, c.Name))
+			continue
+		}
 		if !done {
-			// NOT done (a non-zero "stay active" exit, or an exit that could not run —
-			// both stay active, the more-guarding direction). Leave the context as it
-			// is for another cycle. The reason a could-not-run carries is deliberately
-			// NOT logged as an error here: a non-zero exit is the ORDINARY way a
-			// context says "not done yet", so treating every one as a fault would make
-			// the common path noisy. A genuinely broken exit shows up as a context
-			// that never deactivates, which is visible on its own.
+			// A non-zero exit is the ORDINARY way a context says "not done yet": it stays
+			// active for another cycle, quietly.
 			continue
 		}
 		// Done (clean exit): mark inactive, KEEPING the last payload so a later cycle
@@ -349,6 +358,7 @@ func runContextExits(
 		srevents.Emit(srevents.Event{Kind: srevents.ContextDeactivated, Rule: srevents.Rule(c.Origin.Plugin, c.Name), On: stop.Kind})
 		recordContextState(cmd, store, contextMap, c.Name, natures.ContextState{Active: false, Payload: current.Payload})
 	}
+	return refusals
 }
 
 // contextMatchingEvents returns every fired event a context's `on` triggers
