@@ -22,6 +22,8 @@ func TestGitGapEarly(t *testing.T) {
 		{`git -c a=b $S`, true},
 		{`timeout $T git push`, true},
 		{`env -S "$A" git push`, true},
+		{`git --attr-source HEAD $S`, true},
+		{`git --attr-source HEAD -c $X push`, true},
 		{`git push $REMOTE`, false},
 		{`git status "$X"`, false},
 		{`git rev-parse --verify -q "$h^{commit}"`, false},

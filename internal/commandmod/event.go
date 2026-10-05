@@ -247,7 +247,7 @@ func gitGapEarly(inv Invocation) bool {
 	for i := 1; i < len(inv.Argv); i++ {
 		a := inv.Argv[i]
 		switch a {
-		case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env":
+		case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source":
 			i++
 			continue
 		}

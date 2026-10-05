@@ -25,7 +25,7 @@ git_split() {
     case "$a" in
       "$gapbin") GAP_BIN=1 ;;
       "$gap") GAP_FREE=1 ;;
-      -C | -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env)
+      -C | -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env | --attr-source)
         GOPTS+=("$a")
         i=$((i + 1))
         if [ "$i" -lt "$n" ]; then
@@ -87,7 +87,7 @@ git_chdir() {
       fi
     else
       kept+=("$a")
-      case "$a" in -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env)
+      case "$a" in -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env | --attr-source)
         i=$((i + 1))
         kept+=("${GOPTS[$i]-}")
         ;;
