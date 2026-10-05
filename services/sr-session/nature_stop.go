@@ -19,8 +19,8 @@ import (
 // This file is the Stop half of the new nature dispatch, run at the end of a
 // cycle after the old-format Post dispatch. It orchestrates ALL THREE natures'
 // end-of-cycle work in the one order the spec's reversal requires, then returns
-// the text to block the turn with (file-guard + gate refusals; a context's exit
-// never blocks).
+// the text to block the turn with (file-guard + gate refusals, and a context whose enter or
+// exit could not run; a plain "not done" exit never blocks).
 //
 // # The order, and why it is load-bearing
 //
@@ -42,12 +42,12 @@ import (
 //	     — a gate bound to Stop reads context[]/gates[] and blocks the turn on a
 //	       refusal. It must see the contexts from step 0 already active.
 //	4. context EXITS
-//	     — pure lifecycle (the reversal): each active context's exit runs AFTER
+//	     — lifecycle (the reversal): each active context's exit runs AFTER
 //	       the file-guards and gates decided, so a rule requiring or matching on a
 //	       context read it still open; then the context closes for the next
-//	       cycle. Never blocks the turn.
+//	       cycle. Blocks only when an exit could not finish (killed on its timeout).
 //
-// Steps 1–3 can each contribute a turn block; steps 0 and 4 cannot. All the maps
+// Every step can contribute a turn block (0 and 4 only for a script that could not run). All the maps
 // are loaded once and threaded through, so a context that entered in step 0 is the
 // same one commit-required, the file-guards and the gates read and that closes in
 // step 4.
