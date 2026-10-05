@@ -125,7 +125,7 @@ remote default branch, read afresh at every Stop, whatever the session made, pul
 a pull or a fast-forward push leaves nothing of that work in the local range. An explicit
 `--base` is used exactly as given (and must be before the head).
 
-The pre-push gate (`verify-before-push`) and `sr-checks run|verify --base --head` never read the
+The pre-push gate (`verify-before-push`, when enabled) and `sr-checks run|verify --base --head` never read the
 session's tracked refs, so they work the same with auto-watching off.
 
 Why so plain: CI is the hermetic guarantee. It verifies a pull request's range

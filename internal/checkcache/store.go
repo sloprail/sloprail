@@ -311,10 +311,10 @@ func rawEntries(listing string, oidField int) map[string]string {
 }
 
 // PushErrorFile is the file under the git common dir holding why the last push of local
-// results failed (absent once a push succeeds). The pre-push gate, a separate process, reads it.
+// results failed (absent once a push succeeds). The push gate (when enabled), a separate process, reads it.
 const PushErrorFile = "sloprail-checks-push-error"
 
-// push is doPush that also records its failure for the pre-push gate (see PushErrorFile).
+// push is doPush that also records its failure for the push gate (see PushErrorFile).
 func (s *Store) push() error {
 	err := s.doPush()
 	if s.opt.Remote == "" {

@@ -195,7 +195,7 @@ flattened list.
 
 ### Example: a shipped command gate
 
-The plugin's `sloprail/gate/verify-before-push` is a command gate with its policy in YAML
+The plugin's `sloprail/gate/verify-before-push` (ships off) is a command gate with its policy in YAML
 and one script. It matches any `git ... push`, and a single `checks:` script asks git
 itself which refs the push would update (`git push --dry-run --porcelain`), then runs
 `sr-checks verify` over each one's range. A push whose commits all have stored passes is
