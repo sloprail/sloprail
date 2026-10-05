@@ -22,11 +22,14 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null |
 # root) and its files are the changed paths under that root's `.sloprail/`; the fingerprint is every file of
 # that `.sloprail/` (the rules and the tests of the root), read from SR_TREE
 paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
+# a mode-only change (same bytes, chmod) is not a change of a rule: a root it touches is still a subject (the
+# engine needs one for the selected file), but its files list only the paths whose content changed
+changed="$(printf '%s' "$payload" | content_changed_paths)"
 out='[]'
 while IFS= read -r r; do
   [ -n "$r" ] || continue
   if [ "$r" = "." ]; then dir="$SR_TREE/.sloprail"; else dir="$SR_TREE/$r/.sloprail"; fi
-  files="$(printf '%s\n' "$paths" | jq -R -s -c --arg r "$r" '[split("\n")[] | select(length > 0) | select(if $r == "." then startswith(".sloprail/") else startswith($r + "/.sloprail/") end)]')"
+  files="$(printf '%s\n' "$changed" | jq -R -s -c --arg r "$r" '[split("\n")[] | select(length > 0) | select(if $r == "." then startswith(".sloprail/") else startswith($r + "/.sloprail/") end)]')"
   fp="$(tree_sha "$dir")"
   out="$(printf '%s' "$out" | jq -c --arg r "$r" --argjson f "$files" --arg fp "$fp" '. + [{id: $r, files: $f, fingerprint: $fp}]')"
 done < <(printf '%s\n' "$paths" | roots_of)
