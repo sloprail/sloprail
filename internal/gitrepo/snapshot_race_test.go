@@ -203,7 +203,9 @@ func TestSnapshot_SweepSkipsWhenLockBusy(t *testing.T) {
 	require.NoError(t, withWorktreeLock(dir, func() error {
 		start := time.Now()
 		SweepStaleSnapshots(dir)
-		assert.Less(t, time.Since(start), 5*time.Second)
+		// Far under worktreeLockWait (2m) a waiting sweep would take, and loose enough for the
+		// one git call before the lock try on a loaded machine.
+		assert.Less(t, time.Since(start), time.Minute)
 		return nil
 	}))
 }
