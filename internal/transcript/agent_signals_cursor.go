@@ -32,6 +32,9 @@ type AgentSignalCursor struct {
 // over. Like BackgroundAgentSignals an unparseable line is an error ("unknown") and the cursor
 // stays where it was, so the caller reads the same lines again next time.
 //
+// One cursor is kept per session, for the record it dispatches from: a Stop that alternates between
+// two records starts over each time, which costs what reading it whole always did.
+//
 // A last line with no newline yet is read when it is a whole record and is an error when it is not,
 // the same answer BackgroundAgentSignals gives for a torn record.
 func BackgroundAgentSignalsSince(path string, cur AgentSignalCursor) ([]AgentSignal, AgentSignalCursor, error) {
@@ -55,7 +58,7 @@ func BackgroundAgentSignalsSince(path string, cur AgentSignalCursor) ([]AgentSig
 		return nil, cur, fmt.Errorf("transcript: seek %s: %w", path, err)
 	}
 
-	var entries []Entry
+	var out []AgentSignal
 	offset := cur.Offset
 	r := bufio.NewReaderSize(f, 1<<20)
 	for {
@@ -65,12 +68,13 @@ func BackgroundAgentSignalsSince(path string, cur AgentSignalCursor) ([]AgentSig
 		}
 		if len(line) > 0 {
 			if body := bytes.TrimSpace(line); len(body) > 0 {
-				if mayCarryAgentSignal(body) {
+				if mayCarryAgentSignal(body) || namesAwaitedCall(body, background) {
 					var rec claudeRecord
 					if jerr := json.Unmarshal(body, &rec); jerr != nil {
 						return nil, cur, fmt.Errorf("transcript: parse %s: %w", path, jerr)
 					}
-					entries = append(entries, rec.entry())
+					// Folded as it is read, so a call this very read began is awaited by the lines after it.
+					out = append(out, agentSignalsOf([]Entry{rec.entry()}, background)...)
 				} else if !json.Valid(body) {
 					return nil, cur, fmt.Errorf("transcript: parse %s: not a JSON record", path)
 				}
@@ -85,7 +89,6 @@ func BackgroundAgentSignalsSince(path string, cur AgentSignalCursor) ([]AgentSig
 		}
 	}
 
-	out := agentSignalsOf(entries, background)
 	next := AgentSignalCursor{Path: path, Offset: offset}
 	if offset > 0 {
 		next.Check = fingerprint(f, offset)
@@ -106,6 +109,18 @@ func fingerprint(f *os.File, offset int64) string {
 	from := max(offset-int64(len(buf)), 0)
 	_, _ = io.Copy(h, io.NewSectionReader(f, from, offset-from))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// namesAwaitedCall is whether a record names a background call still waiting for its result: that
+// result is read even when it carries no launch receipt (an error, a receipt in other words), so the
+// call is answered and leaves the cursor, which therefore holds only calls really still waiting.
+func namesAwaitedCall(line []byte, awaited map[string]bool) bool {
+	for id := range awaited {
+		if bytes.Contains(line, []byte(id)) {
+			return true
+		}
+	}
+	return false
 }
 
 // mayCarryAgentSignal is whether a raw record could be (or hold) a signal: a launch is an Agent
