@@ -48,7 +48,7 @@ const docsRule = "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n"
 
 func project(t *testing.T, ruleYAML string) (*Env, string, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithEnabledShipped("sloprail/gate/verify-before-push"))
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
