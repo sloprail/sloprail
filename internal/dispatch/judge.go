@@ -426,34 +426,61 @@ const (
 	noVerdictReason = "the judge did not produce a JSON verdict object"
 )
 
-// reasonFromVerifierOutput pulls the reasoning the verify script printed out of
-// sr-agent's captured stream. The verifier prints the reasoning on its own line;
-// sr-agent prefixes it. The last such reasoning wins (the final attempt's).
-func reasonFromVerifierOutput(b []byte) string {
-	const marker = "JUDGE-REASON:"
-	var found string
+// The verifier prints a verdict's reasoning on ONE line so sr-agent's `verifier (attempt n/m):`
+// quoting and a line scan can find it, but a reasoning is often several lines (a numbered
+// list of every failing item). So the verifier JSON-encodes it after the *JSON marker, and the
+// reader decodes it back. The plain markers stay readable for the verifier's own one-line
+// complaints and for output written before the encoded form existed.
+const (
+	reasonMarker         = "JUDGE-REASON:"
+	reasonJSONMarker     = "JUDGE-REASON-JSON:"
+	passReasonMarker     = "JUDGE-PASS-REASON:"
+	passReasonJSONMarker = "JUDGE-PASS-REASON-JSON:"
+)
+
+// markedReasons returns every reasoning printed with the given plain/encoded marker pair, in
+// order. On a line the earliest marker is the real one, so a reasoning that quotes a marker
+// in its own text (encoded, it stays inside its string) is not mistaken for another.
+func markedReasons(b []byte, plain, encoded string) []string {
+	var out []string
 	for _, line := range strings.Split(string(b), "\n") {
-		if i := strings.Index(line, marker); i >= 0 {
-			text := strings.TrimSpace(line[i+len(marker):])
-			if text != "" {
-				found = text
+		pi, ei := strings.Index(line, plain), strings.Index(line, encoded)
+		var text string
+		switch {
+		case pi < 0 && ei < 0:
+			continue
+		case ei >= 0 && (pi < 0 || ei < pi):
+			text = strings.TrimSpace(line[ei+len(encoded):])
+			var decoded string
+			if err := json.Unmarshal([]byte(text), &decoded); err == nil {
+				text = decoded
 			}
+		default:
+			text = line[pi+len(plain):]
+		}
+		if text = strings.TrimSpace(text); text != "" {
+			out = append(out, text)
 		}
 	}
-	return found
+	return out
+}
+
+// reasonFromVerifierOutput pulls the reasoning the verify script printed out of
+// sr-agent's captured stream, whole and multi-line. The last such reasoning wins
+// (the final attempt's).
+func reasonFromVerifierOutput(b []byte) string {
+	if all := markedReasons(b, reasonMarker, reasonJSONMarker); len(all) > 0 {
+		return all[len(all)-1]
+	}
+	return ""
 }
 
 // passReasonFromVerifierOutput recovers the reasoning of a passing verdict, which
-// the verifier prints as `JUDGE-PASS-REASON: …` and sr-agent echoes on stderr.
+// the verifier prints as `JUDGE-PASS-REASON-JSON: …` and sr-agent echoes on stderr.
 func passReasonFromVerifierOutput(streams ...[]byte) string {
-	const marker = "JUDGE-PASS-REASON:"
 	for _, b := range streams {
-		for _, line := range strings.Split(string(b), "\n") {
-			if i := strings.Index(line, marker); i >= 0 {
-				if text := strings.TrimSpace(line[i+len(marker):]); text != "" {
-					return text
-				}
-			}
+		if all := markedReasons(b, passReasonMarker, passReasonJSONMarker); len(all) > 0 {
+			return all[0]
 		}
 	}
 	return ""
@@ -466,7 +493,7 @@ func passReasonFromVerifierOutput(streams ...[]byte) string {
 // finds the single JSON verdict object, and:
 //
 //   - exits 0 when `pass` is true — sr-agent then reports success;
-//   - exits 1 when `pass` is false, printing the reasoning as `JUDGE-REASON: …`
+//   - exits 1 when `pass` is false, printing the reasoning, JSON-encoded, as `JUDGE-REASON-JSON: …`
 //     so the engine can recover it and the agent can be shown it on the next
 //     attempt;
 //   - exits 1 when the output is not a well-formed verdict, so sr-agent asks the
@@ -541,7 +568,7 @@ reason="$(printf '%s' "$json" | jq -r '.` + reasonKey + ` // ""' 2>/dev/null)"
 if [ "$pass" = "true" ]; then
   # A pass keeps its reasoning too: surface it so the engine can store it.
   if [ -n "$reason" ]; then
-    echo "JUDGE-PASS-REASON: $(printf '%s' "$reason" | tr '\n' ' ')" >&2
+    printf 'JUDGE-PASS-REASON-JSON: %s\n' "$(printf '%s' "$reason" | jq -Rsc .)" >&2
   fi
   exit 0
 fi
@@ -559,7 +586,7 @@ fi
 if [ -z "$reason" ]; then
   reason="the judge found the action does not satisfy the rule, but named no specific reason"
 fi
-echo "JUDGE-REASON: $reason" >&2
+printf 'JUDGE-REASON-JSON: %s\n' "$(printf '%s' "$reason" | jq -Rsc .)" >&2
 exit 3
 `
 
