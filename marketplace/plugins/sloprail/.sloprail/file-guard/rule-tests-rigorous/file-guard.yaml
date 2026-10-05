@@ -8,8 +8,9 @@
 # match: any file of a rule or of its cases, at any depth of nesting (a plugin's own `.sloprail/` too):
 #   .sloprail/<gate|file-guard|context>/<rule>/...        (the rule's files and, under tests/, its cases)
 #   .sloprail/file-guard/structure.yaml                   (the structure gate; its cases are structure.tests/)
-# An expression, not a glob, so the root project's `.sloprail/` matches as well as a nested one. A file
-# straight under `tests/` is no case and subjects.sh skips it.
+# An expression, not a glob, so the root project's `.sloprail/` matches as well as a nested one. A stray
+# file under a rule's `tests/` (or under `structure.tests/`) is no case: it selects its rule, which is judged
+# on the cases that stand.
 match: 'path matches "(^|/)[.]sloprail/((gate|file-guard|context)/[^/]+/.|file-guard/structure[.]yaml$)"'
 
 # One subject per rule touched by the change (a changed case, or a changed file of the rule), each cached on

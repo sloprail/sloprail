@@ -30,13 +30,10 @@ path_subject() {
       return 0
     fi
     if [ "$b" = structure.tests ]; then
-      case "$c" in
-        */*)
-          printf '%s.sloprail/file-guard/structure.tests\n' "$root"
-          return 0
-          ;;
-      esac
-      return 1
+      # any file under structure.tests/, a case's or a stray one that is no case, belongs to the structure gate
+      [ -n "$c" ] || return 1
+      printf '%s.sloprail/file-guard/structure.tests\n' "$root"
+      return 0
     fi
   fi
   case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac

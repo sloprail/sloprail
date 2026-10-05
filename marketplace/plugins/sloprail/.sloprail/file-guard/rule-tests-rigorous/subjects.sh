@@ -40,7 +40,7 @@ while IFS= read -r id; do
   [ -n "$id" ] || continue
   rule_split "$id" || continue
   cases="$(rule_cases "$id")"
-  files="$(printf '%s' "$pairs" | awk -F'\t' -v id="$id" '$1 == id { print $2 }' | jq -R . | jq -sc .)"
+  files="$(printf '%s' "$pairs" | RTR_ID="$id" awk -F'\t' '$1 == ENVIRON["RTR_ID"] { print $2 }' | jq -R . | jq -sc .)"
   fp="$({
     while IFS= read -r c; do
       [ -n "$c" ] && find "$SR_TREE/$c" -type f

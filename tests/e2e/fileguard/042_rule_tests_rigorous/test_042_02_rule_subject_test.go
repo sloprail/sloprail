@@ -54,16 +54,27 @@ func TestT042_11_ChangedRuleFileJudgesItsCases(t *testing.T) {
 	}
 }
 
-// T042_12: a rule with no case standing is no subject: changing it is not refused for lacking cases.
-func TestT042_12_RuleWithoutCasesIsNoSubject(t *testing.T) {
-	e := harness.New(t, harness.WithOnlyShippedFileGuard(ruleName))
-	proj := e.Project()
-	e.GitInit(proj)
-	e.Run(proj, "s-042", "hello", harness.Turns("done"))
-	e.WriteFile(proj, ".sloprail/gate/demo/README.md", "demo\n")
-	e.WriteFile(proj, ".sloprail/gate/demo/tests/stray.txt", "not a case\n")
-	e.CommitAll(proj, "a rule and a stray file")
-	if got := strings.Join(e.CheckRunRange(proj, "s-042", "origin/main", "HEAD"), "\n"); got != "" {
-		t.Fatalf("a rule with no case was refused:\n%s", got)
+// T042_12: a rule with no case standing is a subject with nothing to judge: changing it is not refused for
+// lacking cases, and neither is a stray file under its tests/ or under structure.tests/ (no case, no refusal).
+func TestT042_12_RuleWithoutCasesPasses(t *testing.T) {
+	for name, files := range map[string][]string{
+		"rule-file":       {".sloprail/gate/demo/README.md"},
+		"stray-file":      {".sloprail/gate/demo/tests/stray.txt"},
+		"structure-stray": {".sloprail/file-guard/structure.tests/stray.txt"},
+		"rule-and-stray":  {".sloprail/gate/demo/README.md", ".sloprail/gate/demo/tests/stray.txt"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := harness.New(t, harness.WithOnlyShippedFileGuard(ruleName))
+			proj := e.Project()
+			e.GitInit(proj)
+			e.Run(proj, "s-042", "hello", harness.Turns("done"))
+			for _, f := range files {
+				e.WriteFile(proj, f, "not a case\n")
+			}
+			e.CommitAll(proj, "a change with no case")
+			if got := strings.Join(e.CheckRunRange(proj, "s-042", "origin/main", "HEAD"), "\n"); got != "" {
+				t.Fatalf("a change with no case was refused:\n%s", got)
+			}
+		})
 	}
 }
