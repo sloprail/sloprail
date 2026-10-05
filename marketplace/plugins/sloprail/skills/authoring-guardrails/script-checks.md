@@ -56,7 +56,14 @@ Write a reason: only the check knows what the agent should do instead. Address i
 to the agent whose action was blocked, and say what to do rather than what went
 wrong — the engine appends the rule's name, so the reason itself is about the fix.
 
-`{"reason"}` on stdout is the whole structured contract. The old format's
+A check that **could not do its job** (a tool it needs is missing or failed, not the content
+being wrong) adds `"error": true`: `{"reason":"sr-test could not run","error":true}`. It still
+refuses, but it is no verdict on the content: a file-guard stores nothing under the key, so the
+next `sr-checks run` runs the check again instead of replaying the failure. Without the flag a
+refusal is a verdict, cached for the same content until the rule or the content changes. (A script
+the engine could not start at all is an error the same way.)
+
+`{"reason"}` and `{"error"}` on stdout are the whole structured contract. The old format's
 `{"decision":"block","reason":…}` wrapper is gone — the engine reads `reason`
 alone, so drop `decision`.
 
