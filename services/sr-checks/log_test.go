@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/checkcache"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 )
 
 func guardRun(id, at, rule, status, fp, base, head string, meta map[string]any) checkcache.Run {
@@ -103,4 +106,35 @@ func TestParseSince(t *testing.T) {
 	}
 	_, err := parseSince("yesterday", now)
 	require.Error(t, err)
+}
+
+func TestRangeCommits_BaseExclusiveHeadInclusive(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		out, err := c.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	base := run("rev-parse", "HEAD")
+	run("commit", "-q", "--allow-empty", "-m", "one")
+	one := run("rev-parse", "HEAD")
+	run("commit", "-q", "--allow-empty", "-m", "two")
+	two := run("rev-parse", "HEAD")
+
+	got, err := rangeCommits(dir, []string{base + ".." + two})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{one: true, two: true}, got)
+
+	got, err = rangeCommits(dir, []string{base + ".." + one, gitrepo.EmptyTree + ".." + base})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{one: true, base: true}, got)
+
+	for _, bad := range []string{"nodots", "..two", base + "..", base + "..nosuchrev"} {
+		_, err = rangeCommits(dir, []string{bad})
+		assert.Error(t, err, bad)
+	}
 }
