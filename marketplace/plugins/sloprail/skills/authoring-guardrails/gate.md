@@ -228,7 +228,13 @@ other index-moving command on the line is refused, as is a commit whose folder o
 cannot be read (fail closed). Files the same line creates before the commit are not seen: CI's
 verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.
 
-All three ship **on**: a project turns one off
+These three gates (verify-before-push, cite-before-commit, checks-ref-sr-only) also fire on any
+`git` invocation with a gap (`len(.gaps) > 0`: an option or the subcommand is a variable or `$(...)`
+the line never assigned to a literal, as in `git $X`, `timeout $T git push`, `env -S "$A" git push`) and
+refuse it, fail closed, telling the agent to use the literal subcommand. A `builtin cd` / `command cd`
+is tracked like `cd`, and an `env -S '<literal command>'` payload is read as the command it runs.
+
+All three ship **on** (verify-before-push ships off since v0.4.1): a project turns one off
 with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
 
 `sloprail/gate/ci-verify-required` is the `Stop` gate that closes the loop on the CI side: a

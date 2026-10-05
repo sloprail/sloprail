@@ -631,6 +631,9 @@ var interpreterFlagsTakingValue = map[string]bool{
 //	                      runtime parameter, which is the floor.
 //	sh -c                 -c with nothing after it. There is no payload word.
 func interpreterPayload(argv []word) (string, bool) {
+	if basename(argv[0].value) == "env" {
+		return envSplitPayload(argv)
+	}
 	in, ok := interpreters[basename(argv[0].value)]
 	if !ok {
 		return "", false
@@ -710,6 +713,43 @@ func interpreterPayload(argv []word) (string, bool) {
 			return p.value, true
 		}
 		return "", false
+	}
+	return "", false
+}
+
+// envSplitPayload returns the string `env -S` / `--split-string` splits into
+// the command it runs (`env -S 'git push'`, `env -i -S'A=1 npm publish'`), and
+// whether it is a literal one. env splits it by its own rules, but the words of
+// the command are the same ones the shell would read, which is all a payload is
+// re-parsed for. Only the options that stand before the first bare word are
+// env's own; a payload word that is not literal is the floor, as for `sh -c`.
+func envSplitPayload(argv []word) (string, bool) {
+	for i := 1; i < len(argv); i++ {
+		a := argv[i]
+		switch {
+		case a.value == "--":
+			return "", false
+		case a.value == "-S" || a.value == "--split-string":
+			if !a.literal || i+1 >= len(argv) || argv[i+1].gapBefore || !argv[i+1].literal {
+				return "", false
+			}
+			return argv[i+1].value, true
+		case strings.HasPrefix(a.value, "--split-string="):
+			if !a.literal {
+				return "", false
+			}
+			return strings.TrimPrefix(a.value, "--split-string="), true
+		case strings.HasPrefix(a.value, "-S") && !strings.HasPrefix(a.value, "--"):
+			if !a.literal {
+				return "", false
+			}
+			return a.value[2:], true
+		case a.value == "-u" || a.value == "--unset" || a.value == "-C" || a.value == "--chdir":
+			i++
+		case strings.HasPrefix(a.value, "-") && a.value != "-":
+		default:
+			return "", false
+		}
 	}
 	return "", false
 }
@@ -810,7 +850,22 @@ func fromArgv(argv []word, depth int) []Invocation {
 	// The interpreter itself has already been appended above and stays
 	// reported. Unwrapping a payload ADDS what it runs; a rule about `sh` must
 	// not be defeated by the fix to a rule about npm.
-	invs = append(invs, fromPayload(argv, depth)...)
+	payload := fromPayload(argv, depth)
+	if basename(argv[0].value) == "env" {
+		// `env -C /x -S 'cmd'` and `env A=b -S ...` run the payload where and
+		// as the wrapper says, exactly like the vector form above.
+		if dir, known, moves := wrapperChdir(argv, false); moves {
+			for i := range payload {
+				payload[i].Cwd = chdirCwd(dir, known, payload[i].Cwd)
+			}
+		}
+		if set := wrapperEnv(argv); len(set) > 0 {
+			for i := range payload {
+				payload[i].Env = underlay(payload[i].Env, set)
+			}
+		}
+	}
+	invs = append(invs, payload...)
 
 	return invs
 }
@@ -877,6 +932,14 @@ func unwrap(argv []word) []word {
 			// equals, so env does not take it as an assignment and neither do we.
 			if strings.Contains(arg, "=") && !strings.HasPrefix(arg, "=") {
 				continue
+			}
+			// A word the line lost just before this one (`timeout $T cmd arg`)
+			// stood where the wrapper's own bare words stand: it was the
+			// duration, or took the place of it, so this word is the program.
+			// Reading it as the duration would report its argument as the
+			// program and hide the real program from every rule about it.
+			if argv[i].gapBefore {
+				positionals = 0
 			}
 			// A bare word the wrapper itself consumes — timeout's duration.
 			if positionals > 0 {

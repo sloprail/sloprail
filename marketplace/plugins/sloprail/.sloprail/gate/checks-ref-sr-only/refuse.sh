@@ -71,7 +71,7 @@ while [ "$i" -lt "$n" ]; do
   git_split "$inv"
   # A word the engine could not resolve (a `$(...)`, a variable the line did not assign to a literal)
   # may be the subcommand or the ref: it could name the results ref, and would not be read here.
-  [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal, so it could not be checked against the results ref. Write it out literally. $msg"
+  [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal, so it could not be checked against the results ref. Use the literal subcommand and options. $msg"
   case "$SUB" in
     update-ref | symbolic-ref | push | fetch | pull | fast-import)
       [ -z "$GAP_REST" ] || refuse "This 'git $SUB' names a ref through a variable or \$(...) that could not be resolved, so it could not be checked against the results ref. Write the ref out literally. $msg"

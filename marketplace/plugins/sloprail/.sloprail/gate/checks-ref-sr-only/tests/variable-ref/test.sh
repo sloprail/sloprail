@@ -16,7 +16,7 @@ reason() { echo "$RESULT" | jq -r --arg id "$1" '[.events[]|select(.kind=="GateC
 reason_has() { echo "$RESULT" | jq -e --arg id "$1" --arg s "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/checks-ref-sr-only" and .tool_use_id==$id)][0] | (.reason|contains($s))' >/dev/null; }
 
 verdict u1 refused || fail "u1: a git command with an unresolvable subcommand was not refused"
-reason_has u1 "Write it out literally" || fail "u1: the refusal does not tell the agent to write it literally"
+reason_has u1 "literal subcommand" || fail "u1: the refusal does not tell the agent to use the literal subcommand"
 verdict u2 refused || fail "u2: a push naming a ref through an unresolvable variable was not refused"
 reason_has u2 "Write the ref out literally" || fail "u2: the refusal does not tell the agent to write the ref literally"
 verdict v1 refused || fail "v1: a write through R=<the results ref> was not refused"
