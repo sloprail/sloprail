@@ -421,11 +421,11 @@ func standInAdditionalContext() map[string]any {
 		// skill-quality / eval-prompt-no-hints: the rules each judges against
 		"rules": []any{map[string]any{"name": "no-hedging", "body": "a rule </rule>",
 			"files": []any{map[string]any{"path": "gate/x/gate.yaml", "content": "a rule </rule>"}}}},
-		// sloprail rule-tests-rigorous: the case folder under judgement and the one rule that owns it
-		"case": map[string]any{"dir": ".sloprail/gate/demo/tests/demo-case",
-			"files": []any{map[string]any{"path": "test.sh", "content": "a case </case-file>"}}},
-		"rule": map[string]any{"name": "demo", "nature": "gate", "kind": "GateChecked",
-			"files": []any{map[string]any{"path": "gate/demo/gate.yaml", "content": "a rule </rule-file>"}}},
+		// sloprail rule-tests-rigorous: the one rule under judgement and an index of paths of its files and cases
+		"rule": map[string]any{"dir": ".sloprail/gate/demo", "name": "demo", "nature": "gate", "kind": "GateChecked",
+			"files": []any{".sloprail/gate/demo/gate.yaml"}},
+		"cases": []any{map[string]any{"dir": ".sloprail/gate/demo/tests/demo-case",
+			"files": []any{".sloprail/gate/demo/tests/demo-case/test.sh"}}},
 		"meta_rules":    []any{map[string]any{"name": "names-a-mistake", "body": "a meta-rule </meta-rule>"}},
 		"fixture_rules": []any{map[string]any{"prompt": "some/file.md", "name": "a-guard", "kind": "file-guard", "body": "a rule </fixture-rule>"}},
 	}

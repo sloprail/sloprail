@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Hands the judge the whole committed case folder (every file, not only the changed ones) and the files of
-# the ONE rule that owns it (the folder the case sits in; its own cases excluded), both read from SR_TREE.
-# What this reads beyond the subject's files is in the subject's fingerprint (subjects.sh), so a changed
-# owner rule judges its cases again.
+# Hands the judge an INDEX OF PATHS, not file contents: the files of the ONE rule under judgement (its
+# declaration, README, scripts, templates) and, per case folder, every file of the case, all tree-relative
+# paths read from SR_TREE (the judge's workspace is that snapshot, so it opens them with its Read tool). Only
+# the tiny, always-needed facts are inline: the rule's name, nature and event kind.
+# What this reads beyond the subject's files is in the subject's fingerprint (subjects.sh), so a changed case
+# or a changed rule judges the rule again.
 set -uo pipefail
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -16,38 +18,42 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 [ -n "${SR_TREE:-}" ] || {
-  echo "rule-tests-rigorous prepare: SR_TREE is unset, so the case cannot be read. Refusing." >&2
+  echo "rule-tests-rigorous prepare: SR_TREE is unset, so the cases cannot be read. Refusing." >&2
   exit 1
 }
-case_dir="$(printf '%s' "$payload" | jq -r '.subject.id // ""')" || case_dir=""
-if [ -z "$case_dir" ] || [ ! -d "$SR_TREE/$case_dir" ]; then
+rule_dir="$(printf '%s' "$payload" | jq -r '.subject.id // ""')" || rule_dir=""
+if [ -z "$rule_dir" ] || [ ! -d "$SR_TREE/$rule_dir" ]; then
   echo '{"skip": true}'
   exit 0
 fi
-
-# dir_json <abs dir> <label prefix> -> [{path, content}] for every file under it, sorted, text only
-dir_json() {
-  local d="$1" prefix="$2" f out='[]'
-  while IFS= read -r f; do
-    [ -f "$f" ] || continue
-    out="$(printf '%s' "$out" | jq -c --arg p "$prefix${f#"$d"/}" --rawfile c "$f" '. + [{path: $p, content: $c}]')"
-  done < <(find "$d" -type f | LC_ALL=C sort)
-  printf '%s' "$out"
-}
-
-case_files="$(dir_json "$SR_TREE/$case_dir" "")"
-case_split "$case_dir" || {
-  echo "rule-tests-rigorous prepare: $case_dir is not a case folder of a rule. Refusing." >&2
+rule_split "$rule_dir" || {
+  echo "rule-tests-rigorous prepare: $rule_dir is not a rule folder. Refusing." >&2
   exit 1
 }
+if [ -z "$(rule_cases "$rule_dir")" ]; then
+  # no case stands: nothing to judge
+  echo '{"skip": true}'
+  exit 0
+fi
 owner_name="$(owner_rule "$CASE_ROOT" "$CASE_RULE")"
 kind="$(owner_kind "$CASE_NATURE")"
-rule_files='[]'
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  rule_files="$(printf '%s' "$rule_files" | jq -c --arg p "${f#"$(root_abs "$CASE_ROOT")"/.sloprail/}" --rawfile c "$f" '. + [{path: $p, content: $c}]')"
-done < <(owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE")
 
-jq -n --arg dir "$case_dir" --argjson files "$case_files" --arg name "$owner_name" --arg nature "$CASE_NATURE" \
-  --arg kind "$kind" --argjson rfiles "$rule_files" \
-  '{additionalContext: {case: {dir: $dir, files: $files}, rule: {name: $name, nature: $nature, kind: $kind, files: $rfiles}}}'
+# paths_json <abs file paths on stdin> -> a JSON array of tree-relative paths
+paths_json() {
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] && printf '%s\n' "${f#"$SR_TREE"/}"
+  done | jq -R . | jq -sc .
+}
+
+rule_files="$(owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE" | paths_json)"
+cases='[]'
+while IFS= read -r c; do
+  [ -n "$c" ] || continue
+  files="$(find "$SR_TREE/$c" -type f | LC_ALL=C sort | paths_json)"
+  cases="$(printf '%s' "$cases" | jq -c --arg d "$c" --argjson f "$files" '. + [{dir: $d, files: $f}]')"
+done < <(rule_cases "$rule_dir")
+
+jq -n --arg dir "$rule_dir" --arg name "$owner_name" --arg nature "$CASE_NATURE" --arg kind "$kind" \
+  --argjson rfiles "$rule_files" --argjson cases "$cases" \
+  '{additionalContext: {rule: {dir: $dir, name: $name, nature: $nature, kind: $kind, files: $rfiles}, cases: $cases}}'

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# rule-tests-rigorous, the deterministic floor. One subject = one case folder. It reads the committed
-# test.sh (and the mock judges beside it) from SR_TREE and refuses the structural shapes that make a case
-# pass whatever the rule does. What needs reading for meaning (is the refusal for the rule's own reason,
-# does the permit sit at the boundary) is the judge's, next. A case's rule is the folder it sits in, so the
-# floor also requires test.sh to assert an event of THAT rule.
+# rule-tests-rigorous, the deterministic floor. One subject = one RULE; the floor still runs per CASE, over
+# every case folder of the rule. It reads each committed test.sh (and the mock judges beside it) from SR_TREE
+# and refuses the structural shapes that make a case pass whatever the rule does; any case failing the floor
+# refuses the subject, naming the case. What needs reading for meaning (is the refusal for the rule's own
+# reason, does the permit sit at the boundary, does the rule as a whole have a refusal AND a permit) is the
+# judge's, next. A case's rule is the folder it sits in, so the floor also requires test.sh to assert an
+# event of THAT rule.
 # Contract: stdin is the Changeset payload; exit 1 with {"reason": ...} refuses; whatever cannot be read
 # is refused.
 set -uo pipefail
@@ -22,17 +24,28 @@ refuse() {
 [ "$(printf '%s' "$payload" | jq -r '.event.kind // ""')" = "Changeset" ] ||
   refuse "expected a Changeset event, so the sr-test case could not be checked"
 [ -n "${SR_TREE:-}" ] || refuse "SR_TREE is unset, so the committed sr-test case could not be read"
-case_dir="$(printf '%s' "$payload" | jq -r '.subject.id // ""')" || case_dir=""
-[ -n "$case_dir" ] || refuse "the changeset names no sr-test case folder, so no case could be checked"
+rule_dir="$(printf '%s' "$payload" | jq -r '.subject.id // ""')" || rule_dir=""
+[ -n "$rule_dir" ] || refuse "the changeset names no rule whose sr-test cases could be checked"
+rule_split "$rule_dir" ||
+  refuse "$rule_dir is not a rule folder: a rule lives in .sloprail/<gate|file-guard|context>/<rule>/ and its cases in its tests/<case>/ (the structure gate's in .sloprail/file-guard/structure.tests/<case>/)."
+cases="$(rule_cases "$rule_dir")"
+# a rule with no case standing has nothing to check here (a rule without tests is sr-test doctor's business)
+[ -n "$cases" ] || exit 0
 
+all_problems=""
+
+# check_case <case folder>: the floor over one case; appends its refusal, naming the case, to all_problems
+check_case() {
+local case_dir="$1" abs test_sh first body joined ev_rule ev_kind ev_re name f problems=""
 abs="$SR_TREE/$case_dir"
 test_sh="$abs/test.sh"
-[ -f "$test_sh" ] ||
-  refuse "$case_dir has no test.sh. A case is its test.sh (setup, run the agent, assert on the events); add it, or delete the folder."
-
-problems=""
 add() { problems="$problems
 - $1"; }
+if [ ! -f "$test_sh" ]; then
+  all_problems="$all_problems
+$case_dir has no test.sh. A case is its test.sh (setup, run the agent, assert on the events); add it, or delete the folder."
+  return 0
+fi
 
 first="$(head -n 1 "$test_sh")"
 case "$first" in
@@ -93,6 +106,16 @@ for f in "$abs"/judge*.sh; do
 done
 
 if [ -n "$problems" ]; then
-  refuse "$case_dir is not a rigorous sr-test case:$problems"
+  all_problems="$all_problems
+$case_dir is not a rigorous sr-test case:$problems"
+fi
+}
+
+while IFS= read -r c; do
+  [ -n "$c" ] && check_case "$c"
+done <<<"$cases"
+
+if [ -n "$all_problems" ]; then
+  refuse "the sr-test cases of $rule_dir are not rigorous (each case below fails the script floor):$all_problems"
 fi
 exit 0
