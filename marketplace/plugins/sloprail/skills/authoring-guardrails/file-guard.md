@@ -89,7 +89,7 @@ never the working tree.
   from the local results. **Stop shows failures only**: a stored FAIL (with its
   reasons), a rule that does not load, or a real error refuses it. A range nobody has
   judged yet is not reported at Stop, and passes it silently; run `sr-checks run`
-  before pushing — CI `sr-checks verify` (and the push gate, if enabled) refuses an unjudged range.
+  before a PR is ready — CI `sr-checks verify` (and the push gate, if enabled) refuses an unjudged range.
 - **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (ships off; below), and optionally a git `pre-push` hook.
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
   backstop for anything a session did not track. A squash merge keeps the PR's
@@ -125,7 +125,7 @@ remote default branch, read afresh at every Stop, whatever the session made, pul
 a pull or a fast-forward push leaves nothing of that work in the local range. An explicit
 `--base` is used exactly as given (and must be before the head).
 
-The pre-push gate (`verify-before-push`, when enabled) and `sr-checks run|verify --base --head` never read the
+The push gate (`verify-before-push`, when enabled) and `sr-checks run|verify --base --head` never read the
 session's tracked refs, so they work the same with auto-watching off.
 
 Why so plain: CI is the hermetic guarantee. It verifies a pull request's range
