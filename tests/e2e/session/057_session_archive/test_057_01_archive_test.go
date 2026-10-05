@@ -102,7 +102,7 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 			t.Fatalf("premise: %s has no stored FAIL: %s", c.Repo, want.Output)
 		}
 		if got := readFile(t, filepath.Join(dir, c.File)); got != want.Output {
-			t.Fatalf("%s: archived checks differ from `sr-checks log --json`:\n%s\nvs\n%s", c.Repo, got, want.Output)
+			t.Fatalf("%s: with one session in the repository its archived checks are the whole `sr-checks log --json`:\n%s\nvs\n%s", c.Repo, got, want.Output)
 		}
 		if len(c.Sessions) != 1 || c.Sessions[0] != sess {
 			t.Fatalf("%s tracked by %v", c.Repo, c.Sessions)
@@ -382,6 +382,8 @@ func TestT057_06_TheWorkingDirectoryDefinesTheProject(t *testing.T) {
 // T057_07: the stored verdicts live in the repository's own ref, shared by all its worktrees, so a
 // session that tracked several worktrees of one repository gets ONE checks file for it (not a copy
 // per worktree), beside one for a second repository; archive.json maps every tracked folder to it.
+// That file holds only what THIS session relied on: the repository's log also carries another
+// session's verdicts (here, one working on its own branch in its own worktree), and those are not in it.
 func TestT057_07_WorktreesOfOneRepositoryShareOneChecksFile(t *testing.T) {
 	w := newWorld(t)
 	e := w.e
@@ -403,6 +405,13 @@ func TestT057_07_WorktreesOfOneRepositoryShareOneChecksFile(t *testing.T) {
 	e.GitInit(other)
 	e.FileGuard(other, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
 	e.CommitAll(other, "the rule")
+
+	// A second session in the same repository, on a branch of its own, leaves a stored verdict in
+	// the same ref (the log is repository-wide) for a commit the first session never tracked.
+	wtB := filepath.Join(root, "wt-b")
+	git(t, w.proj, "worktree", "add", "-q", "-b", "other-session", wtB)
+	w.sessionIn(t, wtB, "s-057-07-b")
+	headB := git(t, wtB, "rev-parse", "HEAD")
 
 	commitIn := func(dir, name string) harness.Turn {
 		return harness.Bash("c-"+name, fmt.Sprintf(
@@ -429,12 +438,24 @@ func TestT057_07_WorktreesOfOneRepositoryShareOneChecksFile(t *testing.T) {
 	realOther, _ := filepath.EvalSymlinks(other)
 	covered := map[string]bool{}
 	for _, c := range m.Checks {
-		want := e.CLIDirect(c.Repo, "sr-checks", "log", "--json")
-		if want.Code != 0 || !strings.Contains(want.Output, failText) {
-			t.Fatalf("premise: %s has no stored FAIL: %s", c.Repo, want.Output)
+		whole := e.CLIDirect(c.Repo, "sr-checks", "log", "--json")
+		if whole.Code != 0 || !strings.Contains(whole.Output, failText) {
+			t.Fatalf("premise: %s has no stored FAIL: %s", c.Repo, whole.Output)
 		}
-		if got := readFile(t, filepath.Join(dir, c.File)); got != want.Output {
-			t.Fatalf("%s: archived checks differ from `sr-checks log --json`:\n%s\nvs\n%s", c.Repo, got, want.Output)
+		got := readFile(t, filepath.Join(dir, c.File))
+		if !strings.Contains(got, failText) {
+			t.Fatalf("%s: the session's own FAIL is not archived:\n%s", c.Repo, got)
+		}
+		if c.Repo == realProj {
+			if !strings.Contains(whole.Output, headB) {
+				t.Fatalf("premise: the other session's verdict (head %s) is not in the repository's log:\n%s", headB, whole.Output)
+			}
+			if strings.Contains(got, headB) {
+				t.Errorf("the other session's verdict (head %s) is in this session's archive:\n%s", headB, got)
+			}
+			if len(got) >= len(whole.Output) {
+				t.Errorf("the archive is not narrower than the repository's log:\n%s\nvs\n%s", got, whole.Output)
+			}
 		}
 		for _, f := range c.Folders {
 			covered[f] = true

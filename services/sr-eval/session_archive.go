@@ -45,8 +45,9 @@ tool-results), the scratchpad and task outputs Claude Code keeps under its temp
 root, and the session's sloprail state store. It also saves the check results
 (sr-checks log --json) of the project repository and of every other repository the
 session tracked (once per repository, however many of its worktrees), and the tracked ranges themselves (sr-session refs list --json),
-so the archive stands without git or origin. sr-checks log cannot be scoped to a
-session, so each repository's full log is saved.
+so the archive stands without git or origin. A repository's log holds every session's
+verdicts, so only the ones whose commit lies in a range the archived sessions tracked are
+kept (sr-checks log --range); a repository with no tracked range gets an empty file.
 
 Layout: <into>/<label>/<UTC timestamp>-<rand>/ with archive.json, one directory
 per session and checks/. Exactly this entry's directory is committed.
@@ -190,16 +191,21 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 		Label: label, Cwd: cwd, Project: projName, Sessions: ids, StartedAt: now.UTC(),
 		Sources: archiveSources{ProjectDir: projDir, Scratchpad: map[string]string{}},
 	}
-	folders := map[string][]string{} // tracked folder -> sessions that tracked it
+	folders := map[string][]string{}      // tracked folder -> sessions that tracked it
+	ranges := map[string][]trackedRange{} // tracked folder -> the ranges the sessions held there
 	if root, err := gitrepo.Root(cwd); err == nil && root != "" {
 		folders[filepath.Clean(root)] = nil
 	}
 	for _, id := range ids {
-		for _, f := range archiveOneSession(m, cwd, projDir, projName, id, dir) {
-			folders[f] = append(folders[f], id)
+		for _, r := range archiveOneSession(m, cwd, projDir, projName, id, dir) {
+			f := filepath.Clean(r.Folder)
+			if !contains(folders[f], id) {
+				folders[f] = append(folders[f], id)
+			}
+			ranges[f] = append(ranges[f], r)
 		}
 	}
-	archiveChecks(m, folders, dir)
+	archiveChecks(m, folders, ranges, dir)
 	m.Tools = toolVersions()
 	m.EndedAt = time.Now().UTC()
 
@@ -217,10 +223,10 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 }
 
 // archiveOneSession copies what one session left behind into <dir>/<id>/ and
-// returns the folders its tracked ranges name. A missing piece is recorded in
+// returns the ranges it tracked. A missing piece is recorded in
 // the manifest, never an error: a session may have no subagents, no scratchpad,
 // or no state at all.
-func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir string) []string {
+func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir string) []trackedRange {
 	skip := func(item, reason string) {
 		m.Skipped = append(m.Skipped, skippedItem{Session: id, Item: item, Reason: reason})
 	}
@@ -281,8 +287,8 @@ func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir strin
 
 // archiveRefs saves `sr-session refs list --json` for the session, run as the
 // session itself (a hook-style payload on stdin names it), and returns the
-// folders it lists.
-func archiveRefs(cwd, tpath, id, sdir string, skip func(item, reason string)) []string {
+// ranges it lists.
+func archiveRefs(cwd, tpath, id, sdir string, skip func(item, reason string)) []trackedRange {
 	payload, _ := json.Marshal(map[string]string{"session_id": id, "transcript_path": tpath, "cwd": cwd})
 	stdout, err := runTool(cwd, bytes.NewReader(payload), "sr-session", "refs", "list", "--json")
 	if err != nil {
@@ -295,20 +301,27 @@ func archiveRefs(cwd, tpath, id, sdir string, skip func(item, reason string)) []
 			skip("refs list --json", err.Error())
 		}
 	}
-	var ranges []struct{ Folder string }
-	if err := json.Unmarshal(stdout, &ranges); err != nil {
+	var rows []trackedRange
+	if err := json.Unmarshal(stdout, &rows); err != nil {
 		skip("refs list --json", "unreadable output: "+err.Error())
 		return nil
 	}
-	seen := map[string]bool{}
-	var folders []string
-	for _, r := range ranges {
-		if r.Folder != "" && !seen[r.Folder] {
-			seen[r.Folder] = true
-			folders = append(folders, filepath.Clean(r.Folder))
+	var ranges []trackedRange
+	for _, r := range rows {
+		if r.Folder != "" {
+			ranges = append(ranges, r)
 		}
 	}
-	return folders
+	return ranges
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // runTool execs a sibling binary from PATH in dir, the way sloprail's binaries

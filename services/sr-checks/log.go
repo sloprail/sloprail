@@ -63,6 +63,10 @@ the verdict was recorded. base and head are that run's commit range, null when i
 
 --rule limits the listing to one file-guard, by folder name or qualified name.
 --failing keeps only the fails.
+--range BASE..HEAD (repeatable) keeps the verdicts whose run's head is a commit of one of the ranges
+(base exclusive, head inclusive, as the range is judged: merge-base(base, head)..head; the empty tree
+as base takes every commit head reaches). A verdict that recorded no head is dropped. Without --range
+the whole log is listed.
 --since keeps verdicts judged at or after a time: a duration back from now (30m, 24h, 7d, 2w), an
 RFC3339 time, or a date (2026-01-02, UTC).`,
 		Args: cobra.NoArgs,
@@ -72,6 +76,7 @@ RFC3339 time, or a date (2026-01-02, UTC).`,
 	cmd.Flags().Bool("jsonl", false, "Alias of --json")
 	cmd.Flags().Bool("failing", false, "Only fails")
 	cmd.Flags().String("rule", "", "Only this file-guard (folder name or qualified name)")
+	cmd.Flags().StringArray("range", nil, "Only verdicts whose run head is a commit of BASE..HEAD (repeatable)")
 	cmd.Flags().String("since", "", "Only verdicts judged at or after this: a duration (24h, 7d), an RFC3339 time or a date")
 	return cmd
 }
@@ -100,6 +105,12 @@ func runLog(cmd *cobra.Command, _ []string) error {
 	if err != nil || root == "" {
 		return fmt.Errorf("sloprail: %s is not inside a git repository", cwd)
 	}
+	var heads map[string]bool // nil: no --range, nothing is filtered by commit
+	if rangeArgs, _ := cmd.Flags().GetStringArray("range"); len(rangeArgs) > 0 {
+		if heads, err = rangeCommits(root, rangeArgs); err != nil {
+			return err
+		}
+	}
 	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), filepath.Clean(root), false) // read-only, like verify
 	if err != nil {
 		return err
@@ -113,6 +124,9 @@ func runLog(cmd *cobra.Command, _ []string) error {
 	w := cmd.OutOrStdout()
 	enc := json.NewEncoder(w)
 	for _, e := range logEntries(runs, rule, failing, since) {
+		if heads != nil && (e.Head == nil || !heads[*e.Head]) {
+			continue
+		}
 		if asJSON {
 			if err := enc.Encode(e); err != nil {
 				return err
@@ -126,6 +140,31 @@ func runLog(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(w, line)
 	}
 	return nil
+}
+
+// rangeCommits is the set of commits in the --range values, each BASE..HEAD resolved the way a
+// run resolves its range.
+func rangeCommits(root string, args []string) (map[string]bool, error) {
+	set := map[string]bool{}
+	for _, a := range args {
+		base, head, ok := strings.Cut(a, "..")
+		if !ok || base == "" || head == "" || strings.Contains(head, "..") {
+			return nil, fmt.Errorf("sloprail: --range %q: want BASE..HEAD", a)
+		}
+		r, err := gitrepo.ResolveRange(root, base, head)
+		if err != nil {
+			return nil, fmt.Errorf("sloprail: --range %q: %w", a, err)
+		}
+		set[r.Head] = true
+		commits, err := gitrepo.CommitsIn(root, r.Base, r.Head)
+		if err != nil {
+			return nil, fmt.Errorf("sloprail: --range %q: %w", a, err)
+		}
+		for _, c := range commits {
+			set[c.SHA] = true
+		}
+	}
+	return set, nil
 }
 
 // guardKind is the kind of the one verdict a guard stores per subject (checkrun's own constant

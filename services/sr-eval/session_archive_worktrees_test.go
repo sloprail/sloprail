@@ -4,19 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/gitrepo"
 )
 
 // Worktrees of one repository share its check verdicts, so they are archived once.
 func TestArchive_ChecksOncePerRepositoryAcrossWorktrees(t *testing.T) {
 	w := newArchiveWorld(t, "s1")
-	if out, err := exec.Command("git", "-C", w.other, "-c", "user.name=t", "-c", "user.email=t@t",
-		"commit", "--quiet", "--allow-empty", "-m", "init").CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v: %s", err, out)
-	}
 	wt1 := filepath.Join(t.TempDir(), "wt1")
 	wt2 := filepath.Join(t.TempDir(), "wt2")
 	for i, wt := range []string{wt1, wt2} {
@@ -29,13 +26,13 @@ func TestArchive_ChecksOncePerRepositoryAcrossWorktrees(t *testing.T) {
 	mustWriteFile2(t, filepath.Join(bin, "sr-session"), fmt.Sprintf(`#!/bin/sh
 case "$*" in
   "refs list --json") cat >/dev/null
-    printf '[{"Folder":"%s"},{"Folder":"%s"},{"Folder":"%s"},{"Folder":"/no/such/folder"}]';;
+    printf '[{"Folder":"%s","Base":"%s","HeadSHA":"%s"},{"Folder":"%s","Base":"%s","HeadSHA":"%s"},{"Folder":"%s","Base":"%s","HeadSHA":"%s"},{"Folder":"/no/such/folder"}]';;
   *) exit 3;;
 esac
-`, w.other, wt1, wt2))
+`, w.other, gitrepo.EmptyTree, w.otherSHA, wt1, gitrepo.EmptyTree, w.otherSHA, wt2, gitrepo.EmptyTree, w.otherSHA))
 	mustWriteFile2(t, filepath.Join(bin, "sr-checks"), `#!/bin/sh
 case "$*" in
-  "log --json") printf '{"rule":"r","from":"%s"}\n' "$(pwd -P)";;
+  "log --json"*) printf '{"rule":"r","from":"%s","args":"%s"}\n' "$(pwd -P)" "$*";;
   *) exit 3;;
 esac
 `)
@@ -75,6 +72,11 @@ esac
 	if files, _ := filepath.Glob(filepath.Join(dir, "checks", "*.jsonl")); len(files) != 2 {
 		t.Errorf("want two checks files, got %v", files)
 	}
+	// three worktrees held the same range: it is asked for once
+	got, _ := os.ReadFile(filepath.Join(dir, c.File))
+	if want := `"args":"log --json --range ` + gitrepo.EmptyTree + ".." + w.otherSHA + `"`; !strings.Contains(string(got), want) {
+		t.Errorf("want one --range for the repository (%s): %s", want, got)
+	}
 	var gone bool
 	for _, s := range m.Skipped {
 		gone = gone || (strings.Contains(s.Item, "/no/such/folder") && s.Reason == "the folder is gone")
@@ -96,6 +98,12 @@ func sortedStrings(s ...string) []string {
 	return out
 }
 
+// rangeOf is the range of the whole history of repo, as a session tracking it from the start holds it.
+func rangeOf(t *testing.T, repo string) []trackedRange {
+	t.Helper()
+	return []trackedRange{{Folder: repo, Base: gitrepo.EmptyTree, HeadSHA: gitOut(t, repo, "rev-parse", "HEAD")}}
+}
+
 func fakeChecks(t *testing.T, script string) {
 	t.Helper()
 	bin := t.TempDir()
@@ -110,7 +118,7 @@ func fakeChecks(t *testing.T, script string) {
 func TestArchiveChecks_ZeroRepositories(t *testing.T) {
 	fakeChecks(t, "exit 9")
 	m := &archiveManifest{}
-	archiveChecks(m, map[string][]string{}, t.TempDir())
+	archiveChecks(m, map[string][]string{}, nil, t.TempDir())
 	if len(m.Checks) != 0 || len(m.Skipped) != 0 {
 		t.Fatalf("checks %+v skipped %+v", m.Checks, m.Skipped)
 	}
@@ -120,10 +128,13 @@ func TestArchiveChecks_ZeroRepositories(t *testing.T) {
 // and does not stop the other repository from being archived.
 func TestArchiveChecks_RepositoryWithoutChecksStoreIsSkipped(t *testing.T) {
 	good, bad := gitInit(t, t.TempDir()), gitInit(t, t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	commitEmpty(t, good)
+	commitEmpty(t, bad)
 	fakeChecks(t, `if [ "$(pwd -P)" = "`+bad+`" ]; then echo "no checks store" >&2; exit 2; fi; echo '{"rule":"r"}'`)
 	dir := t.TempDir()
 	m := &archiveManifest{}
-	archiveChecks(m, map[string][]string{good: {"s1"}, bad: {"s1"}}, dir)
+	archiveChecks(m, map[string][]string{good: {"s1"}, bad: {"s1"}}, map[string][]trackedRange{good: rangeOf(t, good), bad: rangeOf(t, bad)}, dir)
 	if len(m.Checks) != 1 || m.Checks[0].Repo != good {
 		t.Fatalf("checks: %+v", m.Checks)
 	}
@@ -135,43 +146,94 @@ func TestArchiveChecks_RepositoryWithoutChecksStoreIsSkipped(t *testing.T) {
 	}
 }
 
-// The main worktree is gone but a linked one stands: the log is still read, from the linked folder.
+// The main worktree is gone but a linked one stands: git cannot read the linked worktree either (its
+// git directory lived in the main one), so no range of it resolves. The repository still gets its file,
+// empty, and the range is reported, never widened to an unscoped log.
 func TestArchiveChecks_MainWorktreeGoneLinkedStands(t *testing.T) {
 	main := gitInit(t, t.TempDir())
 	gitOut(t, main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "init")
 	wt := filepath.Join(t.TempDir(), "wt")
 	gitOut(t, main, "worktree", "add", "--quiet", "-b", "b", wt)
 	wt, _ = filepath.EvalSymlinks(wt)
-	fakeChecks(t, `echo "{\"from\":\"$(pwd -P)\"}"`)
+	fakeChecks(t, "echo unscoped")
+	sha := gitOut(t, main, "rev-parse", "HEAD")
 	if err := os.RemoveAll(main); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
 	m := &archiveManifest{}
-	archiveChecks(m, map[string][]string{wt: {"s1"}}, dir)
-	if len(m.Checks) != 1 || len(m.Skipped) != 0 {
+	archiveChecks(m, map[string][]string{wt: {"s1"}}, map[string][]trackedRange{wt: {{Folder: wt, Base: gitrepo.EmptyTree, HeadSHA: sha}}}, dir)
+	if len(m.Checks) != 1 || len(m.Skipped) != 1 || !strings.Contains(m.Skipped[0].Reason, "not in the repository") {
 		t.Fatalf("checks %+v skipped %+v", m.Checks, m.Skipped)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dir, m.Checks[0].File)); !strings.Contains(string(got), wt) {
-		t.Fatalf("log was not read from the standing worktree: %s", got)
+	if got, _ := os.ReadFile(filepath.Join(dir, m.Checks[0].File)); len(got) != 0 {
+		t.Fatalf("want an empty file, not an unscoped log: %s", got)
 	}
 }
 
 // A symlinked spelling of a tracked folder and its real path are one repository.
 func TestArchiveChecks_SameRepositoryTwoSpellings(t *testing.T) {
 	repo := gitInit(t, t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	commitEmpty(t, repo)
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(repo, link); err != nil {
 		t.Fatal(err)
 	}
 	fakeChecks(t, `echo '{"rule":"r"}'`)
 	m := &archiveManifest{}
-	archiveChecks(m, map[string][]string{repo: {"s1"}, link: {"s2"}}, t.TempDir())
+	archiveChecks(m, map[string][]string{repo: {"s1"}, link: {"s2"}}, map[string][]trackedRange{repo: rangeOf(t, repo)}, t.TempDir())
 	if len(m.Checks) != 1 {
 		t.Fatalf("checks: %+v", m.Checks)
 	}
 	c := m.Checks[0]
 	if len(c.Folders) != 2 || strings.Join(c.Sessions, ",") != "s1,s2" {
 		t.Fatalf("%+v", c)
+	}
+}
+
+// The log of a repository is cut to the ranges the session tracked there: the base and every head a
+// range pointed at (first tip, last tip, the branch now) make one --range each, and a range whose
+// commits are not in the repository is reported, never silently widened to the whole log.
+func TestRangeArgs_OnePerDistinctHeadFromTheBase(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	repo := gitInit(t, t.TempDir())
+	base := commitEmpty(t, repo)
+	first := commitEmpty(t, repo)
+	gitOut(t, repo, "branch", "-M", "feat")
+	last := commitEmpty(t, repo)
+	got, unresolved := rangeArgs(repo, []trackedRange{
+		{Folder: repo, Base: base, Head: "feat", HeadSHA: first, FirstTip: first},
+		{Folder: repo, Base: base, Head: "feat", HeadSHA: last, FirstTip: first}, // same range again, moved on
+		{Folder: repo, Base: base, Head: "detached/abc", HeadSHA: last},
+	})
+	want := []string{base + ".." + first, base + ".." + last}
+	if want[0] > want[1] {
+		want[0], want[1] = want[1], want[0]
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") || len(unresolved) != 0 {
+		t.Fatalf("args %v unresolved %v, want %v", got, unresolved, want)
+	}
+	_, unresolved = rangeArgs(repo, []trackedRange{
+		{Folder: repo, Base: "no-such-base", HeadSHA: last},
+		{Folder: repo, Base: base, Head: "gone-branch"},
+	})
+	if len(unresolved) != 2 {
+		t.Fatalf("want both ranges reported unresolved, got %v", unresolved)
+	}
+}
+
+// A repository the session tracked no range in gets an empty file, and sr-checks is not asked.
+func TestArchiveChecks_NoRangeMeansAnEmptyFile(t *testing.T) {
+	repo := gitInit(t, t.TempDir())
+	fakeChecks(t, "echo unscoped; exit 0")
+	dir := t.TempDir()
+	m := &archiveManifest{}
+	archiveChecks(m, map[string][]string{repo: nil}, nil, dir)
+	if len(m.Checks) != 1 || len(m.Skipped) != 0 {
+		t.Fatalf("checks %+v skipped %+v", m.Checks, m.Skipped)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, m.Checks[0].File)); len(got) != 0 {
+		t.Fatalf("want an empty file, got %q", got)
 	}
 }

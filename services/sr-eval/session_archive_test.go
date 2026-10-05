@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/clidoc"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -20,6 +21,14 @@ import (
 // sr-session / sr-checks on PATH.
 type archiveWorld struct {
 	cwd, other, projDir, into, stdinLog string
+	cwdSHA, otherSHA                    string // the one commit of each repository
+}
+
+// commitEmpty makes a commit in dir and returns its sha.
+func commitEmpty(t *testing.T, dir string) string {
+	t.Helper()
+	gitOut(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "c")
+	return gitOut(t, dir, "rev-parse", "HEAD")
 }
 
 func gitInit(t *testing.T, dir string) string {
@@ -41,6 +50,7 @@ func newArchiveWorld(t *testing.T, sessions ...string) *archiveWorld {
 		other: gitInit(t, t.TempDir()),
 		into:  filepath.Join(t.TempDir(), "archives"),
 	}
+	w.cwdSHA, w.otherSHA = commitEmpty(t, w.cwd), commitEmpty(t, w.other)
 	cfg := t.TempDir()
 	tmp := t.TempDir()
 	data := t.TempDir()
@@ -72,14 +82,15 @@ func newArchiveWorld(t *testing.T, sessions ...string) *archiveWorld {
 case "$*" in
   "--version") echo "sr-session version stub-1";;
   "refs list --json") cat >> '`+w.stdinLog+`'; echo >> '`+w.stdinLog+`'
-    printf '[{"Folder":"%s","Head":"main"},{"Folder":"%s","Head":"x"},{"Folder":"/no/such/folder","Head":"y"}]' '`+w.other+`' '`+w.other+`';;
+    printf '[{"Folder":"%s","Base":"%s","Head":"main","HeadSHA":"%s"},{"Folder":"%s","Base":"%s","Head":"x","HeadSHA":"%s"},{"Folder":"%s","Base":"%s","Head":"main","HeadSHA":"%s"},{"Folder":"/no/such/folder","Head":"y"}]' \
+      '`+w.other+`' '`+gitrepo.EmptyTree+`' '`+w.otherSHA+`' '`+w.other+`' '`+gitrepo.EmptyTree+`' '`+w.otherSHA+`' '`+w.cwd+`' '`+gitrepo.EmptyTree+`' '`+w.cwdSHA+`';;
   *) exit 3;;
 esac
 `)
 	mustWriteFile2(t, filepath.Join(bin, "sr-checks"), `#!/bin/sh
 case "$*" in
   "--version") echo "sr-checks version stub-2";;
-  "log --json") printf '{"rule":"r","repo":"%s"}\n' "$(pwd -P)";;
+  "log --json"*) printf '{"rule":"r","repo":"%s","args":"%s"}\n' "$(pwd -P)" "$*";;
   *) exit 3;;
 esac
 `)
@@ -174,6 +185,14 @@ func TestArchive_CopiesEverythingPerSession(t *testing.T) {
 		if err != nil || !strings.Contains(string(got), `"repo":"`+c.Repo+`"`) {
 			t.Errorf("%s: %q, %v", c.File, got, err)
 		}
+		// the log is cut to the session's ranges: one --range per distinct head, none unscoped
+		sha := w.otherSHA
+		if c.Repo == w.cwd {
+			sha = w.cwdSHA
+		}
+		if want := "log --json --range " + gitrepo.EmptyTree + ".." + sha + `"`; !strings.Contains(string(got), want) {
+			t.Errorf("%s: sr-checks was not asked for the session's range %s: %s", c.File, want, got)
+		}
 	}
 	var gone bool
 	for _, s := range m.Skipped {
@@ -247,13 +266,20 @@ func TestArchive_StubsMissingFromPathAreSkippedNotFatal(t *testing.T) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		t.Fatal(err)
 	}
-	var refs, checks bool
+	var refs bool
 	for _, s := range m.Skipped {
 		refs = refs || (s.Item == "refs list --json" && strings.Contains(s.Reason, "sr-session is not on PATH"))
-		checks = checks || (strings.HasPrefix(s.Item, "checks of ") && strings.Contains(s.Reason, "sr-checks is not on PATH"))
 	}
-	if !refs || !checks {
+	if !refs {
 		t.Errorf("missing tools not recorded: %+v", m.Skipped)
+	}
+	// without sr-session no range is known, so no verdict is relied on: the repository's file is
+	// empty, and sr-checks (not on PATH either) is never asked
+	if len(m.Checks) != 1 {
+		t.Fatalf("checks: %+v", m.Checks)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, m.Checks[0].File)); err != nil || len(got) != 0 {
+		t.Errorf("a repository with no tracked range must get an empty file: %q, %v", got, err)
 	}
 }
 
