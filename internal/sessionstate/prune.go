@@ -23,6 +23,11 @@ import (
 // for branches that are gone, and a memo past its cap. Everything it keeps is what a hook can
 // still ask about: tracked ranges, live folders, and what was observed of live branches (without
 // which a branch the session has seen would look new and be tracked again).
+//
+// What goes with a gone folder is gone with it, a decision included: an untracked range there
+// judged nothing, and the folder is not coming back. One side effect is accepted: a branch only a
+// gone sibling folder had recorded no longer reads as "recorded elsewhere" to a sub-agent
+// worktree met late, which errs toward tracking it, never away from it.
 
 const (
 	// pruneEvery is how often a hook pays for it: it reads the registry and stats each folder.
@@ -180,7 +185,7 @@ func pruneGone(db *sql.DB, askGit bool) error {
 
 	// What was observed in folders that are gone, and of branches that are gone.
 	obs, err := strs(`SELECT key FROM meta WHERE key >= ? AND key < ? OR key >= ? AND key < ? OR key >= ? AND key < ?`,
-		observedTipKey, observedTipKey+"\x7f", foreignCoverKey, foreignCoverKey+"\x7f", observedFolderKey, observedFolderKey+"\x7f")
+		observedTipKey, prefixEnd(observedTipKey), foreignCoverKey, prefixEnd(foreignCoverKey), observedFolderKey, prefixEnd(observedFolderKey))
 	if err != nil {
 		return err
 	}
@@ -242,13 +247,13 @@ func pruneGone(db *sql.DB, askGit bool) error {
 	}
 
 	// A memo past its cap, and keys nothing reads any more.
-	if count(`SELECT COUNT(*) FROM meta WHERE key >= ? AND key < ?`, verifyMemoKey, verifyMemoKey+"\x7f") > maxVerifyMemos {
-		if err := del(`DELETE FROM meta WHERE key >= ? AND key < ?`, verifyMemoKey, verifyMemoKey+"\x7f"); err != nil {
+	if count(`SELECT COUNT(*) FROM meta WHERE key >= ? AND key < ?`, verifyMemoKey, prefixEnd(verifyMemoKey)) > maxVerifyMemos {
+		if err := del(`DELETE FROM meta WHERE key >= ? AND key < ?`, verifyMemoKey, prefixEnd(verifyMemoKey)); err != nil {
 			return err
 		}
 	}
 	for _, p := range legacyMetaPrefixes {
-		if err := del(`DELETE FROM meta WHERE key >= ? AND key < ?`, p, p+"\x7f"); err != nil {
+		if err := del(`DELETE FROM meta WHERE key >= ? AND key < ?`, p, prefixEnd(p)); err != nil {
 			return err
 		}
 	}
@@ -269,7 +274,7 @@ func pruneGone(db *sql.DB, askGit bool) error {
 // when the pruning will need them (the migration, or a registry past its bounds).
 func prefetch(db *sql.DB, facts *folderFacts, force bool) {
 	var obs, pruned int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM meta WHERE key >= ? AND key < ?`, observedTipKey, observedTipKey+"\x7f").Scan(&obs)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM meta WHERE key >= ? AND key < ?`, observedTipKey, prefixEnd(observedTipKey)).Scan(&obs)
 	_ = db.QueryRow(`SELECT COUNT(*) FROM session_refs WHERE untracked_reason LIKE 'pruned:%'`).Scan(&pruned)
 	if !force && obs <= maxObservations && pruned <= maxPrunedRows {
 		return
@@ -277,8 +282,8 @@ func prefetch(db *sql.DB, facts *folderFacts, force bool) {
 	rows, err := db.Query(`SELECT folder FROM session_refs WHERE untracked_reason LIKE 'pruned:%'
 		UNION SELECT substr(substr(key, ?), instr(substr(key, ?), ':') + 1) FROM meta WHERE key >= ? AND key < ?
 		UNION SELECT substr(substr(key, ?), instr(substr(key, ?), ':') + 1) FROM meta WHERE key >= ? AND key < ?`,
-		len(observedTipKey)+1, len(observedTipKey)+1, observedTipKey, observedTipKey+"\x7f",
-		len(foreignCoverKey)+1, len(foreignCoverKey)+1, foreignCoverKey, foreignCoverKey+"\x7f")
+		len(observedTipKey)+1, len(observedTipKey)+1, observedTipKey, prefixEnd(observedTipKey),
+		len(foreignCoverKey)+1, len(foreignCoverKey)+1, foreignCoverKey, prefixEnd(foreignCoverKey))
 	if err != nil {
 		return
 	}
@@ -295,6 +300,14 @@ func prefetch(db *sql.DB, facts *folderFacts, force bool) {
 			facts.localBranches(f)
 		}
 	}
+}
+
+// prefixEnd is the first key after every key that starts with prefix: the prefix with its last byte
+// raised. (A bound like prefix+"\x7f" would sort below a key whose next byte is not ASCII.)
+func prefixEnd(prefix string) string {
+	b := []byte(prefix)
+	b[len(b)-1]++
+	return string(b)
 }
 
 // isObjectName reports whether s is a full object id (a range whose head is a bare commit).
