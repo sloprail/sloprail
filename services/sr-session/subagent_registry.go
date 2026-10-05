@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -167,7 +168,13 @@ func settleAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string,
 	current, haveCurrent := harness.ProcessOfSession(home, p.SessionID)
 
 	if p.TranscriptPath != "" {
-		signals, err := transcript.BackgroundAgentSignals(p.TranscriptPath)
+		// Only what the record gained since the last Stop is read: a record of a long session is
+		// hundreds of megabytes, and every signal in it before the cursor is already in the registry.
+		var cursor transcript.AgentSignalCursor
+		if raw, ok, _ := root.Meta(sessionstate.MetaAgentSignalCursor); ok {
+			_ = json.Unmarshal([]byte(raw), &cursor)
+		}
+		signals, nextCursor, err := transcript.BackgroundAgentSignalsSince(p.TranscriptPath, cursor)
 		if err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: dispatching record not read for sub-agents:", err)
 		}
@@ -188,6 +195,12 @@ func settleAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string,
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: sub-agent registry not updated:", err)
 				return plan
+			}
+		}
+		if err == nil {
+			next, _ := json.Marshal(nextCursor)
+			if prev, _ := json.Marshal(cursor); string(next) != string(prev) {
+				_ = root.SetMeta(sessionstate.MetaAgentSignalCursor, string(next))
 			}
 		}
 	}

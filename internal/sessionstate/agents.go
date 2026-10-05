@@ -281,12 +281,16 @@ func (s *store) Agents(sessionID string) ([]Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range out {
-		for _, r := range ranges {
-			if r.AgentID == out[i].AgentID && r.Tracked() {
-				out[i].Ranges = append(out[i].Ranges, r)
-			}
+	// Indexed by agent: a session that dispatched thousands of agents holds thousands of ranges, and a
+	// scan of every range per agent is the product of the two at every Stop.
+	byAgent := map[string][]TrackedRange{}
+	for _, r := range ranges {
+		if r.Tracked() {
+			byAgent[r.AgentID] = append(byAgent[r.AgentID], r)
 		}
+	}
+	for i := range out {
+		out[i].Ranges = byAgent[out[i].AgentID]
 	}
 	return out, nil
 }

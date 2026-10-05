@@ -113,6 +113,10 @@ const (
 	// made.
 	MetaCitedCycle = "cited_cycle"
 
+	// MetaAgentSignalCursor is how far the dispatching record's background-agent signals were
+	// read (transcript.AgentSignalCursor, as JSON): the next Stop reads only what the record gained.
+	MetaAgentSignalCursor = "agent_signals_cursor"
+
 	// MetaRulesSeenInit marks that the first hook of the session recorded which rules were
 	// in force, and MetaRuleSeenPrefix+<qualified rule> is when each rule was first loaded
 	// by a hook: RuleSeenAtStart for a rule present at that first hook, else the Unix

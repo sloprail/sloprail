@@ -229,8 +229,13 @@ func BackgroundAgentSignals(path string) ([]AgentSignal, error) {
 	if err != nil {
 		return nil, err
 	}
+	return agentSignalsOf(entries, map[string]bool{}), nil
+}
+
+// agentSignalsOf is the signals the entries show; background is the tool_use ids of the
+// run_in_background Agent calls seen so far, added to and consumed as the entries are read.
+func agentSignalsOf(entries []Entry, background map[string]bool) []AgentSignal {
 	var out []AgentSignal
-	background := map[string]bool{} // tool_use id of a run_in_background Agent call
 	notify := func(e Entry, text string) {
 		if id, status, ok := parseTaskNotification(text); ok && terminalTaskStatuses[status] {
 			key := e.UUID
@@ -283,7 +288,11 @@ func BackgroundAgentSignals(path string) ([]AgentSignal, error) {
 				switch {
 				case b.Type == "text":
 					notify(e, b.Text)
-				case b.Type == "tool_result" && background[b.ToolUseID] && !b.IsError:
+				case b.Type == "tool_result" && background[b.ToolUseID]:
+					delete(background, b.ToolUseID) // answered: nothing more to wait for from this call
+					if b.IsError {
+						continue
+					}
 					for _, body := range resultBodies(b.Content) {
 						if m := agentLaunchedID.FindStringSubmatch(body); m != nil && strings.Contains(body, "launched") {
 							out = append(out, AgentSignal{Kind: AgentLaunched, AgentID: m[1], Key: e.UUID + ":" + m[1]})
@@ -303,7 +312,7 @@ func BackgroundAgentSignals(path string) ([]AgentSignal, error) {
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // RunningBackgroundAgents returns the ids of the background sub-agents the transcript at path
