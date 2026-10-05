@@ -2,6 +2,7 @@ package commandmod
 
 import (
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -724,6 +725,25 @@ func interpreterPayload(argv []word) (string, bool) {
 // re-parsed for. Only the options that stand before the first bare word are
 // env's own; a payload word that is not literal is the floor, as for `sh -c`.
 func envSplitPayload(argv []word) (string, bool) {
+	// finish splits the payload and appends the words after it: env appends them to the
+	// command it splits, so `env -S git push` and `env -S 'cmd' -m x` run them.
+	// A word the line lost becomes an unset variable, so it is a gap in the re-parse.
+	finish := func(payload string, last int) (string, bool) {
+		out, ok := envUnescape(payload)
+		if !ok {
+			return "", false
+		}
+		for _, w := range argv[last+1:] {
+			if w.gapBefore {
+				out += ` $SR_GAP_UNSET`
+			}
+			out += " '" + strings.ReplaceAll(w.value, "'", `'\''`) + "'"
+		}
+		if argv[len(argv)-1].gapAfter {
+			out += ` $SR_GAP_UNSET`
+		}
+		return out, true
+	}
 	take := func(i int, rest string) (string, bool) {
 		if !argv[i].literal {
 			return "", false
@@ -732,9 +752,9 @@ func envSplitPayload(argv []word) (string, bool) {
 			if i+1 >= len(argv) || argv[i+1].gapBefore || !argv[i+1].literal {
 				return "", false
 			}
-			rest = argv[i+1].value
+			return finish(argv[i+1].value, i+1)
 		}
-		return envUnescape(rest)
+		return finish(rest, i)
 	}
 	for i := 1; i < len(argv); i++ {
 		a := argv[i]
@@ -745,10 +765,10 @@ func envSplitPayload(argv []word) (string, bool) {
 			if !a.literal {
 				return "", false
 			}
-			return envUnescape(strings.TrimPrefix(a.value, "--split-string="))
+			return finish(strings.TrimPrefix(a.value, "--split-string="), i)
 		case a.value == "--split-string":
 			return take(i, "")
-		case a.value == "--unset" || a.value == "--chdir" || a.value == "--default-signal" || a.value == "--argv0":
+		case a.value == "--unset" || a.value == "--chdir" || a.value == "--argv0":
 			i++
 		case strings.HasPrefix(a.value, "-") && !strings.HasPrefix(a.value, "--") && a.value != "-":
 			// a short-flag cluster: `-iS`, `-uX`, `-S'cmd'`
@@ -770,6 +790,8 @@ func envSplitPayload(argv []word) (string, bool) {
 	}
 	return "", false
 }
+
+var envBraced = regexp.MustCompile(`\$\{[^}]*\}`)
 
 // envClusterTakesValue reports whether arg is an `env` short-flag cluster (`-iS`, `-iu`) whose last
 // letter takes the next word as its value.
@@ -802,9 +824,8 @@ func isDuration(w string) bool {
 // `v`, `f` or `r` is a separator, `c` ends the string, any other character is itself. A `$`
 // (env expands ${VAR}) is the floor: the command cannot be known.
 func envUnescape(p string) (string, bool) {
-	if strings.Contains(p, "$") {
-		return "", false
-	}
+	// env expands `${VAR}`; the value is unknown, so it is a lost word (an unset variable) here.
+	p = envBraced.ReplaceAllLiteralString(p, `$SR_GAP_UNSET`)
 	var b strings.Builder
 	for i := 0; i < len(p); i++ {
 		if p[i] != '\\' {
@@ -988,6 +1009,13 @@ func unwrap(argv []word) []word {
 
 	for i := 1; i < len(argv); i++ {
 		arg := argv[i].value
+
+		// `env -S 'cmd' args` runs the split string with the words after it appended: it is read
+		// whole as a payload (envSplitPayload), never as a vector whose program is the next word.
+		if basename(argv[0].value) == "env" && (strings.HasPrefix(arg, "--split-string") ||
+			(strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg, "S"))) {
+			return nil
+		}
 
 		// `--` ends the wrapper's own options; whatever follows is the command.
 		// Its positionals still come first — `timeout -- 5 npm` is the duration

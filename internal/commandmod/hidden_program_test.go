@@ -42,8 +42,35 @@ func TestHidden_EnvSplitStringEscapesAndClusters(t *testing.T) {
 			assert.Equal(t, []string{"git", "push"}, firstInv(t, line, "git").Argv)
 		})
 	}
-	for _, inv := range ExtractCommand(`env -S 'git ${X}'`).Invocations {
-		assert.NotEqual(t, "git", inv.Bin)
+	// a ${VAR} is a lost word: git is still reported, with the gap
+	assert.NotEmpty(t, firstInv(t, `env -S 'git ${X}'`, "git").Gaps)
+}
+
+// env appends the words after the -S string to the command it splits; `${VAR}` is a lost word.
+func TestHidden_EnvSplitStringTrailingWordsAndBraced(t *testing.T) {
+	cases := []struct {
+		line string
+		argv []string
+	}{
+		{`env -S git commit -m x`, []string{"git", "commit", "-m", "x"}},
+		{`env -iS git push`, []string{"git", "push"}},
+		{`env -S 'git' 'push'`, []string{"git", "push"}},
+		{`env -S 'git push' origin main`, []string{"git", "push", "origin", "main"}},
+		{`env -S 'git commit' -m x`, []string{"git", "commit", "-m", "x"}},
+		{`env --default-signal -S 'git push'`, []string{"git", "push"}},
+		{`env -S 'git push $X'`, []string{"git", "push"}},
+		{`env -S 'git ${X} push'`, []string{"git", "push"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.line, func(t *testing.T) {
+			inv := firstInv(t, tc.line, "git")
+			assert.Equal(t, tc.argv, inv.Argv)
+		})
+	}
+	assert.NotEmpty(t, firstInv(t, `env -S 'git push ${X}'`, "git").Gaps)
+	assert.NotEmpty(t, firstInv(t, `env -S 'git ${X} push'`, "git").Gaps)
+	for _, inv := range ExtractCommand(`env -S git commit -m x`).Invocations {
+		assert.NotContains(t, []string{"commit", "x"}, inv.Bin)
 	}
 }
 
