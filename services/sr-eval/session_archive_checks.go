@@ -45,6 +45,8 @@ func repoOf(folder string) string {
 // a branch or a commit; HeadSHA and FirstTip are the commits the head pointed at.
 type trackedRange struct {
 	Folder, Base, Head, HeadSHA, FirstTip string
+	// UntrackedReason is set for a range the agent dropped: the session no longer answered for it.
+	UntrackedReason string
 }
 
 // revCommit resolves rev to a commit in repo, "" when it names none.
@@ -66,6 +68,9 @@ func revCommit(repo, rev string) string {
 func rangeArgs(repo string, ranges []trackedRange) (args, unresolved []string) {
 	seen := map[string]bool{}
 	for _, r := range ranges {
+		if r.UntrackedReason != "" {
+			continue // dropped by the agent: the session did not rely on it
+		}
 		base := r.Base
 		if base != gitrepo.EmptyTree {
 			if base = revCommit(repo, base); base == "" {
@@ -82,14 +87,20 @@ func rangeArgs(repo string, ranges []trackedRange) (args, unresolved []string) {
 				heads[sha] = true
 			}
 		}
-		if len(heads) == 0 {
-			unresolved = append(unresolved, r.Folder+": head "+r.Head)
-		}
 		for h := range heads {
+			// sr-checks resolves the range the way a run does; one that fails there (no shared
+			// history) would fail the whole listing, so it is left out here.
+			if _, err := gitrepo.ResolveRange(repo, base, h); err != nil {
+				unresolved = append(unresolved, r.Folder+": range "+base+".."+h+": "+err.Error())
+				continue
+			}
 			if a := base + ".." + h; !seen[a] {
 				seen[a] = true
 				args = append(args, a)
 			}
+		}
+		if len(heads) == 0 {
+			unresolved = append(unresolved, r.Folder+": head "+r.Head)
 		}
 	}
 	sort.Strings(args)

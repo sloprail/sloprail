@@ -221,6 +221,19 @@ func TestRangeArgs_OnePerDistinctHeadFromTheBase(t *testing.T) {
 	if len(unresolved) != 2 {
 		t.Fatalf("want both ranges reported unresolved, got %v", unresolved)
 	}
+	// a range the agent dropped is not relied on; one with no shared history cannot be resolved
+	// by sr-checks, so it is reported here rather than failing the whole listing
+	got, unresolved = rangeArgs(repo, []trackedRange{{Folder: repo, Base: base, HeadSHA: last, UntrackedReason: "done"}})
+	if len(got) != 0 || len(unresolved) != 0 {
+		t.Fatalf("an untracked range was kept: %v %v", got, unresolved)
+	}
+	stranger := gitInit(t, t.TempDir())
+	strangerSHA := commitEmpty(t, stranger)
+	gitOut(t, repo, "fetch", "-q", stranger, "HEAD:refs/heads/stranger")
+	got, unresolved = rangeArgs(repo, []trackedRange{{Folder: repo, Base: base, HeadSHA: strangerSHA}})
+	if len(got) != 0 || len(unresolved) != 1 || !strings.Contains(unresolved[0], "share no history") {
+		t.Fatalf("a range with no shared history must be reported, not passed on: %v %v", got, unresolved)
+	}
 }
 
 // A repository the session tracked no range in gets an empty file, and sr-checks is not asked.

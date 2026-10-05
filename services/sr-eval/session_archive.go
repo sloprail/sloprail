@@ -44,10 +44,13 @@ Per session it copies the transcript and its session directory (subagents,
 tool-results), the scratchpad and task outputs Claude Code keeps under its temp
 root, and the session's sloprail state store. It also saves the check results
 (sr-checks log --json) of the project repository and of every other repository the
-session tracked (once per repository, however many of its worktrees), and the tracked ranges themselves (sr-session refs list --json),
-so the archive stands without git or origin. A repository's log holds every session's
-verdicts, so only the ones whose commit lies in a range the archived sessions tracked are
-kept (sr-checks log --range); a repository with no tracked range gets an empty file.
+session tracked (once per repository, however many of its worktrees), and the
+tracked ranges themselves (sr-session refs list --json), so the archive stands
+without git or origin. A repository's log holds every session's verdicts, so only
+the ones whose commit lies in a range the archived sessions still tracked are kept
+(sr-checks log --range, the range's base as of now: a branch merged since collapses
+to its tip, and a verdict only replayed onto the range is not kept); a repository
+with no tracked range gets an empty file.
 
 Layout: <into>/<label>/<UTC timestamp>-<rand>/ with archive.json, one directory
 per session and checks/. Exactly this entry's directory is committed.
