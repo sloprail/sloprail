@@ -11,5 +11,9 @@ finish() { echo '{"type":"result","subtype":"success","result":"done","is_error"
 case $n in
   0) bash_ t1 "pgrep -f sr-checks" ;;
   1) bash_ t2 "pgrep -x sleep" ;;
+  2) bash_ t3 'pgrep -f "some-other-program"' ;;
+  3) bash_ t4 "pgrep -x sr-checks" ;;
+  4) bash_ t5 "sr-checks show --base HEAD --head HEAD" ;;
+  5) bash_ t6 'sr-checks show --base HEAD --head HEAD & pid=$!; wait $pid' ;;
   *) finish ;;
 esac
