@@ -44,7 +44,7 @@ cat "$F/sloppy-case.txt" > .sloprail/gate/demo/tests/sloppy/test.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a sloppy case"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 [ "$status" -ne 0 ]
-jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==3 and .[2].outcome=="refused" and (.[2].reason|contains("gate/demo/tests/sloppy")) and (.[2].reason|split("The files this refusal")[0]|contains("permit-neighbour") or contains("refusal-reason")|not)' "$SR_EVENTS_FILE" >/dev/null
+jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==3 and .[2].outcome=="refused" and (.[2].reason|contains("gate/demo/tests/sloppy")) and (.[2].reason|contains("does not start with a shebang")) and (.[2].reason|contains("asserts no event of its owning rule demo")) and (.[2].reason|split("The files this refusal")[0]|contains("permit-neighbour") or contains("refusal-reason")|not)' "$SR_EVENTS_FILE" >/dev/null
 [ "$(wc -l < "$SR_EVENTS_FILE.judges" | tr -d ' ')" = 2 ]
 
 # no permit in any case: the rule is refused once, the missing permit listed
