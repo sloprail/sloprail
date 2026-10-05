@@ -44,9 +44,8 @@ are judged when anything else of the rule changed. Two checks, in order, first r
    - a scenario a case claims to cover (by its folder name or comments) and the rule's README names is really
      exercised by that case; a README scenario no case claims is not demanded.
 
-   The judge lists EVERY gap in one verdict, numbered `(1)`, `(2)`, ..., each naming the rule, the criterion,
-   the case(s) and the quoted text or the missing scenario, so the agent fixes them all in one pass. The whole
-   verdict is one line: the engine carries only the first line of a judge's reasoning to the agent. The case's rule is the
+   The judge lists EVERY gap in one verdict, one per line, each naming the rule, the criterion, the case(s)
+   and the quoted text or the missing scenario, so the agent fixes them all in one pass. The case's rule is the
    folder: events of other rules it may mention are ignored.
 
 The verdict is cached per rule on the rule's own files, all its case folders and the plugin's `plugin.json` (its name is in the event name a

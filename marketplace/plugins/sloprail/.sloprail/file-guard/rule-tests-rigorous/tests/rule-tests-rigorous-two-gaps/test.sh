@@ -2,7 +2,7 @@
 set -euo pipefail
 # rule-tests-rigorous, every gap in one verdict. The demo gate's only case passes the script floor (it asserts an
 # event of the owner) but asserts neither a refusal nor a permit. The judge (mocked, deciding from the case it
-# reads) reports BOTH gaps in its one verdict, numbered (1) and (2) on one line; the case that asserts the
+# reads) reports BOTH gaps in its one verdict, one gap per line; the case that asserts the
 # refusal and the permit then passes.
 F="$SR_TEST_CASE_DIR/fixtures"
 git init -q .
@@ -24,7 +24,7 @@ cat "$F/inert-case.txt" > .sloprail/gate/demo/tests/inert/test.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a case that asserts neither a refusal nor a permit"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 [ "$status" -ne 0 ]
-jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("(1) demo: REFUSAL AND PERMIT: no case asserts a refusal")) and (.[0].reason|contains("(2) demo: REFUSAL AND PERMIT: no case asserts a permit")) and (.[0].reason|split("\nThe files this refusal")[0]|contains("\n")|not)' "$SR_EVENTS_FILE" >/dev/null
+jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==1 and .[0].outcome=="refused" and (.[0].reason|split("\n")|map(select(startswith("demo: REFUSAL AND PERMIT: no case asserts a")))|length==2)' "$SR_EVENTS_FILE" >/dev/null
 [ "$(wc -l < "$SR_EVENTS_FILE.judges" | tr -d ' ')" = 1 ]
 
 # the recovery: the case asserts the refusal and its permitted neighbour
