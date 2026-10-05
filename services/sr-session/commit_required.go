@@ -373,7 +373,7 @@ func treeKey(path string) string {
 // owed as ever. Only the root's Stop defers (a sub-agent's own Stop never does), and anything that
 // cannot be read yields no folder: a doubt is a refusal.
 //
-// The store attributes by folder, not by path: a folder where the root and a running agent both
+// A silent agent not yet stale is waited for, as for ranges. The store attributes by folder, not by path: a folder where the root and a running agent both
 // wrote is the agent's, and the root's own tree is never asked about (the agent there shares the
 // root's work, which must stay owed).
 func foldersOfRunningAgents(cmd *cobra.Command, p HookPayload, folders []sessionstate.Folder) map[string]string {

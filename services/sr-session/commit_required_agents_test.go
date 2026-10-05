@@ -129,7 +129,8 @@ func TestNoteAgentFolders_ASubagentsCallRecordsTheRepositoriesItWorksIn(t *testi
 	other := initRepo(t)
 	reg := openStore(t)
 	rs := rootSession{ID: "s", Cwd: root}
-	noteAgentFolders(reg, rs, HookPayload{Cwd: other, AgentID: "a1", AgentType: "x", TranscriptPath: "t"})
+	noteAgentFolders(reg, rs, HookPayload{Cwd: root, AgentID: "a1", ToolName: "Bash", ToolInput: []byte(`{"command":"ls"}`)}) // only looking: nothing
+	noteAgentFolders(reg, rs, HookPayload{Cwd: root, AgentID: "a1", ToolName: "Write", ToolInput: []byte(`{"file_path":"` + filepath.Join(other, "x.md") + `"}`)})
 	noteAgentFolders(reg, rs, HookPayload{Cwd: root}) // the root's own call records nothing
 	require.NoError(t, reg.StartAgent(sessionstate.AgentSignal{SessionID: "s", AgentID: "a1", At: time.Now()}))
 	as, err := reg.Agents("s")

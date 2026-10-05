@@ -195,8 +195,8 @@ func registerPendingWorktrees(reg sessionstate.Store, rs rootSession, agent stri
 	}
 }
 
-// noteAgentFolders records, for a sub-agent's call, the folders it is working in: the repository
-// it stands in, the ones its git commands name, the one a file it writes lives in. This is what
+// noteAgentFolders records, for a sub-agent's call, the folders it WORKS in: the repositories
+// its history-moving git commands name and the one a file it writes lives in (not where it only stands or reads). This is what
 // the root's Stop reads to tell a folder a running agent is mid-work in (see commit_required.go);
 // session_folders cannot, since it names only the first agent to register a folder. Best effort:
 // a folder not recorded is a folder the root's Stop still refuses on.
@@ -204,7 +204,7 @@ func noteAgentFolders(reg sessionstate.Store, rs rootSession, p HookPayload) {
 	if !p.IsSubagent() || p.AgentID == "" {
 		return
 	}
-	dirs := append([]string{p.Cwd}, commandFolders(p)...)
+	dirs := commandFolders(p) // history moved there; merely standing or reading in a folder is not working in it
 	if p.ToolName == "Edit" || p.ToolName == "Write" || p.ToolName == "MultiEdit" || p.ToolName == "NotebookEdit" {
 		var in struct {
 			FilePath     string `json:"file_path"`
