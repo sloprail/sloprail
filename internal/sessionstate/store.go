@@ -109,6 +109,9 @@ type Store interface {
 	SetRangeBase(sessionID, folder, head, base string) error
 	// Ranges lists a session's ranges, tracked and untracked.
 	Ranges(sessionID string) ([]TrackedRange, error)
+	// PruneGone drops what the session remembers of folders and branches that no longer exist
+	// (prune.go). Cheap to ask: it does its work once every few minutes.
+	PruneGone() error
 
 	// StartAgent, TouchAgent, NoteAgentLaunch, EndAgent, MarkAgentStale, NewAgentSignal and Agents are
 	// the sub-agent registry (agents.go): which sub-agents the session dispatched, and whether each

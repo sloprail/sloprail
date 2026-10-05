@@ -913,6 +913,9 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		return []string{unreadableRegistry(rs.Path, err).Error() + "; refusing because a registry that could not be read must not be read as 'nothing to judge'"}
 	}
 	untrackGone(root, rs.ID, ranges)
+	if err := root.PruneGone(); err != nil { // what the session remembers of folders and branches that are gone
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: registry not pruned:", err)
+	}
 	if ranges, err = root.Ranges(rs.ID); err != nil {
 		return []string{unreadableRegistry(rs.Path, err).Error() + "; refusing because a registry that could not be read must not be read as 'nothing to judge'"}
 	}
