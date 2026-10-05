@@ -184,6 +184,11 @@ type scriptResult struct {
 	// where "declined" would permit something (a context's enter) must refuse on it.
 	Unrunnable bool
 
+	// Errored is set when the script ran and said, in its structured stdout ({"reason": "...",
+	// "error": true}), that it could not do its job (a tool it needs failed): a refusal, but no
+	// verdict on the content, so it is never cached.
+	Errored bool
+
 	// Cause is, for an Unrunnable result, the diagnosis alone (the file and what is wrong with it,
 	// no framing sentence about a check or an action), for a caller that words its own refusal.
 	Cause string
@@ -273,10 +278,11 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 		return scriptResult{Passed: true, Stdout: stdout}, nil
 	}
 	return scriptResult{
-		Passed: false,
-		Reason: scriptRefusalReason(s.Script, code, signal, stdout, stderr),
-		Stdout: stdout,
-		Code:   code,
+		Passed:  false,
+		Reason:  scriptRefusalReason(s.Script, code, signal, stdout, stderr),
+		Stdout:  stdout,
+		Code:    code,
+		Errored: structuredError(stdout),
 	}, nil
 }
 
@@ -545,6 +551,15 @@ func structuredReason(stdout []byte) string {
 		return strings.TrimSpace(res.Reason)
 	}
 	return ""
+}
+
+// structuredError reads the {"error": true} flag off a script's stdout: the script ran but could
+// not reach a verdict.
+func structuredError(stdout []byte) bool {
+	var res struct {
+		Error bool `json:"error"`
+	}
+	return json.Unmarshal(bytes.TrimSpace(stdout), &res) == nil && res.Error
 }
 
 // plainText returns trimmed output meant to be read by a person, or "" when there

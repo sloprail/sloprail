@@ -1257,6 +1257,12 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 	if err != nil {
 		return fail(err)
 	}
+	if pv.Refused && pv.NoVerdict {
+		// prepare could not run: an engine-side failure, recorded as an error, never as a verdict.
+		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": pv.Reason, noVerdictMeta: true}
+		_ = ev.recordCheck(runID, rec) // already failing
+		return dispatchcore.Verdict{}, engineError(g, errors.New(pv.Reason))
+	}
 	if pv.Refused {
 		// A refusal of prepare is the check's verdict (fail-closed): stored and replayed like
 		// any other, so the Stop's verify reads it instead of "not judged yet".
@@ -1282,7 +1288,7 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 	if err != nil {
 		return fail(err)
 	}
-	if returnedNoVerdict(c, v) {
+	if returnedNoVerdict(v) {
 		// The judge never produced a verdict (it answered nothing parseable): an engine-side
 		// failure, not a FAIL verdict on the content. It is recorded as an error, never as a
 		// verdict under the key, so `verify` says "not judged yet" and the next `run` asks again.
@@ -1305,7 +1311,11 @@ func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
 	for _, r := range rows {
 		reason, _ := r.Metadata["reasoning"].(string)
 		if r.Subject == rr.subject.ID && r.Status != checkstore.StatusPass && r.Status != checkstore.StatusFail && r.Metadata[noVerdictMeta] == true && r.RunAt >= at {
-			at, why = r.RunAt, "the judge returned no verdict: "+reason
+			who := "the judge"
+			if !strings.Contains(r.Kind, ":judge:") {
+				who = "the check" // a script, or a prepare that could not run
+			}
+			at, why = r.RunAt, who+" returned no verdict: "+reason
 		}
 	}
 	return why
@@ -1314,10 +1324,11 @@ func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
 // noVerdictMeta marks a stored row as the judge having returned no verdict.
 const noVerdictMeta = "no_verdict"
 
-// returnedNoVerdict says a judge check was refused for want of a parseable answer, not for a
-// verdict on the content (a script's refusal, whatever it says, is always its verdict).
-func returnedNoVerdict(c declaration.Check, v dispatchcore.Verdict) bool {
-	return c.Script == "" && v.Refused && v.NoVerdict
+// returnedNoVerdict says a check was refused for want of an answer, not for a verdict on the
+// content: a judge that answered nothing parseable, a script that could not run or said it
+// errored. A script's own refusal is its verdict.
+func returnedNoVerdict(v dispatchcore.Verdict) bool {
+	return v.Refused && v.NoVerdict
 }
 
 // stepKey names a step of a guard: its subject and its kind.

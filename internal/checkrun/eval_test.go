@@ -862,14 +862,62 @@ func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *
 	assert.False(t, refused, r2.Reason+"\n"+"the quote resolves now: the citation is judged again and holds")
 }
 
-// A judge that returned no parseable verdict is an engine-side failure, not a verdict on the
-// content; a script's refusal (whatever it says) and a real judge refusal are verdicts.
-func TestReturnedNoVerdict_OnlyAJudgeThatAnsweredNothing(t *testing.T) {
+// A check that returned no verdict (a judge that answered nothing parseable, a script that could
+// not run or said it errored) is an engine-side failure, not a verdict on the content; a script's
+// own refusal and a real judge refusal are verdicts.
+func TestReturnedNoVerdict_OnlyACheckThatAnsweredNothing(t *testing.T) {
 	none := dispatchcore.Verdict{Refused: true, NoVerdict: true, Reason: "any wording at all"}
-	assert.True(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, none))
-	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Refused: true, Reason: "the judge did not produce a JSON verdict object (a real refusal that quotes it)"}), "typed, not by the reason text")
-	assert.False(t, returnedNoVerdict(declaration.Check{Script: "./c.sh"}, none), "a script's refusal is its verdict")
-	assert.False(t, returnedNoVerdict(declaration.Check{Judge: "j.md.j2"}, dispatchcore.Verdict{Reason: none.Reason}), "not a refusal")
+	assert.True(t, returnedNoVerdict(none))
+	assert.False(t, returnedNoVerdict(dispatchcore.Verdict{Refused: true, Reason: "the judge did not produce a JSON verdict object (a real refusal that quotes it)"}), "typed, not by the reason text")
+	assert.False(t, returnedNoVerdict(dispatchcore.Verdict{Reason: none.Reason}), "not a refusal")
+}
+
+// A check that errored (a script saying {"error": true}, one that cannot be executed) refuses
+// (fail-closed) but stores no verdict under the key: the next run, over the same content, runs
+// the check again.
+func TestEvaluate_AScriptThatErroredIsNeverCached(t *testing.T) {
+	cases := map[string]func(t *testing.T, f *evalFixture){
+		"says error": func(t *testing.T, f *evalFixture) {
+			script := "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"sr-test could not run\",\"error\":true}'\nexit 1\n"
+			require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "check.sh"), []byte(script), 0o755))
+		},
+		"cannot be executed": func(t *testing.T, f *evalFixture) {
+			require.NoError(t, os.Chmod(filepath.Join(f.guard.Dir, "check.sh"), 0o644))
+		},
+	}
+	for name, break_ := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newEvalFixture(t, nil)
+			break_(t, f)
+			f.commitDoc(t, "docs/a.md", "clean")
+			_, refused := f.evaluate(t, f.results)
+			require.True(t, refused, "an error stays fail-closed")
+			p := f.params(t, f.results)
+			p.Verify = true
+			got, _ := Evaluate(p)
+			require.Len(t, got, 1)
+			assert.Contains(t, got[0].Reason, "not judged yet (the check returned no verdict: ", "no verdict was stored, and no judge is named for a script")
+
+			// The check works now: a re-run over the same content tries again.
+			require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "check.sh"), []byte(countingCheck(f.ledger)), 0o755))
+			require.NoError(t, os.Chmod(filepath.Join(f.guard.Dir, "check.sh"), 0o755))
+			_, refused = f.evaluate(t, f.results)
+			assert.False(t, refused)
+			assert.Equal(t, 1, f.runs(t), "the check ran again")
+		})
+	}
+}
+
+// A script's plain refusal is a verdict: stored, and replayed without running again.
+func TestEvaluate_AScriptRefusalIsStillCached(t *testing.T) {
+	f := newEvalFixture(t, nil).withSession(t)
+	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
+	_, refused := f.evaluate(t, f.results)
+	require.True(t, refused)
+	n := f.runs(t)
+	_, refused = f.evaluate(t, f.results)
+	assert.True(t, refused)
+	assert.Equal(t, n, f.runs(t))
 }
 
 // Verify over a range whose latest run left the judge without a verdict says so, in the judge's

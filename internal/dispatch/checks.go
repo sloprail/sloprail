@@ -92,6 +92,11 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Ve
 	if res.Passed {
 		return pass(), nil
 	}
+	if res.Unrunnable || res.Errored {
+		// The script could not run, or said it could not decide: refused (fail-closed), but no
+		// verdict on the content, so it is never cached and the next run tries again.
+		return refuseNoVerdict(res.Reason), nil
+	}
 	return refuse(res.Reason), nil
 }
 
@@ -326,7 +331,10 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 	if !res.Passed {
 		// prepare exited non-zero. The spec says a prepare failure fails the check;
 		// carry its words so the agent hears what prepare complained about.
-		return preparedResult{}, refuse(fmt.Sprintf("the judge's prepare step refused (before the model was asked): %s", res.Reason)), nil
+		v := refuse(fmt.Sprintf("the judge's prepare step refused (before the model was asked): %s", res.Reason))
+		// A prepare that could not run, or said it errored, decided nothing about the content.
+		v.NoVerdict = res.Unrunnable || res.Errored
+		return preparedResult{}, v, nil
 	}
 
 	// Read the envelope out of prepare's stdout: `additionalContext` and `skip`,
