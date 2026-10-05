@@ -99,7 +99,7 @@ func TestT056_02_AStoredFailStillRefusesTheStop(t *testing.T) {
 
 // T056_02 (c): what the Stop lets through unjudged, the pre-push gate refuses.
 func TestT056_02_ThePrePushGateStillRefusesTheUnjudgedRange(t *testing.T) {
-	e, proj := project(t)
+	e, proj := project(t, harness.WithEnabledShipped("sloprail/gate/verify-before-push"))
 	const sess = "s-056-02c"
 
 	e.Run(proj, sess, "write the doc and push it", Turns("done",
