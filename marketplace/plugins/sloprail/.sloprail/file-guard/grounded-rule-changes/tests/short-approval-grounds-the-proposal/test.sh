@@ -4,6 +4,8 @@ set -euo pipefail
 # A short approval is read against what it answered. The assistant proposed dropping the demo gate's PreCommandInvoke
 # trigger, the user said "lgtm", and the commit cites "lgtm" (the only authority; the assistant message is context the
 # judge is handed beside it): the change that was proposed is grounded and permitted.
+# The judge is a mock that reads the record from the source path:line it is handed, so this proves the handoff and the
+# verdict path; how the real model reads the rubric is for sr-eval.
 git init -q .
 mkdir -p .sloprail/gate/demo
 printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
