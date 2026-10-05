@@ -70,10 +70,10 @@ func TestDiscoverPluginUnderTestIsCoreInstallsOnce(t *testing.T) {
 // sr-test was built in the main checkout) is installed once: the copy under test, not both.
 func TestDiscoverPluginUnderTestShadowsAnotherCheckoutsCore(t *testing.T) {
 	root := t.TempDir()
-	put(t, root, "pl/.claude-plugin/plugin.json", `{"name":"sloprail"}`)
+	putJSON(t, root, "pl/.claude-plugin/plugin.json", `{"name":"sloprail"}`)
 	put(t, root, "pl/.sloprail/file-guard/structure.tests/a/test.sh", "exit 0")
 	core := t.TempDir() // the main checkout's marketplace/plugins/sloprail
-	put(t, core, ".claude-plugin/plugin.json", `{"name":"sloprail"}`)
+	putJSON(t, core, ".claude-plugin/plugin.json", `{"name":"sloprail"}`)
 	cs, err := Discover(root, core)
 	require.NoError(t, err)
 	require.Len(t, cs, 1)
@@ -141,4 +141,11 @@ func TestDiscoverLayout(t *testing.T) {
 		"structure||file-guard/structure:s|file-guard/structure",
 		"gate|g|gate/g:a|gate/g",
 	}, got)
+}
+
+func putJSON(t *testing.T, root, rel, body string) {
+	t.Helper()
+	p := filepath.Join(root, rel)
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 }
