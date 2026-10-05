@@ -38,6 +38,9 @@ type Agent struct {
 	OwnerProcStart string
 	// Ranges are the tracked ranges the agent owns (session_refs rows with its agent_id).
 	Ranges []TrackedRange
+	// Folders are the git roots the agent has been seen working in (session_agent_folders),
+	// whoever registered them.
+	Folders []string
 }
 
 // Running reports whether the registry holds the agent as still running.
@@ -193,6 +196,21 @@ func (s *store) MarkAgentStale(sessionID, agentID string, at time.Time) error {
 	return nil
 }
 
+// NoteAgentFolder records that an agent worked in a folder (its git root). Idempotent.
+func (s *store) NoteAgentFolder(sessionID, agentID, folder string) error {
+	if sessionID == "" || agentID == "" || folder == "" {
+		return errors.New("sessionstate: an agent folder needs a session, an agent id and a folder")
+	}
+	db, err := s.conn()
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(`INSERT OR IGNORE INTO session_agent_folders (session_id, agent_id, folder) VALUES (?, ?, ?)`, sessionID, agentID, folder); err != nil {
+		return fmt.Errorf("sessionstate: note folder of agent %q: %w", agentID, err)
+	}
+	return nil
+}
+
 // NewAgentSignal reports whether a signal of a session is new, recording it: the signal is the
 // record that carried a task-notification, so one is applied once.
 func (s *store) NewAgentSignal(sessionID, signal string) (bool, error) {
@@ -238,6 +256,27 @@ func (s *store) Agents(sessionID string) ([]Agent, error) {
 		return nil, fmt.Errorf("sessionstate: list agents: %w", err)
 	}
 	rows.Close()
+	frows, err := db.Query(`SELECT agent_id, folder FROM session_agent_folders WHERE session_id = ? ORDER BY folder`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("sessionstate: list agent folders: %w", err)
+	}
+	folders := map[string][]string{}
+	for frows.Next() {
+		var id, folder string
+		if err := frows.Scan(&id, &folder); err != nil {
+			frows.Close()
+			return nil, fmt.Errorf("sessionstate: read agent folder: %w", err)
+		}
+		folders[id] = append(folders[id], folder)
+	}
+	if err := frows.Err(); err != nil {
+		frows.Close()
+		return nil, fmt.Errorf("sessionstate: list agent folders: %w", err)
+	}
+	frows.Close()
+	for i := range out {
+		out[i].Folders = folders[out[i].AgentID]
+	}
 	ranges, err := s.Ranges(sessionID)
 	if err != nil {
 		return nil, err
