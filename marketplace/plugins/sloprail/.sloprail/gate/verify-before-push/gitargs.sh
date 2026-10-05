@@ -4,6 +4,10 @@
 # command line wrote but the engine could not resolve (a `$(...)`, a variable the line never assigned):
 #   GAP_FREE  a word was lost among the global options or where the subcommand stands, and is not the
 #             value of an option that takes one. It may have been any option, or the subcommand itself.
+#             Also set for a global option this file does not know (it may take the next word as its value).
+#   GAP_BIN   a word was lost in front of `git` (`timeout $T git ...`, `env $E git ...`): it belongs to a
+#             wrapper, so it cannot change the subcommand, but the folder and environment git runs in
+#             are unknown. A caller that needs them (a push, a commit) refuses it.
 #   GAP_VAL   a word was lost where a global option's value stands (`-C $D push`, `-c k=$V`): the folder
 #             git runs in (or its config) is unknown.
 #   GAP_REST  a word was lost after the subcommand (a remote, a refspec, a path, a message). REST holds
@@ -11,17 +15,18 @@
 # Each is "" or 1. The engine reports them as `.gaps` (argv positions), never as an argument, so
 # nothing here mistakes the next word for the lost one.
 git_split() {
-  GOPTS=() SUB="" REST=() GAP_FREE="" GAP_VAL="" GAP_REST=""
-  local args=() a gap=$'\001gap'
+  GOPTS=() SUB="" REST=() GAP_FREE="" GAP_VAL="" GAP_REST="" GAP_BIN=""
+  local args=() a gap=$'\001gap' gapbin=$'\001gapbin'
   # NUL-delimited: an argument may hold a newline (a multi-line -m), which a line read would split.
   # A lost word is a marker token at its position.
-  while IFS= read -r -d '' a; do args+=("$a"); done < <(printf '%s' "$1" | jq -j '(.argv // []) as $a | (.gaps // []) as $g | [(if ($g | index(0)) != null then "\u0001gap" else empty end), range(1;($a | length) + 1) as $i | (if ($g | index($i)) != null then "\u0001gap" else empty end), ($a[$i] // empty)] | .[] | ., "\u0000"')
+  while IFS= read -r -d '' a; do args+=("$a"); done < <(printf '%s' "$1" | jq -j '(.argv // []) as $a | (.gaps // []) as $g | [(if ($g | index(0)) != null then "\u0001gapbin" else empty end), range(1;($a | length) + 1) as $i | (if ($g | index($i)) != null then "\u0001gap" else empty end), ($a[$i] // empty)] | .[] | ., "\u0000"')
   local i=0 n=${#args[@]}
   while [ "$i" -lt "$n" ]; do
     a="${args[$i]}"
     case "$a" in
+      "$gapbin") GAP_BIN=1 ;;
       "$gap") GAP_FREE=1 ;;
-      -C | -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env)
+      -C | -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env | --attr-source)
         GOPTS+=("$a")
         i=$((i + 1))
         if [ "$i" -lt "$n" ]; then
@@ -41,7 +46,11 @@ git_split() {
           fi
         fi
         ;;
-      -*) GOPTS+=("$a") ;;
+      # options that take no value (git(1) OPTIONS), and `--name=value` spellings, which carry theirs inline
+      -v | --version | -h | --help | --exec-path | --html-path | --man-path | --info-path | -p | --paginate | -P | --no-pager | --no-replace-objects | --no-lazy-fetch | --no-optional-locks | --no-advice | --bare | --literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs | --*=*) GOPTS+=("$a") ;;
+      # any other option may take the next word as its value, so where the subcommand stands is in doubt
+      # (a git option this list does not know): fail closed like a lost word
+      -*) GOPTS+=("$a"); GAP_FREE=1 ;;
       *)
         SUB="$a"
         i=$((i + 1))
@@ -83,7 +92,7 @@ git_chdir() {
       fi
     else
       kept+=("$a")
-      case "$a" in -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env)
+      case "$a" in -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env | --attr-source)
         i=$((i + 1))
         kept+=("${GOPTS[$i]-}")
         ;;

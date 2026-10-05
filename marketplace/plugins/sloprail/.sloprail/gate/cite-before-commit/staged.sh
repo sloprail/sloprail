@@ -85,8 +85,9 @@ for inv in "${invs[@]}"; do
   # A word the engine could not resolve (a `$(...)`, a variable the line did not assign to a literal)
   # may be an option, the subcommand, or the folder: this would judge another repository than the
   # one the command runs in. Fail closed.
-  [ -z "$GAP_FREE" ] || fail "a 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal"
+  [ -z "$GAP_FREE" ] || fail "a 'git' command on this line has an option or subcommand that is an option the gate does not know, a variable, \$(...) or ~ the line does not assign to a literal, so it may be a commit. Use the literal subcommand and options: git -C <literal dir> commit ..."
   [ "$SUB" = commit ] || continue
+  [ -z "$GAP_BIN" ] || fail "a word in front of 'git' in this commit (a wrapper's option or environment held in a variable or \$(...)) could not be resolved, so the folder and environment the commit runs in are unknown"
   [ -z "$GAP_VAL" ] || fail "an option value of the commit (-C <dir>, -c <key=value>, --git-dir ...) is a variable, \$(...), ~ or glob that could not be resolved"
 
   lostword="" amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
@@ -209,8 +210,8 @@ for inv in "${invs[@]}"; do
     [ "$k" -lt "$idx" ] || break
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
     split_git "$prev"
-    [ -z "$GAP_FREE" ] || fail "a 'git' command this line runs before the commit has an option or subcommand that could not be resolved"
-    if [ -n "$GAP_VAL" ] && { [ "$SUB" = add ] || [ "$SUB" = rm ] || [[ "$movers" == *" $SUB "* ]]; }; then
+    [ -z "$GAP_FREE" ] || fail "a 'git' command this line runs before the commit has an option or subcommand that could not be resolved, so it may move the index. Use the literal subcommand and options"
+    if [ -n "$GAP_BIN$GAP_VAL" ] && { [ "$SUB" = add ] || [ "$SUB" = rm ] || [[ "$movers" == *" $SUB "* ]]; }; then
       fail "the 'git $SUB' this line runs before the commit has a -C folder that could not be resolved"
     fi
     git_redirected "$prev" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree) on a git command it runs before the commit, which moves git to a repository this gate does not replay"
