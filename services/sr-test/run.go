@@ -126,7 +126,10 @@ Any .sloprail/ below the path counts (a plugin's included). Each result line car
   owner    "<nature>/<rule>" within its .sloprail/ ("gate/cite-before-commit", "file-guard/structure")
   subject  "<owner>:<case>" in the root .sloprail/, "<dir of the .sloprail's parent>:<owner>:<case>" below it
            (marketplace/plugins/sloprail:gate/cite-before-commit:<case>)
-In a case: SR_TEST_CASE_DIR is a copy of the case folder, SR_TEST_SLOPRAIL_DIR the original .sloprail/.`
+In a case: SR_TEST_CASE_DIR is a copy of the case folder, SR_TEST_SLOPRAIL_DIR the original .sloprail/.
+The environment is built from scratch, not inherited: a fake HOME, its own TMPDIR, a PATH of the sloprail binaries, jq, git, bash and
+the mock claude plus /usr/bin:/bin, git reading only the case's own config, and nothing else from the caller (--live-judges also
+passes the credentials and proxy settings a real judge needs).`
 
 func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error) {
 	root := "."
