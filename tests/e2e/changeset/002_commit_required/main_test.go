@@ -17,7 +17,10 @@ type Env = harness.Env
 var (
 	// New opts in to a sub-agent's own Stop verifying (the default is off): this package tests it.
 	New = func(t *testing.T, o ...harness.Option) *harness.Env {
-		return harness.New(t, append(o, harness.WithSubagentStopCheck())...)
+		// The rule-tests-* rules judge the sr-test cases of every rule a range adds: the rules these tests
+		// commit are no subject of theirs.
+		return harness.New(t, append(o, harness.WithSubagentStopCheck(),
+			harness.WithoutShipped("sloprail/file-guard/rule-tests-pass", "sloprail/file-guard/rule-tests-rigorous"))...)
 	}
 	Turns    = harness.Turns
 	Bash     = harness.Bash
