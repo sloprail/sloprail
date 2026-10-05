@@ -12,13 +12,14 @@ git init -q --bare "$REMOTE"
 # the session's own project: clean, nothing to push
 git init -q -b main .
 mkdir -p .sloprail
-printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
+# the gate ships off (#243): this project opts in
+printf 'enabled:\n  - sloprail/gate/verify-before-push\ndisabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 # the other repository holds the unverified commit on a branch
 git init -q -b main "$OTHER"
 mkdir -p "$OTHER/.sloprail"
 # (the demo gate's script is incidental, not under test: authoring-slop would judge it)
-printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n  - sloprail/file-guard/authoring-slop\n' > "$OTHER/.sloprail/config.yaml"
+printf 'enabled:\n  - sloprail/gate/verify-before-push\ndisabled:\n  - sloprail/file-guard/rule-tests-pass\n  - sloprail/file-guard/authoring-slop\n' > "$OTHER/.sloprail/config.yaml"
 # the plugins are enabled through the project's .claude/settings.local.json, which the agent run writes later:
 # link OTHER to it, so the rules judge OTHER's commits too
 ln -s "$PWD/.claude" "$OTHER/.claude"
