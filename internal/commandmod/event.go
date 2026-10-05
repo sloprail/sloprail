@@ -2,6 +2,7 @@ package commandmod
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/grounding"
@@ -123,12 +124,13 @@ func (c CommandEvent) Event() event.Event {
 			gaps = append(gaps, g)
 		}
 		entry := map[string]any{
-			KeyBin:   inv.Bin,
-			KeyArgv:  argv,
-			KeyGaps:  gaps,
-			KeyFlags: flags,
-			KeyCwd:   inv.Cwd,
-			KeyEnv:   env,
+			KeyBin:         inv.Bin,
+			KeyArgv:        argv,
+			KeyGaps:        gaps,
+			KeyGitGapEarly: gitGapEarly(inv),
+			KeyFlags:       flags,
+			KeyCwd:         inv.Cwd,
+			KeyEnv:         env,
 			// "" with stdinKnown false when the text is not literal or absent.
 			KeyStdin:      "",
 			KeyStdinKnown: inv.Stdin != nil,
@@ -232,4 +234,56 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		c.Invocations = append(c.Invocations, inv)
 	}
 	return c, nil
+}
+
+// gitValueOptions are git's global options that take their value as the NEXT word (git(1) OPTIONS).
+var gitValueOptions = map[string]bool{
+	"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
+	"--super-prefix": true, "--config-env": true, "--attr-source": true,
+}
+
+// gitFlagOptions are git's global options that take no value as a separate word. `--name=value`
+// spellings carry their value inline and are never in doubt.
+var gitFlagOptions = map[string]bool{
+	"-v": true, "--version": true, "-h": true, "--help": true, "--exec-path": true,
+	"--html-path": true, "--man-path": true, "--info-path": true, "-p": true, "--paginate": true,
+	"-P": true, "--no-pager": true, "--no-replace-objects": true, "--no-lazy-fetch": true,
+	"--no-optional-locks": true, "--no-advice": true, "--bare": true, "--literal-pathspecs": true,
+	"--glob-pathspecs": true, "--noglob-pathspecs": true, "--icase-pathspecs": true,
+}
+
+// gitGapEarly reports whether the subcommand of a `git` invocation is in doubt: it lost a word
+// where its global options or its subcommand stand (a gap at or before the first word that is
+// neither an option nor an option's value), or it has a global option this table does not know,
+// which may take the next word as its value. Fail closed: only options known to take no value, and
+// the known value-taking ones with their value consumed, let the scan reach the subcommand. A gap
+// after the subcommand (a ref, a path, a message) cannot change which command runs.
+func gitGapEarly(inv Invocation) bool {
+	if inv.Bin != "git" {
+		return false
+	}
+	sub := len(inv.Argv)
+	for i := 1; i < len(inv.Argv); i++ {
+		a := inv.Argv[i]
+		switch {
+		case gitValueOptions[a]:
+			i++
+		case gitFlagOptions[a]:
+		case strings.HasPrefix(a, "--") && strings.Contains(a, "="):
+			// `--git-dir=x`: the value is inline
+		case strings.HasPrefix(a, "-"):
+			return true // an option this table does not know: its value may be the next word
+		default:
+			sub = i
+		}
+		if sub != len(inv.Argv) {
+			break
+		}
+	}
+	for _, g := range inv.Gaps {
+		if g <= sub {
+			return true
+		}
+	}
+	return false
 }

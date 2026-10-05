@@ -21,6 +21,10 @@
 # (`git -C <literal dir> push <remote> <ref>`). `D=/x; git -C $D push` and `D=/x && cd $D && git push`
 # are read as `/x`; anything else the gate cannot resolve is never judged as the hook's own repository.
 #
+# The matcher also fires on any `git` invocation with a gap (`.gaps`: a word the engine could not
+# resolve among its options or where the subcommand stands, e.g. `git $X`, `git "$(echo push)"`),
+# and the script refuses it, fail closed, telling the agent to use the literal subcommand.
+#
 # Limit: this gate sees the command line the agent runs, not the commands inside a script it
 # runs (`sh ship.sh` that pushes). CI verify is the backstop for those.
 #
@@ -31,6 +35,6 @@ enabled: false
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and any(.argv, # == "push"))
+      any(event.invocations, .bin == "git" and (.gitGapEarly or any(.argv, # == "push")))
 checks:
   - script: ./verify.sh

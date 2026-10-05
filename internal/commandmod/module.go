@@ -49,14 +49,15 @@ const (
 	// Keys within one entry of FieldInvocations. Not fields of the kind: a
 	// matcher reads them off an element of the list, and the declaration
 	// describes the list itself.
-	KeyBin        = "bin"
-	KeyArgv       = "argv"
-	KeyGaps       = "gaps"
-	KeyFlags      = "flags"
-	KeyCwd        = "cwd"
-	KeyEnv        = "env"
-	KeyStdin      = "stdin"
-	KeyStdinKnown = "stdinKnown"
+	KeyBin         = "bin"
+	KeyArgv        = "argv"
+	KeyGaps        = "gaps"
+	KeyGitGapEarly = "gitGapEarly"
+	KeyFlags       = "flags"
+	KeyCwd         = "cwd"
+	KeyEnv         = "env"
+	KeyStdin       = "stdin"
+	KeyStdinKnown  = "stdinKnown"
 )
 
 // Module produces command events.
@@ -123,6 +124,13 @@ func (*Module) Kinds() []module.KindDecl {
 								Type: module.TypeList,
 								Elem: &module.FieldDecl{Type: module.TypeInt},
 							},
+
+							// gitGapEarly is true for a `git` invocation that lost a word
+							// among its global options or where its subcommand stands
+							// (`git $X`, `git -C $D push`), false when every gap comes
+							// after the subcommand (`git rev-parse "$REF"`) or there is
+							// none. See gitGapEarly.
+							{Name: KeyGitGapEarly, Type: module.TypeBool},
 
 							// flags stays OPEN, and the asymmetry with argv is
 							// the design. A flag name belongs to the command

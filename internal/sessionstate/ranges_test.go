@@ -100,9 +100,10 @@ func TestRanges_AStoreFromBeforeTrackedRangesIsMigratedAndItsRowsStayTracked(t *
 	}
 	_, err = old.Exec(`PRAGMA user_version = 5`)
 	require.NoError(t, err)
+	folder := t.TempDir() // a folder that exists: a row of one that is gone is pruned on open
 	_, err = old.Exec(`INSERT INTO session_refs (session_id, folder, ref, first_tip, tip, agent_id, abandoned_tip) VALUES
-		('s', '/r', 'refs/heads/live', 'a1', 'a2', '', ''),
-		('s', '/r', 'refs/heads/dropped', 'b1', 'b2', 'sub', 'b2')`)
+		('s', ?, 'refs/heads/live', 'a1', 'a2', '', ''),
+		('s', ?, 'refs/heads/dropped', 'b1', 'b2', 'sub', 'b2')`, folder, folder)
 	require.NoError(t, err)
 	require.NoError(t, old.Close())
 
@@ -125,7 +126,7 @@ func TestRanges_AStoreFromBeforeTrackedRangesIsMigratedAndItsRowsStayTracked(t *
 	assert.Equal(t, RangeAuto, live.AddedBy)
 	assert.Equal(t, "", live.Base, "the base of an older row is computed when it is first read")
 
-	require.NoError(t, s.SetRangeBase("s", "/r", "refs/heads/live", "m0"))
+	require.NoError(t, s.SetRangeBase("s", folder, "refs/heads/live", "m0"))
 	rs, err = s.Ranges("s")
 	require.NoError(t, err)
 	for _, r := range rs {

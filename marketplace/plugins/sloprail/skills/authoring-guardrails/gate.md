@@ -228,9 +228,18 @@ other index-moving command on the line is refused, as is a commit whose folder o
 cannot be read (fail closed). Files the same line creates before the commit are not seen: CI's
 verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.
 
-`checks-ref-sr-only` and `cite-before-commit` ship **on**; `verify-before-push` ships **off**: a
-project opts in with `enabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`. CI's
-required `sr-checks verify` is the guarantee; run `sr-checks run` before a PR is ready.
+These three gates (verify-before-push, cite-before-commit, checks-ref-sr-only) also fire on any
+`git` invocation whose subcommand is in doubt (`.gitGapEarly`: an option or the subcommand is a variable
+or `$(...)` the line never assigned to a literal, or a global option git(1) does not list, which may take
+the next word as its value; as in `git $X`, `timeout $T git push`, `env -S "$A" git push`) and
+refuse it, fail closed, telling the agent to use the literal subcommand. A `builtin cd` / `command cd`
+is tracked like `cd`, and an `env -S '<literal command>'` payload is read as the command it runs.
+
+`cite-before-commit` and `checks-ref-sr-only` ship **on**; `verify-before-push` ships **off** (since
+v0.4.1) and a project opts in with `enabled: [sloprail/gate/verify-before-push]` in
+`.sloprail/config.yaml`. CI's required `sr-checks verify` is the guarantee; run `sr-checks run`
+before a PR is ready. The gates that ship on are turned off with `disabled: [sloprail/gate/<name>]`
+in `.sloprail/config.yaml`.
 
 `sloprail/gate/ci-verify-required` is the `Stop` gate that closes the loop on the CI side: a
 file-guard's verdict is only enforced where `sr-checks verify` runs, so a project with at

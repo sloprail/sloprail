@@ -26,12 +26,16 @@
 # moves the index in the same line is refused. CI's `sr-checks verify` stays the backstop for whatever
 # this cannot see.
 #
+# The matcher also fires on any `git` invocation with a gap (`.gaps`: a word the engine could not
+# resolve among its options or where the subcommand stands, e.g. `git $X`, `git "$(echo push)"`),
+# and the script refuses it, fail closed, telling the agent to use the literal subcommand.
+#
 # On by default, like every shipped rule, and switched off by listing
 # `sloprail/gate/cite-before-commit` under `disabled:` in .sloprail/config.yaml.
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and any(.argv, # == "commit"))
+      any(event.invocations, .bin == "git" and (.gitGapEarly or any(.argv, # == "commit")))
 require:
   - citation: {source_types: [user, tool_result]}
     when: ./staged.sh when

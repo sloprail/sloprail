@@ -314,12 +314,31 @@ var dirChangingBuiltins = map[string]bool{"pushd": true, "popd": true}
 // passes down; a `cd` argument is resolved exactly the way any other operand
 // in this package is.
 func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd bool, ok bool) {
-	if len(call.Args) == 0 || !isLiteral(call.Args[0]) {
-		return "", false, false
-	}
-	got, err := expand.Fields(cfg, call.Args[0])
-	if err != nil || len(got) != 1 {
-		return "", false, false
+	// `builtin cd X` and `command cd X` are the same cd: the prefix only skips
+	// a function or alias of that name, so it moves the shell all the same.
+	args := call.Args
+	var got []string
+	for {
+		if len(args) == 0 || !isLiteral(args[0]) {
+			return "", false, false
+		}
+		var err error
+		got, err = expand.Fields(cfg, args[0])
+		if err != nil || len(got) != 1 {
+			return "", false, false
+		}
+		if got[0] != "builtin" && got[0] != "command" {
+			break
+		}
+		args = args[1:]
+		// `command -p cd X` and `command -- cd X` run the same cd.
+		for got[0] == "command" && len(args) > 0 && isLiteral(args[0]) {
+			f, ferr := expand.Fields(cfg, args[0])
+			if ferr != nil || len(f) != 1 || (f[0] != "-p" && f[0] != "--") {
+				break
+			}
+			args = args[1:]
+		}
 	}
 	if dirChangingBuiltins[got[0]] {
 		// pushd/popd: recognised, never resolved. See dirChangingBuiltins.
@@ -332,13 +351,13 @@ func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd 
 
 	// Past this point the call IS a cd; whether it can be RESOLVED is a
 	// separate question, answered by ok.
-	if len(call.Args) != 2 {
+	if len(args) != 2 {
 		// No argument (`cd` alone, home) or more than one (a usage error in
 		// real cd, or `cd -P dir`/`cd -L dir`, flags this does not parse). Both
 		// are outside what this package resolves statically.
 		return "", isCd, false
 	}
-	arg := call.Args[1]
+	arg := args[1]
 	if !isLiteral(arg) && !plainKnown(cfg, arg) {
 		// `cd "$SOME_VAR"`, `cd $(pwd)/x` — a target resolved out of an
 		// environment this package does not have, exactly the case

@@ -229,6 +229,9 @@ func TestRangeArgs_OnePerDistinctHeadFromTheBase(t *testing.T) {
 	}
 	stranger := gitInit(t, t.TempDir())
 	strangerSHA := commitEmpty(t, stranger)
+	if strangerSHA == base {
+		t.Fatalf("premise: the unrelated history must be a different commit, both are %s", base)
+	}
 	gitOut(t, repo, "fetch", "-q", stranger, "HEAD:refs/heads/stranger")
 	got, unresolved = rangeArgs(repo, []trackedRange{{Folder: repo, Base: base, HeadSHA: strangerSHA}})
 	if len(got) != 0 || len(unresolved) != 1 || !strings.Contains(unresolved[0], "share no history") {

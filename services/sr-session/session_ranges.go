@@ -913,6 +913,9 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		return []string{unreadableRegistry(rs.Path, err).Error() + "; refusing because a registry that could not be read must not be read as 'nothing to judge'"}
 	}
 	untrackGone(root, rs.ID, ranges)
+	if err := root.PruneGone(); err != nil { // what the session remembers of folders and branches that are gone
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: registry not pruned:", err)
+	}
 	if ranges, err = root.Ranges(rs.ID); err != nil {
 		return []string{unreadableRegistry(rs.Path, err).Error() + "; refusing because a registry that could not be read must not be read as 'nothing to judge'"}
 	}
@@ -927,8 +930,12 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 	vmemo := &verifyMemo{store: store, plugins: func(folder string) []string { return pluginRuleHashes(quiet, folder, reg) }}
 	recorded := lazyRecordedCitations(p, store)
 	seen := &seenRanges{m: map[string]bool{}} // (repo, head, base) already verified this Stop
+	tCollapse := time.Now()
 	oneEach := collapseByRepo(ranges, p.AgentID, memo)
+	debugTiming(cmd, "collapse-by-repo", tCollapse)
+	tSettle := time.Now()
 	plan := settleRootAgents(cmd, root, rs.ID, p, ranges)
+	debugTiming(cmd, "settle-root-agents", tSettle)
 	running := plan.Waiting
 	var waiting []string
 	silentSaid := map[string]bool{}
@@ -1599,6 +1606,9 @@ func newRefsListCmd() *cobra.Command {
 				return err
 			}
 			for i := range ranges { // the base each range is judged from now, not the one stored
+				if !ranges[i].Tracked() {
+					continue // judged by nothing: its stored base is all there is, and asking git for it costs processes per row
+				}
 				head, _ := headRevision(ranges[i])
 				ranges[i].Base = effectiveBase(ranges[i], head)
 			}
