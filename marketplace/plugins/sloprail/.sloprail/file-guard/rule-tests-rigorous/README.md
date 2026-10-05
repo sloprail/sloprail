@@ -41,7 +41,8 @@ are judged when anything else of the rule changed. Two checks, in order, first r
    - recovery is shown where the rule tells the agent what to do instead;
    - a permit sits at the rule's boundary, not far away from it;
    - a mocked judge decides from its input and gives different verdicts for refusal and permit;
-   - the scenarios the rule's README names are really exercised by some case.
+   - a scenario a case claims to cover (by its folder name or comments) and the rule's README names is really
+     exercised by that case; a README scenario no case claims is not demanded.
 
    The judge lists EVERY gap in one verdict, numbered `(1)`, `(2)`, ..., each naming the rule, the criterion,
    the case(s) and the quoted text or the missing scenario, so the agent fixes them all in one pass. The whole

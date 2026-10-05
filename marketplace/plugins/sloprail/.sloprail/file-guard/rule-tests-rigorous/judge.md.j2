@@ -38,8 +38,7 @@ recovery, when the rule's refusal tells the agent nothing to do instead) is sati
    permits, nothing.
 2. REASON. Every asserted refusal in any case also asserts its reason, and the reason it asserts is the rule's ACTUAL
    reason for its own refusal (what the rule's YAML, script or judge template refuses for), not an incidental word that
-   any refusal from that rule would carry, such as the rule's name. Where the rule refuses for several reasons, each
-   distinct reason the rule's own files give is refused for somewhere among the cases.
+   any refusal from that rule would carry, such as the rule's name.
 3. RECOVERY. Where the rule's refusal tells the agent what to do instead (its reason, README or script says "do X"),
    some case shows the agent doing X after the refusal and the rule then permitting. Where the rule's refusal tells the
    agent nothing to do, no recovery is needed.
@@ -49,9 +48,10 @@ recovery, when the rule's refusal tells the agent nothing to do instead) is sati
 5. MOCKED JUDGES DECIDE. Where the rule has a judge check and a case mocks it (SR_CHECKS_JUDGE_MOCKS), the mock script
    decides from its stdin (the rendered prompt and payload) and returns different verdicts for the refused and the
    permitted scenario. A mock that returns one fixed answer, or ignores its input, proves nothing about the rule.
-6. NAMED SCENARIOS. Every scenario the rule's README (or the rule's own comments) names as one it handles, as a refusal
-   or as an allowed exception, is really exercised by some case. A case that claims "the exception for X" (by its
-   folder name or its own comments) but never writes X does not exercise it.
+6. NAMED SCENARIOS. Every scenario that a case CLAIMS to cover (by its folder name or its own comments), and that the
+   rule's README (or the rule's own comments) names as one it handles, as a refusal or as an allowed exception, is really
+   exercised by that case. A case that claims "the exception for X" but never writes X fails. A README scenario that no
+   case claims is not demanded: this suite need not cover everything the README mentions.
 
 Cite evidence for EVERY criterion: the exact text you rely on, in quotes, with its file. A criterion you cannot support
 with a quote you found in the material fails.
