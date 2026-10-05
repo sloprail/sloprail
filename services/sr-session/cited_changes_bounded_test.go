@@ -81,25 +81,42 @@ func TestHistoryOfAFileThatKeepsChangingIsBounded(t *testing.T) {
 	assert.Less(t, len(storedCitations(t, store)), 40_000)
 }
 
-// What is owed — a cited change that landed — is never pushed out by uncited stretches around it.
-func TestACitedChangeSurvivesAnyNumberOfUncitedStretches(t *testing.T) {
+func citesOn(store sessionstate.Store, path string) int {
+	n := 0
+	for _, p := range historyIn(store, true)[path] {
+		if len(p.Cites) > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// What is owed — a cited change that landed — is not pushed out by the uncited stretches around it
+// while the history is within its bound, and a cited change made after any number of them is there.
+// Past the bound the OLDEST history goes, of either kind, so what follows is measured from the
+// state it really was (see CompactCitationPoints).
+func TestACitedChangeStaysWhileTheHistoryIsWithinItsBoundAndTheNewestAlwaysStays(t *testing.T) {
 	repo, store, cycle := boundedRepo(t)
 	abs := filepath.Join(repo, "a.md")
 	require.NoError(t, os.WriteFile(abs, []byte("cited\n"), 0o644))
 	require.NoError(t, recordPending(store, []pendingChange{{Path: "a.md", Abs: abs,
 		Point: historyPoint{Cites: userCite, Before: st(store, "base\n"), After: st(store, "cited\n"), At: 1}}}))
 	require.NoError(t, settleCitedChanges(store))
-	for i := 1; i <= 200; i++ {
+	for i := 1; i <= 20; i++ {
 		cycle(i, fmt.Sprintf("v%d\n", i-1), fmt.Sprintf("v%d\n", i), "nohup job")
 	}
-	var cites int
-	for _, p := range historyIn(store, true)["a.md"] {
-		if len(p.Cites) > 0 {
-			cites++
-			assert.Equal(t, userCite, p.Cites)
-		}
+	assert.Equal(t, 1, citesOn(store, "a.md"), "within the bound the cited change stays")
+
+	for i := 21; i <= 200; i++ {
+		cycle(i, fmt.Sprintf("v%d\n", i-1), fmt.Sprintf("v%d\n", i), "nohup job")
 	}
-	assert.Equal(t, 1, cites)
+	require.NoError(t, os.WriteFile(abs, []byte("cited again\n"), 0o644))
+	require.NoError(t, recordPending(store, []pendingChange{{Path: "a.md", Abs: abs,
+		Point: historyPoint{Cites: userCite, Before: st(store, "v200\n"), After: st(store, "cited again\n"), At: 1_000_000}}}))
+	require.NoError(t, settleCitedChanges(store))
+	assert.Equal(t, 1, citesOn(store, "a.md"), "the change cited last is there; the one before the dropped prefix is not")
+	pts := historyIn(store, true)["a.md"]
+	assert.Equal(t, int64(1_000_000), pts[len(pts)-1].At)
 }
 
 // The names a cycle record keeps of work that may still run are bounded the same way.
