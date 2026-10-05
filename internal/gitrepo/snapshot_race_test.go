@@ -197,6 +197,17 @@ func TestSnapshot_LockWaitIsBounded(t *testing.T) {
 	}))
 }
 
+// The sweep is housekeeping: with the lock busy it is skipped at once, adding no wait.
+func TestSnapshot_SweepSkipsWhenLockBusy(t *testing.T) {
+	dir := initRepo(t)
+	require.NoError(t, withWorktreeLock(dir, func() error {
+		start := time.Now()
+		SweepStaleSnapshots(dir)
+		assert.Less(t, time.Since(start), 5*time.Second)
+		return nil
+	}))
+}
+
 // 20 workers adding, sweeping and removing one repository finish in bounded time, none failing:
 // the lock is never held while waiting for another lock.
 func TestSnapshot_ParallelAddRemoveSweepIsBounded(t *testing.T) {

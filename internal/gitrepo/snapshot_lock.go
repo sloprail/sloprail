@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +22,15 @@ const worktreeLockFile = "sloprail-worktree.lock"
 // a third add reuses it), and the adds and removes end up with each other's registrations or
 // with none ("is not a working tree"). Serializing the three makes each see a settled registry.
 func withWorktreeLock(dir string, fn func() error) error {
+	return lockWorktrees(dir, worktreeLockWait, fn)
+}
+
+// lockHolderLen is the fixed width of the pid record, so recording it is one write that never
+// leaves the file empty or half-old.
+const lockHolderLen = 24
+
+// lockWorktrees is withWorktreeLock with an explicit wait; wait 0 is one try.
+func lockWorktrees(dir string, wait time.Duration, fn func() error) error {
 	out, err := run(dir, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return err
@@ -37,13 +45,14 @@ func withWorktreeLock(dir string, fn func() error) error {
 		return fmt.Errorf("gitrepo: worktree lock: %w", err)
 	}
 	defer f.Close()
-	if err := acquireLock(f, path); err != nil {
+	if err := acquireLock(f, path, wait); err != nil {
 		return err
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	// The holder's pid, for the message of whoever times out waiting.
-	_ = f.Truncate(0)
-	_, _ = f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0)
+	if _, err := f.WriteAt([]byte(fmt.Sprintf("%-*d", lockHolderLen, os.Getpid())), 0); err != nil {
+		return fmt.Errorf("gitrepo: worktree lock %s: record holder: %w", path, err)
+	}
 	return fn()
 }
 
@@ -51,9 +60,9 @@ func withWorktreeLock(dir string, fn func() error) error {
 // few git calls, so a wait this long means a holder is stuck, and that is reported, not waited out.
 var worktreeLockWait = 2 * time.Minute
 
-// acquireLock polls a non-blocking flock until worktreeLockWait passes.
-func acquireLock(f *os.File, path string) error {
-	deadline := time.Now().Add(worktreeLockWait)
+// acquireLock polls a non-blocking flock until wait passes.
+func acquireLock(f *os.File, path string, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
 	for {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
@@ -62,10 +71,12 @@ func acquireLock(f *os.File, path string) error {
 		if err != syscall.EWOULDBLOCK && err != syscall.EINTR {
 			return fmt.Errorf("gitrepo: worktree lock %s: %w", path, err)
 		}
-		if time.Now().After(deadline) {
-			holder, _ := os.ReadFile(path)
-			return fmt.Errorf("gitrepo: worktree lock %s still held after %s by pid %s",
-				path, worktreeLockWait, strings.TrimSpace(string(holder)))
+		if !time.Now().Before(deadline) {
+			holder := "unknown (not recorded yet)"
+			if b, _ := os.ReadFile(path); strings.TrimSpace(string(b)) != "" {
+				holder = strings.TrimSpace(string(b))
+			}
+			return fmt.Errorf("gitrepo: worktree lock %s still held after %s by pid %s", path, wait, holder)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
