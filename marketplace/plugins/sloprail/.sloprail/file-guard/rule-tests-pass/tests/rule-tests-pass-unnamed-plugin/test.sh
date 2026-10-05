@@ -25,3 +25,12 @@ git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a gate with no 
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 [ "$status" -ne 0 ]
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-pass")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("gate/demo")) and (.[0].reason|contains("no sr-test case lives in the folder")) and (.[0].reason|contains("plugins/unnamed/.sloprail/gate/demo/tests/<case>/"))' "$SR_EVENTS_FILE" >/dev/null
+
+# the recovery: a case in the plugin gate's folder that makes it refuse and permit; the range now passes
+mkdir -p plugins/unnamed/.sloprail/gate/demo/tests/demo-case
+cat "$F/unnamed-case-test.txt" > plugins/unnamed/.sloprail/gate/demo/tests/demo-case/test.sh
+cat "$F/demo-case-agent.txt" > plugins/unnamed/.sloprail/gate/demo/tests/demo-case/agent.sh
+chmod +x plugins/unnamed/.sloprail/gate/demo/tests/demo-case/test.sh plugins/unnamed/.sloprail/gate/demo/tests/demo-case/agent.sh
+git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a case for the demo gate of the unnamed plugin"
+sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
+jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-pass")] | length==2 and .[1].outcome=="passed"' "$SR_EVENTS_FILE" >/dev/null
