@@ -156,9 +156,9 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 		}
 	}
 
-	// 4. context exits, AFTER file-guards and gates decided. Pure lifecycle: flips active/inactive,
-	//    never blocks the turn.
-	runContextExits(cmd, loaded.Contexts, stop, scope, store, contextMap, gatesMap)
+	// 4. context exits, AFTER file-guards and gates decided. Lifecycle: flips active/inactive. Only an exit
+	//    that could not finish (killed on its timeout) refuses the turn.
+	refusals = append(refusals, runContextExits(cmd, loaded.Contexts, stop, scope, store, contextMap, gatesMap)...)
 
 	// What this Stop was shown, so the next Stop — if this cycle is still open —
 	// can mark the same text and files `seen`. Recorded whether or not a rule
