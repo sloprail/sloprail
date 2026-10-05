@@ -32,7 +32,9 @@ plugin's alike. One subject per touched `.sloprail` root; one script check, `che
 
 The verdict is cached per root on the change plus the rules and the tests: `subjects.sh` fingerprints every
 file under the touched `.sloprail/`, so a changed rule or case runs the cases again and an unchanged one
-does not.
+does not. A refusal because `sr-test` itself could not do its job (it is missing, a case ran to status
+`error`, a run reported no case, `doctor` failed) carries `"error": true`: it is refused but never cached, so
+the next run tries again. A case that fails is a verdict and stays cached.
 
 Turn it off from the project's `.sloprail/config.yaml`:
 

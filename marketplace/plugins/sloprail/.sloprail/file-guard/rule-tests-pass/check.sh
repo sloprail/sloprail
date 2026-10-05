@@ -27,6 +27,8 @@ refuse() {
 }
 
 # refuse_error: the tooling failed, not the change. Refused, but no verdict: the engine does not cache it.
+# When one case fails and another errors, the whole refusal is an error (not cached): the real failure is
+# reported too, and the next run, with sr-test working, settles both.
 refuse_error() {
   jq -n --arg r "$1" '{reason: $r, error: true}'
   exit 1
