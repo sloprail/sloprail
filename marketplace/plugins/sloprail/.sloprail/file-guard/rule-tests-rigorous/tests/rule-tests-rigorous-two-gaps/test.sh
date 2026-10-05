@@ -24,7 +24,7 @@ cat "$F/inert-case.txt" > .sloprail/gate/demo/tests/inert/test.sh
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m "a case that asserts neither a refusal nor a permit"
 sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$?
 [ "$status" -ne 0 ]
-jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==1 and .[0].outcome=="refused" and (.[0].reason|split("\n")|map(select(startswith("demo: REFUSAL AND PERMIT: no case asserts a")))|length==2)' "$SR_EVENTS_FILE" >/dev/null
+jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-rigorous")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("no case asserts a refusal")) and (.[0].reason|split("\n")|map(select(startswith("demo: REFUSAL AND PERMIT: no case asserts a")))|length==2)' "$SR_EVENTS_FILE" >/dev/null
 [ "$(wc -l < "$SR_EVENTS_FILE.judges" | tr -d ' ')" = 1 ]
 
 # the recovery: the case asserts the refusal and its permitted neighbour
