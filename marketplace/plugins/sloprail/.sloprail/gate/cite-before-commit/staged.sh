@@ -284,7 +284,7 @@ for inv in "${invs[@]}"; do
       echo "cite-before-commit: could not check this commit (its message comes from stdin that is not a literal heredoc or here-string); the file-guards will check the citation at Stop and in CI." >&2
       continue
     fi
-    if printf '%s' "$msgtext" | grep -Eiq '^Sloprail-Cites-(User|Tool):'; then
+    if grep -Eiq '^Sloprail-Cites-(User|Tool):' <<<"$msgtext"; then
       res="$(printf '%s' "$msgtext" | (cd "$dir" && sr-checks staged --trailers 2>"$tmp/err"))" ||
         fail "sr-checks staged --trailers said: $(head -c 800 "$tmp/err")"
       good="$(printf '%s\n' "$res" | jq -rs '[.[] | select(.ok)] | length' 2>/dev/null)" || fail "the resolved citations could not be read"

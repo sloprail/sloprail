@@ -56,8 +56,11 @@ esac
 # the body without comment lines: a comment that explains an assertion is neither one nor a violation
 body="$(grep -v -E '^[[:space:]]*#' "$test_sh")"
 
-if ! printf '%s\n' "$body" | grep -q -E '[.]events|SR_EVENTS_FILE' ||
-  ! printf '%s\n' "$body" | grep -q -E 'jq[[:space:]]+(-[A-Za-z]*e[A-Za-z]*|--exit-status)([[:space:]]|$)'; then
+# Every grep -q below reads a here-string, never `printf | grep -q`: under pipefail, grep -q exiting early on
+# a match leaves printf to die of SIGPIPE on a body bigger than the pipe buffer, and the pipeline then fails
+# although the pattern matched (a valid case was refused, flaking under load).
+if ! grep -q -E '[.]events|SR_EVENTS_FILE' <<<"$body" ||
+  ! grep -q -E 'jq[[:space:]]+(-[A-Za-z]*e[A-Za-z]*|--exit-status)([[:space:]]|$)' <<<"$body"; then
   add "test.sh never asserts on the events (a 'jq -e' over '.events' of the sr-test agent result, or over \$SR_EVENTS_FILE). The exit code of sr-test agent only says the agent ran; assert which rule decided, with which outcome."
 fi
 
@@ -73,26 +76,27 @@ ev_re="$ev_rule"
 # events carry the bare "structure" as well as "<plugin>/structure"
 [ "$CASE_NATURE" != structure ] || ev_re="(${ev_rule%structure})?structure"
 joined="$(printf '%s\n' "$body" | awk '{ if (sub(/\\$/, "")) { buf = buf $0; next } print buf $0; buf = "" } END { if (buf != "") print buf }')"
-if ! printf '%s\n' "$joined" | grep -F -e "$ev_kind" | grep -E 'jq[[:space:]]' | grep -q -E "[.]rule[[:space:]]*==[[:space:]]*\"$ev_re\""; then
+ev_lines="$(grep -F -e "$ev_kind" <<<"$joined" | grep -E 'jq[[:space:]]' || true)"
+if ! grep -q -E "[.]rule[[:space:]]*==[[:space:]]*\"$ev_re\"" <<<"$ev_lines"; then
   add "test.sh asserts no event of its owning rule $ev_rule. The case sits in the folder of $CASE_NATURE/$CASE_RULE, so it must prove that rule: one jq -e must select '.kind==\"$ev_kind\" and .rule==\"$ev_rule\"' and assert its outcome. Events of other rules, or of another kind, do not count."
 fi
 
-if printf '%s\n' "$body" | grep -q 'refused'; then
-  if ! printf '%s\n' "$body" | grep -q -E '[.]reason[^|]*[|][[:space:]]*(contains|test|startswith|endswith|index|inside|match)\(|[.]reason[[:space:]]*==|[.]reason[[:space:]]*\|[[:space:]]*(contains|test)'; then
+if grep -q 'refused' <<<"$body"; then
+  if ! grep -q -E '[.]reason[^|]*[|][[:space:]]*(contains|test|startswith|endswith|index|inside|match)\(|[.]reason[[:space:]]*==|[.]reason[[:space:]]*\|[[:space:]]*(contains|test)' <<<"$body"; then
     add "test.sh asserts a refusal but never checks its reason. Assert '(.reason|contains(\"...\"))' (or test(...)) with the sentence that names why the rule refused, so a refusal for some other reason fails."
   fi
 fi
 
-if printf '%s\n' "$body" | grep -q -E '[|][|][[:space:]]*(true|:|exit 0)[[:space:]]*($|[;)&}])'; then
+if grep -q -E '[|][|][[:space:]]*(true|:|exit 0)[[:space:]]*($|[;)&}])' <<<"$body"; then
   add "test.sh swallows a failure with '|| true' (or '|| :', '|| exit 0'). Remove it: an assertion that cannot fail proves nothing."
 fi
-if printf '%s\n' "$body" | grep -q -E '^[[:space:]]*(true|:)[[:space:]]*$'; then
+if grep -q -E '^[[:space:]]*(true|:)[[:space:]]*$' <<<"$body"; then
   add "test.sh has a line that is only 'true' (or ':'). It asserts nothing; remove it or replace it with a real assertion."
 fi
-if printf '%s\n' "$body" | grep -q -E '\[[[:space:]]+(1|"1"|true|0)[[:space:]]+\]|\[[[:space:]]+(1[[:space:]]+-eq[[:space:]]+1|0[[:space:]]+-eq[[:space:]]+0)[[:space:]]+\]'; then
+if grep -q -E '\[[[:space:]]+(1|"1"|true|0)[[:space:]]+\]|\[[[:space:]]+(1[[:space:]]+-eq[[:space:]]+1|0[[:space:]]+-eq[[:space:]]+0)[[:space:]]+\]' <<<"$body"; then
   add "test.sh has a test on a constant ('[ 1 ]', '[ 1 -eq 1 ]'). It can never fail; assert on the events instead."
 fi
-if printf '%s\n' "$body" | grep -q -E "jq[[:space:]]+(-[A-Za-z-]+[[:space:]]+)*['\"]?(\\.|true|1)['\"]?[[:space:]]*([>|;]|\$)"; then
+if grep -q -E "jq[[:space:]]+(-[A-Za-z-]+[[:space:]]+)*['\"]?(\\.|true|1)['\"]?[[:space:]]*([>|;]|\$)" <<<"$body"; then
   add "test.sh runs jq with a constant filter ('.', 'true', '1'). It passes on any input; filter the events and test a condition."
 fi
 
@@ -100,7 +104,8 @@ fi
 for f in "$abs"/judge*.sh; do
   [ -f "$f" ] || continue
   name="$(basename "$f")"
-  if ! grep -v -E '^[[:space:]]*(#|echo|printf)' "$f" | grep -q -E '(^|[^[:alnum:]_-])(cat|read|grep|jq|sed|awk|head|tail|tr|wc|python3?)([[:space:]]|$)'; then
+  judge_body="$(grep -v -E '^[[:space:]]*(#|echo|printf)' "$f" || true)"
+  if ! grep -q -E '(^|[^[:alnum:]_-])(cat|read|grep|jq|sed|awk|head|tail|tr|wc|python3?)([[:space:]]|$)' <<<"$judge_body"; then
     add "$name is a mock judge that never reads its stdin, so it returns the same verdict whatever the input. Make it decide from the input (cat the stdin, grep it for what the rule is about) and print {\"pass\":...,\"reasoning\":...} accordingly."
   fi
 done

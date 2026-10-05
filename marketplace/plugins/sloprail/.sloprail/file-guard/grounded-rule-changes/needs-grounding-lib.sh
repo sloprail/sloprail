@@ -45,10 +45,12 @@ is_landed_revert() {
   # Newest first; the commits newer than the matching version are the ones being undone.
   while read -r c; do
     [ -n "$c" ] || continue
-    printf '%s\n' "$inrange" | grep -qxF -- "$c" && continue
+    # a here-string, not `printf | grep -q`: under pipefail an early match would SIGPIPE printf (see rule-tests-rigorous)
+    grep -qxF -- "$c" <<<"$inrange" && continue
     have="$(git -C "$SR_TREE" rev-parse -q --verify "${c}:${path}" 2>/dev/null)" || have=""
     [ "$have" = "$want" ] && return 0
-    git -C "$SR_TREE" log -1 --format=%B "$c" 2>/dev/null | grep -qiE '^Sloprail-Cites-[A-Za-z]+:' && return 1
+    msg="$(git -C "$SR_TREE" log -1 --format=%B "$c" 2>/dev/null)"
+    grep -qiE '^Sloprail-Cites-[A-Za-z]+:' <<<"$msg" && return 1
   done <<SR_REV_EOF
 $(git -C "$SR_TREE" log --format=%H "$ref" -- "$path" 2>/dev/null)
 SR_REV_EOF

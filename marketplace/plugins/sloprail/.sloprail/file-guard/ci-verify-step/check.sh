@@ -25,24 +25,24 @@ for i in $(seq 0 $((n - 1))); do
 
   how="Fix the CI file as the snippets in the 'sloprail/gate/ci-verify-required' refusal show, and commit it."
   missing=""
-  if ! printf '%s\n' "$body" | grep -q -E 'sr-checks[[:space:]]+verify'; then
+  if ! grep -q -E 'sr-checks[[:space:]]+verify' <<<"$body"; then
     missing="a step that runs 'sr-checks verify' (it carries the marker but nothing runs it)"
   fi
 
   base="${path##*/}"
   case "$path" in
     .github/workflows/*.yml | .github/workflows/*.yaml)
-      printf '%s\n' "$body" | grep -q -E '^(on:.*[[:space:],{[]pull_request([[:space:],}:]|\]|$)|[[:space:]]*(-[[:space:]]*)?pull_request[[:space:]]*(:|$))' \
+      grep -q -E '^(on:.*[[:space:],{[]pull_request([[:space:],}:]|\]|$)|[[:space:]]*(-[[:space:]]*)?pull_request[[:space:]]*(:|$))' <<<"$body" \
         || missing="${missing:+$missing; }a 'pull_request' trigger under 'on:'"
       ;;
     *.gitlab-ci.yml | *.gitlab-ci.yaml)
-      printf '%s\n' "$body" | grep -q -E '^[[:space:]]*(-[[:space:]]*)?if:.*merge_request_event' \
+      grep -q -E '^[[:space:]]*(-[[:space:]]*)?if:.*merge_request_event' <<<"$body" \
         || missing="${missing:+$missing; }a rule '- if: \$CI_PIPELINE_SOURCE == \"merge_request_event\"'"
       ;;
     *)
       case "$base" in
         azure-pipelines*.yml | azure-pipelines*.yaml)
-          printf '%s\n' "$body" | grep -q -E '^pr[[:space:]]*:' \
+          grep -q -E '^pr[[:space:]]*:' <<<"$body" \
             || missing="${missing:+$missing; }a top-level 'pr:' trigger (for example 'pr: [main]')"
           ;;
         *) : ;; # any other provider: only the verify step (checked above) can be required
