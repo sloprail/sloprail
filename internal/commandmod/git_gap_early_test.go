@@ -6,6 +6,33 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Every global option in git(1) OPTIONS: known ones never leave the subcommand in doubt on their own,
+// the value-taking ones consume their value, and anything unlisted fails closed.
+func TestGitGapEarly_GlobalOptionsTable(t *testing.T) {
+	noValue := []string{
+		"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path",
+		"-p", "--paginate", "-P", "--no-pager", "--no-replace-objects", "--no-lazy-fetch",
+		"--no-optional-locks", "--no-advice", "--bare", "--literal-pathspecs", "--glob-pathspecs",
+		"--noglob-pathspecs", "--icase-pathspecs",
+		"--exec-path=/x", "--git-dir=/x", "--work-tree=/x", "--namespace=n", "--super-prefix=p",
+		"--config-env=a=B", "--attr-source=HEAD", "--list-cmds=main",
+	}
+	withValue := []string{"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
+	for _, o := range noValue {
+		assert.False(t, gitGapEarly(firstInv(t, `git `+o+` status $R`, "git")), "%s then a literal subcommand", o)
+		assert.True(t, gitGapEarly(firstInv(t, `git `+o+` $S`, "git")), "%s then a lost subcommand", o)
+	}
+	for _, o := range withValue {
+		assert.False(t, gitGapEarly(firstInv(t, `git `+o+` v status $R`, "git")), "%s v then a literal subcommand", o)
+		assert.True(t, gitGapEarly(firstInv(t, `git `+o+` v $S`, "git")), "%s v then a lost subcommand", o)
+		assert.True(t, gitGapEarly(firstInv(t, `git `+o+` $V push`, "git")), "%s then a lost value", o)
+	}
+	// an option the table does not know may take the next word: the subcommand is in doubt, with or without a gap
+	for _, line := range []string{`git --future-opt val push`, `git --future-opt push`, `git -Z push`, `git -pZ status`} {
+		assert.True(t, gitGapEarly(firstInv(t, line, "git")), line)
+	}
+}
+
 // gitGapEarly is what the git gates match on: a git invocation that lost a word among its global
 // options or where its subcommand stands. A gap after the subcommand, a program that is known and
 // is not git, and the harness's own pre-stop command are never matched.

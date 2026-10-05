@@ -15,7 +15,9 @@ case $n in
   # a cd that is a variable the line never assigned, behind builtin or command, leaves the folder unknown
   4) bash_ h5 'builtin cd "$UNSET_DIR"; git commit -q --allow-empty -m x' ;;
   5) bash_ h6 'command cd "$UNSET_DIR"; git commit -q --allow-empty -m x' ;;
+  # a global option git(1) does not list may take the next word as its value: the subcommand is in doubt
+  6) bash_ h7 'git --future-opt x commit -q --allow-empty -m x' ;;
   # recovery: the literal subcommand changes no guarded file, so it is decided and permitted
-  6) bash_ l1 'git -c user.name=t -c user.email=t@t commit -q --allow-empty -m x' ;;
+  7) bash_ l1 'git -c user.name=t -c user.email=t@t commit -q --allow-empty -m x' ;;
   *) finish ;;
 esac

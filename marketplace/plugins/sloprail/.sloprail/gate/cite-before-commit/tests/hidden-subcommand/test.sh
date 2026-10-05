@@ -16,7 +16,7 @@ for id in h1 h2; do
   verdict $id refused || fail "$id: a commit with a hidden subcommand was not refused"
   reason_has $id "literal subcommand" || fail "$id: the refusal does not tell the agent to use the literal subcommand"
 done
-for id in h3 h4 h5 h6; do
+for id in h3 h4 h5 h6 h7; do
   verdict $id refused || fail "$id: a commit after a cd to an unassigned variable was not refused"
   reason_has $id "could not check" || fail "$id: the refusal does not say the commit could not be checked"
 done

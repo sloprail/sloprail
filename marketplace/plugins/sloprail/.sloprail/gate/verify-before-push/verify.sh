@@ -37,7 +37,7 @@ while [ "$i" -lt "$n" ]; do
   # A word of the command that the engine could not resolve (a `$(...)`, a variable the line did not
   # assign to a literal) is not the next word: judging the command without it would judge another
   # repository, or another remote, than the one the push runs in. Fail closed.
-  [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand the gate could not resolve (a variable, \$(...) or ~ the line does not assign to a literal), so it may be a push and could not be checked. Use the literal subcommand and options: git -C <literal dir> push <remote> <ref>."
+  [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand the gate could not resolve (an option it does not know, a variable, \$(...) or ~ the line does not assign to a literal), so it may be a push and could not be checked. Use the literal subcommand and options: git -C <literal dir> push <remote> <ref>."
   if [ "$SUB" = "push" ]; then
     [ -z "$GAP_BIN" ] || refuse "A word in front of 'git' in this push (a wrapper's option or environment held in a variable or \$(...), as in 'timeout \$T git push') could not be resolved, so the folder and environment the push runs in could not be checked. Write the push without it: git -C <literal dir> push <remote> <ref>."
     [ -z "$GAP_VAL" ] || refuse "An option value of this push (-C <dir>, -c <key=value>, --git-dir ...) is a variable, \$(...), ~ or glob that could not be resolved, so the repository it pushes from could not be checked. Use literals: git -C <literal dir> push ..."

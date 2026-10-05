@@ -4,6 +4,7 @@
 # command line wrote but the engine could not resolve (a `$(...)`, a variable the line never assigned):
 #   GAP_FREE  a word was lost among the global options or where the subcommand stands, and is not the
 #             value of an option that takes one. It may have been any option, or the subcommand itself.
+#             Also set for a global option this file does not know (it may take the next word as its value).
 #   GAP_BIN   a word was lost in front of `git` (`timeout $T git ...`, `env $E git ...`): it belongs to a
 #             wrapper, so it cannot change the subcommand, but the folder and environment git runs in
 #             are unknown. A caller that needs them (a push, a commit) refuses it.
@@ -45,7 +46,11 @@ git_split() {
           fi
         fi
         ;;
-      -*) GOPTS+=("$a") ;;
+      # options that take no value (git(1) OPTIONS), and `--name=value` spellings, which carry theirs inline
+      -v | --version | -h | --help | --exec-path | --html-path | --man-path | --info-path | -p | --paginate | -P | --no-pager | --no-replace-objects | --no-lazy-fetch | --no-optional-locks | --no-advice | --bare | --literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs | --*=*) GOPTS+=("$a") ;;
+      # any other option may take the next word as its value, so where the subcommand stands is in doubt
+      # (a git option this list does not know): fail closed like a lost word
+      -*) GOPTS+=("$a"); GAP_FREE=1 ;;
       *)
         SUB="$a"
         i=$((i + 1))

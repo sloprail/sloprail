@@ -236,26 +236,49 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 	return c, nil
 }
 
-// gitGapEarly reports whether a `git` invocation lost a word where its global options or its
-// subcommand stand: a gap at or before the first word that is neither an option nor an option's
-// value. A gap after the subcommand (a ref, a path, a message) cannot change which command runs.
+// gitValueOptions are git's global options that take their value as the NEXT word (git(1) OPTIONS).
+var gitValueOptions = map[string]bool{
+	"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
+	"--super-prefix": true, "--config-env": true, "--attr-source": true,
+}
+
+// gitFlagOptions are git's global options that take no value as a separate word. `--name=value`
+// spellings carry their value inline and are never in doubt.
+var gitFlagOptions = map[string]bool{
+	"-v": true, "--version": true, "-h": true, "--help": true, "--exec-path": true,
+	"--html-path": true, "--man-path": true, "--info-path": true, "-p": true, "--paginate": true,
+	"-P": true, "--no-pager": true, "--no-replace-objects": true, "--no-lazy-fetch": true,
+	"--no-optional-locks": true, "--no-advice": true, "--bare": true, "--literal-pathspecs": true,
+	"--glob-pathspecs": true, "--noglob-pathspecs": true, "--icase-pathspecs": true,
+}
+
+// gitGapEarly reports whether the subcommand of a `git` invocation is in doubt: it lost a word
+// where its global options or its subcommand stand (a gap at or before the first word that is
+// neither an option nor an option's value), or it has a global option this table does not know,
+// which may take the next word as its value. Fail closed: only options known to take no value, and
+// the known value-taking ones with their value consumed, let the scan reach the subcommand. A gap
+// after the subcommand (a ref, a path, a message) cannot change which command runs.
 func gitGapEarly(inv Invocation) bool {
-	if inv.Bin != "git" || len(inv.Gaps) == 0 {
+	if inv.Bin != "git" {
 		return false
 	}
 	sub := len(inv.Argv)
 	for i := 1; i < len(inv.Argv); i++ {
 		a := inv.Argv[i]
-		switch a {
-		case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source":
+		switch {
+		case gitValueOptions[a]:
 			i++
-			continue
+		case gitFlagOptions[a]:
+		case strings.HasPrefix(a, "--") && strings.Contains(a, "="):
+			// `--git-dir=x`: the value is inline
+		case strings.HasPrefix(a, "-"):
+			return true // an option this table does not know: its value may be the next word
+		default:
+			sub = i
 		}
-		if strings.HasPrefix(a, "-") {
-			continue
+		if sub != len(inv.Argv) {
+			break
 		}
-		sub = i
-		break
 	}
 	for _, g := range inv.Gaps {
 		if g <= sub {

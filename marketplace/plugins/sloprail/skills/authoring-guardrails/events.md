@@ -178,7 +178,9 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
 
 - `.gitGapEarly` — bool, `true` only for a `git` invocation that lost a word among its global
   options or where its subcommand stands (`git $X`, `git -C $D push`, `timeout $T git push`), so
-  the command that runs could be any git command. `false` for a gap after the subcommand
+  the command that runs could be any git command. Also `true` when a global option before the
+  subcommand is not one of git(1)'s documented ones (it may take the next word as its value).
+  `false` for a gap after the subcommand
   (`git rev-parse "$REF"`), for no gap, and for every other program. A rule that must refuse a
   hidden git subcommand matches on it instead of on `.gaps`.
 
