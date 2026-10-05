@@ -40,7 +40,7 @@ case "$count" in '' | *[!0-9]*) refuse "the changeset's files could not be read,
 # print one sentence saying what is wrong and how to fix it, and return 1.
 fine() {
   local path="$1" content="$2"
-  if ! printf '%s' "$content" | grep -q 'CHANGE-ME'; then
+  if ! grep -q 'CHANGE-ME' <<<"$content"; then
     return 0
   fi
   echo "replace this with what $path must hold, and how to fix it"
