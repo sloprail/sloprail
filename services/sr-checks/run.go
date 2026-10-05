@@ -16,6 +16,7 @@ import (
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/prrerun"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -31,7 +32,9 @@ Every check (requirement, script, judge) is cached by content: one verdict per g
 by the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
 input changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment
 of the sloprail/checks branch, and pushed to origin when the repository has one. Prints each
-refusal, and exits 1 when any rule refuses.
+refusal, and exits 1 when any rule refuses. When the head is the tip of a branch with an open pull request whose
+"sr-checks verify" check failed, the failed job is re-run (gh run rerun --failed) once the verdicts are pushed;
+best-effort: without a usable gh it says so in one line and the exit status is the run's own.
 
 Run it in the foreground and wait: it prints progress to stderr (a line per judge and per rule, and a
 heartbeat every 30s), so do not poll the process list. It is safe to run in parallel, in several
@@ -244,6 +247,11 @@ func execute(cmd *cobra.Command, m mode) error {
 	// A `run` already pushed what an earlier run left pending; verify and show only read, so
 	// they say when verdicts are still waiting for a run to push them.
 	checkrun.WarnPending(cmd.ErrOrStderr(), cache)
+	if m == modeRun && cache.PendingPush() == nil {
+		// The verdicts CI's verify job was waiting for are on the remote now: re-run its failed job
+		// (best-effort; the run's own status below is unchanged).
+		prrerun.Rerun(cmd.ErrOrStderr(), prrerun.OS, t.root, t.rng.Head)
+	}
 
 	w := cmd.OutOrStdout()
 	if m == modeShow {

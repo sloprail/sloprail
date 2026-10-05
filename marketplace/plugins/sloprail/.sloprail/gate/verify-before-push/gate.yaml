@@ -24,8 +24,12 @@
 # Limit: this gate sees the command line the agent runs, not the commands inside a script it
 # runs (`sh ship.sh` that pushes). CI verify is the backstop for those.
 #
-# On by default, like every shipped rule, and switched off by listing
-# `sloprail/gate/verify-before-push` under `disabled:` in .sloprail/config.yaml.
+# OFF by default (`enabled: false` below): the judges need the Claude subscription, which CI cannot
+# use, so `sr-checks run` stays local, and a verify on every push slowed every push. The guarantee
+# is CI's required `sr-checks verify` job at merge time. A project that wants the push refused too
+# opts in by listing `sloprail/gate/verify-before-push` under `enabled:` in .sloprail/config.yaml
+# (`disabled:` still wins over it).
+enabled: false
 on:
   - event: PreCommandInvoke
     match: >-

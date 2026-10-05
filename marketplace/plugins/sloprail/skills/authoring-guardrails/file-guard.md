@@ -89,8 +89,8 @@ never the working tree.
   from the local results. **Stop shows failures only**: a stored FAIL (with its
   reasons), a rule that does not load, or a real error refuses it. A range nobody has
   judged yet is not reported at Stop, and passes it silently; run `sr-checks run`
-  before pushing — the pre-push gate and CI `sr-checks verify` refuse an unjudged range.
-- **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below), and optionally a git `pre-push` hook.
+  before a pull request is marked ready (`sr-checks run --base <merge-base> --head HEAD`) — CI `sr-checks verify` refuses an unjudged range (and so does the opt-in pre-push gate).
+- **Before a push**, the shipped `sloprail/gate/verify-before-push` gate (below; **off** by default, a project opts in with `enabled:`), and optionally a git `pre-push` hook.
 - **In CI**, `sr-checks verify` as a required status check (below). This is the
   backstop for anything a session did not track. A squash merge keeps the PR's
   verdict: `verify` reuses a stored verdict of the same rule judged over the same base
@@ -152,11 +152,17 @@ commit required covers its uncommitted work.
 
 ### Before a push: verify-before-push
 
-The shipped gate `sloprail/gate/verify-before-push` is on by default. It refuses an
+The shipped gate `sloprail/gate/verify-before-push` is **off by default** (`enabled: false`): judges
+need the Claude subscription CI cannot use, so `sr-checks run` stays local, and CI's required
+`sr-checks verify` job is the guarantee at merge time. Before a pull request is marked ready run
+`sr-checks run --base <merge-base> --head HEAD`; once it has pushed the verdicts it re-runs the pull
+request's failed `sr-checks verify` job through `gh` (best-effort). A project that wants every push
+checked too lists `sloprail/gate/verify-before-push` under `enabled:` in `.sloprail/config.yaml`.
+Enabled, it refuses an
 agent's `git push` until `sr-checks verify --base <merge-base(remote/default, sha)> --head <sha>`
 passes for every ref the push would update, and the refusal names the `sr-checks run` that
-judges the range. It fails closed when a ref, folder or base cannot be resolved. Switch it off
-by listing `sloprail/gate/verify-before-push` under `disabled:` in `.sloprail/config.yaml`.
+judges the range. It fails closed when a ref, folder or base cannot be resolved. `disabled:` wins
+over `enabled:`.
 
 The verdicts live on the `sloprail/checks` branch, and a forged pass there would defeat
 `verify`, so the shipped gate `sloprail/gate/checks-ref-sr-only` (also on by default) refuses

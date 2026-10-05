@@ -22,7 +22,7 @@ func pushSetup(t *testing.T, disable ...string) (*Env, string, func() bool) {
 	}
 }
 
-// T057_01: the push gate is ON by default and switched off with `disabled: [sloprail/gate/verify-before-push]`
+// T057_01: the push gate, once opted in (`enabled:`), is switched off with `disabled: [sloprail/gate/verify-before-push]`
 // in .sloprail/config.yaml. Off, a push goes through (the Stop still judges the commits). On, commits a
 // file-guard refuses (or nobody judged) do not leave the machine; once judged clean, the same push goes through.
 func TestT057_01_ThePushGateCanBeDisabled(t *testing.T) {
@@ -39,7 +39,7 @@ func TestT057_01_ThePushGateCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestT057_01_APushOfRefusedCommitsIsBlockedThenAllowedOnceFixedByDefault(t *testing.T) {
+func TestT057_01_APushOfRefusedCommitsIsBlockedThenAllowedOnceFixedWhenEnabled(t *testing.T) {
 	e, proj, pushed := pushSetup(t)
 	e.Run(proj, "s-057-01b", "commit and push", Turns("done",
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),

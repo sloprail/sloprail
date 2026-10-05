@@ -9,7 +9,8 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// The plugin's sloprail/gate/verify-before-push (on by default) refuses an agent's `git push`
+// The plugin's sloprail/gate/verify-before-push (OFF by default: a project opts in with `enabled:`; every
+// test here but the default-off one opts in) refuses an agent's `git push`
 // until `sr-checks verify` passes over the commits it would send, and
 // sloprail/gate/checks-ref-sr-only keeps the results branch for sr-checks alone.
 // The helpers below are copied unchanged from the old changeset/003_stop_evaluation package.
@@ -46,9 +47,19 @@ exit 0
 
 const docsRule = "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n"
 
+// pushGate is the shipped gate that ships off.
+const pushGate = "sloprail/gate/verify-before-push"
+
+// project is a project that opted in to the push gate.
 func project(t *testing.T, ruleYAML string) (*Env, string, string) {
 	t.Helper()
-	e := harness.New(t, harness.WithoutShippedFileGuards())
+	return projectWith(t, ruleYAML, harness.WithEnabledShipped(pushGate))
+}
+
+// projectWith is a project built with exactly the given harness options.
+func projectWith(t *testing.T, ruleYAML string, opts ...harness.Option) (*Env, string, string) {
+	t.Helper()
+	e := harness.New(t, append([]harness.Option{harness.WithoutShippedFileGuards()}, opts...)...)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")

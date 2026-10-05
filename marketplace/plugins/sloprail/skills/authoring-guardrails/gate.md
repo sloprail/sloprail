@@ -195,7 +195,7 @@ flattened list.
 
 ### Example: a shipped command gate
 
-The plugin's `sloprail/gate/verify-before-push` is a command gate with its policy in YAML
+The plugin's `sloprail/gate/verify-before-push` (ships off, see below) is a command gate with its policy in YAML
 and one script. It matches any `git ... push`, and a single `checks:` script asks git
 itself which refs the push would update (`git push --dry-run --porcelain`), then runs
 `sr-checks verify` over each one's range. A push whose commits all have stored passes is
@@ -228,8 +228,9 @@ other index-moving command on the line is refused, as is a commit whose folder o
 cannot be read (fail closed). Files the same line creates before the commit are not seen: CI's
 verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.
 
-All three ship **on**: a project turns one off
-with `disabled: [sloprail/gate/verify-before-push]` in `.sloprail/config.yaml`.
+`cite-before-commit` and `ci-verify-required` ship **on** (a project turns one off with `disabled: [...]`
+in `.sloprail/config.yaml`); `verify-before-push` ships **off**, and a project opts in with
+`enabled: [sloprail/gate/verify-before-push]`.
 
 `sloprail/gate/ci-verify-required` is the `Stop` gate that closes the loop on the CI side: a
 file-guard's verdict is only enforced where `sr-checks verify` runs, so a project with at

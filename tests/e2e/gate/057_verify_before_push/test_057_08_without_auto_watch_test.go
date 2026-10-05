@@ -11,7 +11,7 @@ import (
 // tracked refs, so it refuses an unverified range with SR_AUTO_WATCH_GIT_REFS unset (nothing
 // watched), and lets the same push through once the range is judged clean.
 func TestT057_08_ThePushGateRefusesAnUnverifiedRangeWithNothingWatched(t *testing.T) {
-	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutAutoWatch())
+	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutAutoWatch(), harness.WithEnabledShipped(pushGate))
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": recorder("")})
