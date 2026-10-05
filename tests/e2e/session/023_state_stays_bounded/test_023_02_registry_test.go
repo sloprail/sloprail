@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -42,7 +43,8 @@ func TestT023_03_ARegistryThatKeptEverythingIsPrunedAtTheNextHook(t *testing.T) 
 	if err := store.TrackRange(sessionstate.TrackedRange{SessionID: id, Folder: keptGone, Head: "feature", HeadSHA: "abc", Base: "b", AddedBy: sessionstate.RangeAgent}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetMeta("observed-tip:main:"+proj, "abc"); err != nil {
+	branch := strings.TrimSpace(e.Git(proj, "branch", "--show-current"))
+	if err := store.SetMeta("observed-tip:"+branch+":"+proj, "abc"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetMeta("refs_snapshot:"+proj, "legacy"); err != nil {
@@ -94,8 +96,10 @@ func TestT023_03_ARegistryThatKeptEverythingIsPrunedAtTheNextHook(t *testing.T) 
 	if !tracked {
 		t.Errorf("the tracked range of a folder that is gone was dropped: it is still verified at its commit")
 	}
-	if v, ok, _ := store.Meta("observed-tip:main:" + proj); !ok || v != "abc" {
-		t.Errorf("what was observed of a live branch was lost: %q %v", v, ok)
+	// The hook itself records the branch's real tip over the seeded one: what matters is that the
+	// observation of a live branch is still there.
+	if _, ok, _ := store.Meta("observed-tip:" + branch + ":" + proj); !ok {
+		t.Errorf("what was observed of the live branch %q was lost", branch)
 	}
 	if _, ok, _ := store.Meta("refs_snapshot:" + proj); ok {
 		t.Errorf("a key no code reads survived")
