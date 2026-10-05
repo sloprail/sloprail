@@ -229,7 +229,7 @@ cannot be read (fail closed). Files the same line creates before the commit are 
 verify is the backstop. Switch it off with `disabled: [sloprail/gate/cite-before-commit]`.
 
 These three gates (verify-before-push, cite-before-commit, checks-ref-sr-only) also fire on any
-`git` invocation with a gap (`len(.gaps) > 0`: an option or the subcommand is a variable or `$(...)`
+`git` invocation with a gap (`.gitGapEarly`: an option or the subcommand is a variable or `$(...)`
 the line never assigned to a literal, as in `git $X`, `timeout $T git push`, `env -S "$A" git push`) and
 refuse it, fail closed, telling the agent to use the literal subcommand. A `builtin cd` / `command cd`
 is tracked like `cd`, and an `env -S '<literal command>'` payload is read as the command it runs.

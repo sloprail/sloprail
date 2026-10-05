@@ -25,4 +25,5 @@ done
 verdict r1 permitted || fail "r1: the literal read of the results ref was refused"
 verdict r2 refused || fail "r2: the literal write of the results ref was not refused"
 reason_has r2 "only sr-checks writes it" || fail "r2: the refusal is not the results-ref reason"
-verdict l1 permitted || fail "l1: the literal read was refused"
+# a lost word AFTER the subcommand (a substitution in an argument) cannot change the command: this gate does not match it at all
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="sloprail/checks-ref-sr-only" and .tool_use_id=="l1")] | length==0' >/dev/null || fail "l1: a gap after the subcommand woke the gate"

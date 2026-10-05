@@ -34,6 +34,6 @@ enabled: false
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, .bin == "git" and (len(.gaps) > 0 or any(.argv, # == "push")))
+      any(event.invocations, .bin == "git" and (.gitGapEarly or any(.argv, # == "push")))
 checks:
   - script: ./verify.sh

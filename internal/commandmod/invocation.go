@@ -1012,7 +1012,8 @@ func unwrap(argv []word) []word {
 
 		// `env -S 'cmd' args` runs the split string with the words after it appended: it is read
 		// whole as a payload (envSplitPayload), never as a vector whose program is the next word.
-		if basename(argv[0].value) == "env" && (strings.HasPrefix(arg, "--split-string") ||
+		// A string that cannot be read falls through: the words after it are reported, with the gap.
+		if _, readable := envSplitPayload(argv); readable && basename(argv[0].value) == "env" && (strings.HasPrefix(arg, "--split-string") ||
 			(strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg, "S"))) {
 			return nil
 		}

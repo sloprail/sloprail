@@ -2,6 +2,7 @@ package commandmod
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/grounding"
@@ -123,12 +124,13 @@ func (c CommandEvent) Event() event.Event {
 			gaps = append(gaps, g)
 		}
 		entry := map[string]any{
-			KeyBin:   inv.Bin,
-			KeyArgv:  argv,
-			KeyGaps:  gaps,
-			KeyFlags: flags,
-			KeyCwd:   inv.Cwd,
-			KeyEnv:   env,
+			KeyBin:         inv.Bin,
+			KeyArgv:        argv,
+			KeyGaps:        gaps,
+			KeyGitGapEarly: gitGapEarly(inv),
+			KeyFlags:       flags,
+			KeyCwd:         inv.Cwd,
+			KeyEnv:         env,
 			// "" with stdinKnown false when the text is not literal or absent.
 			KeyStdin:      "",
 			KeyStdinKnown: inv.Stdin != nil,
@@ -232,4 +234,33 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		c.Invocations = append(c.Invocations, inv)
 	}
 	return c, nil
+}
+
+// gitGapEarly reports whether a `git` invocation lost a word where its global options or its
+// subcommand stand: a gap at or before the first word that is neither an option nor an option's
+// value. A gap after the subcommand (a ref, a path, a message) cannot change which command runs.
+func gitGapEarly(inv Invocation) bool {
+	if inv.Bin != "git" || len(inv.Gaps) == 0 {
+		return false
+	}
+	sub := len(inv.Argv)
+	for i := 1; i < len(inv.Argv); i++ {
+		a := inv.Argv[i]
+		switch a {
+		case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env":
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		sub = i
+		break
+	}
+	for _, g := range inv.Gaps {
+		if g <= sub {
+			return true
+		}
+	}
+	return false
 }
