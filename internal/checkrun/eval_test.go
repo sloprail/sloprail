@@ -896,7 +896,7 @@ func TestEvaluate_AScriptThatErroredIsNeverCached(t *testing.T) {
 			p.Verify = true
 			got, _ := Evaluate(p)
 			require.Len(t, got, 1)
-			assert.Contains(t, got[0].Reason, "not judged yet", "no verdict was stored")
+			assert.Contains(t, got[0].Reason, "not judged yet (the check returned no verdict: ", "no verdict was stored, and no judge is named for a script")
 
 			// The check works now: a re-run over the same content tries again.
 			require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "check.sh"), []byte(countingCheck(f.ledger)), 0o755))

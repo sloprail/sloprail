@@ -237,11 +237,12 @@ type Verdict struct {
 	// same as reaching the end with no refusal).
 	Abstained bool
 
-	// NoVerdict reports that a check (a judge, or a script that could not run or said it errored) refused for want of any parseable answer (it
-	// produced nothing the verifier could read, timed out, could not start, or the model's
-	// transport failed), not as a verdict on the content.
-	// Only with Refused. Set by the judge call itself, so callers need not read
-	// the Reason text.
+	// NoVerdict reports that a check refused for want of an answer, not as a verdict on the
+	// content. For a judge: it produced nothing the verifier could read, timed out, could not
+	// start, or the model's transport failed. For a script or a prepare: it could not be run
+	// at all, or said {"error": true} on stdout.
+	// Only with Refused. Set by the check call itself (askJudge, runScriptCheck, runPrepare),
+	// so callers need not read the Reason text.
 	NoVerdict bool
 }
 

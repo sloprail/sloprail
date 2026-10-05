@@ -1311,7 +1311,11 @@ func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
 	for _, r := range rows {
 		reason, _ := r.Metadata["reasoning"].(string)
 		if r.Subject == rr.subject.ID && r.Status != checkstore.StatusPass && r.Status != checkstore.StatusFail && r.Metadata[noVerdictMeta] == true && r.RunAt >= at {
-			at, why = r.RunAt, "the judge returned no verdict: "+reason
+			who := "the judge"
+			if !strings.Contains(r.Kind, ":judge:") {
+				who = "the check" // a script, or a prepare that could not run
+			}
+			at, why = r.RunAt, who+" returned no verdict: "+reason
 		}
 	}
 	return why
