@@ -19,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sloprail/sloprail/internal/ambientenv"
 	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
@@ -49,6 +48,8 @@ type Options struct {
 	CorePluginDir string
 	// BinDirs are prepended to the case PATH (the sloprail binaries).
 	BinDirs []string
+
+	toolDirs []string // resolved once per Run (see toolDirs)
 }
 
 // Metadata is a result's metadata.
@@ -99,6 +100,7 @@ func Run(root string, opt Options) ([]Result, error) {
 		}
 		cases = keep
 	}
+	opt.toolDirs = toolDirs(opt.LiveJudges)
 	jobs := opt.Jobs
 	if jobs <= 0 {
 		jobs = DefaultJobs
@@ -203,18 +205,20 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return finish(Error, err.Error())
 	}
-	env := append(caseEnv(os.Environ()), "HOME="+home, "SR_TEST_CASE_DIR="+casePath, "SR_EVENTS_FILE="+eventsFile, "PATH="+pathWith(opt.BinDirs),
-		"SR_TEST_TARGET_DIR="+c.Target, "SR_TEST_SLOPRAIL_DIR="+c.SloprailDir)
-	if len(c.Plugins) > 0 {
-		env = append(env, "SR_TEST_PLUGIN_DIR="+strings.Join(c.Plugins, string(os.PathListSeparator)))
+	// The case's whole configuration of git: the machine's own is not read (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL). It sits beside HOME, which stays empty.
+	gitconfig := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(gitconfig, []byte("[init]\n\tdefaultBranch = main\n"), 0o644); err != nil {
+		return finish(Error, err.Error())
 	}
-	if !opt.LiveJudges {
-		env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
+	tmp := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return finish(Error, err.Error())
 	}
 	// The runner provisions the project's repository and the commit identity, so a case sets up
 	// neither. A case may still re-run `git init` (harmless) or override the identity (its own
 	// GIT_AUTHOR_* exports, `git -c user.name=...`).
-	env = append(env, TestIdentityEnv()...)
+	env := caseEnv(os.Environ(), envSpec{Home: home, GitConfig: gitconfig, Tmp: tmp, CaseDir: casePath, EventsFile: eventsFile,
+		Target: c.Target, SloprailDir: c.SloprailDir, Plugins: c.Plugins, BinDirs: opt.BinDirs, ToolDirs: opt.toolDirs, LiveJudges: opt.LiveJudges})
 	initCmd := exec.CommandContext(ctx, "git", "init", "-q")
 	initCmd.Dir, initCmd.Env = proj, env
 	if out, err := initCmd.CombinedOutput(); err != nil {
@@ -271,21 +275,6 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	return finish(status, out)
 }
 
-// caseEnv is the ambient environment a case starts from: the enclosing session's identity, every
-// CLAUDE_CODE_*, SR_* and SLOPRAIL_* variable and HOME are dropped, so a case sees only what sr-test
-// sets for it (and passes the same locally and in CI).
-func caseEnv(environ []string) []string {
-	out := make([]string, 0, len(environ))
-	for _, kv := range ambientenv.Hermetic(environ) {
-		key, _, _ := strings.Cut(kv, "=")
-		if key == "HOME" || strings.HasPrefix(key, "CLAUDE_CODE_") {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
-
 // The identity the runner gives every case's git commits.
 const (
 	TestGitName  = "sr-test"
@@ -305,10 +294,6 @@ func orDefault(d time.Duration) time.Duration {
 		return 5 * time.Minute
 	}
 	return d
-}
-
-func pathWith(dirs []string) string {
-	return strings.Join(append(append([]string{}, dirs...), os.Getenv("PATH")), string(os.PathListSeparator))
 }
 
 func tail(s string, n int) string {
