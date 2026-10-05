@@ -3,7 +3,9 @@ package gitrepo
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,4 +99,79 @@ func TestSnapshot_TwentyParallelSnapshotsOfOneRepoAllSucceed(t *testing.T) {
 		require.NoError(t, r.err)
 		assert.NoError(t, r.s.Remove())
 	}
+}
+
+// Adds overlapping removes and sweeps (each of which prunes) all succeed: this is the
+// interleaving that deleted another snapshot's half-made registration.
+func TestSnapshot_AddsOverlapRemovesAndSweeps(t *testing.T) {
+	dir := initRepo(t)
+	head := commit(t, dir, "a.txt", "x")
+
+	const workers, rounds = 8, 4
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*rounds*2)
+	for w := 0; w < workers; w++ {
+		parent := t.TempDir()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := 0; r < rounds; r++ {
+				s, err := AddSnapshot(dir, parent, head)
+				errs <- err
+				if err == nil {
+					errs <- s.Remove()
+				}
+				SweepStaleSnapshots(dir)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		assert.NoError(t, err)
+	}
+}
+
+// The worktree lock is exclusive: while one holder has it, a snapshot waits.
+func TestSnapshot_WaitsForTheWorktreeLock(t *testing.T) {
+	dir := initRepo(t)
+	head := commit(t, dir, "a.txt", "x")
+
+	done := make(chan *Snapshot, 1)
+	parent := t.TempDir()
+	require.NoError(t, withWorktreeLock(dir, func() error {
+		go func() {
+			s, _ := AddSnapshot(dir, parent, head)
+			done <- s
+		}()
+		select {
+		case <-done:
+			t.Error("snapshot was made while the lock was held")
+		case <-time.After(500 * time.Millisecond):
+		}
+		return nil
+	}))
+	s := <-done
+	require.NotNil(t, s)
+	assert.NoError(t, s.Remove())
+}
+
+// When the lock cannot be taken, no snapshot is made, and Remove still deletes its root.
+func TestSnapshot_LockFailureLeavesNothingBehind(t *testing.T) {
+	dir := initRepo(t)
+	head := commit(t, dir, "a.txt", "x")
+	s, err := AddSnapshot(dir, t.TempDir(), head)
+	require.NoError(t, err)
+
+	// A directory where the lock file belongs makes opening it fail.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, ".git", worktreeLockFile), 0o755))
+	parent := t.TempDir()
+	_, err = AddSnapshot(dir, parent, head)
+	assert.Error(t, err)
+	left, _ := os.ReadDir(parent)
+	assert.Empty(t, left)
+
+	root := s.root
+	assert.Error(t, s.Remove())
+	assert.NoDirExists(t, root)
 }
