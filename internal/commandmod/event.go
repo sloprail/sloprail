@@ -19,6 +19,15 @@ type Invocation struct {
 	// here as `npm`.
 	Argv []string
 
+	// Gaps are the positions in Argv where a word of the line was dropped
+	// because it could not be resolved without running something or guessing
+	// at an environment the line does not set (`$(pwd)/x`, `$UNSET`, `${X:-y}`):
+	// i means a word stood immediately before Argv[i], len(Argv) that one
+	// trailed the vector. Argv alone cannot tell a `-C $D` from a `-C` followed
+	// by the next word; a consumer that must not judge the wrong thing (a gate
+	// resolving a folder) reads this to fail closed. Nil when every word resolved.
+	Gaps []int
+
 	// Flags are the flags parsed out of Argv, keyed by name without its
 	// leading dashes. Each value is every occurrence of that flag, in the
 	// order given — a flag given once is a one-element slice, not a bare
@@ -109,9 +118,14 @@ func (c CommandEvent) Event() event.Event {
 		for k, v := range inv.Env {
 			env[k] = v
 		}
+		gaps := make([]any, 0, len(inv.Gaps))
+		for _, g := range inv.Gaps {
+			gaps = append(gaps, g)
+		}
 		entry := map[string]any{
 			KeyBin:   inv.Bin,
 			KeyArgv:  argv,
+			KeyGaps:  gaps,
 			KeyFlags: flags,
 			KeyCwd:   inv.Cwd,
 			KeyEnv:   env,
@@ -166,6 +180,16 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 			for _, a := range argv {
 				if s, ok := a.(string); ok {
 					inv.Argv = append(inv.Argv, s)
+				}
+			}
+		}
+		if gaps, ok := m[KeyGaps].([]any); ok {
+			for _, g := range gaps {
+				switch n := g.(type) {
+				case int:
+					inv.Gaps = append(inv.Gaps, n)
+				case float64:
+					inv.Gaps = append(inv.Gaps, int(n))
 				}
 			}
 		}

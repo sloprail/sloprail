@@ -106,16 +106,22 @@ func TestT058_16_DashCAmendOfUnguardedFileIsAllowed(t *testing.T) {
 	}
 }
 
-// T058_17: a folder that cannot be told (a cd to a variable) is allowed with a one-line note: the
-// file-guards check the citation at Stop and in CI.
-func TestT058_17_UnknownFolderIsAllowedWithANote(t *testing.T) {
-	e, proj := project(t)
-	res := e.Run(proj, "s-058-17", prompt, Turns("done",
-		stage("a", "src/x.go", "package x"),
-		Bash("c", "d=.; cd $d && git commit -q -m 'add x'"),
-	))
-	if res.Refused() {
-		t.Fatalf("a commit in an unknowable folder was refused:\n%s", res.Output)
+// T058_17: a folder that cannot be told (a cd to a command substitution, or to a variable the line
+// never assigned a literal) fails closed: the commit is not judged against the hook's cwd, and the
+// reason tells the agent to use a literal folder.
+func TestT058_17_UnknownFolderFailsClosed(t *testing.T) {
+	for i, cmd := range []string{
+		"cd $(pwd) && git commit -q -m 'add x' --allow-empty",
+		"cd $UNSET_DIR && git commit -q -m 'add x' --allow-empty",
+		"d=$(pwd); cd $d && git commit -q -m 'add x' --allow-empty",
+	} {
+		e, proj := project(t)
+		res := e.Run(proj, "s-058-17-"+string(rune('a'+i)), prompt, Turns("done", Bash("c", cmd)))
+		if !res.Refused() {
+			t.Fatalf("%q: a commit in an unknowable folder was not refused:\n%s", cmd, res.Output)
+		}
+		has(t, res.Output, "could not check")
+		has(t, res.Output, "literal")
 	}
 }
 

@@ -103,6 +103,86 @@ type cwd struct {
 	// when not literal). Immutable once built: a scope copies it on write, so
 	// a subshell's copy and the parent's never alias.
 	env map[string]string
+	// vars is the shell variables the line has assigned so far in this scope
+	// (`D=/x;`, `D=/x &&`, `export D=/x;`) whose value is a literal, name to
+	// value. A variable absent here is UNKNOWN, not unset: the shell the
+	// command runs in may hold it, so expansion treats a reference to it as
+	// unresolvable (see cfgWith) rather than as empty. Immutable once built,
+	// copy-on-write like env.
+	vars map[string]string
+	// noVars disables vars for this file: set when the line defines a shell
+	// function, whose body can assign a variable anywhere it is called.
+	noVars bool
+}
+
+// cfgWith is cfg expanding against what the line has assigned so far: exactly
+// the variables in vars, and any other parameter an error (NoUnset), so a word
+// that reads one is lost rather than read as empty.
+func cfgWith(cfg *expand.Config, vars map[string]string) *expand.Config {
+	c := *cfg
+	list := make([]string, 0, len(vars))
+	for k, v := range vars {
+		list = append(list, k+"="+v)
+	}
+	c.Env = expand.ListEnviron(list...)
+	c.NoUnset = true
+	return &c
+}
+
+// setVar records name as holding value (known) or as unknown. Copy-on-write.
+func (c *cwd) setVar(name, value string, known bool) {
+	if c.noVars {
+		return
+	}
+	if _, had := c.vars[name]; !had && !known {
+		return
+	}
+	next := make(map[string]string, len(c.vars)+1)
+	for k, v := range c.vars {
+		next[k] = v
+	}
+	if known {
+		next[name] = value
+	} else {
+		delete(next, name)
+	}
+	c.vars = next
+}
+
+// applyAssigns records the effect of NAME=value words, with each value read
+// against the variables known before it. declare is true for a declaration
+// clause, where a bare `NAME` assigns nothing.
+func (c *cwd) applyAssigns(cfg *expand.Config, assigns []*syntax.Assign, declare bool) {
+	for _, as := range assigns {
+		if as.Name == nil {
+			continue
+		}
+		if as.Value == nil && as.Naked && declare {
+			continue
+		}
+		if as.Append || as.Array != nil || as.Index != nil {
+			c.setVar(as.Name.Value, "", false)
+			continue
+		}
+		v := ""
+		if as.Value != nil {
+			lit, err := expand.Literal(cfgWith(cfg, c.vars), as.Value)
+			if err != nil || strings.Contains(lit, "~") || !paramsKnown(cfgWith(cfg, c.vars), as.Value) {
+				c.setVar(as.Name.Value, "", false)
+				continue
+			}
+			v = lit
+		}
+		c.setVar(as.Name.Value, v, true)
+	}
+}
+
+// varWriters are the builtins that assign a variable by a route this package
+// does not follow; seeing one forgets every known variable.
+var varWriters = map[string]bool{
+	"read": true, "mapfile": true, "readarray": true, "getopts": true, "unset": true, "let": true,
+	"source": true, ".": true, "command": true, "builtin": true, "exec": true, "wait": true, "trap": true,
+	"export": true, "declare": true, "typeset": true, "local": true, "readonly": true,
 }
 
 // startCwd is the effective directory nothing has yet moved out of: the empty,
@@ -138,15 +218,21 @@ func (c cwd) advance(target string) cwd {
 	if path.IsAbs(target) {
 		// An absolute cd names the directory outright, whatever an opaque
 		// eval before it may have done.
-		return cwd{dir: path.Clean(target), env: c.env}
+		n := c
+		n.dir, n.opaque = path.Clean(target), false
+		return n
 	}
 	if c.dir == "" {
 		// Relative, composed onto "wherever this sequence started" — which
 		// stays exactly that: still relative, one level deeper. Not resolved
 		// against any root, because this package has none.
-		return cwd{dir: path.Clean(target), opaque: c.opaque, env: c.env}
+		n := c
+		n.dir = path.Clean(target)
+		return n
 	}
-	return cwd{dir: path.Clean(path.Join(c.dir, target)), opaque: c.opaque, env: c.env}
+	n := c
+	n.dir = path.Clean(path.Join(c.dir, target))
+	return n
 }
 
 // resolveTargetAt turns a path as a command line spelled it into the path it
@@ -253,7 +339,7 @@ func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd 
 		return "", isCd, false
 	}
 	arg := call.Args[1]
-	if !isLiteral(arg) {
+	if !isLiteral(arg) && !plainKnown(cfg, arg) {
 		// `cd "$SOME_VAR"`, `cd $(pwd)/x` — a target resolved out of an
 		// environment this package does not have, exactly the case
 		// literalWord refuses for a redirection's own path.
@@ -362,7 +448,14 @@ func evalPayloadOf(cfg *expand.Config, call *syntax.CallExpr) (payload []*syntax
 func cwdFor(f *syntax.File) map[*syntax.Stmt]cwd {
 	cfg := newConfig()
 	out := make(map[*syntax.Stmt]cwd)
-	cwdForSequence(cfg, f.Stmts, startCwd, out)
+	entry := startCwd
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if _, ok := n.(*syntax.FuncDecl); ok {
+			entry.noVars = true
+		}
+		return true
+	})
+	cwdForSequence(cfg, f.Stmts, entry, out)
 	return out
 }
 
@@ -396,17 +489,54 @@ func cwdForSequence(cfg *expand.Config, stmts []*syntax.Stmt, entry cwd, out map
 // actually run), or anything else (recorded at the current directory and
 // nothing to advance).
 func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*syntax.Stmt]cwd) {
+	if stmt.Background {
+		// A backgrounded command runs in a subshell: nothing it does (a cd, an
+		// assignment, a block's or loop's body) reaches what follows.
+		inner := *current
+		cwdForStmtHere(cfg, stmt, &inner, out)
+		return
+	}
+	cwdForStmtHere(cfg, stmt, current, out)
+}
+
+// cwdForStmtHere is cwdForStmt in the shell it was handed.
+func cwdForStmtHere(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*syntax.Stmt]cwd) {
 	out[stmt] = *current
+	// An arithmetic or `:=` expansion anywhere in the statement (a word, a redirect, a case or
+	// for word list, a test) may assign a variable.
+	if mayAssign(stmt) {
+		current.vars = nil
+	}
 
 	switch cmd := stmt.Cmd.(type) {
 	case *syntax.CallExpr:
+		if len(cmd.Args) == 0 {
+			// Bare assignments: `D=/x` sets a shell variable for what follows.
+			// A backgrounded one runs in a subshell and sets nothing here.
+			if mayAssign(cmd) {
+				// `A=$((D=1))`: an expansion in the value assigns another variable.
+				current.vars = nil
+			}
+			current.applyAssigns(cfg, cmd.Assigns, false)
+			return
+		}
+		if forgetsVars(cfg, current, cmd) {
+			current.vars = nil
+		}
+		cfg = cfgWith(cfg, current.vars)
 		if payload, isEval, ok := evalPayloadOf(cfg, cmd); isEval {
 			if !ok {
 				// `eval "$SETUP"` — a payload this package cannot read may
 				// `cd` anywhere. Opaque, not unknown: see cwd.opaque for why
 				// the file-target side keeps resolving.
 				current.opaque = true
+				current.vars = nil
+				current.noVars = true // it may define a function
 				return
+			}
+			if hasFuncDecl(payload) {
+				current.vars = nil
+				current.noVars = true
 			}
 			// eval runs its payload in THIS shell, exactly like a Block: a
 			// `cd` inside it moves every statement after the eval. Its own
@@ -445,6 +575,40 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		if exp, _ := exportsOf(cfg, cmd); exp != nil {
 			current.env = withEnv(current.env, exp)
 		}
+		// Every NAME=value in it also assigns the shell variable. An option
+		// this package does not model changes what the name means from here on
+		// (`-n` a name reference, `-l`/`-u`/`-i`/`-c` the value assigned): no
+		// variable is tracked from then on. So does an option it cannot read.
+		for _, as := range cmd.Args {
+			if as.Name == nil && as.Value != nil {
+				o, err := expand.Literal(cfg, as.Value)
+				if err != nil || !isLiteral(as.Value) || (strings.HasPrefix(o, "-") && strings.ContainsAny(o, "nluic")) {
+					current.vars = nil
+					current.noVars = true
+					continue
+				}
+				// A quoted `"NAME=value"` parses as a plain word, not an assignment: it assigns all the same.
+				if name, val, ok := strings.Cut(o, "="); ok && !strings.HasPrefix(o, "-") && validEnvName(name) {
+					current.vars = nil
+					current.noVars = true
+					current.env = withEnv(current.env, map[string]string{name: val})
+				}
+			}
+		}
+		if mayAssign(cmd) {
+			current.vars = nil
+		}
+		if cmd.Variant != nil {
+			current.applyAssigns(cfg, cmd.Args, true)
+		}
+	case *syntax.ArithmCmd, *syntax.LetClause, *syntax.TimeClause, *syntax.CoprocClause:
+		// Run something this package does not follow: an arithmetic or a
+		// timed/co-process body may assign a variable.
+		current.vars = nil
+	case *syntax.TestClause:
+		if mayAssign(cmd) {
+			current.vars = nil
+		}
 	case *syntax.Subshell:
 		// A fresh scope, seeded with a COPY of what the parent currently
 		// knows. Whatever `cd`s happen inside are recorded for the statements
@@ -480,6 +644,10 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			// whatever statement follows this one.
 			cwdForStmt(cfg, cmd.X, ptr(*current), out)
 			cwdForStmt(cfg, cmd.Y, ptr(*current), out)
+			// zsh (and bash with lastpipe) runs the last element in the current shell.
+			if assignsVars(cmd.Y) {
+				current.vars = nil
+			}
 		default:
 			// `&&`, `||`: X first, then Y — the left-to-right order
 			// BinaryCmd's own left associativity already puts them in (see
@@ -488,7 +656,11 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 			// actually run. Both share `current` because both really do run
 			// in the one shell this function is tracking.
 			cwdForStmt(cfg, cmd.X, current, out)
+			afterX := cwd{vars: current.vars}
 			cwdForStmt(cfg, cmd.Y, current, out)
+			// Y runs only when X succeeds (`&&`) or fails (`||`): a variable it
+			// assigns is known afterwards only if X's path agrees.
+			current.vars = mergeVars(afterX, *current)
 		}
 	case *syntax.Block:
 		// `{ cd /a; }` in the CURRENT shell — a Block is not a new process,
@@ -529,6 +701,10 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		// reason (a body with no cd leaves current unchanged, so running it
 		// twice is the same as running it once, is the same as not running it
 		// at all).
+		if assignsVars(cmd) {
+			// A later iteration reads what an earlier one assigned.
+			current.vars = nil
+		}
 		*current = cwdForSequence(cfg, cmd.Cond, *current, out)
 		zeroTimes := *current
 		onceOrMore := cwdForSequence(cfg, cmd.Do, *current, out)
@@ -544,6 +720,14 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		// they are not, i.e. two different iterations could leave two
 		// different directories, mergeBranches's disagreement rule already
 		// answers unknown, which is the honest reflection of that).
+		if wi, ok := cmd.Loop.(*syntax.WordIter); ok && wi.Name != nil {
+			current.setVar(wi.Name.Value, "", false)
+		} else if _, ok := cmd.Loop.(*syntax.CStyleLoop); ok {
+			current.vars = nil
+		}
+		if assignsVars(cmd) {
+			current.vars = nil
+		}
 		zeroTimes := *current
 		onceOrMore := cwdForSequence(cfg, cmd.Do, *current, out)
 		*current = mergeBranches(zeroTimes, onceOrMore)
@@ -667,7 +851,118 @@ func cwdForIfChain(cfg *expand.Config, cmd *syntax.IfClause, entry cwd, out map[
 func mergeBranches(branches ...cwd) cwd {
 	out := mergeDirs(branches...)
 	out.env = mergeEnvs(branches...)
+	out.vars = mergeVars(branches...)
+	for _, b := range branches {
+		out.noVars = out.noVars || b.noVars
+	}
 	return out
+}
+
+// mergeVars keeps a variable only where every path agrees on its value; a
+// variable one path left unknown, or set differently, is unknown afterwards.
+func mergeVars(branches ...cwd) map[string]string {
+	if len(branches) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for k, v := range branches[0].vars {
+		same := true
+		for _, b := range branches[1:] {
+			if bv, ok := b.vars[k]; !ok || bv != v {
+				same = false
+				break
+			}
+		}
+		if same {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// forgetsVars reports whether this call may assign a shell variable by a route
+// this package does not follow: a builtin that writes one, a program word it
+// cannot read, an arithmetic or `:=` expansion in any word.
+func forgetsVars(cfg *expand.Config, c *cwd, call *syntax.CallExpr) bool {
+	if mayAssign(call) || !isLiteral(call.Args[0]) {
+		return true
+	}
+	fields, err := expand.Fields(cfg, call.Args[0])
+	if err != nil || len(fields) != 1 {
+		return true
+	}
+	first := fields[0]
+	if first == "source" || first == "." || first == "trap" {
+		c.noVars = true // the sourced file may define a function; a trap assigns at any point
+	}
+	if first == "printf" {
+		for _, a := range call.Args[1:] {
+			if lit, err := expand.Literal(cfg, a); err != nil || strings.HasPrefix(lit, "-v") {
+				return true
+			}
+		}
+	}
+	return varWriters[first]
+}
+
+// mayAssign reports whether anything under n assigns a shell variable from
+// inside an expansion: `$((D=1))`, `${D:=x}`, an arithmetic command.
+func mayAssign(n syntax.Node) bool {
+	found := false
+	syntax.Walk(n, func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.ArithmExp, *syntax.ArithmCmd, *syntax.BinaryArithm, *syntax.UnaryArithm, *syntax.ParenArithm:
+			found = true
+		case *syntax.Assign:
+			if x.Index != nil {
+				found = true
+			}
+		case *syntax.BinaryTest:
+			switch x.Op {
+			case syntax.TsEql, syntax.TsNeq, syntax.TsLeq, syntax.TsGeq, syntax.TsLss, syntax.TsGtr:
+				found = true // operands are arithmetic
+			}
+		case *syntax.ParamExp:
+			if x.Index != nil || x.Slice != nil || (x.Exp != nil && (x.Exp.Op == syntax.AssignUnset || x.Exp.Op == syntax.AssignUnsetOrNull)) {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// assignsVars reports whether anything under n may assign a shell variable: a NAME=value, a
+// declaration, a builtin that writes one, a command it cannot read, or an assigning expansion.
+// Used for loop bodies (a later iteration reads what an earlier one set) and the last element of
+// a pipeline.
+func assignsVars(root syntax.Node) bool {
+	if mayAssign(root) {
+		return true
+	}
+	found := false
+	syntax.Walk(root, func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.Assign, *syntax.DeclClause, *syntax.LetClause:
+			found = true
+		case *syntax.ForClause:
+			if n != root {
+				found = true
+			}
+		case *syntax.CallExpr:
+			if len(x.Args) > 0 {
+				w, err := expand.Fields(safeConfig(), x.Args[0])
+				if !isLiteral(x.Args[0]) || err != nil || len(w) != 1 || varWriters[w[0]] || w[0] == "eval" || w[0] == "trap" {
+					found = true
+				}
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // mergeEnvs is the union of what any path exported: a variable one path set
@@ -940,4 +1235,32 @@ func withEnv(base, add map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// plainKnown reports whether w is literals and plain `$NAME` / `${NAME}`
+// references to variables cfg holds: a word whose expansion is certain.
+func plainKnown(cfg *expand.Config, w *syntax.Word) bool {
+	ok := true
+	syntax.Walk(w, func(n syntax.Node) bool {
+		switch n.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.ArithmExp:
+			ok = false
+		}
+		return ok
+	})
+	return ok && paramsKnown(cfg, w)
+}
+
+// hasFuncDecl reports whether any statement under stmts defines a function.
+func hasFuncDecl(stmts []*syntax.Stmt) bool {
+	found := false
+	for _, st := range stmts {
+		syntax.Walk(st, func(n syntax.Node) bool {
+			if _, ok := n.(*syntax.FuncDecl); ok {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
 }

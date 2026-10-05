@@ -69,6 +69,14 @@ while [ "$i" -lt "$n" ]; do
   i=$((i + 1))
   [ "$(printf '%s' "$inv" | jq -r '.bin // ""')" = "git" ] || continue
   git_split "$inv"
+  # A word the engine could not resolve (a `$(...)`, a variable the line did not assign to a literal)
+  # may be the subcommand or the ref: it could name the results ref, and would not be read here.
+  [ -z "$GAP_FREE" ] || refuse "A 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal, so it could not be checked against the results ref. Write it out literally. $msg"
+  case "$SUB" in
+    update-ref | symbolic-ref | push | fetch | pull | fast-import)
+      [ -z "$GAP_REST" ] || refuse "This 'git $SUB' names a ref through a variable or \$(...) that could not be resolved, so it could not be checked against the results ref. Write the ref out literally. $msg"
+      ;;
+  esac
   # forms that write a ref without naming it: the ref is in the piped input (update-ref --stdin;
   # sr-checks writes the ref through its own process, never through an agent's git command), or it is
   # the destination of a refspec ('refs/*:refs/*', '+*:*', an option `-c remote.x.fetch=...`, a

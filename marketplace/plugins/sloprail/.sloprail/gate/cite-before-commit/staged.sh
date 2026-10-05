@@ -82,9 +82,14 @@ for inv in "${invs[@]}"; do
   idx=$((idx + 1))
   [ "$(printf '%s' "$inv" | jq -r '.bin // ""')" = git ] || continue
   split_git "$inv"
+  # A word the engine could not resolve (a `$(...)`, a variable the line did not assign to a literal)
+  # may be an option, the subcommand, or the folder: this would judge another repository than the
+  # one the command runs in. Fail closed.
+  [ -z "$GAP_FREE" ] || fail "a 'git' command on this line has an option or subcommand that is a variable, \$(...) or ~ the line does not assign to a literal"
   [ "$SUB" = commit ] || continue
+  [ -z "$GAP_VAL" ] || fail "an option value of the commit (-C <dir>, -c <key=value>, --git-dir ...) is a variable, \$(...), ~ or glob that could not be resolved"
 
-  amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
+  lostword="" amend="" all="" include="" newmsg="" dry="" help="" nopath="" paths=() msgs=() msgfiles=()
   args=(${REST[@]+"${REST[@]}"})
   j=0
   while [ "$j" -lt "${#args[@]}" ]; do
@@ -159,19 +164,20 @@ for inv in "${invs[@]}"; do
           esac
         done
         ;;
+      $'\001gap') lostword=1 ;;
       *) paths+=("$a") ;;
     esac
   done
   [ -z "$help" ] || continue
   [ -z "$dry" ] || continue
+  # An argument the engine could not resolve (a `--author="$A"`, a `$FLAGS`, a pathspec in a variable)
+  # may name paths: early feedback only, CI's verify and the file-guards at Stop judge the commit.
+  [ -z "$lostword" ] || echo "cite-before-commit: an argument of this commit could not be resolved, so the paths it commits may not all be checked; the file-guards will check the citation at Stop and in CI." >&2
   [ -z "$amend" ] || amending=1
 
-  # The gate is early feedback; the file-guards' `require: citation` at Stop and in CI verify every
-  # committed range. A folder this gate cannot tell is allowed, with a note, never refused.
-  if ! dir="$(dir_of "$inv")"; then
-    echo "cite-before-commit: could not check this commit (its folder is a variable or eval); the file-guards will check the citation at Stop and in CI." >&2
-    continue
-  fi
+  # A folder this gate cannot tell (a variable the line did not assign to a literal, a substitution, an
+  # eval) is refused, never judged as the hook's cwd: that would judge another repository.
+  dir="$(dir_of "$inv")" || fail "the commit runs in a folder that could not be resolved (after a 'cd' to a variable, \$(...), ~, or an eval)"
   # `git -C <dir>` moves git (and so the index it reads) to <dir>: run everything there, never in the hook's cwd.
   git_redirected "$inv" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree), which moves git to a repository this gate does not replay"
   git_chdir "$dir"
@@ -203,8 +209,17 @@ for inv in "${invs[@]}"; do
     [ "$k" -lt "$idx" ] || break
     [ "$(printf '%s' "$prev" | jq -r '.bin // ""')" = git ] || continue
     split_git "$prev"
+    [ -z "$GAP_FREE" ] || fail "a 'git' command this line runs before the commit has an option or subcommand that could not be resolved"
+    if [ -n "$GAP_VAL" ] && { [ "$SUB" = add ] || [ "$SUB" = rm ] || [[ "$movers" == *" $SUB "* ]]; }; then
+      fail "the 'git $SUB' this line runs before the commit has a -C folder that could not be resolved"
+    fi
     git_redirected "$prev" && fail "the command sets GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (or --git-dir / --work-tree) on a git command it runs before the commit, which moves git to a repository this gate does not replay"
-    pdir="$(dir_of "$prev")" || continue
+    if ! pdir="$(dir_of "$prev")"; then
+      if [ "$SUB" = add ] || [ "$SUB" = rm ] || [[ "$movers" == *" $SUB "* ]]; then
+        fail "the 'git $SUB' this line runs before the commit runs in a folder that could not be resolved"
+      fi
+      continue
+    fi
     git_chdir "$pdir"
     pdir="$EDIR"
     ptop="$(cd "$pdir" 2>/dev/null && git "${GOPTS[@]+"${GOPTS[@]}"}" rev-parse --show-toplevel 2>/dev/null)" || continue
