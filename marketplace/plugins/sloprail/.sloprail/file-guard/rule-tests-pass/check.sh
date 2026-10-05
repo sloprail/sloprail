@@ -10,6 +10,9 @@
 #      that still stands must have at least one case (`sr-test doctor`). A rule nobody touched is not refused
 #      for having no case (legacy pass).
 # Contract: stdin is the Changeset payload; exit 1 with {"reason": ...} refuses; whatever cannot run is refused.
+# A refusal that is a verdict on the change (a case fails, a rule has no case) is cached for the same content. A
+# refusal because sr-test itself could not do its job (missing, a case in status error, doctor or a run that
+# reports nothing) carries "error": true: still refused, never cached, so the next run tries again.
 set -uo pipefail
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -20,6 +23,12 @@ payload="$(cat)"
 
 refuse() {
   jq -n --arg r "$1" '{reason: $r}'
+  exit 1
+}
+
+# refuse_error: the tooling failed, not the change. Refused, but no verdict: the engine does not cache it.
+refuse_error() {
+  jq -n --arg r "$1" '{reason: $r, error: true}'
   exit 1
 }
 
@@ -37,7 +46,7 @@ if ! command -v sr-test >/dev/null 2>&1; then
   done
 fi
 command -v sr-test >/dev/null 2>&1 ||
-  refuse "sr-test is not on PATH, so the cases could not be run. Install sloprail's binaries (make build) and commit again."
+  refuse_error "sr-test is not on PATH, so the cases could not be run. Install sloprail's binaries (make build) and commit again."
 printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null 2>&1 ||
   refuse "the changeset's files could not be read, so the sr-test cases could not be run"
 
@@ -60,7 +69,7 @@ abs="$tree"
 [ "$root" = "." ] || abs="$tree/$root"
 sloprail="$abs/.sloprail"
 
-work="$(mktemp -d)" || refuse "could not make a scratch directory to run the sr-test cases"
+work="$(mktemp -d)" || refuse_error "could not make a scratch directory to run the sr-test cases"
 trap 'rm -rf "$work"' EXIT
 
 printf '%s\n' "$paths" | classify "$root" >"$work/touched.tsv"
@@ -84,6 +93,7 @@ else
 fi
 
 failures=""
+tool_error=""
 if [ -s "$work/want.txt" ]; then
   only=()
   while IFS= read -r s; do only+=(--only "$s"); done <"$work/want.txt"
@@ -100,9 +110,17 @@ if [ -s "$work/want.txt" ]; then
   if [ -z "$failures" ] && ! jq -e -s 'length > 0' "$work/run.jsonl" >/dev/null 2>&1; then
     failures="sr-test run exited $status and reported no case:
 $(tail -n 12 "$work/run.err" | sed 's/^/    /')"
+    tool_error=1
+  fi
+  # a wanted case that did not run, or ran to status error (sr-test could not run it: exit 2, a timeout, a setup
+  # failure), is sr-test failing, not the change failing a case
+  if jq -e -s --argjson want "$want_json" '. as $r | any($want[] as $s | ([$r[] | select(.subject == $s)] | first) as $x | $x == null or $x.status == "error")' "$work/run.jsonl" >/dev/null 2>&1; then
+    tool_error=1
   fi
 fi
 if [ -n "$failures" ]; then
+  [ "${tool_error:-}" = 1 ] && refuse_error "sr-test could not run its cases (ran $scope); this is no verdict on the change, so it is tried again on the next run. Run 'sr-test run $root' to see why.
+$failures"
   refuse "sr-test cases fail after this change (ran $scope). Fix the rule or the case and commit again; run 'sr-test run $root' to see them.
 $failures"
 fi
@@ -116,7 +134,7 @@ if grep -q -E '^rule	' "$work/touched.tsv"; then
   # the rule is matched on (dir, nature, rule), never on a name rebuilt here from plugin.json
   if ! sr-test doctor --json "$abs" >"$work/doctor.out" 2>"$work/doctor.err" ||
     ! jq -e -s 'all(.[]; type == "object" and (.dir | type == "string") and (.nature | type == "string") and (.rule | type == "string"))' "$work/doctor.out" >/dev/null 2>&1; then
-    refuse "sr-test doctor could not tell which rules have a case under $root/.sloprail:
+    refuse_error "sr-test doctor could not tell which rules have a case under $root/.sloprail:
 $(tail -n 12 "$work/doctor.err" | sed 's/^/    /')"
   fi
   while IFS="	" read -r kind nature rule; do
