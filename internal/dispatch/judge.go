@@ -490,7 +490,7 @@ func passReasonFromVerifierOutput(streams ...[]byte) string {
 // finds the single JSON verdict object, and:
 //
 //   - exits 0 when `pass` is true — sr-agent then reports success;
-//   - exits 1 when `pass` is false, printing the reasoning as `JUDGE-REASON: …`
+//   - exits 1 when `pass` is false, printing the reasoning, JSON-encoded, as `JUDGE-REASON-JSON: …`
 //     so the engine can recover it and the agent can be shown it on the next
 //     attempt;
 //   - exits 1 when the output is not a well-formed verdict, so sr-agent asks the
