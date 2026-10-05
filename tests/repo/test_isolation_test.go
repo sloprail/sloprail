@@ -30,7 +30,10 @@ func globalGitConfigWrites(body string) []string {
 	check := func(cmd string, line int) {
 		// each command of a line on its own: a read-only one beside a write must not exempt it
 		for _, seg := range segmentRe.Split(cmd, -1) {
-			if !strings.Contains(seg, "config") || readOnlyConfig.MatchString(seg) || !writesMachineConfig(seg) {
+			// a read inside $(...) / backticks, or a flag-looking word in a trailing comment, is
+			// not this command's own flag
+			own := trailingComment.ReplaceAllString(substitution.ReplaceAllString(seg, " "), "")
+			if !strings.Contains(seg, "config") || readOnlyConfig.MatchString(own) || !writesMachineConfig(seg) {
 				continue
 			}
 			if shellGitConfig.MatchString(seg) || goGitConfig.MatchString(seg) {
@@ -93,12 +96,14 @@ func writesMachineConfig(cmd string) bool {
 }
 
 var (
-	globalScope    = regexp.MustCompile(`--(global|system)\b`)
-	homeFile       = regexp.MustCompile(`(--file|-f)[ =]+"?(~|\$HOME|\$\{HOME\}|/Users/|/home/)[^ ]*config\b`)
-	readOnlyConfig = regexp.MustCompile(`--(get|get-all|get-regexp|list|show-origin)\b|\s-l\b`)
-	shellGitConfig = regexp.MustCompile(`\bgit\b[^|;&]*\bconfig\b`)
-	goGitConfig    = regexp.MustCompile(`"config"\s*,`)
-	segmentRe      = regexp.MustCompile(`&&|\|\||;|\|`)
+	globalScope     = regexp.MustCompile(`--(global|system)\b`)
+	homeFile        = regexp.MustCompile(`(--file|-f)[ =]+"?(~|\$HOME|\$\{HOME\}|/Users/|/home/)[^ ]*config\b`)
+	readOnlyConfig  = regexp.MustCompile(`--(get|get-all|get-regexp|list|show-origin)\b|\s-l\b`)
+	shellGitConfig  = regexp.MustCompile(`\bgit\b[^|;&]*\bconfig\b`)
+	goGitConfig     = regexp.MustCompile(`"config"\s*,`)
+	substitution    = regexp.MustCompile("\\$\\([^)]*\\)|`[^`]*`")
+	trailingComment = regexp.MustCompile(`\s(#|//).*$`)
+	segmentRe       = regexp.MustCompile(`&&|\|\||;|\|`)
 )
 
 func TestNothingWritesTheMachinesGitConfig(t *testing.T) {
@@ -151,6 +156,9 @@ func TestGlobalGitConfigWriteDetector(t *testing.T) {
 		"git config \\\n  --global user.name x",
 		"exec.Command(\"git\", \"config\",\n\t\"--global\", \"user.email\")",
 		"git config --file ~/.gitconfig user.email x",
+		"git config --global user.name \"$(git config --get user.name)\"",
+		"git config --global user.name x # not --list",
+		"git config --global user.name x // --list",
 		"git config --global user.name x && git config --list",
 		"git config --global user.name x; git config --global --list",
 		"args := []string{\n\"config\",\n\"--global\",\n\"user.name\", \"x\",\n}",
