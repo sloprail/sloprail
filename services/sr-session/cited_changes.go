@@ -260,10 +260,46 @@ func settleCitedChanges(store sessionstate.Store) error {
 		for _, p := range landed {
 			(*all)[p.Path] = append((*all)[p.Path], p.Point)
 		}
+		for path := range touched(landed) {
+			(*all)[path] = compactPoints((*all)[path])
+		}
 	}); err != nil {
 		return err
 	}
 	return nil
+}
+
+// touched is the set of paths a list of changes names.
+func touched(changes []pendingChange) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range changes {
+		out[c.Path] = true
+	}
+	return out
+}
+
+// compactPoints bounds one path's history (sessionstate.CompactCitationPoints): a stretch that is
+// recorded again is the same stretch, and a path keeps its newest points of each kind. Every writer
+// of the history goes through it, so the history stays the size of the work in the tree however
+// many cycles the session runs.
+func compactPoints(pts []historyPoint) []historyPoint {
+	raw := make([]json.RawMessage, 0, len(pts))
+	for _, p := range pts {
+		b, err := json.Marshal(p)
+		if err != nil {
+			return pts
+		}
+		raw = append(raw, b)
+	}
+	var out []historyPoint
+	for _, b := range sessionstate.CompactCitationPoints(raw) {
+		var p historyPoint
+		if json.Unmarshal(b, &p) != nil {
+			return pts
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // landedOf is the pending changes whose file holds exactly what they produce.
@@ -349,7 +385,7 @@ func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPa
 			pt.From = &prev
 			pt.FromAt = cyc.EndedAt
 			if marked {
-				pt.Foreign, pt.BetweenTurns, pt.By = false, true, strings.Join(dedupeStrings(by), "; ")
+				pt.Foreign, pt.BetweenTurns, pt.By = false, true, strings.Join(sessionstate.LastEntries(by), "; ")
 			}
 		}
 		pt.After = putState(store, cur.Exists, content)
@@ -365,6 +401,9 @@ func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPa
 		for _, f := range points {
 			(*all)[f.Path] = append((*all)[f.Path], f.Point)
 		}
+		for path := range touched(points) {
+			(*all)[path] = compactPoints((*all)[path])
+		}
 	})
 }
 
@@ -376,7 +415,7 @@ func markDetached(store sessionstate.Store, what string) error {
 	}
 	return updateCycle(store, func(c *cycleMeta) {
 		c.Detached = true
-		c.DetachedBy = dedupeStrings(append(c.DetachedBy, what))
+		c.DetachedBy = sessionstate.LastEntries(append(c.DetachedBy, what))
 	})
 }
 
@@ -388,7 +427,7 @@ func markLaunched(store sessionstate.Store, what string) error {
 		return nil
 	}
 	return updateCycle(store, func(c *cycleMeta) {
-		c.Launched = dedupeStrings(append(c.Launched, what))
+		c.Launched = sessionstate.LastEntries(append(c.Launched, what))
 	})
 }
 
@@ -491,11 +530,11 @@ func endCycle(store sessionstate.Store, events []event.Event, selects citedPath,
 		c.State, c.EndedAt, c.End = "ended", nowNano(), end
 		if bg.Known {
 			// The harness says what is still running: the mark follows it.
-			c.Tasks, c.TasksBy = len(bg.Running) > 0, bg.Running
+			c.Tasks, c.TasksBy = len(bg.Running) > 0, sessionstate.LastEntries(bg.Running)
 		} else if len(c.Launched) > 0 {
 			// It says nothing: what this cycle ran in the background may still
 			// be running, and nothing will say when it stops.
-			c.Tasks, c.TasksBy = true, dedupeStrings(append(c.TasksBy, c.Launched...))
+			c.Tasks, c.TasksBy = true, sessionstate.LastEntries(append(c.TasksBy, c.Launched...))
 		}
 		c.Launched = nil
 	}); err != nil {
@@ -927,5 +966,5 @@ func otherMarks(p HookPayload, record string) []string {
 			}
 		}
 	})
-	return dedupeStrings(by)
+	return sessionstate.LastEntries(by)
 }

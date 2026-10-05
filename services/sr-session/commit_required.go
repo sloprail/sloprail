@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -91,7 +92,9 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 				return failClosed(err)
 			}
 		} else {
+			tOwn := time.Now()
 			o, refusal := owedIn(root, guards)
+			debugTiming(cmd, "commit-required/own-tree", tOwn)
 			if refusal != "" {
 				return refusal
 			}
@@ -105,7 +108,9 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 		if err != nil {
 			return failClosed(err) // a registry that could not be read is not "nothing else was committed"
 		}
+		tBusy := time.Now()
 		busy := foldersOfRunningAgents(cmd, p, others)
+		debugTiming(cmd, fmt.Sprintf("commit-required/running-agents (%d other folders)", len(others)), tBusy)
 		for _, f := range others {
 			if key := treeKey(f.Path); covered[key] {
 				continue
