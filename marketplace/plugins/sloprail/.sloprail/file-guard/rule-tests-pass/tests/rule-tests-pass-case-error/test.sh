@@ -30,8 +30,10 @@ sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 && status=0 || status=$
 jq -es '[.[]|select(.kind=="FileGuardChecked" and .rule=="sloprail/rule-tests-pass")] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains("gate/demo:the-case: error"))' "$SR_EVENTS_FILE" >/dev/null
 
 # no verdict was stored: verify reads "not judged yet" (a failing case's stored refusal would be read back)
-VERIFY=$(sr-checks verify --base "$BASE" --head HEAD 2>&1 || true)
-printf '%s' "$VERIFY" | grep -q "not judged yet"
+sr-checks verify --base "$BASE" --head HEAD >verify.out 2>&1 && status=0 || status=$?
+[ "$status" -ne 0 ]
+grep -q "not judged yet" verify.out
+rm -f verify.out
 
 # the recovery: the case is fixed and passes (verify above logged event 2, so this run is event 3)
 cat "$F/fixed.txt" > .sloprail/gate/demo/tests/the-case/test.sh
