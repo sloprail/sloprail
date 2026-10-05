@@ -137,7 +137,10 @@ func casesIn(root, sloprail, corePlugin string) []Case {
 	var plugins []string
 	if IsPlugin(owner) {
 		plugins = []string{owner}
-		if corePlugin != "" && !sameDir(owner, corePlugin) {
+		// The plugin under test is the core plugin when it is the same folder, or another
+		// checkout's copy of it (a git worktree beside the checkout the binary was built in):
+		// one name is installed once, and the one under test wins.
+		if corePlugin != "" && !sameDir(owner, corePlugin) && PluginName(owner) != PluginName(corePlugin) {
 			plugins = append(plugins, corePlugin)
 		}
 	}

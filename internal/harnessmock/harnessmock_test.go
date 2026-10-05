@@ -62,3 +62,28 @@ func TestSettings(t *testing.T) {
 		t.Fatalf("%s %v", b, err)
 	}
 }
+
+// Two plugin folders of one name (a worktree's copy and another checkout's) are installed once, the first
+// one winning: linking both would fail with "symlink ...: file exists".
+func TestLocalPluginMarketplaceInstallsOneNameOnce(t *testing.T) {
+	a, b, dir := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, p := range []string{a, b} {
+		if err := os.MkdirAll(filepath.Join(p, ".claude-plugin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, ".claude-plugin", "plugin.json"), []byte(`{"name":"sloprail"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, err := LocalPluginMarketplace("m", dir, []string{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != "sloprail" {
+		t.Fatalf("names = %v", names)
+	}
+	got, err := os.Readlink(filepath.Join(dir, "plugins", "sloprail"))
+	if err != nil || got != a {
+		t.Fatalf("link = %q, %v; want %q", got, err, a)
+	}
+}
