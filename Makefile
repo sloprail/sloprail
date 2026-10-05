@@ -238,6 +238,19 @@ check:
 # across 46 e2e packages ran the disk out of space. -p 1 is the constraint, and
 # the split into unit/services/e2e is so a failure in the fast half is reported
 # in seconds rather than after the slow half finishes.
+# The git identity every test run commits under. Tests build throwaway repos and commit in them;
+# on a machine with no global identity (a CI runner, a fresh container) that fails unless an
+# identity is in the environment. It is given HERE, as environment for the test processes only,
+# so nothing ever has to write the machine's global git config to run the tests: an agent that
+# copied the CI workflow's old identity step to run a shard "as CI does" rewrote a developer's
+# real ~/.gitconfig, and every later commit of theirs was authored
+# "local test <ci-local@sloprail.invalid>". tests/repo/test_isolation_test.go refuses such a call.
+TEST_TARGETS := test test-unit test-services test-e2e test-e2e-shard test-plugins-e2e
+$(TEST_TARGETS): export GIT_AUTHOR_NAME := sloprail-test
+$(TEST_TARGETS): export GIT_AUTHOR_EMAIL := sloprail-test@sloprail.invalid
+$(TEST_TARGETS): export GIT_COMMITTER_NAME := sloprail-test
+$(TEST_TARGETS): export GIT_COMMITTER_EMAIL := sloprail-test@sloprail.invalid
+
 test: test-unit test-services test-e2e
 
 # tests/repo checks the repository's own files (every shipped shell script
