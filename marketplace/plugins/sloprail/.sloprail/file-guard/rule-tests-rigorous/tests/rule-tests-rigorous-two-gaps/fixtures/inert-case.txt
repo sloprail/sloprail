@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+git init -q .
+RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "write to somewhere/")
+echo "$RESULT" | jq -e '[.events[]|select(.kind=="GateChecked" and .rule=="demo")] | .[0].outcome=="skipped"' >/dev/null

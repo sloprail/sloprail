@@ -26,21 +26,36 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null |
   exit 1
 }
 
-# every changed file, tagged with the rule it belongs to
-pairs=""
-while IFS= read -r p; do
-  [ -n "$p" ] || continue
+# every changed file, tagged with the rule it belongs to. Paths are NUL-delimited and kept in arrays, so a
+# path with a tab, a newline or a backslash reaches the subject whole.
+ids=()
+paths=()
+while IFS= read -r -d '' p; do
   id="$(path_subject "$p")" || continue
-  pairs="$pairs$id	$p
-"
-done < <(printf '%s' "$payload" | jq -r '.changeset.files[].path')
+  ids+=("$id")
+  paths+=("$p")
+done < <(printf '%s' "$payload" | jq -j '.changeset.files[].path + "\u0000"')
+
+uniq=()
+for id in ${ids[@]+"${ids[@]}"}; do
+  seen=0
+  for u in ${uniq[@]+"${uniq[@]}"}; do
+    [ "$u" = "$id" ] && seen=1
+  done
+  [ "$seen" = 1 ] || uniq+=("$id")
+done
 
 out='[]'
-while IFS= read -r id; do
-  [ -n "$id" ] || continue
+for id in ${uniq[@]+"${uniq[@]}"}; do
   rule_split "$id" || continue
   cases="$(rule_cases "$id")"
-  files="$(printf '%s' "$pairs" | RTR_ID="$id" awk -F'\t' '$1 == ENVIRON["RTR_ID"] { print $2 }' | jq -R . | jq -sc .)"
+  sel=()
+  i=0
+  for other in "${ids[@]}"; do
+    [ "$other" = "$id" ] && sel+=("${paths[$i]}")
+    i=$((i + 1))
+  done
+  files="$(jq -nc '$ARGS.positional' --args "${sel[@]}")"
   fp="$({
     while IFS= read -r c; do
       [ -n "$c" ] && find "$SR_TREE/$c" -type f
@@ -50,5 +65,5 @@ while IFS= read -r id; do
     plugin_manifest "$CASE_ROOT"
   } | files_sha)"
   out="$(printf '%s' "$out" | jq -c --arg c "$id" --argjson f "$files" --arg fp "$fp" '. + [{id: $c, files: $f, fingerprint: $fp}]')"
-done < <(printf '%s' "$pairs" | cut -f1 | LC_ALL=C sort -u)
+done
 printf '%s\n' "$out"
