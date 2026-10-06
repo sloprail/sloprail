@@ -12,6 +12,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/checkrun"
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/reap"
@@ -138,7 +139,8 @@ func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error
 	} else {
 		defer release()
 	}
-	reap.Temp("", "") // what killed runs left in the temp dir
+	reap.Temp("", "")                 // what killed runs left in the temp dir
+	defer gitrepo.CleanupOnSignal()() // a killed run takes its cases' process groups and snapshots with it
 	root := "."
 	if len(args) > 0 {
 		root = args[0]

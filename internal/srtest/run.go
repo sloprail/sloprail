@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/reap"
 	"github.com/sloprail/sloprail/internal/scriptexec"
 )
@@ -242,7 +243,11 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 		cmd.Env = env
 		buf.Reset()
 		cmd.Stdout, cmd.Stderr = &buf, &buf
-		runErr = cmd.Run()
+		if runErr = cmd.Start(); runErr == nil {
+			untrack := procgroup.Track(cmd) // a signal to sr-test reaches the case's whole group
+			runErr = cmd.Wait()
+			untrack()
+		}
 		if !errors.Is(runErr, syscall.ETXTBSY) {
 			break
 		}

@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/procgroup"
 )
 
 // ownerFile marks a snapshot root and names the process that made it (pid and start time, so
@@ -134,25 +135,11 @@ func RemoveLiveSnapshots() {
 	}
 }
 
-// CleanupOnSignal makes SIGTERM and SIGINT remove this process's live snapshots and then exit
-// with the conventional 128+signal status. The returned func stops the handler.
+// CleanupOnSignal makes SIGTERM, SIGINT and SIGHUP end every child process group this process
+// started (internal/procgroup), remove its live snapshots and then exit with the conventional
+// 128+signal status. The returned func stops the handler.
 func CleanupOnSignal() (stop func()) {
-	ch := make(chan os.Signal, 1)
-	done := make(chan struct{})
-	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		select {
-		case sig := <-ch:
-			RemoveLiveSnapshots()
-			code := 128 + int(syscall.SIGTERM)
-			if sig == syscall.SIGINT {
-				code = 128 + int(syscall.SIGINT)
-			}
-			os.Exit(code)
-		case <-done:
-		}
-	}()
-	return func() { signal.Stop(ch); close(done) }
+	return procgroup.ExitOnSignal(RemoveLiveSnapshots)
 }
 
 // MarkOwner records the current process (pid and start time) as the owner of dir, the way a

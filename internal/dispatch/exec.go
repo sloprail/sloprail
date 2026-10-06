@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
@@ -105,6 +106,9 @@ var defaultCheckTimeout = func() time.Duration {
 // uninterruptible syscall — without it one such process restores the unbounded
 // hang this timeout exists to remove.
 const checkKillGrace = 2 * time.Second
+
+// killAfterTerm is how long a timed-out check's group has to exit on SIGTERM before SIGKILL.
+const killAfterTerm = time.Second
 
 // exitNotExecutable and exitNotFound are the statuses a shell uses to say it
 // could not run the command at all, as opposed to the command running and
@@ -420,19 +424,29 @@ func runArgv(dir string, argv []string, stdin []byte, env []string, timeout time
 	c.Stdin = bytes.NewReader(stdin)
 	c.Stdout = &outBuf
 	c.Stderr = &errBuf
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procgroup.Own(c)
 	c.Cancel = func() error {
-		if err := syscall.Kill(-c.Process.Pid, syscall.SIGKILL); err != nil {
+		// SIGTERM first, so a child that keeps children of its own in groups of their own
+		// (sr-agent's model call) can take them down with it; SIGKILL for what is left.
+		pgid := c.Process.Pid
+		if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
 			if errors.Is(err, syscall.ESRCH) {
 				return os.ErrProcessDone
 			}
 			return err
 		}
+		time.AfterFunc(killAfterTerm, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
 		return nil
 	}
 	c.WaitDelay = checkKillGrace
 
-	err := c.Run()
+	// Run, with the group registered while it runs: a signal to this process then reaches it.
+	err := c.Start()
+	if err == nil {
+		untrack := procgroup.Track(c)
+		err = c.Wait()
+		untrack()
+	}
 	expired = ctx.Err() != nil
 	stdout, stderr = outBuf.Bytes(), errBuf.Bytes()
 
