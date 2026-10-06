@@ -37,6 +37,9 @@ func newSessionStartCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
+			if skipWithoutTranscript(cmd, p, true) {
+				return nil
+			}
 
 			// Where this session measures from. Recorded before the declarations
 			// are touched: a malformed declaration is a reason to print something,
