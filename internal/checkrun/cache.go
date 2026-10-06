@@ -35,6 +35,10 @@ func OpenCache(w io.Writer, root string, write bool) (*checkcache.Store, error) 
 	if err := store.Sync(); err != nil {
 		fmt.Fprintf(w, "sloprail: the check results could not be fetched from origin, using the local copy: %v\n", err)
 	}
+	// Results filed under an older key schema are re-keyed once (a no-op when current).
+	if _, err := store.MigrateKeys(); err != nil {
+		fmt.Fprintf(w, "sloprail: the check results could not be re-keyed, older verdicts may be judged again: %v\n", oneLine(err))
+	}
 	return store, nil
 }
 

@@ -9,8 +9,8 @@ import (
 
 // writesOwnFolderGuard is a file-guard that passes everything and records each
 // time it is asked into a ledger INSIDE its own rule folder ($SR_GUARDRAIL_DIR).
-// That is the trap: the rule's hash covers the tracked files of its .sloprail root, so once
-// the ledger is swept into a commit the rule's definition has changed.
+// Once the ledger is swept into a commit the rule's folder has changed, which a verdict's key
+// does not see.
 const writesOwnFolderGuard = `match: "notes/**/*.md"
 checks:
   - script: ./check.sh
@@ -22,18 +22,14 @@ echo asked >> "$SR_GUARDRAIL_DIR/ledger"
 exit 0
 `
 
-// T034_19: a file-guard that writes into its own rule folder changes its own key.
+// T034_19: a ledger a file-guard writes into its own rule folder never changes what is judged.
 //
-// Every other test in this tree keeps its ledger OUTSIDE the project (harness.Ledger),
-// which is what a test wants and what hides this trap. Here the ledger is written into
-// the rule's folder on purpose. While it is untracked the hash ignores it, so `run`
-// stores its verdict under the key it computed; the agent's `git add -A` then sweeps the
-// ledger into a commit, the rule's hash changes, and the verdict `run` stored no longer
-// applies: `verify` (Stop, CI) reads the new key and says "not judged yet", and the next
-// `run` asks again.
-//
-// Keep a rule's state in `sr-session state` or under .git/, never in its folder.
-func TestT034_19_ALedgerCommittedInsideTheGuardFolderChangesTheKey(t *testing.T) {
+// Every other test in this tree keeps its ledger OUTSIDE the project (harness.Ledger). Here
+// the ledger is written into the rule's folder on purpose, and the agent's `git add -A` sweeps
+// it into a commit. A verdict is keyed by its input (rule, subject, content), never by the
+// rule's definition, so the commit changes the rule's recorded hash and nothing else: `verify`
+// still reads the verdict `run` stored, and the next `run` does not ask the rule again.
+func TestT034_19_ALedgerCommittedInsideTheGuardFolderDoesNotReJudge(t *testing.T) {
 	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
 	proj := e.Project()
 	e.GitInit(proj)
@@ -53,21 +49,18 @@ func TestT034_19_ALedgerCommittedInsideTheGuardFolderChangesTheKey(t *testing.T)
 	if got := asked(); got != 1 {
 		t.Fatalf("premise: the rule should be asked once, asked %d times", got)
 	}
-	if r := e.CheckVerify(proj, session, base, "HEAD"); r.Code != 0 {
-		t.Fatalf("premise: the verdict run stored should be read by verify (the ledger is still untracked):\n%s", r.Output)
-	}
 
 	e.CommitAll(proj, "sweep everything, ledger included")
 	if out := e.Git(proj, "show", "--stat", "--format=", "HEAD"); !strings.Contains(out, ".sloprail/file-guard/own-ledger/ledger") {
 		t.Fatalf("premise: the commit should have swept the ledger into the rule's folder:\n%s", out)
 	}
-	if r := e.CheckVerify(proj, session, base, "HEAD"); r.Code == 0 || !strings.Contains(r.Output, "not judged yet") {
-		t.Fatalf("a ledger committed inside the guard folder changes the rule's key, so the stored verdict must no longer apply:\n%s", r.Output)
+	if r := e.CheckVerify(proj, session, base, "HEAD"); r.Code != 0 {
+		t.Fatalf("a ledger committed inside the guard folder must not void the stored verdict:\n%s", r.Output)
 	}
 	if r := e.CheckRunRaw(proj, session, base, "HEAD"); r.Code != 0 {
-		t.Fatalf("the rule judges again under its new key:\n%s", r.Output)
+		t.Fatalf("run:\n%s", r.Output)
 	}
-	if got := asked(); got != 2 {
-		t.Fatalf("the rule must be asked again under the new key (asked %d times, want 2)", got)
+	if got := asked(); got != 1 {
+		t.Fatalf("the rule was asked again after a ledger commit (asked %d times, want 1)", got)
 	}
 }

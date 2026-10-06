@@ -37,7 +37,7 @@ func TestLogEntries_KeepsASupersededFailAndOrdersOldestFirst(t *testing.T) {
 	assert.Equal(t, "pass", got[1].Status)
 	assert.Nil(t, got[1].Reasons)
 	assert.Nil(t, got[1].Base, "a run that recorded no range has null base/head")
-	assert.Equal(t, checkcache.Key{Rule: "file-guard/docs", RuleHash: "h", Kind: "guard", Subject: "changeset", Fingerprint: "fp1"}.ID(), got[0].Key)
+	assert.Equal(t, checkcache.Key{Rule: "file-guard/docs", Kind: "guard", Subject: "changeset", Fingerprint: "fp1"}.ID(), got[0].Key)
 }
 
 func TestLogEntries_FailFallsBackToOverallReasoning(t *testing.T) {

@@ -6,37 +6,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
 
-func (f *evalFixture) hash(t *testing.T) string {
-	t.Helper()
-	h, err := changeset.RuleHashAt(f.repo, f.guard.Dir, false)
-	require.NoError(t, err)
-	return h
-}
-
-func (f *evalFixture) baseAt(t *testing.T, hash string) string {
+func (f *evalFixture) baseAt(t *testing.T) string {
 	t.Helper()
 	rng, err := gitrepo.ResolveRange(f.repo, f.base, "HEAD")
 	require.NoError(t, err)
-	return f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base
+	return f.newEvaluation(t, f.results).effectiveBase(f.guard, rng).Base
 }
 
 // The effective base is the head of the latest complete PASSING run: a fail never advances
 // it, a pass does, and a stored fail is replayed (no re-roll) until its input changes.
 func TestIncremental_EffectiveBaseAdvancesOnlyOnPass(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
-	hash := f.hash(t)
-	assert.Equal(t, f.base, f.baseAt(t, hash), "no run yet: the requested base")
+	assert.Equal(t, f.base, f.baseAt(t), "no run yet: the requested base")
 
 	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
 	r, refused := f.evaluate(t, f.results)
 	require.True(t, refused)
 	assert.Contains(t, r.Reason, "forbidden words")
 	require.Equal(t, 1, f.runs(t))
-	assert.Equal(t, f.base, f.baseAt(t, hash), "a FAIL never advances the base")
+	assert.Equal(t, f.base, f.baseAt(t), "a FAIL never advances the base")
 
 	_, refused = f.evaluate(t, f.results)
 	require.True(t, refused, "the stored fail is replayed")
@@ -46,7 +37,7 @@ func TestIncremental_EffectiveBaseAdvancesOnlyOnPass(t *testing.T) {
 	_, refused = f.evaluate(t, f.results)
 	require.False(t, refused)
 	require.Equal(t, 2, f.runs(t))
-	assert.Equal(t, fixed, f.baseAt(t, hash), "a pass advances the base to its head")
+	assert.Equal(t, fixed, f.baseAt(t), "a pass advances the base to its head")
 
 	// Only what changed since is examined: a new file is judged alone, the old one is not
 	// looked at again.
@@ -92,33 +83,30 @@ func TestIncremental_RunAndVerifyAgreeOnTheBase(t *testing.T) {
 // A base that is not an ancestor of the head is ignored, and so is one before the requested base.
 func TestIncremental_ABaseThatIsNotAnAncestorIsIgnored(t *testing.T) {
 	f := newEvalFixture(t, nil)
-	hash := f.hash(t)
 	f.commitDoc(t, "docs/a.md", "clean")
 	_, refused := f.evaluate(t, f.results)
 	require.False(t, refused)
 	runGit(t, f.repo, "checkout", "-q", "-b", "other", f.base)
 	f.commitDoc(t, "docs/z.md", "clean z")
-	assert.Equal(t, f.base, f.baseAt(t, hash))
+	assert.Equal(t, f.base, f.baseAt(t))
 }
 
 // A rule with a `subjects:` script is judged over the range it is asked about: its subjects'
 // fingerprints depend on more than the diff, so a base that only moves forward would never ask again.
 func TestIncremental_ASubjectsScriptRuleKeepsTheRequestedBase(t *testing.T) {
 	f := newEvalFixture(t, nil)
-	hash := f.hash(t)
 	f.commitDoc(t, "docs/a.md", "clean")
 	_, refused := f.evaluate(t, f.results)
 	require.False(t, refused)
-	assert.NotEqual(t, f.base, f.baseAt(t, hash), "premise: a plain rule's base advanced")
+	assert.NotEqual(t, f.base, f.baseAt(t), "premise: a plain rule's base advanced")
 	f.guard.Subjects = "./subjects.sh"
-	assert.Equal(t, f.base, f.baseAt(t, hash))
+	assert.Equal(t, f.base, f.baseAt(t))
 }
 
 // Passes chain: B1..H1 then H1..H2 advance the base from B1 to H2, but a pass over a NARROW range
 // B2..H (B2 after B1) leaves B1..B2 unjudged and advances nothing; a FAIL anywhere is no pass.
 func TestIncremental_EffectiveBaseChainsPassesAndIgnoresNarrowOnes(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
-	hash := f.hash(t)
 	c1 := f.commitDoc(t, "docs/a.md", "clean a")
 	f.commitDoc(t, "docs/b.md", "clean b")
 	c3 := f.commitDoc(t, "docs/c.md", "clean c")
@@ -131,7 +119,7 @@ func TestIncremental_EffectiveBaseChainsPassesAndIgnoresNarrowOnes(t *testing.T)
 		t.Helper()
 		rng, err := gitrepo.ResolveRange(f.repo, f.base, head)
 		require.NoError(t, err)
-		return f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base
+		return f.newEvaluation(t, f.results).effectiveBase(f.guard, rng).Base
 	}
 
 	over(c1, c3) // narrow: B2=c1 is after B1=f.base
@@ -140,7 +128,6 @@ func TestIncremental_EffectiveBaseChainsPassesAndIgnoresNarrowOnes(t *testing.T)
 
 func TestIncremental_SequentialPassesChain(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
-	hash := f.hash(t)
 	c1 := f.commitDoc(t, "docs/a.md", "clean a")
 	c2 := f.commitDoc(t, "docs/b.md", "clean b")
 	c3 := f.commitDoc(t, "docs/c.md", "clean c")
@@ -150,12 +137,11 @@ func TestIncremental_SequentialPassesChain(t *testing.T) {
 	}
 	rng, err := gitrepo.ResolveRange(f.repo, f.base, c3)
 	require.NoError(t, err)
-	assert.Equal(t, c2, f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base, "B1..H1 then H1..H2 reach H2")
+	assert.Equal(t, c2, f.newEvaluation(t, f.results).effectiveBase(f.guard, rng).Base, "B1..H1 then H1..H2 reach H2")
 }
 
 func TestIncremental_AFailInTheChainStopsIt(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
-	hash := f.hash(t)
 	c1 := f.commitDoc(t, "docs/a.md", "clean a")
 	c2 := f.commitDoc(t, "docs/b.md", "FORBIDDEN")
 	c3 := f.commitDoc(t, "docs/c.md", "clean c")
@@ -168,5 +154,5 @@ func TestIncremental_AFailInTheChainStopsIt(t *testing.T) {
 	assert.True(t, run(c1, c2), "the forbidden file is refused")
 	rng, err := gitrepo.ResolveRange(f.repo, f.base, c3)
 	require.NoError(t, err)
-	assert.Equal(t, c1, f.newEvaluation(t, f.results).effectiveBase(f.guard, hash, rng).Base, "the base reaches the last pass and stops at the fail")
+	assert.Equal(t, c1, f.newEvaluation(t, f.results).effectiveBase(f.guard, rng).Base, "the base reaches the last pass and stops at the fail")
 }

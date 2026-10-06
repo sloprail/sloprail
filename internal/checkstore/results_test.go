@@ -238,7 +238,7 @@ func TestResolveStale_IsANoOpAStoredFailStaysVisible(t *testing.T) {
 	require.NoError(t, err)
 	live := record(t, s, run("h1"), judge("fail", "same"), judge("pass", "new"))
 
-	n, err := s.ResolveStale(rule, "h1", live)
+	n, err := s.ResolveStale(rule, live)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 	rows, err := s.Query(`SELECT status FROM checks WHERE fingerprint = 'old'`)
@@ -437,7 +437,7 @@ func TestResolveStale_LeavesNothingInTheBackend(t *testing.T) {
 	first := Open(backend, false).(*store)
 	record(t, first, run("h0"), judge("fail", "old"))
 	live := record(t, first, run("h1"), judge("pass", "new"))
-	n, err := first.ResolveStale(rule, "h1", live)
+	n, err := first.ResolveStale(rule, live)
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
 	require.NoError(t, first.Close())
@@ -477,20 +477,20 @@ func TestEffectiveRuns_AnEvaluationPassesOnlyWhenEverySubjectDid(t *testing.T) {
 	record(t, s, a("h1", "b1"), script("fail")) // one subject of h1's evaluation failed
 	record(t, s, a("h2", "b2"), script("pass"))
 	other := a("h3", "b3")
-	other.RuleHash = "h2" // another definition of the rule
+	other.RuleHash = "h2" // another definition of the rule: its pass counts too
 	record(t, s, other, script("pass"))
 	unfinished, err := s.RecordRun(a("h4", "b4"))
 	require.NoError(t, err)
 	_ = unfinished
 
-	runs, err := s.EffectiveRuns(rule, "h1")
+	runs, err := s.EffectiveRuns(rule)
 	require.NoError(t, err)
 	var heads []string
 	for _, r := range runs {
 		assert.Equal(t, "base0", r.Base, "each carries the range it covered")
 		heads = append(heads, r.Head)
 	}
-	assert.Equal(t, []string{"h2", "h0"}, heads, "newest first; a failed subject, an unfinished run and another rule hash are no base")
+	assert.Equal(t, []string{"h3", "h2", "h0"}, heads, "newest first, whatever the rule hash; a failed subject and an unfinished run are no base")
 }
 
 // A process waiting on another's in-flight key reads the verdict the holder flushed before it

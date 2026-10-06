@@ -35,8 +35,8 @@ import (
 // one run of its require and checks.
 //
 //   - EVERY check is cached by content, the same way: a script, a judge and a requirement
-//     alike. What is kept is one verdict per guard x subject, under the key (rule hash, which
-//     covers every script and template of the rule folder; subject id; the content of the
+//     alike. What is kept is one verdict per guard x subject, under the key (the rule's name,
+//     never its definition: editing a rule does not void what was judged; subject id; the content of the
 //     subject's files; for a rule that requires a citation, the commit messages and quotes;
 //     the subject's own fingerprint from the `subjects:` script, when it gave one). A finished
 //     pass or fail with the same key is a hit: `run` does not run the guard again, whatever
@@ -263,7 +263,6 @@ func forEach(n, limit int, fn func(i int)) {
 // far its checks have got.
 type ruleRun struct {
 	g          declaration.FileGuard
-	hash       string
 	req        dispatchcore.Request
 	payload    changeset.Payload
 	subject    changeset.Subject
@@ -493,7 +492,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	run := checkstore.CheckRun{CheckID: rule, BaseRef: r.Base, HeadRef: r.Head, Metadata: map[string]any{"eventKind": changeset.Kind}}
 	run.BaseTree, run.HeadTree = rangeTrees(ev.root, r)
 
-	// The rule's hash is what a run is recorded under; verify records nothing, so it hashes only
+	// The rule's hash is recorded on a run for the trace (it is not part of any key); verify records nothing, so it hashes only
 	// a rule that selected something (hashing walks the rule's folder, and most rules select nothing).
 	var hash string
 	if !ev.verify {
@@ -539,11 +538,11 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		run.RuleHash = hash
 	}
 	// EFFECTIVE BASE (a10n's GetEffectiveBase): the head of the rule's latest complete passing
-	// evaluation at this definition that is an ancestor of the head and a descendant of the
+	// evaluation (at whatever definition) that is an ancestor of the head and a descendant of the
 	// requested base. What passed once is not re-examined: only the change since it is. Computed
 	// from the stored runs alone, so `verify` (CI too) finds the base `run` did; a FAIL never
-	// advances it. Found only for a rule that selected something (verify hashes no other).
-	if eff := ev.effectiveBase(g, hash, r); eff.Base != r.Base {
+	// advances it.
+	if eff := ev.effectiveBase(g, r); eff.Base != r.Base {
 		r = eff
 		run.BaseRef = r.Base
 		run.BaseTree, run.HeadTree = rangeTrees(ev.root, r)
@@ -628,7 +627,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 			dropAll()
 			return ev.fail(g, run, err)
 		}
-		rrs = append(rrs, &ruleRun{g: g, hash: hash, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head, base: r.Base, baseTree: run.BaseTree, headTree: run.HeadTree})
+		rrs = append(rrs, &ruleRun{g: g, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head, base: r.Base, baseTree: run.BaseTree, headTree: run.HeadTree})
 	}
 	return rrs, FileGuardResult{}, false
 }
@@ -653,13 +652,13 @@ const maxEffectiveCandidates = 200
 // Starting at the requested base, the furthest such head becomes the base, and so on until
 // nothing advances: sequential passes B1..H1 then H1..H2 reach H2, while a pass over a narrow
 // range B2..H with B2 after B1 leaves the span B1..B2 unjudged and so advances nothing.
-func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, hash string, r gitrepo.Range) gitrepo.Range {
-	if ev.store == nil || hash == "" || g.Subjects != "" || ev.params.WholeRange {
+func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, r gitrepo.Range) gitrepo.Range {
+	if ev.store == nil || g.Subjects != "" || ev.params.WholeRange {
 		// A `subjects:` script names units whose verdicts depend on more than the diff (the
 		// fingerprint it gives): a range narrowed to "what changed since" would never ask again.
 		return r
 	}
-	runs, err := ev.store.EffectiveRuns(g.Qualified(), hash)
+	runs, err := ev.store.EffectiveRuns(g.Qualified())
 	if err != nil {
 		return r // no history is read as none: the requested base
 	}
@@ -745,7 +744,7 @@ func Show(p Params, g declaration.FileGuard) (Shown, error) {
 	if out.RuleHash, err = changeset.RuleHashAt(p.Root, g.Dir, g.Origin.FromPlugin()); err != nil {
 		return out, err
 	}
-	out.Range = ev.effectiveBase(g, out.RuleHash, r)
+	out.Range = ev.effectiveBase(g, r)
 	r = out.Range
 	match, err := guardrail.CompileFileMatch(g.Match)
 	if err != nil {
@@ -1363,9 +1362,8 @@ func withoutSession(req dispatchcore.Request) dispatchcore.Request {
 	return req
 }
 
-// guardKey is the fingerprint a guard's verdict over its subject is kept under. The rule
-// hash (part of the cache key) already covers every script and template of the rule folder
-// and the subject id is the key's own; this adds what the verdict is about: the content of
+// guardKey is the fingerprint a guard's verdict over its subject is kept under. The rule's
+// name and the subject id are the key's own, and the rule's definition is not part of it; this adds what the verdict is about: the content of
 // the subject's files, its fingerprint from the `subjects:` script (when it gave one), and,
 // the quotes of the range's citations (and, for a rule that requires one, which ground the subject). No commit
 // SHA, branch, session or snapshot path is in it, so two branches with identical content share
@@ -1453,7 +1451,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		}
 		return dispatchcore.Verdict{}, nil, false
 	}
-	cached, have, err := ev.store.CachedCheck(g.Qualified(), rr.hash, rr.subject.ID, guardKind, rr.key)
+	cached, have, err := ev.store.CachedCheck(g.Qualified(), rr.subject.ID, guardKind, rr.key)
 	if err != nil {
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
@@ -1461,7 +1459,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if ev.verify && !have {
 		// A squash merge carries the judged branch's net change in a commit of another message
 		// (so another citation key): the same two trees are the same change, judged already.
-		if byTrees, ok, err := ev.store.CachedByTrees(g.Qualified(), rr.hash, rr.subject.ID, guardKind, rr.baseTree, rr.headTree); err != nil {
+		if byTrees, ok, err := ev.store.CachedByTrees(g.Qualified(), rr.subject.ID, guardKind, rr.baseTree, rr.headTree); err != nil {
 			return dispatchcore.Verdict{}, engineError(g, err), true
 		} else if ok {
 			cached, have = byTrees, true
@@ -1856,7 +1854,7 @@ func (ev *changesetEvaluation) claimInflight(rr *ruleRun) (v dispatchcore.Verdic
 	if ev.locks == nil || ev.store == nil || ev.verify || rr.key == "" {
 		return dispatchcore.Verdict{}, nil, false
 	}
-	rr.lockKey = judgelimit.Name(ev.identity.RepoID, rr.g.Qualified(), rr.hash, rr.subject.ID, rr.key)
+	rr.lockKey = judgelimit.Name(ev.identity.RepoID, rr.g.Qualified(), rr.subject.ID, rr.key)
 	release, waited, lerr := ev.locks.AcquireInflight(rr.lockKey, "another run judging the same check ("+rr.g.Attribution()+" "+rr.subject.ID+")")
 	if lerr != nil {
 		fmt.Fprintln(ev.log(rr.g), "sloprail: in-flight lock unavailable, judging anyway:", lerr)

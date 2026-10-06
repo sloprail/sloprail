@@ -29,7 +29,7 @@ func newRunCmd() *cobra.Command {
 		Long: `Judge every file-guard over merge-base(--base, --head)..--head.
 
 Every check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed
-by the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
+by the rule name (never its definition), the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the
 input changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment
 of the sloprail/checks branch, and pushed to origin when the repository has one. Prints each
 refusal, and exits 1 when any rule refuses.

@@ -23,7 +23,7 @@ checks:
 
 // checkForbidSecret refuses a file whose content holds SECRET, recording every time it
 // runs — and the paths of the files it was handed — into led, a harness ledger OUTSIDE
-// the project (inside the rule's folder it would change the rule's hash: T034_19).
+// the project (a ledger inside the rule's folder is the case T034_19 covers).
 func checkForbidSecret(led *harness.Ledger) string {
 	return `#!/bin/sh
 payload="$(cat)"

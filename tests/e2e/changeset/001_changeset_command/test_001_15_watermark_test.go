@@ -55,16 +55,13 @@ func watermarkRepo(t *testing.T) (e *Env, proj, rule, hash, start, c1 string) {
 	return e, proj, first.Rule, first.RuleHash, start, c1
 }
 
-// T001_17: a pass is keyed on the rule's definition. Edit the rule and the hash changes
-// (so verdicts are not replayed): the pass reached under the older rule is not one under
-// the new hash.
-func TestT001_17_AnEditedRuleKeepsItsWatermark(t *testing.T) {
+// T001_17: a verdict is keyed on its input, not on the rule's definition. Edit the rule and the
+// hash it is recorded under changes, but the pass reached under the older rule is still the
+// answer for the same input: the judge is not asked again.
+func TestT001_17_AnEditedRuleKeepsItsVerdicts(t *testing.T) {
 	e, proj, _, hash, start, c1 := watermarkRepo(t)
 	if r := e.CheckRunRaw(proj, wmSession, start, c1); r.Code != 0 || e.JudgeCalls(proj, wmPrompt, "") != 1 {
 		t.Fatalf("premise: no pass at %s under %s (exit %d):\n%s", c1, hash, r.Code, r.Output)
-	}
-	if e.CheckRunRaw(proj, wmSession, start, c1); e.JudgeCalls(proj, wmPrompt, "") != 1 {
-		t.Fatal("premise: the same rule over the same range asked the judge again")
 	}
 	e.WriteFile(proj, ".sloprail/file-guard/size/check.sh", passingCheck+"# edited\n")
 
@@ -73,11 +70,11 @@ func TestT001_17_AnEditedRuleKeepsItsWatermark(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
 	if got.RuleHash == hash {
-		t.Fatalf("the edit left the rule's hash unchanged")
+		t.Fatalf("the edit left the rule's recorded hash unchanged")
 	}
 	e.CheckRunRaw(proj, wmSession, start, c1)
-	if n := e.JudgeCalls(proj, wmPrompt, ""); n != 2 {
-		t.Fatalf("the pass reached under the older rule (%s) was replayed under the new hash %s (%d judge calls, want 2)", hash, got.RuleHash, n)
+	if n := e.JudgeCalls(proj, wmPrompt, ""); n != 1 {
+		t.Fatalf("the pass reached under the older rule (%s) was judged again under %s (%d judge calls, want 1)", hash, got.RuleHash, n)
 	}
 }
 
