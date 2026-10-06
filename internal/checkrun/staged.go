@@ -13,6 +13,7 @@ import (
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/judgelimit"
 )
 
 // StagedParams is what StagedNeedingCitation reads: the file-guards and the repository whose
@@ -163,7 +164,7 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 
 // whenWorkers is how many `when` scripts run side by side. Verdicts are never kept between runs:
 // nothing an agent can write may stand in for a script's answer.
-func whenWorkers() int { return max(2, min(8, runtime.NumCPU())) }
+func whenWorkers() int { return max(2, min(8, runtime.NumCPU(), judgelimit.Fanout())) }
 
 // changedBy reports whether the commit is among those that changed the file.
 func changedBy(cs changeset.Changeset, path, sha string) bool {

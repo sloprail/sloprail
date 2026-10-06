@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -28,17 +29,24 @@ const (
 	DirEnv = "SLOPRAIL_LOCK_DIR"
 	// DefaultSlots is the machine-wide judge limit.
 	DefaultSlots = 8
+	// RunSlotsEnv overrides how many heavy runs (`sr-checks run`, `sr-test run`) may be in
+	// progress at once on the machine.
+	RunSlotsEnv = "SLOPRAIL_RUN_SLOTS"
+	// RunHeldEnv is set, for the children of a run holding a run slot, so a run they start (a
+	// test case running `sr-checks run`) does not queue for a second slot behind its own parent.
+	RunHeldEnv = "SLOPRAIL_RUN_SLOT_HELD"
 
 	staleAfter = 24 * time.Hour
 )
 
 // Limiter is a handle on the lock directory. The zero Poll and Notify intervals take the defaults.
 type Limiter struct {
-	Dir    string
-	Slots  int
-	Out    io.Writer     // where "waiting" lines go; nil discards
-	Poll   time.Duration // how often a waiter retries (default 100ms)
-	Notify time.Duration // how often a waiter says it waits (default 30s)
+	Dir      string
+	Slots    int
+	RunSlots int           // heavy runs at once; 0 takes DefaultRunSlots
+	Out      io.Writer     // where "waiting" lines go; nil discards
+	Poll     time.Duration // how often a waiter retries (default 100ms)
+	Notify   time.Duration // how often a waiter says it waits (default 30s)
 }
 
 // New is the machine's limiter, configured from the environment.
@@ -55,8 +63,24 @@ func New(out io.Writer) Limiter {
 	if n, err := strconv.Atoi(os.Getenv(SlotsEnv)); err == nil && n > 0 {
 		slots = n
 	}
-	return Limiter{Dir: dir, Slots: slots, Out: out}
+	return Limiter{Dir: dir, Slots: slots, RunSlots: RunSlots(), Out: out}
 }
+
+// DefaultRunSlots is a quarter of the CPUs, at least two: a run is a fan-out of git, shell and jq
+// processes, so a few of them already fill the machine.
+func DefaultRunSlots() int { return max(2, runtime.NumCPU()/4) }
+
+// RunSlots is the machine's heavy-run limit: SLOPRAIL_RUN_SLOTS, else DefaultRunSlots.
+func RunSlots() int {
+	if n, err := strconv.Atoi(os.Getenv(RunSlotsEnv)); err == nil && n > 0 {
+		return n
+	}
+	return DefaultRunSlots()
+}
+
+// Fanout is each run's own parallelism limit under the machine's budget: the CPUs shared by the
+// run slots, at least two. Runs queue for a slot, so the machine runs about NumCPU of them at once.
+func Fanout() int { return max(2, runtime.NumCPU()/RunSlots()) }
 
 func (l Limiter) poll() time.Duration {
 	if l.Poll > 0 {
@@ -108,9 +132,37 @@ func unlock(f *os.File) func() {
 // AcquireSlot waits for one of the machine's judge slots and returns its release. Every
 // Notify it says it is waiting and how many slots are busy.
 func (l Limiter) AcquireSlot() (release func(), err error) {
-	n := l.Slots
+	return l.acquireSlot("slots", "judge", l.Slots, DefaultSlots)
+}
+
+// AcquireRunSlot waits for one of the machine's heavy-run slots and returns its release. A
+// process whose parent already holds one (RunHeldEnv) takes none: waiting behind its own parent
+// could never end.
+func (l Limiter) AcquireRunSlot() (release func(), err error) {
+	if os.Getenv(RunHeldEnv) != "" {
+		return func() {}, nil
+	}
+	return l.acquireSlot("runslots", "run", l.RunSlots, DefaultRunSlots())
+}
+
+// HoldRunSlot is AcquireRunSlot for a process that is the run: it also marks the environment its
+// children inherit with RunHeldEnv until the release.
+func (l Limiter) HoldRunSlot() (release func(), err error) {
+	nested := os.Getenv(RunHeldEnv) != ""
+	slot, err := l.AcquireRunSlot()
+	if err != nil {
+		return nil, err
+	}
+	if nested {
+		return slot, nil
+	}
+	os.Setenv(RunHeldEnv, "1")
+	return func() { os.Unsetenv(RunHeldEnv); slot() }, nil
+}
+
+func (l Limiter) acquireSlot(sub, what string, n, def int) (release func(), err error) {
 	if n < 1 {
-		n = DefaultSlots
+		n = def
 	}
 	last := time.Now()
 	start := int(time.Now().UnixNano()) // spread the first probes so processes do not all queue on slot 0
@@ -118,9 +170,9 @@ func (l Limiter) AcquireSlot() (release func(), err error) {
 		busy := 0
 		for i := 0; i < n; i++ {
 			idx := (start + i) % n
-			f, ok, err := tryLock(filepath.Join(l.Dir, "slots", "slot-"+strconv.Itoa(idx)))
+			f, ok, err := tryLock(filepath.Join(l.Dir, sub, "slot-"+strconv.Itoa(idx)))
 			if err != nil {
-				return nil, fmt.Errorf("judge slots: %w", err)
+				return nil, fmt.Errorf("%s slots: %w", what, err)
 			}
 			if ok {
 				return unlock(f), nil
@@ -128,7 +180,7 @@ func (l Limiter) AcquireSlot() (release func(), err error) {
 			busy++
 		}
 		if time.Since(last) >= l.notify() {
-			l.say("sloprail: waiting for a judge slot (%d busy)", busy)
+			l.say("sloprail: waiting for a %s slot (%d busy)", what, busy)
 			last = time.Now()
 		}
 		time.Sleep(l.poll())
