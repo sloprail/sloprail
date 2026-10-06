@@ -1881,11 +1881,12 @@ func (ev *changesetEvaluation) releaseInflight(rr *ruleRun) {
 }
 
 // subjectChangeset is the changeset one subject's checks receive: the range, with
-// only the citations that ground that subject. The key covers what a check
-// receives (guardKey keys on the subject's own citations), so a commit that
-// touches none of its files, and the quotes it carries, is no input of it (#291).
-// The list is never null: a check may iterate it.
+// only the citations of commits that changed the subject's files (every step's
+// proof, so a reviewer sees each). The key covers what a check receives
+// (CitationPart keys on that evidence and on what grounds each file), so a commit
+// that touches none of its files, and the quotes it carries, is no input of it
+// (#291). The list is never null: a check may iterate it.
 func subjectChangeset(cs changeset.Changeset, sub changeset.Subject) changeset.Changeset {
-	cs.Citations = append([]changeset.Citation{}, cs.ForSubject(sub)...)
+	cs.Citations = append([]changeset.Citation{}, cs.EvidenceForSubject(sub)...)
 	return cs
 }

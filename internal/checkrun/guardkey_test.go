@@ -79,7 +79,7 @@ func TestSubjectChangeset_ChecksSeeOnlyTheSubjectsCitations(t *testing.T) {
 		Citations: []changeset.Citation{cite("words for a", "c1", "a.md"), cite("words for b", "c2", "b.md")},
 	}
 	a := subjectChangeset(cs, changeset.Subject{ID: "a.md", Files: []string{"a.md"}})
-	assert.Equal(t, cs.ForSubject(changeset.Subject{ID: "a.md", Files: []string{"a.md"}}), a.Citations)
+	assert.Equal(t, cs.EvidenceForSubject(changeset.Subject{ID: "a.md", Files: []string{"a.md"}}), a.Citations)
 	for _, c := range a.Citations {
 		assert.NotEqual(t, "words for b", c.Quote, "b.md's citation is no input of a.md's checks")
 	}
@@ -87,4 +87,36 @@ func TestSubjectChangeset_ChecksSeeOnlyTheSubjectsCitations(t *testing.T) {
 	assert.NotNil(t, none.Citations, "never null: a check may iterate it")
 	assert.Empty(t, none.Citations)
 	assert.Len(t, cs.Citations, 2, "the range's own changeset is left as it was")
+}
+
+// Cited commits accumulate: a file changed by two cited commits hands its checks
+// both commits' proof, and the earlier commit's quote is in the key though only
+// the later one grounds the file — a reviewer judging that evidence must not be
+// reused when it changes (TestReview_CitedEditAfterCitedTransitionKeepsEvidence).
+func TestSubjectChangeset_EveryCommitOfTheFileIsEvidence(t *testing.T) {
+	build := func(first string) changeset.Payload {
+		cs := changeset.Changeset{
+			Commits: []changeset.Commit{
+				{SHA: "c1", Trailers: map[string][]string{changeset.TrailerCitesTool: {first}}},
+				{SHA: "c2", Trailers: map[string][]string{changeset.TrailerCitesTool: {"PROOF-TWO"}}},
+			},
+			Files: []changeset.File{{Path: "a.md", Status: "M", Commits: []string{"c1", "c2"}, NewContent: "x"}},
+		}
+		TrustTrailers(&cs)
+		sub := changeset.Subject{ID: "a.md", Files: []string{"a.md"}}
+		return changeset.NewPayload(subjectChangeset(cs, sub), sub, "")
+	}
+	p := build("PROOF-ONE")
+	var quotes []string
+	for _, c := range p.Changeset.Citations {
+		quotes = append(quotes, c.Quote)
+	}
+	assert.Equal(t, []string{"PROOF-ONE", "PROOF-TWO"}, quotes, "both steps' proof reaches the checks")
+
+	key := func(p changeset.Payload) string {
+		k, err := guardKey(declaration.FileGuard{}, p)
+		require.NoError(t, err)
+		return k
+	}
+	assert.NotEqual(t, key(p), key(build("PROOF-ONE-REWORDED")), "the earlier commit's evidence is in the key")
 }

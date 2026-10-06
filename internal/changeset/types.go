@@ -272,6 +272,37 @@ func (cs Changeset) ForSubject(s Subject) []Citation {
 	return out
 }
 
+// EvidenceForFile is every citation carried by a commit of the range that changed
+// f, in range order: what was cited along the way to the file as it stands. Unlike
+// ForFile (which commit's citation GROUNDS the file), nothing is dropped for a later
+// uncited change — a reviewer is handed the proof of each step.
+func (cs Changeset) EvidenceForFile(f File) []Citation {
+	var out []Citation
+	for _, c := range cs.Citations {
+		if slices.ContainsFunc(c.Commits, func(sha string) bool { return slices.Contains(f.Commits, sha) }) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// EvidenceForSubject is the citations of every commit of the range that changed one
+// of the subject's files (see EvidenceForFile), without repeats, in range order:
+// what a subject's checks are handed. A commit touching none of its files is no
+// input of it (#291).
+func (cs Changeset) EvidenceForSubject(s Subject) []Citation {
+	var out []Citation
+	for _, c := range cs.Citations {
+		for _, f := range cs.Files {
+			if slices.Contains(s.Files, f.Path) && slices.ContainsFunc(c.Commits, func(sha string) bool { return slices.Contains(f.Commits, sha) }) {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // Plain is the citations as an event carries them, without where they came from.
 func Plain(cites []Citation) []transcript.Citation {
 	out := make([]transcript.Citation, 0, len(cites))

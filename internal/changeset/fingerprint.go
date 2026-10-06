@@ -50,6 +50,18 @@ func CitationPart(p Payload) (string, error) {
 	type grounded struct {
 		Path   string
 		Quotes []quote
+		// Evidence is every quote cited by a commit that changed the file
+		// (EvidenceForFile): what a check is handed, beyond what grounds it.
+		Evidence []quote
+	}
+	sorted := func(qs []quote) {
+		sort.Slice(qs, func(i, j int) bool {
+			a, b := qs[i], qs[j]
+			if a.Quote != b.Quote {
+				return a.Quote < b.Quote
+			}
+			return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
+		})
 	}
 	// Per file, not per subject: which file a quote grounds is part of the verdict (a quote
 	// that grounds one file of a subject and not another is not the same grounding).
@@ -62,13 +74,11 @@ func CitationPart(p Payload) (string, error) {
 		for _, c := range p.Changeset.ForFile(f) {
 			g.Quotes = append(g.Quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
 		}
-		sort.Slice(g.Quotes, func(i, j int) bool {
-			a, b := g.Quotes[i], g.Quotes[j]
-			if a.Quote != b.Quote {
-				return a.Quote < b.Quote
-			}
-			return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
-		})
+		for _, c := range p.Changeset.EvidenceForFile(f) {
+			g.Evidence = append(g.Evidence, quote{Pool: c.SourceTypes, Quote: c.Quote})
+		}
+		sorted(g.Quotes)
+		sorted(g.Evidence)
 		out = append(out, g)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
