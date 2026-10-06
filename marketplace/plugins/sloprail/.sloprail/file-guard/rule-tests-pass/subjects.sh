@@ -31,9 +31,29 @@ paths=()
 real=()
 while IFS= read -r -d '' flag && IFS= read -r -d '' p; do
   id="$(path_subject "$p")" || continue
+  if is_marker "$id"; then
+    # a shared file (lib/, schemas/, ...) can break the case of any rule of its root: every rule of the root is
+    # a subject, with the shared path among its files
+    while IFS= read -r r; do
+      [ -n "$r" ] || continue
+      ids+=("$r")
+      paths+=("$p")
+      real+=("$flag")
+    done < <(root_rules "$(marker_root "$id")")
+    continue
+  fi
   ids+=("$id")
   paths+=("$p")
   real+=("$flag")
+  # a file of a rule (not a case) that another rule names as `<rule>/<file>` (sourced from it) can break that
+  # cases of that rule: it is among the files of that rule too
+  if [[ "$p" == */tests/* ]]; then continue; fi
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    ids+=("$r")
+    paths+=("$p")
+    real+=("$flag")
+  done < <(rule_users "$id" "${p##*/}")
 done < <(printf '%s' "$payload" | jq -j '.changeset.files[] | (if (.status != "M" or .oldContent != .newContent) then "1" else "0" end) + "\u0000" + .path + "\u0000"')
 
 uniq=()
@@ -62,6 +82,9 @@ for id in ${uniq[@]+"${uniq[@]}"}; do
     done <<<"$cases"
     owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE"
     plugin_manifest "$CASE_ROOT"
+    # what the cases also run: the shared files of the root and the files of other rules this rule sources
+    shared_files "$CASE_ROOT"
+    rule_refs "$id"
   } | files_sha)"
   out="$(printf '%s' "$out" | jq -c --arg c "$id" --argjson f "$files" --arg fp "$fp" '. + [{id: $c, files: $f, fingerprint: $fp}]')"
 done

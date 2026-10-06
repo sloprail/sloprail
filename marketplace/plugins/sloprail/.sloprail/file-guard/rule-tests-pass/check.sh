@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # rule-tests-pass, one subject = one RULE the change touches (subject.id is the rule's folder, see lib.sh;
-# subject.files the changed paths of the rule whose content changed). Reads the committed tree (SR_TREE).
+# subject.files the changed paths whose content changed: the rule's own, a shared file of its root (lib/,
+# schemas/), or a file of another rule it sources). Reads the committed tree (SR_TREE).
 #   1. Cases. Runs `sr-test run . --rule <nature>/<rule>` in the rule's `.sloprail` root: every case of that
 #      rule, and only that rule's, so a repo with many rules is many small cached runs, not one long one. A case
 #      a change deleted is gone at head and is not run.
-#   2. Coverage. A rule this change added or changed (a file of its folder, structure.yaml) that still stands
+#   2. Coverage. A rule this change added or changed (a file of its own folder, structure.yaml) that still stands
 #      must have at least one case (`sr-test doctor`). A rule nobody touched is not refused for having no case
 #      (legacy pass).
 # A subject whose files lists nothing (a mode-only change, same bytes) is no change of the rule: it passes.
@@ -124,7 +125,13 @@ if [ "$nature" = structure ]; then
 else
   decl="$sloprail/$nature/$rule/$nature.yaml"; label="$nature/$rule"; casedir="$shown/$nature/$rule/tests/<case>/"
 fi
-if [ -f "$decl" ]; then
+# Only when a file of the rule itself changed: a shared file or a file another rule sources runs this rule's cases
+# (above) but does not edit the rule, so a legacy rule with no case is not refused for it.
+own_touched=""
+while IFS= read -r -d '' f; do
+  [ "$(path_subject "$f" 2>/dev/null)" = "$id" ] && own_touched=1
+done < <(printf '%s' "$payload" | jq -j '.subject.files[] + "\u0000"')
+if [ -f "$decl" ] && [ -n "$own_touched" ]; then
   # one JSON object per uncovered rule, each with the .sloprail it sits in (dir, "." for this root's own):
   # the rule is matched on (dir, nature, rule), never on a name rebuilt here from plugin.json
   if ! (cd "$abs" && sr-test doctor --json .) >"$work/doctor.out" 2>"$work/doctor.err" ||

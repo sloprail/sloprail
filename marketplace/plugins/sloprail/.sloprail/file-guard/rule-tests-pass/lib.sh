@@ -50,9 +50,106 @@ path_subject() {
       return 0
     fi
   fi
-  case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac
-  [ -n "$b" ] && [ -n "$c" ] || return 1
-  printf '%s.sloprail/%s/%s\n' "$root" "$a" "$b"
+  # config.yaml is project settings, not code a case runs: it belongs to no subject (the rule's match excludes it)
+  [ "$rest" = config.yaml ] && return 1
+  case "$a" in
+    gate | file-guard | context)
+      if [ -n "$b" ] && [ -n "$c" ]; then
+        printf '%s.sloprail/%s/%s\n' "$root" "$a" "$b"
+        return 0
+      fi
+      ;;
+  esac
+  # any other file of the `.sloprail/` (a shared lib/, schemas/, a stray file) is no rule's own: it belongs to
+  # the root's marker, `<root>/.sloprail`, which subjects.sh fans out to every rule of the root
+  printf '%s.sloprail\n' "$root"
+}
+
+# is_marker <subject id> -> 0 for a root-wide marker (`.sloprail`, `<root>/.sloprail`), 1 for a rule's id
+is_marker() {
+  case "$1" in .sloprail | */.sloprail) return 0 ;; esac
+  return 1
+}
+
+# marker_root <marker> -> the tree-relative dir that holds the `.sloprail` ("" for the repo root)
+marker_root() {
+  local m="${1%.sloprail}"
+  printf '%s' "${m%/}"
+}
+
+# root_rules <tree-relative root> -> the id of every rule of that root's `.sloprail`, one per line, sorted: its
+# gate/file-guard/context folders and the structure gate (when structure.yaml or structure.tests exists)
+root_rules() {
+  local root="$1" pre="" base n d
+  [ -n "$root" ] && pre="$root/"
+  base="$(root_abs "$root")/.sloprail"
+  for n in gate file-guard context; do
+    [ -d "$base/$n" ] || continue
+    find "$base/$n" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort | while IFS= read -r d; do
+      [ "$n" = file-guard ] && [ "${d##*/}" = structure.tests ] && continue
+      printf '%s.sloprail/%s/%s\n' "$pre" "$n" "${d##*/}"
+    done
+  done
+  if [ -f "$base/file-guard/structure.yaml" ] || [ -d "$base/file-guard/structure.tests" ]; then
+    printf '%s.sloprail/file-guard/structure.tests\n' "$pre"
+  fi
+}
+
+# shared_files <tree-relative root> -> the absolute path of every shared file of that root's `.sloprail` (those
+# that belong to no rule: lib/, schemas/, ...), one per line, sorted
+shared_files() {
+  local root="$1" pre="" base f
+  [ -n "$root" ] && pre="$root/"
+  base="$(root_abs "$root")/.sloprail"
+  [ -d "$base" ] || return 0
+  find "$base" -type f | LC_ALL=C sort | while IFS= read -r f; do
+    [ "$(path_subject "${f#"$SR_TREE"/}" 2>/dev/null)" = "${pre}.sloprail" ] && printf '%s\n' "$f"
+  done
+}
+
+# rule_users <rule id> <file name> -> the ids of the OTHER rules of its root whose own files name `<rule>/<file name>`:
+# a file a rule keeps for another to source (`../<rule>/cite-links.sh`). A change to it can break their cases.
+rule_users() {
+  local id="$1" fname="$2" root name o f
+  rule_split "$id" || return 0
+  [ "$CASE_NATURE" = structure ] && return 0
+  root="$CASE_ROOT" name="$CASE_RULE"
+  root_rules "$root" | while IFS= read -r o; do
+    [ "$o" = "$id" ] && continue
+    rule_split "$o" || continue
+    [ "$CASE_NATURE" = structure ] && continue
+    owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE" | while IFS= read -r f; do
+      if grep -qF -- "$name/$fname" "$f" 2>/dev/null; then
+        printf '%s\n' "$o"
+        break
+      fi
+    done
+  done
+}
+
+# rule_refs <rule id> -> the absolute path of every file of another rule that this rule's own files name as
+# `<other rule>/<file>` (what rule_users looks for from the other side), one per line
+rule_refs() {
+  local id="$1" root o f own
+  rule_split "$id" || return 0
+  [ "$CASE_NATURE" = structure ] && return 0
+  root="$CASE_ROOT"
+  own="$(owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE")"
+  [ -n "$own" ] || return 0
+  root_rules "$root" | while IFS= read -r o; do
+    [ "$o" = "$id" ] && continue
+    rule_split "$o" || continue
+    [ "$CASE_NATURE" = structure ] && continue
+    local name="$CASE_RULE" nat="$CASE_NATURE" rr="$CASE_ROOT" g
+    owner_files "$rr" "$nat" "$name" | while IFS= read -r f; do
+      while IFS= read -r g; do
+        if grep -qF -- "$name/${f##*/}" "$g" 2>/dev/null; then
+          printf '%s\n' "$f"
+          break
+        fi
+      done <<<"$own"
+    done
+  done
 }
 
 # rule_split <subject id> -> sets CASE_ROOT (the tree-relative dir that holds the `.sloprail`, "" for the repo

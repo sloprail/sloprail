@@ -2,20 +2,23 @@
 # a rule the change adds or edits must have a case. A rule change that breaks a case, or a new rule nobody
 # proves fires, is refused here, not discovered later. The argument lives in README.md.
 #
-# match: any file of a rule or of its cases, at any depth (the root project's `.sloprail/` and a nested plugin's):
-#   .sloprail/<gate|file-guard|context>/<rule>/...        (the rule's files and, under tests/, its cases)
-#   .sloprail/file-guard/structure.yaml                   (the structure gate; its cases are structure.tests/)
-# Every selected file belongs to a rule, so every one is named by a subject. A file of no rule (config.yaml) is
-# no reason to run a rule's cases.
+# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's), except the
+# project's `config.yaml`: a rule's files, its cases, and the files shared by the rules (lib/, schemas/, a file
+# one rule sources from another) that a case can run. config.yaml holds settings only, no code a case runs, so
+# it is no reason to run any case.
 # deletions: include, so deleting a rule's last case (or a rule) is seen: the deleted case is then not run, and
 # the rule that lost its case is refused.
 deletions: include
-match: 'path matches "(^|/)[.]sloprail/((gate|file-guard|context)/[^/]+/.|file-guard/structure[.]yaml$)"'
+match: 'path matches "(^|/)[.]sloprail/." and not (path matches "(^|/)[.]sloprail/config[.]yaml$")'
 
 # One subject per RULE the change touches (a changed case, or a changed file of the rule), each cached on its
-# own and run alone (`sr-test run . --rule <nature>/<rule>`), as rule-tests-rigorous does: a repo with many
-# rules is many small runs that stay under the check timeout, not one long run that times out under load. The
-# fingerprint is the rule's own files, ALL its cases and the plugin's manifest, read from SR_TREE.
+# own. A shared file is no rule's: a change to one makes every rule of its root a subject (a case of any of them
+# can run it), and a change to a file a rule keeps for another to source (`../<rule>/<file>`) makes the rules
+# that name it subjects too. Each subject is cached on its own and run alone
+# (`sr-test run . --rule <nature>/<rule>`), as rule-tests-rigorous does: a repo with many rules is many small
+# runs that stay under the check timeout, not one long run that times out under load. The fingerprint is the
+# rule's own files, ALL its cases, the plugin's manifest, the root's shared files and the files of other rules
+# it sources, read from SR_TREE.
 subjects: ./subjects.sh
 
 checks:
