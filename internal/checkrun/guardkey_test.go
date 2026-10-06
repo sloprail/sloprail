@@ -59,3 +59,32 @@ func TestGuardKey_TheSubjectsOwnCitationsMoveItsKey(t *testing.T) {
 	a1.Changeset.Commits[0].Trailers = map[string][]string{changeset.TrailerCitesUser: {"better words"}}
 	assert.NotEqual(t, key(a0), key(a1))
 }
+
+// What a subject's checks receive matches what its key covers: only the citations
+// grounding its own files, never another file's, and an empty list rather than
+// null. Reverting the scoping would hand a check citations the key ignores, and a
+// stale verdict would be reused (#291).
+func TestSubjectChangeset_ChecksSeeOnlyTheSubjectsCitations(t *testing.T) {
+	cite := func(q, sha, file string) changeset.Citation {
+		var c changeset.Citation
+		c.Quote, c.Commits, c.Files = q, []string{sha}, []string{file}
+		return c
+	}
+	cs := changeset.Changeset{
+		Commits: []changeset.Commit{{SHA: "c1"}, {SHA: "c2"}},
+		Files: []changeset.File{
+			{Path: "a.md", Status: "M", Commits: []string{"c1"}},
+			{Path: "b.md", Status: "M", Commits: []string{"c2"}},
+		},
+		Citations: []changeset.Citation{cite("words for a", "c1", "a.md"), cite("words for b", "c2", "b.md")},
+	}
+	a := subjectChangeset(cs, changeset.Subject{ID: "a.md", Files: []string{"a.md"}})
+	assert.Equal(t, cs.ForSubject(changeset.Subject{ID: "a.md", Files: []string{"a.md"}}), a.Citations)
+	for _, c := range a.Citations {
+		assert.NotEqual(t, "words for b", c.Quote, "b.md's citation is no input of a.md's checks")
+	}
+	none := subjectChangeset(cs, changeset.Subject{ID: "c.md", Files: []string{"c.md"}})
+	assert.NotNil(t, none.Citations, "never null: a check may iterate it")
+	assert.Empty(t, none.Citations)
+	assert.Len(t, cs.Citations, 2, "the range's own changeset is left as it was")
+}

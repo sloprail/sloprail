@@ -616,12 +616,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		if tree != nil {
 			treePath = tree.Path
 		}
-		// A subject's checks receive the citations that ground that subject, not the range's:
-		// the key covers what a check receives, so a commit that touches none of its files
-		// (and the quotes it carries) is no input of it.
-		subCS := cs
-		subCS.Citations = append([]changeset.Citation{}, cs.ForSubject(sub)...) // never null: a check may iterate it
-		req := ev.requestFor(g, r, subCS, sub, treePath, unresolved)
+		req := ev.requestFor(g, r, subjectChangeset(cs, sub), sub, treePath, unresolved)
 		// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
 		// never reads as a pass.
 		subRun := run
@@ -1883,4 +1878,14 @@ func (ev *changesetEvaluation) releaseInflight(rr *ruleRun) {
 	}
 	rr.unlockInflight()
 	rr.unlockInflight = nil
+}
+
+// subjectChangeset is the changeset one subject's checks receive: the range, with
+// only the citations that ground that subject. The key covers what a check
+// receives (guardKey keys on the subject's own citations), so a commit that
+// touches none of its files, and the quotes it carries, is no input of it (#291).
+// The list is never null: a check may iterate it.
+func subjectChangeset(cs changeset.Changeset, sub changeset.Subject) changeset.Changeset {
+	cs.Citations = append([]changeset.Citation{}, cs.ForSubject(sub)...)
+	return cs
 }
