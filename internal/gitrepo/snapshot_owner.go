@@ -155,6 +155,19 @@ func CleanupOnSignal() (stop func()) {
 	return func() { signal.Stop(ch); close(done) }
 }
 
+// MarkOwner records the current process (pid and start time) as the owner of dir, the way a
+// snapshot root is marked, so a later run can tell a dead owner's directory from a live one's.
+func MarkOwner(dir string) { _ = writeOwner(dir) }
+
+// OwnerGone reports whether dir's marked owner is dead; marked is false when dir carries no
+// owner file. Anything unknown counts as alive (the pid-reuse-safe check of ownerAlive).
+func OwnerGone(dir string) (gone, marked bool) {
+	if _, err := os.Stat(filepath.Join(dir, ownerFile)); err != nil {
+		return false, false
+	}
+	return !ownerAlive(dir), true
+}
+
 // SnapshotOrphaned reports whether root, a temp directory made for a snapshot (sr-tree-*), was
 // left behind: its owner is dead, or it has no owner file and is older than ownerlessGrace. A
 // registered worktree inside is the sweep's to unregister (SweepStaleSnapshots); this decides

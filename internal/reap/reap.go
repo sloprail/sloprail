@@ -1,5 +1,5 @@
 // Package reap removes the temp directories sloprail's runs leave behind when they are killed
-// (sr-test-*, sr-tree-*, sr-agent-output*): a run that dies skips its deferred cleanup, and
+// (sr-test-case-*, sr-tree-*, sr-agent-output*): a run that dies skips its deferred cleanup, and
 // thousands of them pile up in the OS temp dir. It runs when a heavy run starts.
 //
 // A directory is garbage when its owner is gone. Directories made by this build carry an owner
@@ -9,47 +9,35 @@
 package reap
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
 
-// OwnerFile names the marker Mark writes in a temp directory: the pid that made it.
-const OwnerFile = "sr-owner"
+// KeepFile marks a directory a person asked to keep (sr-test --keep): never reaped.
+const KeepFile = "sr-keep"
 
 // LegacyAge is how old a directory with no owner file must be before it is taken.
 const LegacyAge = 24 * time.Hour
 
 // Patterns are the directory name prefixes this package takes.
-var Patterns = []string{"sr-test-", "sr-agent-output"}
+//
+// "sr-test-case-" is the per-case directory of `sr-test run`, NOT "sr-test-": the agent harness
+// keeps a persistent home named sr-test-<hash> in the same place, which must survive.
+var Patterns = []string{"sr-test-case-", "sr-agent-output"}
 
 // Mark records the current process as the owner of dir, so Temp can tell a dead owner's from a
 // live run's. Best effort: an unmarked directory falls back to the age rule.
-func Mark(dir string) {
-	_ = os.WriteFile(filepath.Join(dir, OwnerFile), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
-}
+func Mark(dir string) { gitrepo.MarkOwner(dir) }
 
-// ownerGone reports whether dir's marked owner is dead; false when unmarked or unreadable.
-func ownerGone(dir string) (gone, marked bool) {
-	b, err := os.ReadFile(filepath.Join(dir, OwnerFile))
-	if err != nil {
-		return false, false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil || pid <= 0 {
-		return false, true
-	}
-	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH), true
-}
+// Keep marks dir as one to leave alone for ever.
+func Keep(dir string) { _ = os.WriteFile(filepath.Join(dir, KeepFile), nil, 0o644) }
 
-// Temp removes the stale sr-test-*, sr-agent-output* and sr-tree-* directories directly under
+// Temp removes the stale sr-test-case-*, sr-agent-output* and sr-tree-* directories directly under
 // tmp ("" = the OS temp dir) and returns how many it removed. A stale sr-tree-* may still be a
 // registered worktree: repo, when not empty, is where gitrepo's sweep unregisters those first.
 func Temp(tmp, repo string) int {
@@ -75,7 +63,10 @@ func Temp(tmp, repo string) int {
 				continue
 			}
 		case hasPrefix(name):
-			if gone, marked := ownerGone(path); marked {
+			if _, err := os.Stat(filepath.Join(path, KeepFile)); err == nil {
+				continue
+			}
+			if gone, marked := gitrepo.OwnerGone(path); marked {
 				if !gone {
 					continue
 				}

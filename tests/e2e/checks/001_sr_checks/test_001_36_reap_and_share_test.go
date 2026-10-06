@@ -37,7 +37,7 @@ func TestT001_36_ARunReapsStaleTempDirsAndSharesOneCheckout(t *testing.T) {
 			t.Fatal(err)
 		}
 		if owner != "" {
-			if err := os.WriteFile(filepath.Join(d, "sr-owner"), []byte(owner+"\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(d, "sr-snapshot-owner"), []byte(owner+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -49,8 +49,8 @@ func TestT001_36_ARunReapsStaleTempDirsAndSharesOneCheckout(t *testing.T) {
 	if err := dead.Run(); err != nil {
 		t.Fatal(err)
 	}
-	deadOwned := mk("sr-test-dead", strconv.Itoa(dead.Process.Pid), time.Hour)
-	live := mk("sr-test-live", strconv.Itoa(os.Getpid()), 48*time.Hour)
+	deadOwned := mk("sr-test-case-dead", strconv.Itoa(dead.Process.Pid), time.Hour)
+	live := mk("sr-test-case-live", strconv.Itoa(os.Getpid()), 48*time.Hour)
 	oldLegacy := mk("sr-agent-output-old", "", 48*time.Hour)
 	young := mk("sr-agent-output-young", "", time.Minute)
 

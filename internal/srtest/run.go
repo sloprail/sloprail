@@ -157,16 +157,17 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 		r.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 		return r
 	}
-	dir, err := os.MkdirTemp("", "sr-test-*")
+	dir, err := os.MkdirTemp("", "sr-test-case-*")
 	if err != nil {
 		return finish(Error, err.Error())
 	}
-	reap.Mark(dir) // a killed run leaves the directory: the next run reaps it by this owner
 	if opt.Keep {
+		reap.Keep(dir) // asked for: no later run may reap it
 		mu.Lock()
 		fmt.Fprintf(opt.Stderr, "sr-test: kept %s (%s)\n", dir, c.Subject)
 		mu.Unlock()
 	} else {
+		reap.Mark(dir) // a killed run leaves the directory: the next run reaps it by this owner
 		defer os.RemoveAll(dir)
 	}
 	// The project the agent works in is dir/project; the case's own folder, the events log and HOME sit
