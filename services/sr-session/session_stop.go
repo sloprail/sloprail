@@ -27,7 +27,11 @@ func newSessionStopCmd() *cobra.Command {
 			// refusal loop is the project's stop_hook_block_cap — see
 			// stopHookBlockCapReached.
 			defer gitrepo.CleanupOnSignal()() // a killed Stop must not leak its read-only snapshots
-			return completeCycle(cmd, readPayload(cmd))
+			p := readPayload(cmd)
+			if skipWithoutTranscript(cmd, p, false) {
+				return nil
+			}
+			return completeCycle(cmd, p)
 		},
 	}
 }

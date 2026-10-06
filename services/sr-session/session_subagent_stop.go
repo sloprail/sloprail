@@ -98,6 +98,9 @@ func newSessionSubagentStopCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
+			if skipWithoutTranscript(cmd, p, false) {
+				return nil
+			}
 			// A retry after a refusal (stop_hook_active) is judged like any
 			// other Stop; the project's stop_hook_block_cap is what ends a
 			// refusal loop, counted in the sub-agent's own store (completeCycle).
