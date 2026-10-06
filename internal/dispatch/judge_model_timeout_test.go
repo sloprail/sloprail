@@ -3,6 +3,9 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -205,6 +208,24 @@ func TestRunShell_CustomTimeoutKillsLongRun(t *testing.T) {
 	require.NoError(t, startErr, "the command started; it is the timeout under test")
 	assert.True(t, expired, "a command exceeding its timeout must be reported expired")
 	assert.Less(t, elapsed, 5*time.Second, "the custom 200ms bound must fire, not the 30s default")
+}
+
+// A timed-out command that ignores SIGTERM is SIGKILLed after the grace, and a grandchild of it
+// goes with it: SIGTERM first, so a child that manages groups of its own can take them down.
+func TestRunShell_TimeoutEscalatesTermToKill(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	cmd := "trap '' TERM; sleep 120 & echo $! > " + pidFile + "; while :; do sleep 1; done"
+	start := time.Now()
+	_, _, _, expired, _, startErr := runShell("", cmd, nil, nil, 500*time.Millisecond)
+	require.NoError(t, startErr)
+	assert.True(t, expired)
+	assert.Less(t, time.Since(start), killAfterTerm+checkKillGrace+5*time.Second)
+	b, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return syscall.Kill(pid, 0) != nil }, 5*time.Second, 50*time.Millisecond,
+		"the grandchild outlived the timeout kill")
 }
 
 // runShell with a zero timeout falls back to the default bound rather than

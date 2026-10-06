@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/procgroup"
 )
 
 // ErrVerifyFailed is returned when the verifier rejected the agent's output and
@@ -239,7 +241,7 @@ func RunVerifier(ctx context.Context, verifier, outputPath string, attempt, atte
 	proc.Stdout = &complaint
 	proc.Stderr = &complaint
 
-	runErr := proc.Run()
+	runErr := procgroup.Run(proc, true)
 	if complaint.Len() > 0 {
 		fmt.Fprintf(stderr, "sr-agent: verifier (attempt %d/%d): %s\n",
 			attempt, attempts, strings.TrimSpace(complaint.String()))

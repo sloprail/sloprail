@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
@@ -91,7 +92,7 @@ func runMockedJudge(j judgeCall, raw string) (Verdict, error) {
 	cmd.Stdin = strings.NewReader(rendered + "\n\n" + string(j.InputJSON) + "\n")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	if err := procgroup.Run(cmd, true); err != nil {
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) failed: %w: %s", id, script, err, strings.TrimSpace(stderr.String()))
 	}
 	var out struct {

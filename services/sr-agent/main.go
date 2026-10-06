@@ -464,16 +464,8 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 	// (an orphaned one would run on, and bill, with nobody to read it). Not when stdin is a
 	// terminal: a background group reading the terminal is stopped by SIGTTIN, and an
 	// interactive Ctrl-C reaches the child's group anyway.
-	if !isTerminal(proc.Stdin) {
-		procgroup.Own(proc)
-	}
 	defer procgroup.ExitOnSignal(nil)()
-	err := proc.Start()
-	if err == nil {
-		untrack := procgroup.Track(proc)
-		err = proc.Wait()
-		untrack()
-	}
+	err := procgroup.Run(proc, !isTerminal(proc.Stdin))
 	if err == nil {
 		return nil
 	}
