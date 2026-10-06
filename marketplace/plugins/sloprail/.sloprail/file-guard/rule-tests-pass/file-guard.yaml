@@ -2,14 +2,13 @@
 # a rule the change adds or edits must have a case. A rule change that breaks a case, or a new rule nobody
 # proves fires, is refused here, not discovered later. The argument lives in README.md.
 #
-# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's), except the
-# project's `config.yaml`: a rule's files, its cases, and the files shared by the rules (lib/, schemas/, a file
-# one rule sources from another) that a case can run. config.yaml holds settings only, no code a case runs, so
-# it is no reason to run any case.
+# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's): a rule's files,
+# its cases, config.yaml, and the files shared by the rules (lib/, schemas/, a file one rule sources from
+# another), any of which a case can run or depend on.
 # deletions: include, so deleting a rule's last case (or a rule) is seen: the deleted case is then not run, and
 # the rule that lost its case is refused.
 deletions: include
-match: 'path matches "(^|/)[.]sloprail/." and not (path matches "(^|/)[.]sloprail/config[.]yaml$")'
+match: 'path matches "(^|/)[.]sloprail/."'
 
 # One subject per RULE the change touches (a changed case, or a changed file of the rule), each cached on its
 # own. A shared file is no rule's: a change to one makes every rule of its root a subject (a case of any of them

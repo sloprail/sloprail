@@ -14,8 +14,7 @@ A file whose only change is its mode (`chmod +x`, identical bytes) is not a chan
 case and no rule, so a legacy rule made executable is not refused for having no case. A content change to the
 same file is.
 
-It fires when any file under a `.sloprail/` changes in the range (except `config.yaml`, settings with no code a
-case runs), the root project's and a nested plugin's alike. One subject per touched RULE, as
+It fires when any file under a `.sloprail/` changes in the range, the root project's and a nested plugin's alike. One subject per touched RULE, as
 `rule-tests-rigorous` does it, so a repo with many rules is many small runs, each cached on its own and well
 under the check timeout, not one long run that times out under load. One script check, `check.sh`, no model:
 
@@ -24,7 +23,7 @@ under the check timeout, not one long run that times out under load. One script 
    another commit left broken does not block an unrelated change. A case the range deleted is not run.
    A case that does not pass refuses, with its subject, status and the tail of its output.
 
-   A file that is no rule's own (a shared `lib/`, `schemas/`) can break any rule's case, so a change to one
+   A file that is no rule's own (a shared `lib/`, `schemas/`, `config.yaml`) can break any rule's case, so a change to one
    makes every rule of its root a subject, with the shared path among its files. A file a rule keeps for
    another to source (`../<rule>/<file>`) makes the rules that name it subjects too. Such a change runs the
    cases but is not an edit of the rule, so a legacy rule with no case is not refused for it.

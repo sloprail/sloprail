@@ -50,8 +50,6 @@ path_subject() {
       return 0
     fi
   fi
-  # config.yaml is project settings, not code a case runs: it belongs to no subject (the rule's match excludes it)
-  [ "$rest" = config.yaml ] && return 1
   case "$a" in
     gate | file-guard | context)
       if [ -n "$b" ] && [ -n "$c" ]; then
@@ -60,7 +58,7 @@ path_subject() {
       fi
       ;;
   esac
-  # any other file of the `.sloprail/` (a shared lib/, schemas/, a stray file) is no rule's own: it belongs to
+  # any other file of the `.sloprail/` (a shared lib/, schemas/, config.yaml, a stray file) is no rule's own: it belongs to
   # the root's marker, `<root>/.sloprail`, which subjects.sh fans out to every rule of the root
   printf '%s.sloprail\n' "$root"
 }
