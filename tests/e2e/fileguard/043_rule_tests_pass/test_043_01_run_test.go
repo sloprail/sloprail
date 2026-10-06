@@ -51,13 +51,15 @@ func TestT043_04_UntouchedRuleIsNotRefused(t *testing.T) {
 	}
 }
 
-// T043_05: a change to a test only runs that test: the base's broken case, untouched, does not refuse it.
-func TestT043_05_TestsOnlyRunsTheChangedCase(t *testing.T) {
+// T043_05: a change to a case judges its rule alone: every case of that rule runs (the base's broken sibling is
+// refused, named; the edited good one is not), and no case of another rule does.
+func TestT043_05_CaseChangeRunsItsRuleOnly(t *testing.T) {
 	e, proj := scopeEnv(t)
 	e.WriteExecutable(proj, ".sloprail/gate/notes/tests/good/test.sh", passCase+"# a note\n")
 	e.CommitAll(proj, "edit the good case")
-	if got := strings.Join(e.CheckRunRange(proj, "s-043", "origin/main", "HEAD"), "\n"); got != "" {
-		t.Fatalf("a tests-only change ran a case it did not touch:\n%s", got)
+	got := strings.Join(e.CheckRunRange(proj, "s-043", "origin/main", "HEAD"), "\n")
+	if !strings.Contains(got, "gate/notes:broken: fail") || strings.Contains(got, "gate/notes:good") || !strings.Contains(got, "--rule gate/notes") {
+		t.Fatalf("a case change did not judge its rule's cases, or named the wrong one:\n%s", got)
 	}
 }
 

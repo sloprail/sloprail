@@ -54,6 +54,8 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null 2
 
 id="$(printf '%s' "$payload" | jq -r '.subject.id // ""')"
 [ -n "$id" ] || refuse "the changeset names no rule, so the sr-test cases could not be chosen"
+# a root's marker (a shared file of a root with no rule) has no case to run
+if is_marker "$id"; then exit 0; fi
 rule_split "$id" || refuse "the subject $id is no rule folder, so the sr-test cases could not be chosen"
 nfiles="$(printf '%s' "$payload" | jq -r '.subject.files | length')" ||
   refuse "the subject's files could not be read, so the sr-test cases could not be chosen"

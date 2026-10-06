@@ -33,7 +33,11 @@ while IFS= read -r -d '' flag && IFS= read -r -d '' p; do
   id="$(path_subject "$p")" || continue
   if is_marker "$id"; then
     # a shared file (lib/, schemas/, ...) can break the case of any rule of its root: every rule of the root is
-    # a subject, with the shared path among its files
+    # a subject, with the shared path among its files. The root's own marker is a subject too: a root with no
+    # rule still needs one for the selected file (it has nothing to run and passes)
+    ids+=("$id")
+    paths+=("$p")
+    real+=("$flag")
     while IFS= read -r r; do
       [ -n "$r" ] || continue
       ids+=("$r")
@@ -67,6 +71,19 @@ done
 
 out='[]'
 for id in ${uniq[@]+"${uniq[@]}"}; do
+  if is_marker "$id"; then
+    mroot="$(marker_root "$id")"
+    msel=()
+    i=0
+    for other in "${ids[@]}"; do
+      [ "$other" = "$id" ] && [ "${real[$i]}" = 1 ] && msel+=("${paths[$i]}")
+      i=$((i + 1))
+    done
+    files="$(jq -nc '$ARGS.positional' --args ${msel[@]+"${msel[@]}"})"
+    fp="$({ shared_files "$mroot"; plugin_manifest "$mroot"; } | files_sha)"
+    out="$(printf '%s' "$out" | jq -c --arg c "$id" --argjson f "$files" --arg fp "$fp" '. + [{id: $c, files: $f, fingerprint: $fp}]')"
+    continue
+  fi
   rule_split "$id" || continue
   cases="$(rule_cases "$id")"
   sel=()
