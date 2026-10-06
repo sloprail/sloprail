@@ -1,0 +1,20 @@
+# `sr-checks run` starts a model judge for every subject whose verdict is not stored, and a run
+# over a big range costs real money: in one project's two days of work, judge runs cost about
+# $1.3k, and much of it came from sub-agents each running sr-checks again after every fix. Only
+# the session the user talks to should decide when a range is final and worth judging.
+#
+# Refused: `sr-checks run` (or `sr checks run`) from inside a sub-agent. The hook payload names
+# the sub-agent (Claude Code's agent_id), and the engine hands it to the check as SR_AGENT_ID,
+# empty in the main session. Everything else passes: `sr-checks verify` and `show` ask no
+# model, and the main session may run anything.
+#
+# Ships off. The user said: "you can have it in this plugin disabled by default and then enabled
+# explicitly in our tool repos." A project opts in with
+# `enabled: [sloprail/gate/no-subagent-check-runs]` in .sloprail/config.yaml.
+enabled: false
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, (.bin endsWith "sr-checks" or .bin endsWith "/sr" or .bin == "sr") and any(.argv, # == "run"))
+checks:
+  - script: ./refuse.sh
