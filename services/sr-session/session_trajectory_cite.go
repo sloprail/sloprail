@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -192,13 +191,15 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 	case 0:
 		// No match: nothing on stdout, exit 1. Silent on stdout is the contract —
 		// a script tests the exit code, and printing a candidate here would be a
-		// false citation. stderr may say why a sub-agent's quote of "the user"
-		// is not there: it quoted its parent's prompt, or never saw the user.
-		if slices.Contains(sources, transcript.SourceUser) {
-			if hint := transcript.UnresolvedUserHint(path, quote); hint != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the quote is not in the user's messages. "+hint)
-			}
+		// false citation. stderr always says so, and why when it can: a
+		// sub-agent quoted its parent's prompt, or the words are in a tool result
+		// the pool leaves out (sloprail's own output, a sub-agent's reply). A bare
+		// exit 1 sent agents hunting for a typo in a verbatim quote.
+		msg := fmt.Sprintf("sloprail: the quote is not in the %s of this session word for word (only whitespace may differ)", poolNames(sources))
+		if hint := transcript.UnresolvedHint(path, quote, sources); hint != "" {
+			msg = fmt.Sprintf("sloprail: the quote does not resolve in the %s of this session. %s", poolNames(sources), hint)
 		}
+		fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		os.Exit(citeNoMatch)
 	case 1:
 		fmt.Fprintf(cmd.OutOrStdout(), "%s:%d\n", matches[0].Path, matches[0].Line)
@@ -266,4 +267,18 @@ func parseSourceTypes(flag string) ([]transcript.SourceType, error) {
 			transcript.SourceUser, transcript.SourceToolResult)
 	}
 	return sources, nil
+}
+
+// poolNames says which pools a cite searched, for its no-match message.
+func poolNames(sources []transcript.SourceType) string {
+	var names []string
+	for _, s := range sources {
+		switch s {
+		case transcript.SourceUser:
+			names = append(names, "user's messages")
+		case transcript.SourceToolResult:
+			names = append(names, "tool output")
+		}
+	}
+	return strings.Join(names, " or ")
 }
