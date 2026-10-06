@@ -146,8 +146,13 @@ func TestT029_03_CiteNoMatchExitsOneAndIsSilent(t *testing.T) {
 	if res.Code != 1 {
 		t.Fatalf("a no-match exited %d, want 1:\n%s", res.Code, res.Output)
 	}
-	if strings.TrimSpace(res.Output) != "" {
-		t.Fatalf("a no-match printed to stdout, which must be silent:\n%q", res.Output)
+	// Output carries stdout and stderr together. No candidate may be printed (a
+	// false citation); the only thing said is the stderr notice of the miss (#295).
+	if strings.Contains(res.Output, path+":") {
+		t.Fatalf("a no-match printed a citation, which must be silent on stdout:\n%q", res.Output)
+	}
+	if !strings.Contains(res.Output, "the quote is not in the user's messages") {
+		t.Fatalf("a no-match must say on stderr that the quote is not there:\n%q", res.Output)
 	}
 }
 
@@ -252,8 +257,8 @@ func TestT029_05_CiteDoesNotMatchAnyQuestion(t *testing.T) {
 			t.Fatalf("citing question text %q exited %d, want 1 (a question is not the user's words):\n%s",
 				q, res.Code, res.Output)
 		}
-		if strings.TrimSpace(res.Output) != "" {
-			t.Fatalf("citing question %q printed something, must be silent:\n%q", q, res.Output)
+		if strings.Contains(res.Output, path+":") {
+			t.Fatalf("citing question %q printed a citation, must be silent on stdout:\n%q", q, res.Output)
 		}
 	}
 }
