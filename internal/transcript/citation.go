@@ -279,6 +279,26 @@ func UnresolvedUserHint(path, quote string) string {
 	return unresolvedUserHint(path, quote, false)
 }
 
+// UnresolvedHint is what to say when quote resolved in none of sources in the
+// session whose record is at path: why the user pool missed it (see
+// UnresolvedUserHint) and, for the tool_result pool, which excluded kind of
+// tool result the words sit in (excludedResultHint). "" when there is nothing
+// specific to say — the words are simply not there.
+func UnresolvedHint(path, quote string, sources []SourceType) string {
+	var hints []string
+	if wants(sources, SourceUser) {
+		if h := unresolvedUserHint(path, quote, false); h != "" {
+			hints = append(hints, h)
+		}
+	}
+	if wants(sources, SourceToolResult) {
+		if h := excludedResultHint(path, quote, isSubagentRecord(path)); h != "" {
+			hints = append(hints, h)
+		}
+	}
+	return strings.Join(hints, ". ")
+}
+
 func unresolvedUserHint(path, quote string, subagent bool) string {
 	sub := subagent || isSubagentRecord(path)
 	inPrompt := dispatchPromptContains(path, quote)

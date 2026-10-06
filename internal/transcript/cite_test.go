@@ -730,3 +730,34 @@ func TestCiteResolvesAMidTurnQueuedCommandWithImage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, matches, "image data is not words")
 }
+
+// A quote of sloprail's own output (sr-checks prints judges' model-written
+// reasoning) is left out of the tool_result pool on purpose; the miss must say
+// so, both from `cite` (UnresolvedHint) and from a commit trailer resolved across
+// sessions — a bare "not there word for word" sent agents hunting a typo in a
+// verbatim quote (#295).
+func TestUnresolvedHint_NamesSloprailOutputAsExcluded(t *testing.T) {
+	saved := CommandEchoes
+	t.Cleanup(func() { CommandEchoes = saved })
+	CommandEchoes = func(c string) bool { return len(c) >= 9 && c[:9] == "sr-checks" }
+
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "judge the range"),
+		toolUseMsg("a1", "u1", "Bash", "sr-checks run --base A --head B"),
+		toolResultMsg("u2", "a1", "sloprail: file-guards evaluated in 23.425s"),
+	)
+	quote := "file-guards evaluated in 23.425s"
+
+	got, err := CiteInSession(path, quote, []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	assert.Empty(t, got, "sloprail's own output is not tool output a citation grounds on")
+	assert.Contains(t, UnresolvedHint(path, quote, []SourceType{SourceToolResult}), "sloprail's own tools")
+	assert.Empty(t, UnresolvedHint(path, "never printed anywhere", []SourceType{SourceToolResult}),
+		"words that are nowhere get no hint")
+
+	_, err = ResolveCitationAcrossSessions(path, "", CitationRequest{Quote: quote, SourceTypes: []SourceType{SourceToolResult}})
+	var rerr *ResolutionError
+	require.ErrorAs(t, err, &rerr)
+	assert.Contains(t, rerr.Msg, "sloprail's own tools", "the trailer's refusal names why, not a typo")
+}

@@ -54,6 +54,14 @@ func ResolveCitationAcrossSessions(current, projectDir string, req CitationReque
 		return ResolveCitation(path, req)
 	}
 	msg := fmt.Sprintf("citation %s does not resolve in any session of this project: the quote is not there word for word", req)
+	// The words may be there but in text the pool leaves out (sloprail's own
+	// output, a sub-agent's reply, ...): say which, or the caller hunts for a
+	// typo in a quote that is verbatim.
+	if current != "" {
+		if hint := UnresolvedHint(current, req.Quote, req.SourceTypes); hint != "" {
+			msg = fmt.Sprintf("citation %s does not resolve in any session of this project. %s", req, hint)
+		}
+	}
 	if len(unreadable) > 0 {
 		msg += "; could not read: " + strings.Join(unreadable, ", ")
 	}
