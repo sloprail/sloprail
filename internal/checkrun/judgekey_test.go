@@ -107,7 +107,7 @@ func TestGuardKey_ACitationRewordChangesTheKey(t *testing.T) {
 		msg := keyPayload()
 		msg.Changeset.Commits[0].Subject, msg.Changeset.Commits[0].Body = "reworded", "and a body"
 		assert.Equal(t, base, key(t, g, c, msg, "/t1", ""), "a commit's subject and body are never input")
-		// Every check can read changeset.citations, so a reword moves every guard's key.
+		// The subject's own grounding quote is what its checks receive, so a reword moves its key.
 		assert.NotEqual(t, base, key(t, g, c, r, "/t1", ""))
 	}
 }

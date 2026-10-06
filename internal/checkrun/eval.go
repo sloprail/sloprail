@@ -616,7 +616,12 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		if tree != nil {
 			treePath = tree.Path
 		}
-		req := ev.requestFor(g, r, cs, sub, treePath, unresolved)
+		// A subject's checks receive the citations that ground that subject, not the range's:
+		// the key covers what a check receives, so a commit that touches none of its files
+		// (and the quotes it carries) is no input of it.
+		subCS := cs
+		subCS.Citations = append([]changeset.Citation{}, cs.ForSubject(sub)...) // never null: a check may iterate it
+		req := ev.requestFor(g, r, subCS, sub, treePath, unresolved)
 		// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
 		// never reads as a pass.
 		subRun := run
@@ -1367,29 +1372,24 @@ func withoutSession(req dispatchcore.Request) dispatchcore.Request {
 // hash (part of the cache key) already covers every script and template of the rule folder
 // and the subject id is the key's own; this adds what the verdict is about: the content of
 // the subject's files, its fingerprint from the `subjects:` script (when it gave one), and,
-// the quotes of the range's citations (and, for a rule that requires one, which ground the subject). No commit
+// the quotes of the citations that ground the subject (the only ones its checks receive). No commit
 // SHA, branch, session or snapshot path is in it, so two branches with identical content share
 // their verdicts and the run that stored one and the verify that reads it compute one key.
 func guardKey(g declaration.FileGuard, payload changeset.Payload) (string, error) {
 	// The key is over the trailers' quotes as `verify` reads them (trusted, each in its own
 	// pool), never over how a transcript resolved them: a quote `run` could not resolve
 	// (ambiguous, or said in no session) is still a quote of the range, and a key that left it
-	// out would never be the one `verify` computes. Every check can read the range's
-	// citations, so they are in every guard's key, not only a `require: citation` one's.
+	// out would never be the one `verify` computes.
 	trusted := payload
 	cs := trusted.Changeset
 	TrustTrailers(&cs)
 	trusted.Changeset = cs
-	citations := changeset.RangeCitationPart(cs)
-	for _, r := range g.Require {
-		if r.Citation != nil {
-			part, err := changeset.CitationPart(trusted)
-			if err != nil {
-				return "", err
-			}
-			citations += part
-			break
-		}
+	// Only the citations that ground THIS subject (CitationPart) are in the key: they are all
+	// a check receives of the range's citations. A commit touching none of the subject's
+	// files, and the quote it carries, never moves it.
+	citations, err := changeset.CitationPart(trusted)
+	if err != nil {
+		return "", err
 	}
 	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint, citations), nil
 }

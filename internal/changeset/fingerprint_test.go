@@ -166,17 +166,6 @@ func TestGuardKey_FQNSubjectIsItsFingerprint(t *testing.T) {
 	assert.NotEqual(t, key("2", "v1"), key("2", "v2"), "its fingerprint moved")
 }
 
-func TestRangeCitationPart_QuotesMoveItAndDuplicatesDoNot(t *testing.T) {
-	a, b := samplePayload(), samplePayload()
-	assert.Equal(t, RangeCitationPart(a.Changeset), RangeCitationPart(b.Changeset))
-	b.Changeset.Citations = append(b.Changeset.Citations, Citation{Citation: transcript.Citation{Quote: "better words", SourceTypes: []transcript.SourceType{transcript.SourceUser}}})
-	assert.NotEqual(t, RangeCitationPart(a.Changeset), RangeCitationPart(b.Changeset))
-	b.Changeset.Citations = append(b.Changeset.Citations, b.Changeset.Citations[0])
-	c := samplePayload()
-	c.Changeset.Citations = append(c.Changeset.Citations, b.Changeset.Citations[1])
-	assert.Equal(t, RangeCitationPart(c.Changeset), RangeCitationPart(b.Changeset))
-}
-
 // A deletion is keyed by what was deleted: the same path deleted with other old content is another change.
 func TestFilesPart_DeletedFileKeyHasItsOldBlob(t *testing.T) {
 	mk := func(oldBlob, oldContent string) Payload {
