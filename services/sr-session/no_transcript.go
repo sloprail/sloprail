@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -64,6 +65,19 @@ func skipWithoutTranscript(cmd *cobra.Command, p HookPayload, atStart bool) bool
 	return true
 }
 
+// noTranscriptMarkerTTL is how long a session's "told already" marker is kept.
+const noTranscriptMarkerTTL = 7 * 24 * time.Hour
+
+// sweepNoTranscriptMarkers removes the markers of sessions long over, so they do not pile up.
+func sweepNoTranscriptMarkers(dir string) {
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > noTranscriptMarkerTTL {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
 // firstNoTranscriptNotice reports whether this session has not been told yet, and records that it
 // now has. A marker that cannot be kept means telling again, never staying silent.
 func firstNoTranscriptNotice(sessionID string) bool {
@@ -78,6 +92,7 @@ func firstNoTranscriptNotice(sessionID string) bool {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return true
 	}
+	sweepNoTranscriptMarkers(dir)
 	f, err := os.OpenFile(filepath.Join(dir, sessionID), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return !errors.Is(err, fs.ErrExist)
