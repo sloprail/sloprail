@@ -262,3 +262,54 @@ func combinedStatus(s string) bool {
 	}
 	return true
 }
+
+// FileHistoryResult is what one read of a range's history says about each file (by Path).
+type FileHistoryResult struct {
+	// Commits changed the file, oldest first (FileCommits).
+	Commits map[string][]string
+	// Substantive is the subset whose change is more than whitespace (SubstantiveFileCommits).
+	Substantive map[string][]string
+	// SameAsHead is the subset of Substantive whose result is byte-identical to the file as it
+	// is at head: the states a later commit may have restored.
+	SameAsHead map[string][]string
+}
+
+// FileHistory is FileCommits, SubstantiveFileCommits and the commits leaving the file as head
+// has it, from one read of the history. headBlobs maps each file's Path to its object id at
+// head; a file without one has no SameAsHead entry.
+func FileHistory(dir, base, head string, files []FileRef, headBlobs map[string]string) (FileHistoryResult, error) {
+	touches, err := fileTouches(dir, base, head, files)
+	if err != nil {
+		return FileHistoryResult{}, err
+	}
+	res := FileHistoryResult{
+		Commits:     make(map[string][]string, len(files)),
+		Substantive: make(map[string][]string, len(files)),
+		SameAsHead:  make(map[string][]string, len(files)),
+	}
+	for p, ts := range touches {
+		shas, subst, same := make([]string, len(ts)), []string{}, []string{}
+		var want string
+		wantKnown := false
+		if oid := headBlobs[p]; oid != "" {
+			if c, err := BlobRaw(dir, oid); err == nil {
+				want, wantKnown = c, true
+			}
+		}
+		for i, t := range ts {
+			shas[i] = t.sha
+			if !t.substantive(dir) {
+				continue
+			}
+			subst = append(subst, t.sha)
+			if !wantKnown || t.status == 'D' {
+				continue
+			}
+			if got, err := BlobRaw(dir, t.sha+":"+t.path); err == nil && got == want {
+				same = append(same, t.sha)
+			}
+		}
+		res.Commits[p], res.Substantive[p], res.SameAsHead[p] = shas, subst, same
+	}
+	return res, nil
+}
