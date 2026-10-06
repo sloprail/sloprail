@@ -19,7 +19,15 @@ import (
 
 // SchemaDir is the schema version (a date) and the single directory the store
 // reads and writes. A ref carrying a newer v<date>/ directory is refused.
-const SchemaDir = "v2026-10-03"
+//
+// v2026-10-07 re-keyed the records (key schema sr2: no rule hash in a key). The previous
+// directory, v2026-10-03, is read by MigrateKeys once and left in place; an older binary that
+// meets the new directory refuses it (ErrFutureSchema), so CI's sr-checks is upgraded with
+// the engine that writes it.
+const SchemaDir = "v2026-10-07"
+
+// legacySchemaDir is the directory whose records were keyed under sr1; see MigrateKeys.
+const legacySchemaDir = "v2026-10-03"
 
 // ErrFutureSchema means the ref holds a schema directory newer than this binary.
 var ErrFutureSchema = errors.New("checkcache: ref uses a newer schema; upgrade sloprail")
@@ -73,7 +81,9 @@ type Store struct {
 	frozenTip string
 	frozenSn  *snapshot
 
-	beforeGcPush func() // test seam: runs after Gc committed locally, before it pushes
+	beforeGcPush func()                  // test seam: runs after Gc committed locally, before it pushes
+	keyID        func(Run, Check) string // test seam: put files results under this id (the previous key schema)
+	dir          string                  // test seam: the schema directory this store speaks (default SchemaDir)
 
 	pushErr error // why the last push of local results failed; they are retried on the next sync or put
 }
@@ -115,6 +125,14 @@ type snapshot struct {
 type manifest struct {
 	Schema string `json:"schema"`
 	Dict   string `json:"dict"` // sha of the dictionary new segments use; "" = none
+}
+
+// schemaDir is the directory this store reads and writes.
+func (s *Store) schemaDir() string {
+	if s.dir != "" {
+		return s.dir
+	}
+	return SchemaDir
 }
 
 // FreezeTip reads the local ref once and answers every later read from that commit and its
@@ -427,6 +445,12 @@ func (s *Store) snapshotAt(tip string) (*snapshot, error) {
 }
 
 func (s *Store) readSnapshotAt(tip string) (*snapshot, error) {
+	return s.readSnapshotDir(tip, s.schemaDir(), true)
+}
+
+// readSnapshotDir reads the index of one schema directory of the commit. Only the directory
+// this build writes is cached in process and on disk; a legacy one is read afresh.
+func (s *Store) readSnapshotDir(tip, schemaDir string, cached bool) (*snapshot, error) {
 	if tip == "" {
 		return &snapshot{}, nil
 	}
@@ -441,10 +465,10 @@ func (s *Store) readSnapshotAt(tip string) (*snapshot, error) {
 			continue
 		}
 		name := ln[tab+1:]
-		if schemaRe.MatchString(name) && name > SchemaDir {
-			return nil, fmt.Errorf("%w (found %s, this build speaks %s)", ErrFutureSchema, name, SchemaDir)
+		if schemaRe.MatchString(name) && name > s.schemaDir() {
+			return nil, fmt.Errorf("%w (found %s, this build speaks %s)", ErrFutureSchema, name, s.schemaDir())
 		}
-		if name == SchemaDir {
+		if name == schemaDir {
 			f := strings.Fields(ln[:tab])
 			if len(f) == 3 {
 				dirOid = f[2]
@@ -454,16 +478,19 @@ func (s *Store) readSnapshotAt(tip string) (*snapshot, error) {
 	if dirOid == "" {
 		return &snapshot{}, nil
 	}
-	if s.snap != nil && s.snap.DirTree == dirOid {
-		return s.snap, nil
-	}
-	prior := s.snap
-	if prior == nil {
-		prior = s.loadCache()
-	}
-	if prior != nil && prior.DirTree == dirOid {
-		s.snap = prior
-		return prior, nil
+	var prior *snapshot
+	if cached {
+		if s.snap != nil && s.snap.DirTree == dirOid {
+			return s.snap, nil
+		}
+		prior = s.snap
+		if prior == nil {
+			prior = s.loadCache()
+		}
+		if prior != nil && prior.DirTree == dirOid {
+			s.snap = prior
+			return prior, nil
+		}
 	}
 	known := map[string]*segIdx{}
 	if prior != nil {
@@ -538,8 +565,10 @@ func (s *Store) readSnapshotAt(tip string) (*snapshot, error) {
 		sn.ManifestDict = m.Dict
 		sn.HasManifest = true
 	}
-	s.snap = sn
-	s.saveCache(sn)
+	if cached {
+		s.snap = sn
+		s.saveCache(sn)
+	}
 	return sn, nil
 }
 
@@ -677,6 +706,9 @@ func (s *Store) Put(runs []Run) error {
 
 func (s *Store) put(runs []Run) error {
 	_ = s.sync() // an unreachable remote is not a reason to lose results: they go in the local ref
+	if _, err := s.migrateKeys(); err != nil {
+		return err
+	}
 	tip := s.tip()
 	sn, err := s.snapshotAt(tip)
 	if err != nil {
@@ -686,7 +718,7 @@ func (s *Store) put(runs []Run) error {
 	if err != nil {
 		return err
 	}
-	name, zst, idx, err := encodeSegment(runs, d)
+	name, zst, idx, err := encodeSegmentIDs(runs, d, s.keyID)
 	if err != nil {
 		return err
 	}
@@ -716,7 +748,7 @@ func (s *Store) put(runs []Run) error {
 			f[k] = v
 		}
 		if !sn.HasManifest {
-			m, _ := json.Marshal(manifest{Schema: SchemaDir, Dict: d.sha})
+			m, _ := json.Marshal(manifest{Schema: s.schemaDir(), Dict: d.sha})
 			f["MANIFEST.json"] = m
 		}
 		commit, err := s.commit(tip, false, f, fmt.Sprintf("checks: +%d runs", len(runs)))
@@ -799,7 +831,7 @@ func (s *Store) commitTree(parent string, readTree, fresh bool, entries map[stri
 	}
 	var info bytes.Buffer
 	for path, oid := range entries {
-		fmt.Fprintf(&info, "100644 %s\t%s/%s\n", oid, SchemaDir, path)
+		fmt.Fprintf(&info, "100644 %s\t%s/%s\n", oid, s.schemaDir(), path)
 	}
 	if _, err := s.g.run(info.Bytes(), env, "update-index", "--add", "--index-info"); err != nil {
 		return "", err

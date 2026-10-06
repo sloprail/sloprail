@@ -237,7 +237,7 @@ func decode(s string) map[string]any {
 // its run would re-roll the judge). A fail whose input left THIS range needs no clearing: no
 // lookup of this range asks for its key. The method stays so the Store keeps a10n's shape;
 // views still honour "resolves" runs an earlier build may have written.
-func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
+func (s *store) ResolveStale(rule, liveRunID string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return 0, s.writable()
@@ -323,7 +323,7 @@ func (s *store) PassedHeads(rule string) ([]string, error) {
 	return heads, rows.Err()
 }
 
-func (s *store) EffectiveRuns(rule, ruleHash string) ([]RunRef, error) {
+func (s *store) EffectiveRuns(rule string) ([]RunRef, error) {
 	runs, err := s.allRuns() // oldest first
 	if err != nil {
 		return nil, err
@@ -335,7 +335,7 @@ func (s *store) EffectiveRuns(rule, ruleHash string) ([]RunRef, error) {
 	byKey := map[string]*evaluation{}
 	var order []*evaluation
 	for _, r := range runs {
-		if r.Rule != rule || r.RuleHash != ruleHash || r.HeadRef == "" {
+		if r.Rule != rule || r.HeadRef == "" {
 			continue
 		}
 		if _, only := r.Metadata[resolvesKey]; only {

@@ -46,29 +46,29 @@ type Store interface {
 	// RecordCheck stores one check of a run — replacing the same (subject, kind)
 	// of that run — with its findings, and returns the check's id.
 	RecordCheck(runID string, c CheckRecord) (string, error)
-	// CachedCheck finds a stored pass or fail of the rule at this definition (ruleHash) for
+	// CachedCheck finds a stored pass or fail of the rule, at whatever definition, for
 	// (subject, kind, fingerprint): the most recent one. A fail is returned like a pass — it
 	// is terminal and is replayed, never re-judged until the input changes. An empty
-	// fingerprint (a script) never hits. The rule and its hash are part of the backend's key.
-	CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error)
+	// fingerprint (a script) never hits. The rule, and not its definition, is part of the backend's key.
+	CachedCheck(rule, subject, kind, fingerprint string) (CachedCheck, bool, error)
 	// CachedByTrees finds, for a key that missed, a stored pass or fail of the same rule
-	// definition and subject from a complete run whose base and head trees equal these.
-	CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree string) (CachedCheck, bool, error)
+	// (at whatever definition) and subject from a complete run whose base and head trees equal these.
+	CachedByTrees(rule, subject, kind, baseTree, headTree string) (CachedCheck, bool, error)
 	// ResolveStale does nothing and returns 0: a stored fail is a fact about content that
 	// other branches share, so it is never marked stale (see the implementation).
-	ResolveStale(rule, ruleHash, liveRunID string) (int, error)
+	ResolveStale(rule, liveRunID string) (int, error)
 	// PassedHeads lists, newest first, the head_ref of each of the rule's runs, at any
 	// rule hash, that passed: no engine error and no failing check. The
 	// caller picks the first still reachable — that is the rule's watermark.
 	PassedHeads(rule string) ([]string, error)
 	// EffectiveRuns is the input of a10n's GetEffectiveBase, newest first: the range (base and
-	// head) of each evaluation of the rule AT THIS DEFINITION (ruleHash) that passed as a whole.
+	// head) of each evaluation of the rule, at whatever definition, that passed as a whole.
 	// One evaluation is every run of one batch over one head (a guard has one run per
 	// subject), and it passed when each of them is complete, no engine failure and holds no
 	// failing, erroring or interrupted check: one subject's FAIL keeps the evaluation from
 	// advancing the base. The caller chains them: an evaluation covers its base..head, so it
 	// advances a base only when that base lies inside it.
-	EffectiveRuns(rule, ruleHash string) ([]RunRef, error)
+	EffectiveRuns(rule string) ([]RunRef, error)
 	// RunRefs lists, for one rule, the runs that were refused and the runs that
 	// passed, each with the commit range it judged and when it ran. See RunRefs.
 	RunRefs(rule string) (RunRefs, error)

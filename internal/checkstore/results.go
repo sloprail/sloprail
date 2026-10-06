@@ -200,17 +200,17 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 	return run.ID + "/" + c.Subject + "/" + c.Kind, nil
 }
 
-// CachedCheck is a10n's CacheHit on (rule, rule hash, subject, kind, fingerprint), extended to
+// CachedCheck is a10n's CacheHit on (rule, subject, kind, fingerprint), extended to
 // read a fail as well as a pass: a fail is terminal, and replaying it is what keeps a judge
 // from being asked again about input that has not changed.
-func (s *store) CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (CachedCheck, bool, error) {
+func (s *store) CachedCheck(rule, subject, kind, fingerprint string) (CachedCheck, bool, error) {
 	if fingerprint == "" {
 		return CachedCheck{}, false, nil
 	}
 	if err := s.live(); err != nil {
 		return CachedCheck{}, false, err
 	}
-	key := checkcache.Key{Rule: rule, RuleHash: ruleHash, Kind: kind, Subject: subject, Fingerprint: fingerprint}
+	key := checkcache.Key{Rule: rule, Kind: kind, Subject: subject, Fingerprint: fingerprint}
 	// What this process recorded first: it is newer than anything the backend holds.
 	s.mu.Lock()
 	var best *checkcache.Found
@@ -246,11 +246,11 @@ func (s *store) CachedCheck(rule, ruleHash, subject, kind, fingerprint string) (
 	}}, true, nil
 }
 
-// CachedByTrees reads, when a key misses, the verdict of a COMPLETE run of the same rule at
-// the same definition whose base and head TREES equal these: identical trees are an identical
+// CachedByTrees reads, when a key misses, the verdict of a COMPLETE run of the same rule
+// (at whatever definition) whose base and head TREES equal these: identical trees are an identical
 // net change, whichever commits (a squash of a judged branch) carry it. The newest such pass
 // or fail wins; a run without trees, or with an engine error, never matches.
-func (s *store) CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree string) (CachedCheck, bool, error) {
+func (s *store) CachedByTrees(rule, subject, kind, baseTree, headTree string) (CachedCheck, bool, error) {
 	if baseTree == "" || headTree == "" {
 		return CachedCheck{}, false, nil
 	}
@@ -259,7 +259,7 @@ func (s *store) CachedByTrees(rule, ruleHash, subject, kind, baseTree, headTree 
 	}
 	var best *checkcache.Found
 	consider := func(run checkcache.Run) {
-		if !run.Complete || run.ExitCode != 0 || run.Error != "" || run.Rule != rule || run.RuleHash != ruleHash ||
+		if !run.Complete || run.ExitCode != 0 || run.Error != "" || run.Rule != rule ||
 			run.BaseTree != baseTree || run.HeadTree != headTree {
 			return
 		}

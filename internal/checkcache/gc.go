@@ -133,6 +133,47 @@ func (s *Store) maybeGc() {
 	}
 }
 
+// compactedFiles is the layout of the runs in segments of SegmentTarget, with a dictionary
+// trained on them when there are TrainMin or more: the manifest, dictionary and segments of one
+// schema directory. st.Retrained and st.SegsAfter are filled in.
+func (s *Store) compactedFiles(runs []Run, st *GcStats) (map[string][]byte, error) {
+	d, err := s.plainDict()
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) >= TrainMin {
+		var samples [][]byte
+		step := len(runs)/4000 + 1
+		for i := 0; i < len(runs); i += step {
+			raw, _ := json.Marshal(runs[i])
+			samples = append(samples, raw)
+		}
+		if tb, err := trainDict(samples); err == nil {
+			if nd, err := newZdict(tb); err == nil {
+				s.dicts[nd.sha] = nd
+				d, st.Retrained = nd, true
+			}
+		}
+	}
+	files := map[string][]byte{}
+	if d.sha != "" {
+		files["dict/"+d.sha+".zdict"] = d.bytes
+	}
+	m, _ := json.Marshal(manifest{Schema: s.schemaDir(), Dict: d.sha})
+	files["MANIFEST.json"] = m
+	for lo := 0; lo < len(runs); lo += SegmentTarget {
+		hi := min(lo+SegmentTarget, len(runs))
+		name, zst, idx, err := encodeSegment(runs[lo:hi], d)
+		if err != nil {
+			return nil, err
+		}
+		files["seg/"+name+".zst"] = zst
+		files["seg/"+name+".idx"] = idx
+		st.SegsAfter++
+	}
+	return files, nil
+}
+
 func (s *Store) gc() (GcStats, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -161,39 +202,9 @@ func (s *Store) gc() (GcStats, error) {
 		sort.Strings(ids)
 		st := GcStats{Records: len(ids), Duplicates: total - len(ids), SegsBefore: len(sn.Segs)}
 
-		d, err := s.plainDict()
+		files, err := s.compactedFiles(runs, &st)
 		if err != nil {
 			return st, err
-		}
-		if len(runs) >= TrainMin {
-			var samples [][]byte
-			step := len(runs)/4000 + 1
-			for i := 0; i < len(runs); i += step {
-				raw, _ := json.Marshal(runs[i])
-				samples = append(samples, raw)
-			}
-			if tb, err := trainDict(samples); err == nil {
-				if nd, err := newZdict(tb); err == nil {
-					s.dicts[nd.sha] = nd
-					d, st.Retrained = nd, true
-				}
-			}
-		}
-		files := map[string][]byte{}
-		if d.sha != "" {
-			files["dict/"+d.sha+".zdict"] = d.bytes
-		}
-		m, _ := json.Marshal(manifest{Schema: SchemaDir, Dict: d.sha})
-		files["MANIFEST.json"] = m
-		for lo := 0; lo < len(runs); lo += SegmentTarget {
-			hi := min(lo+SegmentTarget, len(runs))
-			name, zst, idx, err := encodeSegment(runs[lo:hi], d)
-			if err != nil {
-				return st, err
-			}
-			files["seg/"+name+".zst"] = zst
-			files["seg/"+name+".idx"] = idx
-			st.SegsAfter++
 		}
 		// A NEW commit on top of the tip whose tree is the compacted layout: the shared history is
 		// never rewritten, so the push below is an ordinary fast-forward (a concurrent writer's

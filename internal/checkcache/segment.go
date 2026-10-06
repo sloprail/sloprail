@@ -139,13 +139,21 @@ type entry struct {
 // encodeSegment compresses runs into a segment and its index. Duplicate keys within the
 // batch resolve by Newer.
 func encodeSegment(runs []Run, d *zdict) (name string, zst, idx []byte, err error) {
+	return encodeSegmentIDs(runs, d, nil)
+}
+
+// encodeSegmentIDs is encodeSegment with the check id function given (nil: the current key's).
+func encodeSegmentIDs(runs []Run, d *zdict, idOf func(Run, Check) string) (name string, zst, idx []byte, err error) {
+	if idOf == nil {
+		idOf = func(r Run, c Check) string { return r.CheckKey(c).ID() }
+	}
 	best := map[string]entry{}
 	for ri, r := range runs {
 		for pi, c := range r.Checks {
 			if !Findable(c) {
 				continue
 			}
-			id := r.CheckKey(c).ID()
+			id := idOf(r, c)
 			if p, ok := best[id]; ok && !Newer(Found{Run: r, Check: c}, Found{Run: runs[p.run], Check: runs[p.run].Checks[p.pos]}) {
 				continue
 			}
@@ -272,7 +280,11 @@ func (s *segIdx) decodeAt(blob []byte, i int, d *zdict) (Found, error) {
 		return Found{}, fmt.Errorf("%w: %s entry names check %d of a run with %d", ErrCorrupt, s.Name, pos, len(r.Checks))
 	}
 	c := r.Checks[pos]
-	if k, _ := key16(r.CheckKey(c).ID()); k != s.Keys[i] {
+	key := r.CheckKey(c)
+	if k, _ := key16(key.ID()); k != s.Keys[i] {
+		if lk, _ := key16(legacyID(key, r.RuleHash)); lk == s.Keys[i] {
+			return Found{Run: r, Check: c}, nil
+		}
 		return Found{}, fmt.Errorf("%w: %s record does not match its index key", ErrCorrupt, s.Name)
 	}
 	return Found{Run: r, Check: c}, nil

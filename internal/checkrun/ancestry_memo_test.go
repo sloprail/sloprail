@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
@@ -30,13 +29,6 @@ func (f *evalFixture) manyRules(t *testing.T, n int) []declaration.FileGuard {
 	runGit(t, f.repo, "commit", "-m", "more rules")
 	f.base = runGit(t, f.repo, "rev-parse", "HEAD")
 	return guards
-}
-
-func (f *evalFixture) hashOf(t *testing.T, g declaration.FileGuard) string {
-	t.Helper()
-	h, err := changeset.RuleHashAt(f.repo, g.Dir, false)
-	require.NoError(t, err)
-	return h
 }
 
 // judgeOver judges the given rules over base..head (a run; verify when verify is set).
@@ -77,8 +69,8 @@ func TestAncestryMemo_SharedEvaluationAgreesWithOneEvaluationPerRule(t *testing.
 	shared := f.newEvaluation(t, f.results)
 	rng := f.rangeTo(t, f.base, c3)
 	for _, g := range guards {
-		alone := f.newEvaluation(t, f.results).effectiveBase(g, f.hashOf(t, g), rng)
-		got := shared.effectiveBase(g, f.hashOf(t, g), rng)
+		alone := f.newEvaluation(t, f.results).effectiveBase(g, rng)
+		got := shared.effectiveBase(g, rng)
 		assert.Equal(t, alone, got, g.Name)
 		if g.Name == narrow.Name {
 			assert.Equal(t, f.base, got.Base, "the narrow pass leaves base..c1 unjudged: nothing advances")
@@ -108,7 +100,7 @@ func TestAncestryMemo_AnUnrelatedBranchDoesNotInheritAnotherRangesAnswer(t *test
 		ev := f.newEvaluation(t, f.results) // one evaluation, both ranges, both orders
 		for _, g := range guards {
 			for _, rng := range order {
-				got := ev.effectiveBase(g, f.hashOf(t, g), rng)
+				got := ev.effectiveBase(g, rng)
 				if rng.Head == z {
 					assert.Equal(t, f.base, got.Base, "%s: c1 and c2 are not ancestors of z", g.Name)
 				} else {

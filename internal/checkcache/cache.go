@@ -21,16 +21,14 @@ import (
 )
 
 // SchemaVersion is the key schema. It is part of every key, so a change to how
-// fingerprints are derived never collides with an older result.
-const SchemaVersion = "sr1"
+// fingerprints are derived, or to what a key is made of, never collides with an older result.
+// sr2: the key no longer holds the rule's hash (sr1 did, see legacyID).
+const SchemaVersion = "sr2"
 
 // Key is what a check's result is a fact about.
 type Key struct {
 	// Rule is the rule's qualified name (<plugin>/file-guard/<name>).
 	Rule string `json:"rule"`
-	// RuleHash is the hash of the rule's definition (changeset.RuleHash): an edited
-	// rubric, script or template never reads an older verdict.
-	RuleHash string `json:"ruleHash"`
 	// Kind names the check inside the rule: check[1]:judge:./rubric.md.j2.
 	Kind string `json:"kind"`
 	// Subject is the unit judged. Today the one subject of a rule's checks is "changeset".
@@ -44,7 +42,19 @@ type Key struct {
 // keys can be re-cut into one another.
 func (k Key) ID() string {
 	h := sha256.New()
-	for _, part := range []string{SchemaVersion, k.Rule, k.RuleHash, k.Kind, k.Subject, k.Fingerprint} {
+	for _, part := range []string{SchemaVersion, k.Rule, k.Kind, k.Subject, k.Fingerprint} {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// legacyID is the id a key had under schema sr1, which also hashed the rule's definition.
+// Segments written then still carry those ids in their index; reading one back recognises it
+// (see segIdx.decodeAt) so an old store compacts instead of being called corrupt.
+func legacyID(k Key, ruleHash string) string {
+	h := sha256.New()
+	for _, part := range []string{"sr1", k.Rule, ruleHash, k.Kind, k.Subject, k.Fingerprint} {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}
@@ -84,7 +94,9 @@ type Run struct {
 	ID      string `json:"id"`
 	RunAt   string `json:"run_at"` // fixed-width UTC, so stamps compare as strings
 	BatchID string `json:"batch,omitempty"`
-	// Rule is the rule's qualified name; RuleHash its definition's hash.
+	// Rule is the rule's qualified name; RuleHash its definition's hash when the run was made.
+	// The hash is recorded for the trace only: a verdict's key never holds it, so a rule's
+	// logic changing does not void what was judged before.
 	Rule     string `json:"rule"`
 	RuleHash string `json:"ruleHash"`
 	BaseRef  string `json:"base_ref"`
@@ -110,7 +122,7 @@ type Run struct {
 
 // CheckKey is the key of one check of a run.
 func (r Run) CheckKey(c Check) Key {
-	return Key{Rule: r.Rule, RuleHash: r.RuleHash, Kind: c.Kind, Subject: c.Subject, Fingerprint: c.Fingerprint}
+	return Key{Rule: r.Rule, Kind: c.Kind, Subject: c.Subject, Fingerprint: c.Fingerprint}
 }
 
 // Found is the stored check for a key, with the run it was recorded in.

@@ -9,7 +9,7 @@ import (
 )
 
 func key(fp string) Key {
-	return Key{Rule: "file-guard/x", RuleHash: "h", Kind: "check[0]:judge:./r.md.j2", Subject: "changeset", Fingerprint: fp}
+	return Key{Rule: "file-guard/x", Kind: "check[0]:judge:./r.md.j2", Subject: "changeset", Fingerprint: fp}
 }
 
 func run(at string, checks ...Check) Run {
@@ -23,16 +23,36 @@ func judge(fp, status string) Check {
 func TestKey_EveryPartIsPartOfTheIdentity(t *testing.T) {
 	base := key("f")
 	for name, k := range map[string]Key{
-		"rule":        {Rule: "file-guard/y", RuleHash: "h", Kind: base.Kind, Subject: base.Subject, Fingerprint: "f"},
-		"rule hash":   {Rule: base.Rule, RuleHash: "h2", Kind: base.Kind, Subject: base.Subject, Fingerprint: "f"},
-		"kind":        {Rule: base.Rule, RuleHash: "h", Kind: "check[1]", Subject: base.Subject, Fingerprint: "f"},
-		"subject":     {Rule: base.Rule, RuleHash: "h", Kind: base.Kind, Subject: "a.go", Fingerprint: "f"},
+		"rule":        {Rule: "file-guard/y", Kind: base.Kind, Subject: base.Subject, Fingerprint: "f"},
+		"kind":        {Rule: base.Rule, Kind: "check[1]", Subject: base.Subject, Fingerprint: "f"},
+		"subject":     {Rule: base.Rule, Kind: base.Kind, Subject: "a.go", Fingerprint: "f"},
 		"fingerprint": key("g"),
 	} {
 		assert.NotEqual(t, base.ID(), k.ID(), name)
 	}
 	// Parts cannot be re-cut into one another.
-	assert.NotEqual(t, Key{Rule: "ab", RuleHash: "c"}.ID(), Key{Rule: "a", RuleHash: "bc"}.ID())
+	assert.NotEqual(t, Key{Rule: "ab", Kind: "c"}.ID(), Key{Rule: "a", Kind: "bc"}.ID())
+}
+
+// A verdict is a fact about its input: the rule's definition is not in the key, so editing the
+// rule's yaml, script or template (a different RuleHash on the run) reads the same verdict.
+func TestKey_TheRulesDefinitionIsNotPartOfTheIdentity(t *testing.T) {
+	c := judge("f", "pass")
+	old, edited := run("1", c), run("2", c)
+	old.RuleHash, edited.RuleHash = "before-the-edit", "after-the-edit"
+	assert.Equal(t, old.CheckKey(c), edited.CheckKey(c))
+	assert.Equal(t, old.CheckKey(c).ID(), edited.CheckKey(c).ID())
+
+	for _, impl := range implementations(t) {
+		require.NoError(t, impl.Put([]Run{old}))
+		got, err := impl.Lookup([]Key{edited.CheckKey(c)})
+		require.NoError(t, err)
+		assert.Len(t, got, 1, "the verdict reached under the old rule is found under the edited one")
+		changed := judge("g", "pass")
+		got, err = impl.Lookup([]Key{edited.CheckKey(changed)})
+		require.NoError(t, err)
+		assert.Empty(t, got, "a changed input is a different key")
+	}
 }
 
 // Both implementations keep the same contract.

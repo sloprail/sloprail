@@ -17,9 +17,9 @@ func openTestStore(t *testing.T) *store {
 	return s
 }
 
-// cached is the lookup of rule at hash h1, which every test run is recorded under.
+// cached is the lookup of rule.
 func (s *store) cached(subject, kind, fingerprint string) (CachedCheck, bool, error) {
-	return s.CachedCheck(rule, "h1", subject, kind, fingerprint)
+	return s.CachedCheck(rule, subject, kind, fingerprint)
 }
 
 func TestOpen_WritesTheFileAndItsDirectoryOnClose(t *testing.T) {

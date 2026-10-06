@@ -10,7 +10,7 @@
 //	sr-checks staged --needs citation            the staged files a commit must cite; read-only
 //
 // Nothing here tracks a session, a branch or what was judged before: the caller states the
-// range, and a guard's verdict over a subject is keyed by the rule, its definition, the
+// range, and a guard's verdict over a subject is keyed by the rule (never its definition), the
 // subject and a fingerprint of the content it was given. Results live on the orphan branch
 // `sloprail/checks` (see internal/checkcache), so another clone or CI finds them.
 package main
@@ -46,7 +46,7 @@ func newRoot() *cobra.Command {
 
 The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
 states the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by
-the rule hash (which covers its scripts and templates), the subject, the content of the subject's
+the rule name (not its definition: editing a rule does not void a verdict), the subject, the content of the subject's
 files, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's
 subjects script, when it has one — never by a commit, session or agent — so the same content after
 a rebase, a squash or a revert is a cache hit, and so is the same content another clone already
