@@ -253,15 +253,15 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 		time.Sleep(judgeRetryBackoff())
 		stdout, stderr, code, expired, startErr = run()
 	}
+	// What sr-agent or its harness printed is never stored or shown on these paths: it can carry
+	// paths, tokens and model prose. The reasons are fixed words.
 	if startErr != nil {
-		return refuseNoVerdict(fmt.Sprintf(
-			"the judge substrate (sr-agent) could not be started: %v. Refusing because a check that cannot run must not be read as approval.%s",
-			startErr, quoted(stderr))), nil
+		return refuseNoVerdict("judge could not start: the judge substrate (sr-agent) could not be run. " +
+			"Refusing because a check that cannot run must not be read as approval."), nil
 	}
 	if expired {
-		return refuseNoVerdict(fmt.Sprintf(
-			"the judge did not answer within the time limit and was stopped. Refusing because a check that did not answer must not be read as approval.%s",
-			quoted(stderr))), nil
+		return refuseNoVerdict("judge timed out: it did not answer within the time limit and was stopped. " +
+			"Refusing because a check that did not answer must not be read as approval."), nil
 	}
 	if code == 0 {
 		// sr-agent exited 0: the verifier accepted a passing verdict. Its reasoning
@@ -388,9 +388,16 @@ func judgeRefusal(stdout, stderr []byte) Verdict {
 	if cause := harnessFailureCause(stderr); !answered && cause != "" {
 		v.Unavailable = cause
 		v.Reason = "judge unavailable: " + cause
+		if cause == "version skew" {
+			v.Reason += " (the sr-agent or harness on PATH does not match this engine's flags). Install sloprail's matching binaries."
+		}
 	}
 	return v
 }
+
+// harnessLinePrefix marks a line of the harness's stderr in a verifying sr-agent's stderr
+// (services/sr-agent harnessLinePrefix).
+const harnessLinePrefix = "sr-agent: harness: "
 
 // harnessFailureMarker is the line sr-agent prints when its harness failed
 // (services/sr-agent failureMarker); what follows is the cause.
@@ -469,10 +476,8 @@ func judgeRefusalReason(stdout, stderr []byte) string {
 	if strings.Contains(errText, "unknown flag: --add-dir") || strings.Contains(errText, "unknown flag: --disallowed-tools") {
 		return "the judge could not run: the sr-agent on PATH is older than this engine and does not know the flags a judge needs (--add-dir:readonly, --disallowed-tools). Install sloprail's matching binaries."
 	}
-	if text := plainText(stderr); text != "" {
-		return text
-	}
-	return "the judge refused this action but produced no readable reasoning"
+	// Anything else is the judge failing without an answer: fixed words, never what it printed.
+	return "the judge exited without a verdict and without a reason"
 }
 
 // noVerdictMarker is sr-agent's own words for an answer file the agent never
@@ -501,6 +506,9 @@ const (
 func markedReasons(b []byte, plain, encoded string) []string {
 	var out []string
 	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, harnessLinePrefix) {
+			continue // the harness's own stderr, model prose included: not the verifier's answer
+		}
 		pi, ei := strings.Index(line, plain), strings.Index(line, encoded)
 		var text string
 		switch {

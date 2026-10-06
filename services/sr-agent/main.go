@@ -35,11 +35,7 @@ import (
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		var runErr *harnessRunError
-		if errors.As(err, &runErr) && runErr.marker() != "" {
-			fmt.Fprintln(os.Stderr, runErr.marker())
-		}
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprint(os.Stderr, failureReport(err))
 		os.Exit(exitCode(err))
 	}
 }
