@@ -65,10 +65,13 @@ func TestRunSlotsAreNotJudgeSlots(t *testing.T) {
 // A run started by a run that holds a slot takes none, or it would wait behind its own parent.
 func TestNestedRunTakesNoSlot(t *testing.T) {
 	l := Limiter{Dir: t.TempDir(), RunSlots: 1, Poll: 5 * time.Millisecond, Notify: time.Hour}
+	t.Setenv(RunHeldEnv, "") // restored when the test ends, whatever happens below
+	os.Unsetenv(RunHeldEnv)
 	release, err := l.HoldRunSlot()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer release() // idempotent for the lock; a failed assertion below must not leak the slot
 	if os.Getenv(RunHeldEnv) == "" {
 		t.Fatal("the holder did not mark its children")
 	}

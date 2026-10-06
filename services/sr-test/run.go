@@ -133,7 +133,7 @@ included: a judge is always a mock script, see SR_CHECKS_JUDGE_MOCKS).`
 func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error) {
 	// Shared with `sr-checks run`: the machine runs only a few of them at once, the rest queue.
 	if release, err := judgelimit.New(cmd.ErrOrStderr()).HoldRunSlot(); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sr-test: run slots unavailable, running anyway:", err)
+		fmt.Fprintln(cmd.ErrOrStderr(), "sr-test: WARNING: no run slot, running without the host-wide limit:", err)
 	} else {
 		defer release()
 	}

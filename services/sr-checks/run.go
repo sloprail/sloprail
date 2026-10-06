@@ -232,7 +232,7 @@ func execute(cmd *cobra.Command, m mode) error {
 		// processes, and a few of them already fill it. The rest queue.
 		release, err := judgelimit.New(cmd.ErrOrStderr()).HoldRunSlot()
 		if err != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: run slots unavailable, running anyway:", err)
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: WARNING: no run slot, running without the host-wide limit:", err)
 		} else {
 			defer release()
 		}
