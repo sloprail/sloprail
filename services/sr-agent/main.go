@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/version"
 )
 
@@ -459,7 +460,12 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 	proc.Stderr = teeTail(cmd.ErrOrStderr(), errTail)
 	proc.Env = sanitizeChildEnv(os.Environ())
 
-	err := proc.Run()
+	// The model call runs in its own process group, killed with this process on SIGTERM/SIGINT
+	// (an orphaned one would run on, and bill, with nobody to read it). Not when stdin is a
+	// terminal: a background group reading the terminal is stopped by SIGTTIN, and an
+	// interactive Ctrl-C reaches the child's group anyway.
+	defer procgroup.ExitOnSignal(nil)()
+	err := procgroup.Run(proc, !isTerminal(proc.Stdin))
 	if err == nil {
 		return nil
 	}

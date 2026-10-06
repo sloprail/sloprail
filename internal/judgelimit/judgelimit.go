@@ -177,6 +177,10 @@ func (l Limiter) HoldRunSlot() (release func(), err error) {
 	nested := os.Getenv(RunHeldEnv) != ""
 	slot, err := l.AcquireRunSlot()
 	if err != nil {
+		if errors.Is(err, ErrWaitExpired) && !nested {
+			// Running anyway, without a slot: its children must still not queue for one.
+			os.Setenv(RunHeldEnv, "1")
+		}
 		return nil, err
 	}
 	if nested {

@@ -20,6 +20,7 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/grounding"
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -339,6 +340,10 @@ func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, []groun
 	defer cancel()
 	c := exec.CommandContext(ctx, "bash", "-c", line)
 	c.Dir = cwd
+	// Its own group (procgroup.Run): a timeout kills the group, and a signal to this hook kills it
+	// too, instead of orphaning the line the agent asked to run.
+	c.Cancel = func() error { return procgroup.KillGroup(c.Process.Pid) }
+	defer procgroup.ExitOnSignal(nil)()
 	c.Env = append(os.Environ(),
 		grounding.EnvResolveDir+"="+dir,
 		grounding.EnvTranscript+"="+transcriptPath,
@@ -350,7 +355,7 @@ func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, []groun
 	// same way and changes nothing — so the exit status is not an error here.
 	// What it recorded before failing is still what the line would do.
 	var said string
-	if c.Run() != nil {
+	if procgroup.Run(c, true) != nil {
 		said = clip(strings.TrimSpace(stderr.String()), resolveNoteMax)
 	}
 	if ctx.Err() != nil {

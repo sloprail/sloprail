@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/procgroup"
 )
 
 // ErrVerifyFailed is returned when the verifier rejected the agent's output and
@@ -226,6 +228,8 @@ func RunVerifier(ctx context.Context, verifier, outputPath string, attempt, atte
 
 	proc := exec.CommandContext(ctx, verifier, outputPath)
 	proc.Stdin = strings.NewReader(string(content))
+	// The verifier runs in its own group: a timeout kills the group, not just the script.
+	proc.Cancel = func() error { return procgroup.KillGroup(proc.Process.Pid) }
 	proc.Env = append(os.Environ(),
 		OutputPathEnv+"="+outputPath,
 		fmt.Sprintf("%s=%d", AttemptEnv, attempt),
@@ -239,7 +243,7 @@ func RunVerifier(ctx context.Context, verifier, outputPath string, attempt, atte
 	proc.Stdout = &complaint
 	proc.Stderr = &complaint
 
-	runErr := proc.Run()
+	runErr := procgroup.Run(proc, true)
 	if complaint.Len() > 0 {
 		fmt.Fprintf(stderr, "sr-agent: verifier (attempt %d/%d): %s\n",
 			attempt, attempts, strings.TrimSpace(complaint.String()))
