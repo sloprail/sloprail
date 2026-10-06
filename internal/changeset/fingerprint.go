@@ -23,8 +23,8 @@ import (
 //   - subjectFP: the "fingerprint" the rule's `subjects:` script gave this subject, for whatever
 //     the verdict depends on beyond the files (a file a check opens with its own tools). It
 //     must be session-independent. Empty without `subjects:`.
-//   - citations: for a `require: citation` rule only, CitationPart: the quotes of the
-//     citations that ground the subject.
+//   - citations: CitationPart, the quotes of the citations that ground the subject (the only
+//     citations its checks receive). A commit touching none of the subject's files is no input.
 //
 // No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
 // are length-prefixed, so two parts cannot be re-cut into another pair.
@@ -50,6 +50,18 @@ func CitationPart(p Payload) (string, error) {
 	type grounded struct {
 		Path   string
 		Quotes []quote
+		// Evidence is every quote cited by a commit that changed the file
+		// (EvidenceForFile): what a check is handed, beyond what grounds it.
+		Evidence []quote
+	}
+	sorted := func(qs []quote) {
+		sort.Slice(qs, func(i, j int) bool {
+			a, b := qs[i], qs[j]
+			if a.Quote != b.Quote {
+				return a.Quote < b.Quote
+			}
+			return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
+		})
 	}
 	// Per file, not per subject: which file a quote grounds is part of the verdict (a quote
 	// that grounds one file of a subject and not another is not the same grounding).
@@ -62,36 +74,16 @@ func CitationPart(p Payload) (string, error) {
 		for _, c := range p.Changeset.ForFile(f) {
 			g.Quotes = append(g.Quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
 		}
-		sort.Slice(g.Quotes, func(i, j int) bool {
-			a, b := g.Quotes[i], g.Quotes[j]
-			if a.Quote != b.Quote {
-				return a.Quote < b.Quote
-			}
-			return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
-		})
+		for _, c := range p.Changeset.EvidenceForFile(f) {
+			g.Evidence = append(g.Evidence, quote{Pool: c.SourceTypes, Quote: c.Quote})
+		}
+		sorted(g.Quotes)
+		sorted(g.Evidence)
 		out = append(out, g)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	body, err := json.Marshal(out)
 	return string(body), err
-}
-
-// RangeCitationPart is every quote of the range (with its pool), sorted and deduped: what any
-// check can read as `changeset.citations`, so new words in an amended commit move the key of a
-// judge or script that never asked for `require: citation`. No SHA, no transcript location.
-func RangeCitationPart(cs Changeset) string {
-	seen := map[string]bool{}
-	var out []string
-	for _, c := range cs.Citations {
-		k := fmt.Sprint(c.SourceTypes) + "\x00" + c.Quote
-		if !seen[k] {
-			seen[k] = true
-			out = append(out, k)
-		}
-	}
-	sort.Strings(out)
-	body, _ := json.Marshal(out)
-	return string(body)
 }
 
 // FilesPart is the path and content of the subject's matched files, in the subject's order:
