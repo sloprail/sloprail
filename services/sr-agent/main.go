@@ -35,6 +35,10 @@ import (
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
+		var runErr *harnessRunError
+		if errors.As(err, &runErr) && runErr.marker() != "" {
+			fmt.Fprintln(os.Stderr, runErr.marker())
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(exitCode(err))
 	}
@@ -61,10 +65,30 @@ func exitCode(err error) int {
 type harnessRunError struct {
 	binary string
 	code   int
+	// cause and detail are what the harness's own output says went wrong (empty when it said
+	// nothing): the class (usage limit, authentication, version skew, other) and its last line.
+	cause  string
+	detail string
 }
 
 func (e *harnessRunError) Error() string {
-	return fmt.Sprintf("%s exited with status %d", e.binary, e.code)
+	msg := fmt.Sprintf("%s exited with status %d", e.binary, e.code)
+	if e.cause == "" {
+		return msg
+	}
+	msg += ": " + e.cause
+	if e.detail != "" {
+		msg += " (" + e.detail + ")"
+	}
+	return msg
+}
+
+// marker is the machine-readable line a caller reads the cause from.
+func (e *harnessRunError) marker() string {
+	if e.cause == "" {
+		return ""
+	}
+	return failureMarker + " " + e.cause
 }
 
 func newRoot() *cobra.Command {
@@ -436,8 +460,11 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 	if inv.Stdin != "" {
 		proc.Stdin = strings.NewReader(inv.Stdin)
 	}
-	proc.Stdout = cmd.OutOrStdout()
-	proc.Stderr = cmd.ErrOrStderr()
+	// What the harness prints is passed through and its tail kept: claude reports a usage limit
+	// on stdout and most other failures on stderr, and the status alone names neither.
+	outTail, errTail := &tailBuffer{max: maxTail}, &tailBuffer{max: maxTail}
+	proc.Stdout = teeTail(cmd.OutOrStdout(), outTail)
+	proc.Stderr = teeTail(cmd.ErrOrStderr(), errTail)
 	proc.Env = sanitizeChildEnv(os.Environ())
 
 	err := proc.Run()
@@ -456,7 +483,12 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return &harnessRunError{binary: inv.Binary, code: exitErr.ExitCode()}
+		failure := &harnessRunError{binary: inv.Binary, code: exitErr.ExitCode()}
+		failure.cause = classifyFailure(errTail.String() + "\n" + outTail.String())
+		if failure.detail = lastLine(errTail.String()); failure.detail == "" {
+			failure.detail = lastLine(outTail.String())
+		}
+		return failure
 	}
 
 	return fmt.Errorf("running %s: %w", inv.Binary, err)

@@ -241,13 +241,18 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// reasoning" fallback already covers a killed substrate. The killed-by-signal
 	// diagnosis is a script-check concern (scriptRefusalReason), where the bare
 	// "exit -1" it replaces was the regression.
-	stdout, stderr, code, expired, _, startErr := runShell(
-		j.Dir,
-		judgeCommand(verifier, j.model(), j.AllowedTools, j.DisallowedTools, j.Workspace),
-		[]byte(prompt),
-		judgeEnv(j),
-		j.Timeout,
-	)
+	command := judgeCommand(verifier, j.model(), j.AllowedTools, j.DisallowedTools, j.Workspace)
+	run := func() (stdout, stderr []byte, code int, expired bool, startErr error) {
+		stdout, stderr, code, expired, _, startErr = runShell(j.Dir, command, []byte(prompt), judgeEnv(j), j.Timeout)
+		return
+	}
+	stdout, stderr, code, expired, startErr := run()
+	if startErr == nil && !expired && code != 0 && judgeCrashed(stdout, stderr) {
+		// The substrate died without a verdict (a usage limit, a bad login, a flaky start): once
+		// more after a pause. Only a crash is retried; a verdict, however negative, is final.
+		time.Sleep(judgeRetryBackoff())
+		stdout, stderr, code, expired, startErr = run()
+	}
 	if startErr != nil {
 		return refuseNoVerdict(fmt.Sprintf(
 			"the judge substrate (sr-agent) could not be started: %v. Refusing because a check that cannot run must not be read as approval.%s",
@@ -366,6 +371,7 @@ func judgeEnv(j judgeCall) []string {
 func judgeRefusal(stdout, stderr []byte) Verdict {
 	reason := judgeRefusalReason(stdout, stderr)
 	v := refuse(reason)
+	v.Unavailable = harnessFailureCause(stderr)
 	// Only the verifier's own reasoning of a pass:false answer is a verdict. Anything else —
 	// nothing written, an unparseable answer, an old sr-agent, the model's or the transport's
 	// failure text — is the judge failing to judge.
@@ -377,6 +383,39 @@ func judgeRefusal(stdout, stderr []byte) Verdict {
 		}
 	}
 	return v
+}
+
+// harnessFailureMarker is the line sr-agent prints when its harness failed
+// (services/sr-agent failureMarker); what follows is the cause.
+const harnessFailureMarker = "sr-agent: harness-failure:"
+
+// harnessFailureCause is the cause sr-agent named for a harness that died ("" when it named none).
+func harnessFailureCause(stderr []byte) string {
+	for _, line := range strings.Split(string(stderr), "\n") {
+		if i := strings.Index(line, harnessFailureMarker); i >= 0 {
+			return strings.TrimSpace(line[i+len(harnessFailureMarker):])
+		}
+	}
+	return ""
+}
+
+// judgeCrashed says a judge exited non-zero without answering: no reasoning of the verifier's
+// on either stream, and no "wrote no output" complaint. Such an exit is the substrate dying.
+func judgeCrashed(stdout, stderr []byte) bool {
+	if reasonFromVerifierOutput(stderr) != "" || reasonFromVerifierOutput(stdout) != "" {
+		return false
+	}
+	return harnessFailureCause(stderr) != ""
+}
+
+// judgeRetryBackoffEnv overrides the pause before a crashed judge is run once more.
+const judgeRetryBackoffEnv = "SLOPRAIL_JUDGE_RETRY_BACKOFF"
+
+func judgeRetryBackoff() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(judgeRetryBackoffEnv)); err == nil && d >= 0 {
+		return d
+	}
+	return 3 * time.Second
 }
 
 // refuseNoVerdict is a refusal that is no verdict: the judge could not run or did not answer.

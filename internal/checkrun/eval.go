@@ -105,6 +105,10 @@ type FileGuardResult struct {
 	Attribution string
 	Refused     bool
 	Reason      string
+	// Unavailable is the cause when the rule was refused for want of a judge (its substrate
+	// died: usage limit, authentication, version skew). Such refusals are reported once, as one
+	// outage, by Evaluate; see collapseUnavailable.
+	Unavailable string
 }
 
 // changesetEvaluation is what one evaluation of every file-guard shares. Its rules are
@@ -389,6 +393,7 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 			refusals = append(refusals, o.result)
 		}
 	}
+	refusals = collapseUnavailable(refusals)
 	emitFileGuardEvents(out, p.On, p.FailuresOnly)
 	for _, o := range out {
 		if o != nil && o.tree != nil {
@@ -936,6 +941,10 @@ func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict,
 	ev.dropTree(rr.g, rr.tree, rr.head)
 	if failed != nil {
 		rr.result, rr.refused = refusal(g, namingFiles(failed.Error(), rr.payload.Changeset.Files)), true
+		var down *judgesUnavailableError
+		if errors.As(failed, &down) {
+			rr.result.Unavailable = down.cause
+		}
 		return
 	}
 	if ev.store != nil && !ev.verify && rr.runID != "" {
@@ -1294,7 +1303,11 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		// verdict under the key, so `verify` says "not judged yet" and the next `run` asks again.
 		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": v.Reason, noVerdictMeta: true}
 		_ = ev.recordCheck(runID, rec) // already failing
-		return dispatchcore.Verdict{}, engineError(g, errors.New(v.Reason))
+		failed := engineError(g, errors.New(v.Reason))
+		if v.Unavailable != "" {
+			failed = &judgesUnavailableError{cause: v.Unavailable, err: failed}
+		}
+		return dispatchcore.Verdict{}, failed
 	}
 	return settle(v, meta)
 }
@@ -1594,6 +1607,60 @@ func onlyCitationFailed(steps []stepRow) bool {
 		any = true
 	}
 	return any
+}
+
+// judgesUnavailableError is an engine failure whose cause is the judge substrate being down
+// (the harness behind sr-agent died with a named cause), not anything about the work judged.
+type judgesUnavailableError struct {
+	cause string
+	err   error
+}
+
+func (e *judgesUnavailableError) Error() string { return e.err.Error() }
+func (e *judgesUnavailableError) Unwrap() error { return e.err }
+
+// collapseUnavailable replaces the refusals that are one judge outage with a single refusal
+// naming the cause, the number of checks it left undecided and which rules: N identical "could
+// not be evaluated" refusals read as N verdicts, and the one real finding hides among them. It
+// still refuses: a guard that could not decide must not be read as approval. The other refusals
+// keep their order and the outage goes last.
+func collapseUnavailable(refusals []FileGuardResult) []FileGuardResult {
+	var kept, down []FileGuardResult
+	for _, r := range refusals {
+		if r.Unavailable != "" {
+			down = append(down, r)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	if len(down) == 0 {
+		return refusals
+	}
+	var causes, names []string
+	seenCause, seenName := map[string]bool{}, map[string]bool{}
+	for _, r := range down {
+		if !seenCause[r.Unavailable] {
+			seenCause[r.Unavailable] = true
+			causes = append(causes, r.Unavailable)
+		}
+		if !seenName[r.Name] {
+			seenName[r.Name] = true
+			names = append(names, r.Name)
+		}
+	}
+	reason := fmt.Sprintf("judges unavailable: %d checks not evaluated: %s. Rules not decided: %s. "+
+		"This is no verdict on the work: no judge ran. Run it again once the judges are available "+
+		"(refusing because a guard that could not decide must not be read as approval).\nFirst failure: %s",
+		len(down), strings.Join(causes, ", "), strings.Join(names, ", "), firstLine(down[0].Reason))
+	return append(kept, FileGuardResult{Name: "judges-unavailable", Attribution: "sloprail", Refused: true, Reason: reason, Unavailable: causes[0]})
+}
+
+// firstLine is a text's first line.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // engineError is the refusal for something that went wrong in the engine while a

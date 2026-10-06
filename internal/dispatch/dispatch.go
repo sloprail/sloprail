@@ -244,6 +244,11 @@ type Verdict struct {
 	// Only with Refused. Set by the check call itself (askJudge, runScriptCheck, runPrepare),
 	// so callers need not read the Reason text.
 	NoVerdict bool
+
+	// Unavailable is, for a judge whose substrate (the harness behind sr-agent) died, the cause
+	// sr-agent named: "usage limit", "authentication", "version skew" or "other". Only with
+	// NoVerdict. It lets a run report one "judges unavailable" outage instead of a refusal per check.
+	Unavailable string
 }
 
 // pass is the clean verdict.
