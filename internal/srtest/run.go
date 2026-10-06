@@ -238,7 +238,7 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 		}
 		cmd.Dir = proj
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.Cancel = func() error { return procgroup.KillGroup(cmd.Process.Pid) }
 		cmd.WaitDelay = 2 * time.Second
 		cmd.Env = env
 		buf.Reset()

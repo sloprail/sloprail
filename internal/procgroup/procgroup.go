@@ -51,6 +51,18 @@ var state = struct {
 	closing      bool
 }{live: map[*exec.Cmd]target{}}
 
+// KillGroup SIGKILLs the group led by pid, for an exec.Cmd's Cancel: a group already gone is
+// os.ErrProcessDone, which Cancel treats as nothing to do rather than a failure.
+func KillGroup(pid int) error {
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	return nil
+}
+
 // Own makes c start in its own process group. Run does it; use Own alone only with Track.
 func Own(c *exec.Cmd) {
 	if c.SysProcAttr == nil {

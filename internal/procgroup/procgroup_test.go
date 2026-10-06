@@ -18,9 +18,11 @@ func gone(pgid int) bool { return syscall.Kill(-pgid, 0) != nil }
 
 // KillAll ends a registered group, grandchildren included, and an unregistered one is left alone.
 func TestKillAllEndsRegisteredGroupsOnly(t *testing.T) {
-	tracked := exec.Command("sh", "-c", "sleep 60 & wait")
+	pidFile := filepath.Join(t.TempDir(), "grandchild")
+	tracked := exec.Command("sh", "-c", "sleep 60 & echo $! > "+pidFile+"; wait")
 	untrack, err := Start(tracked, true)
 	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(readPids(pidFile)) == 1 }, 30*time.Second, 10*time.Millisecond)
 	other := exec.Command("sleep", "60")
 	Own(other)
 	require.NoError(t, other.Start())
@@ -33,7 +35,7 @@ func TestKillAllEndsRegisteredGroupsOnly(t *testing.T) {
 	<-reaped
 	untrack()
 
-	assert.True(t, gone(tracked.Process.Pid), "the tracked group, its sleep included, is gone")
+	assert.Eventually(t, func() bool { return dead(readPids(pidFile)[0]) }, 30*time.Second, 20*time.Millisecond, "the tracked group's grandchild survived")
 	assert.False(t, gone(other.Process.Pid), "an unregistered group is not touched")
 	assert.Equal(t, 0, Tracked())
 }
@@ -82,15 +84,20 @@ func TestMain(m *testing.M) {
 
 func helper(out string) {
 	ExitOnSignal(nil)
-	var pids []string
+	pidFile := out + ".pids"
+	script := "echo $$ >> " + pidFile + "; sleep 120 & echo $! >> " + pidFile + "; wait"
 	for i := 0; i < 2; i++ {
-		c := exec.Command("sh", "-c", "sleep 120 & wait")
+		c := exec.Command("sh", "-c", script)
 		if _, err := Start(c, true); err != nil {
 			os.Exit(3)
 		}
-		pids = append(pids, strconv.Itoa(c.Process.Pid))
+		go func() { _ = c.Wait() }() // reaped here, so a killed leader is not left a zombie of ours
 	}
-	_ = os.WriteFile(out+".tmp", []byte(strings.Join(pids, "\n")), 0o644)
+	// Ready once both groups have reported their leader and their grandchild.
+	for len(readPids(pidFile)) < 4 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = os.WriteFile(out+".tmp", nil, 0o644)
 	_ = os.Rename(out+".tmp", out)
 	if os.Getenv("SR_PG_LATE") != "" {
 		// A start racing the exit: once the handler has closed registration, a start fails.
@@ -100,34 +107,62 @@ func helper(out string) {
 				_ = os.WriteFile(out+".late", []byte(err.Error()), 0o644)
 				select {} // the handler is exiting the process
 			}
-			pid := c.Process.Pid
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = KillGroup(c.Process.Pid)
 			_ = c.Wait()
 		}
 	}
-	time.Sleep(time.Minute)
+	select {} // until the handler ends the process
+}
+
+func readPids(file string) []int {
+	b, _ := os.ReadFile(file)
+	var pids []int
+	for _, f := range strings.Fields(string(b)) {
+		if n, err := strconv.Atoi(f); err == nil {
+			pids = append(pids, n)
+		}
+	}
+	return pids
+}
+
+// dead reports whether pid is gone or a zombie: a killed process nobody has reaped (an orphan under
+// a container's init, which may not reap) still answers kill(pid, 0), but runs nothing.
+func dead(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return true
+	}
+	st := strings.TrimSpace(string(out))
+	return st == "" || st[0] == 'Z'
 }
 
 func runHelper(t *testing.T, sig syscall.Signal, late bool) (code int, pids []int, lateErr string) {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "pids")
+	out := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), "SR_PG_PIDS="+out)
 	if late {
 		cmd.Env = append(cmd.Env, "SR_PG_LATE=1")
 	}
 	require.NoError(t, cmd.Start())
-	require.Eventually(t, func() bool { _, err := os.Stat(out); return err == nil }, 20*time.Second, 20*time.Millisecond)
-	b, _ := os.ReadFile(out)
-	for _, f := range strings.Fields(string(b)) {
-		n, _ := strconv.Atoi(f)
-		pids = append(pids, n)
-	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	require.Eventually(t, func() bool { _, err := os.Stat(out); return err == nil }, 30*time.Second, 10*time.Millisecond)
+	pids = readPids(out + ".pids")
+	require.Len(t, pids, 4)
 	require.NoError(t, cmd.Process.Signal(sig))
 	err := cmd.Wait()
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
 	}
+	// Every process of every group is dead (or an unreaped zombie), whatever the runner's init does.
+	require.Eventually(t, func() bool {
+		for _, p := range pids {
+			if !dead(p) {
+				return false
+			}
+		}
+		return true
+	}, 30*time.Second, 20*time.Millisecond, "a group process survived %s: %v", sig, pids)
 	l, _ := os.ReadFile(out + ".late")
 	return code, pids, string(l)
 }
@@ -135,23 +170,16 @@ func runHelper(t *testing.T, sig syscall.Signal, late bool) (code int, pids []in
 // SIGTERM and SIGINT end every registered group before the process exits 128+signal.
 func TestExitOnSignalEndsGroups(t *testing.T) {
 	for sig, want := range map[syscall.Signal]int{syscall.SIGTERM: 143, syscall.SIGINT: 130} {
-		code, pids, _ := runHelper(t, sig, false)
+		code, _, _ := runHelper(t, sig, false)
 		assert.Equal(t, want, code, sig.String())
-		require.Len(t, pids, 2)
-		for _, p := range pids {
-			assert.True(t, gone(p), "group %d survived %s", p, sig)
-		}
 	}
 }
 
 // A child started while the exit is under way is refused, never left unregistered and orphaned.
 func TestStartAfterTheSignalFails(t *testing.T) {
-	code, pids, late := runHelper(t, syscall.SIGTERM, true)
+	code, _, late := runHelper(t, syscall.SIGTERM, true)
 	assert.Equal(t, 143, code)
 	assert.Contains(t, late, "exiting")
-	for _, p := range pids {
-		assert.True(t, gone(p))
-	}
 }
 
 // A target waited for since the snapshot is not signalled: its pid may be someone else's now.
