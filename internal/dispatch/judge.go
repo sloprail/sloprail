@@ -241,22 +241,27 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// reasoning" fallback already covers a killed substrate. The killed-by-signal
 	// diagnosis is a script-check concern (scriptRefusalReason), where the bare
 	// "exit -1" it replaces was the regression.
-	stdout, stderr, code, expired, _, startErr := runShell(
-		j.Dir,
-		judgeCommand(verifier, j.model(), j.AllowedTools, j.DisallowedTools, j.Workspace),
-		[]byte(prompt),
-		judgeEnv(j),
-		j.Timeout,
-	)
+	command := judgeCommand(verifier, j.model(), j.AllowedTools, j.DisallowedTools, j.Workspace)
+	run := func() (stdout, stderr []byte, code int, expired bool, startErr error) {
+		stdout, stderr, code, expired, _, startErr = runShell(j.Dir, command, []byte(prompt), judgeEnv(j), j.Timeout)
+		return
+	}
+	stdout, stderr, code, expired, startErr := run()
+	if startErr == nil && !expired && code != 0 && judgeCrashed(stdout, stderr) {
+		// The substrate died without a verdict (a usage limit, a bad login, a flaky start): once
+		// more after a pause. Only a crash is retried; a verdict, however negative, is final.
+		time.Sleep(judgeRetryBackoff())
+		stdout, stderr, code, expired, startErr = run()
+	}
+	// What sr-agent or its harness printed is never stored or shown on these paths: it can carry
+	// paths, tokens and model prose. The reasons are fixed words.
 	if startErr != nil {
-		return refuseNoVerdict(fmt.Sprintf(
-			"the judge substrate (sr-agent) could not be started: %v. Refusing because a check that cannot run must not be read as approval.%s",
-			startErr, quoted(stderr))), nil
+		return refuseNoVerdict("judge could not start: the judge substrate (sr-agent) could not be run. " +
+			"Refusing because a check that cannot run must not be read as approval."), nil
 	}
 	if expired {
-		return refuseNoVerdict(fmt.Sprintf(
-			"the judge did not answer within the time limit and was stopped. Refusing because a check that did not answer must not be read as approval.%s",
-			quoted(stderr))), nil
+		return refuseNoVerdict("judge timed out: it did not answer within the time limit and was stopped. " +
+			"Refusing because a check that did not answer must not be read as approval."), nil
 	}
 	if code == 0 {
 		// sr-agent exited 0: the verifier accepted a passing verdict. Its reasoning
@@ -370,13 +375,72 @@ func judgeRefusal(stdout, stderr []byte) Verdict {
 	// nothing written, an unparseable answer, an old sr-agent, the model's or the transport's
 	// failure text — is the judge failing to judge.
 	v.NoVerdict = true
+	answered := false
 	for _, b := range [][]byte{stderr, stdout} {
 		if r := reasonFromVerifierOutput(b); r != "" {
 			v.NoVerdict = strings.HasPrefix(r, noVerdictReason)
+			answered = true
 			break
 		}
 	}
+	// A harness that died with a named cause and answered nothing is the judges being down. What
+	// is stored and shown is the fixed words and the cause, never what the harness printed.
+	if cause := harnessFailureCause(stderr); !answered && cause != "" {
+		v.Unavailable = cause
+		v.Reason = "judge unavailable: " + cause
+		if cause == "version skew" {
+			v.Reason += " (the sr-agent or harness on PATH does not match this engine's flags). Install sloprail's matching binaries."
+		}
+	}
 	return v
+}
+
+// harnessLinePrefix marks a line of the harness's stderr in a verifying sr-agent's stderr
+// (services/sr-agent harnessLinePrefix).
+const harnessLinePrefix = "sr-agent: harness: "
+
+// harnessFailureMarker is the line sr-agent prints when its harness failed
+// (services/sr-agent failureMarker); what follows is the cause.
+const harnessFailureMarker = "sr-agent: harness-failure:"
+
+// harnessFailureCause is the cause sr-agent named for a harness that died ("" when it named none).
+func harnessFailureCause(stderr []byte) string {
+	for _, line := range strings.Split(string(stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, harnessFailureMarker) {
+			continue
+		}
+		switch cause := strings.TrimSpace(strings.TrimPrefix(line, harnessFailureMarker)); cause {
+		case "usage limit", "authentication", "version skew", "other":
+			return cause
+		}
+		return "other"
+	}
+	return ""
+}
+
+// judgeCrashed says a judge exited non-zero without answering: no reasoning of the verifier's
+// on either stream, and no "wrote no output" complaint. Such an exit is the substrate dying.
+func judgeCrashed(stdout, stderr []byte) bool {
+	if reasonFromVerifierOutput(stderr) != "" || reasonFromVerifierOutput(stdout) != "" || strings.Contains(string(stderr), noVerdictMarker) {
+		return false
+	}
+	// A bad login or a flag this harness does not know fails the same way again: not retried.
+	switch harnessFailureCause(stderr) {
+	case "usage limit", "other":
+		return true
+	}
+	return false
+}
+
+// judgeRetryBackoffEnv overrides the pause before a crashed judge is run once more.
+const judgeRetryBackoffEnv = "SLOPRAIL_JUDGE_RETRY_BACKOFF"
+
+func judgeRetryBackoff() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(judgeRetryBackoffEnv)); err == nil && d >= 0 {
+		return d
+	}
+	return 3 * time.Second
 }
 
 // refuseNoVerdict is a refusal that is no verdict: the judge could not run or did not answer.
@@ -412,10 +476,8 @@ func judgeRefusalReason(stdout, stderr []byte) string {
 	if strings.Contains(errText, "unknown flag: --add-dir") || strings.Contains(errText, "unknown flag: --disallowed-tools") {
 		return "the judge could not run: the sr-agent on PATH is older than this engine and does not know the flags a judge needs (--add-dir:readonly, --disallowed-tools). Install sloprail's matching binaries."
 	}
-	if text := plainText(stderr); text != "" {
-		return text
-	}
-	return "the judge refused this action but produced no readable reasoning"
+	// Anything else is the judge failing without an answer: fixed words, never what it printed.
+	return "the judge exited without a verdict and without a reason"
 }
 
 // noVerdictMarker is sr-agent's own words for an answer file the agent never
@@ -444,6 +506,9 @@ const (
 func markedReasons(b []byte, plain, encoded string) []string {
 	var out []string
 	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, harnessLinePrefix) {
+			continue // the harness's own stderr, model prose included: not the verifier's answer
+		}
 		pi, ei := strings.Index(line, plain), strings.Index(line, encoded)
 		var text string
 		switch {

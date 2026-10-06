@@ -302,7 +302,13 @@ func runAgentQuietly(ctx context.Context, cmd *cobra.Command, inv Invocation) (s
 	quiet.SetOut(reply)
 	quiet.SetIn(strings.NewReader(""))
 	quiet.SetContext(ctx)
+	// What the harness prints on stderr is shown, but marked as the harness's: a verdict is read
+	// from the verifier's own lines, and a model's prose that imitates one must not be mistaken
+	// for it.
+	marked := &linePrefixer{w: cmd.ErrOrStderr(), prefix: harnessLinePrefix}
+	quiet.SetErr(marked)
 	err := runHarness(&quiet, inv)
+	marked.flush()
 	return reply.String(), err
 }
 
