@@ -14,27 +14,25 @@ A file whose only change is its mode (`chmod +x`, identical bytes) is not a chan
 case and no rule, so a legacy rule made executable is not refused for having no case. A content change to the
 same file is.
 
-It fires when any file under `**/.sloprail/**` changes in the range, the root project's and a nested
-plugin's alike. One subject per touched `.sloprail` root; one script check, `check.sh`, no model:
+It fires when a file of a rule or of its cases changes in the range (`.sloprail/<nature>/<rule>/...`,
+`structure.yaml`), the root project's and a nested plugin's alike. One subject per touched RULE, as
+`rule-tests-rigorous` does it, so a repo with many rules is many small runs, each cached on its own and well
+under the check timeout, not one long run that times out under load. One script check, `check.sh`, no model:
 
-1. **The cases it can break pass.** The scope depends on what the range touched in that root:
-   - only files of cases (`<nature>/<rule>/tests/<case>/...`, `structure.tests/<case>/...`): only those
-     cases run, by exact `owner:case` subject. A case another commit left broken and this range did not
-     touch is not run, so it does not block an unrelated test edit. A case the range deleted is skipped;
-   - any other file of the root (a rule's declaration, README or script, the config, `structure.yaml`):
-     ALL the root's cases run, since a rule edit can break a case nobody touched.
-
+1. **The rule's cases pass.** It runs `sr-test run . --rule <nature>/<rule>` in the rule's `.sloprail`
+   root: every case of that rule, and only that rule's. A rule the range did not touch is not run, so a case
+   another commit left broken does not block an unrelated change. A case the range deleted is not run.
    A case that does not pass refuses, with its subject, status and the tail of its output.
-2. **A changed rule has a case.** For each rule folder `<nature>/<rule>/` (and `structure.yaml`) the range
+2. **A changed rule has a case.** For a rule folder `<nature>/<rule>/` (or `structure.yaml`) the range
    adds or edits (including deleting a case) and that still stands at head, `sr-test doctor` must not list
    it as uncovered: at least one case must live in its folder. A rule nobody touched is **not** refused for
    having no case: existing rules without a test pass (legacy pass), until they are changed.
 
-The verdict is cached per root on the change plus the rules and the tests: `subjects.sh` fingerprints every
-file under the touched `.sloprail/`, so a changed rule or case runs the cases again and an unchanged one
-does not. A refusal because `sr-test` itself could not do its job (it is missing, a case ran to status
-`error`, a run reported no case, `doctor` failed) carries `"error": true`: it is refused but never cached, so
-the next run tries again. A case that fails is a verdict and stays cached.
+The verdict is cached per rule: `subjects.sh` fingerprints the rule's own files, all its cases and the
+plugin's manifest, so a changed rule or case runs its cases again and an unchanged one does not. A refusal
+because `sr-test` itself could not do its job (it is missing, a case ran to status `error` or timed out, a
+run reported no case, `doctor` failed) carries `"error": true`: it is refused but never cached, so the next
+run tries again. A case that fails is a verdict and stays cached.
 
 Turn it off from the project's `.sloprail/config.yaml`:
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # rule-tests-pass, a failing case. The base holds a legacy gate with no case (it must NOT be refused for
-# that) and a demo gate with one passing case. The range edits only that case so that it fails: a tests-only
-# change runs the touched case, and the refusal names its subject, its status and the tail of its output.
+# that) and a demo gate with one passing case. The range edits only that case so that it fails: the rule's
+# cases run (`sr-test run . --rule gate/demo`), and the refusal names its subject, its status and the tail of its output.
 # Fixing the case (the same file, passing) passes the net range, the near neighbour of the refused change.
 F="$SR_TEST_CASE_DIR/fixtures"
 git init -q .

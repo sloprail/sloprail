@@ -1,65 +1,146 @@
 #!/usr/bin/env bash
-# Shared by subjects.sh and check.sh. Sourced, never run.
+# Shared by subjects.sh and check.sh: where a rule and its cases live, and which changed paths are content
+# changes. Sourced, never run. Everything reads SR_TREE (the committed head), never the working tree.
+#
+# The subject is a RULE, and a rule owns its cases. A case lives in its OWNING rule's folder: the owner is the
+# folder, never inferred from the case's code.
+#   <root>/.sloprail/<gate|file-guard|context>/<rule>/tests/<case>/
+#   <root>/.sloprail/file-guard/structure.tests/<case>/        (the structure gate: one file, no folder)
+# A subject's id is the rule's folder, `<root>/.sloprail/<nature>/<rule>`; for the structure gate it is its
+# cases' folder, `<root>/.sloprail/file-guard/structure.tests` (the rule itself is the one file beside it,
+# `<root>/.sloprail/file-guard/structure.yaml`).
 
-# content_changed_paths: on stdin the Changeset payload -> the paths whose CONTENT changed, one per line. A file
-# that is added, deleted or renamed counts; a modified file counts only when oldContent != newContent. A mode-only
-# change (chmod +x, bytes identical) is not a change of the rule, so it is not listed.
-content_changed_paths() {
-  jq -r '.changeset.files[] | select(.status != "M" or .oldContent != .newContent) | .path'
+# path_subject <tree-relative path> -> prints the id of the subject (the owning rule) the path belongs to: a file
+# of the rule (its declaration, README, scripts, templates) or a file under its tests/ (a case's, or a stray one
+# that is no case). Returns 1, printing nothing, for a path that belongs to no rule.
+path_subject() {
+  local p="$1" root="" rest a b c
+  case "$p" in
+    .sloprail/*) rest="${p#.sloprail/}" ;;
+    */.sloprail/*)
+      root="${p%%/.sloprail/*}/"
+      rest="${p#*/.sloprail/}"
+      ;;
+    *) return 1 ;;
+  esac
+  # split by parameter expansion, not `read`: read stops at a newline, and a path may hold one
+  a="${rest%%/*}"
+  b=""
+  c=""
+  case "$rest" in
+    */*)
+      b="${rest#*/}"
+      case "$b" in
+        */*)
+          c="${b#*/}"
+          b="${b%%/*}"
+          ;;
+      esac
+      ;;
+  esac
+  if [ "$a" = file-guard ]; then
+    if [ "$b" = structure.yaml ] && [ -z "$c" ]; then
+      printf '%s.sloprail/file-guard/structure.tests\n' "$root"
+      return 0
+    fi
+    if [ "$b" = structure.tests ]; then
+      # any file under structure.tests/, a case's or a stray one that is no case, belongs to the structure gate
+      [ -n "$c" ] || return 1
+      printf '%s.sloprail/file-guard/structure.tests\n' "$root"
+      return 0
+    fi
+  fi
+  case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac
+  [ -n "$b" ] && [ -n "$c" ] || return 1
+  printf '%s.sloprail/%s/%s\n' "$root" "$a" "$b"
 }
 
-# roots_of <changed path>... on stdin, one per line -> the distinct tree-relative dirs holding the `.sloprail`
-# the path lives under ("" is the repo root, printed as a line holding a single dot).
-roots_of() {
-  awk '{
-    p = "/" $0
-    i = index(p, "/.sloprail/")
-    if (i > 0) {
-      r = substr(p, 2, i - 2)
-      print (r == "" ? "." : r)
-    }
-  }' | LC_ALL=C sort -u
+# rule_split <subject id> -> sets CASE_ROOT (the tree-relative dir that holds the `.sloprail`, "" for the repo
+# root), CASE_NATURE (gate | file-guard | context | structure) and CASE_RULE (the rule's folder name;
+# "structure" for the structure gate). Returns 1 for an id that is no rule.
+rule_split() {
+  local d="$1" rest a b
+  CASE_ROOT="" CASE_NATURE="" CASE_RULE=""
+  case "$d" in
+    .sloprail/*) rest="${d#.sloprail/}" ;;
+    */.sloprail/*)
+      CASE_ROOT="${d%%/.sloprail/*}"
+      rest="${d#*/.sloprail/}"
+      ;;
+    *) return 1 ;;
+  esac
+  a="${rest%%/*}"
+  b=""
+  case "$rest" in
+    */*)
+      b="${rest#*/}"
+      b="${b%%/*}"
+      ;;
+  esac
+  if [ "$a" = file-guard ] && [ "$b" = structure.tests ]; then
+    CASE_NATURE=structure CASE_RULE=structure
+    return 0
+  fi
+  case "$a" in gate | file-guard | context) ;; *) return 1 ;; esac
+  [ -n "$b" ] || return 1
+  CASE_NATURE="$a" CASE_RULE="$b"
 }
 
-# classify <root> on stdin the changed paths of that root (one per line) -> lines of what the change touches
-# inside the root's `.sloprail/`, relative to it:
-#   case <dir>\t<owner>:<case>   a file of one case: <nature>/<rule>/tests/<case>/ or file-guard/structure.tests/<case>/
-#                                 (<owner> is "<nature>/<rule>", "file-guard/structure" for the structure gate)
-#   rule <nature>\t<rule>         a file of a rule's folder (a case's included), or of structure.yaml ("structure")
-#   other                         any other file: a rule's declaration or scripts, config, structure, ...
-# A path outside the root's `.sloprail/` is skipped.
-classify() {
-  awk -v root="$1" '{
-    p = $0
-    if (root != ".") { if (index(p, root "/") != 1) next; p = substr(p, length(root) + 2) }
-    if (index(p, ".sloprail/") != 1) next
-    s = substr(p, 11)
-    n = split(s, a, "/")
-    if (n >= 4 && a[1] == "file-guard" && a[2] == "structure.tests") {
-      print "case\tfile-guard/structure.tests/" a[3] "\tfile-guard/structure:" a[3]; print "rule\tstructure\tstructure"; next
-    }
-    if (n >= 5 && (a[1] == "gate" || a[1] == "file-guard" || a[1] == "context") && a[3] == "tests") {
-      print "case\t" a[1] "/" a[2] "/tests/" a[4] "\t" a[1] "/" a[2] ":" a[4]; print "rule\t" a[1] "\t" a[2]; next
-    }
-    if (n == 2 && a[1] == "file-guard" && a[2] == "structure.yaml") { print "rule\tstructure\tstructure"; print "other"; next }
-    if (n >= 3 && (a[1] == "gate" || a[1] == "file-guard" || a[1] == "context")) { print "rule\t" a[1] "\t" a[2] }
-    print "other"
-  }'
+# rule_cases <subject id> -> the tree-relative folder of every case of the rule, one per line, sorted
+rule_cases() {
+  local id="$1" d c
+  rule_split "$id" || return 0
+  if [ "$CASE_NATURE" = structure ]; then d="$id"; else d="$id/tests"; fi
+  [ -d "$SR_TREE/$d" ] || return 0
+  find "$SR_TREE/$d" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort | while IFS= read -r c; do
+    printf '%s\n' "${c#"$SR_TREE"/}"
+  done
 }
 
-# tree_sha <abs dir>... -> one sha256 over the tree-relative names (relative to SR_TREE: the snapshot's own
-# path differs per run and must not reach the fingerprint) and the contents of every file under the dirs, sorted
-tree_sha() {
-  local d f
-  {
-    for d in "$@"; do
-      [ -d "$d" ] || continue
-      find "$d" -type f | LC_ALL=C sort | while IFS= read -r f; do
-        printf '%s\n' "${f#"$SR_TREE"/}"
-        cat "$f"
-      done
-    done
-  } | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1
+# root_abs <tree-relative root> -> the absolute dir that holds the `.sloprail`
+root_abs() {
+  if [ -n "$1" ]; then printf '%s/%s' "$SR_TREE" "$1"; else printf '%s' "$SR_TREE"; fi
+}
+
+# plugin_manifest <tree-relative root> -> the absolute path of the nearest `.claude-plugin/plugin.json` at or
+# above the dir that holds the `.sloprail` (up to the tree's root); nothing for a rule that lives in the project.
+plugin_manifest() {
+  local d
+  d="$(root_abs "$1")"
+  while :; do
+    if [ -f "$d/.claude-plugin/plugin.json" ]; then
+      printf '%s\n' "$d/.claude-plugin/plugin.json"
+      return 0
+    fi
+    [ "$d" = "$SR_TREE" ] && return 0
+    case "$d" in "$SR_TREE"/*) ;; *) return 0 ;; esac
+    d="$(dirname "$d")"
+  done
+}
+
+# owner_files <tree-relative root> <nature> <rule> -> the absolute path of every file that makes up the
+# rule itself (its declaration, README, scripts, templates), one per line, sorted. Its cases (tests/) are
+# not part of this list: they are the rule's cases, listed by rule_cases.
+owner_files() {
+  local base
+  base="$(root_abs "$1")/.sloprail"
+  if [ "$2" = structure ]; then
+    [ -f "$base/file-guard/structure.yaml" ] && printf '%s\n' "$base/file-guard/structure.yaml"
+    return 0
+  fi
+  [ -d "$base/$2/$3" ] || return 0
+  find "$base/$2/$3" -type f -not -path "$base/$2/$3/tests/*" | LC_ALL=C sort
+}
+
+# files_sha -> one sha256 over the tree-relative names and the contents of the files whose absolute paths
+# are on stdin, sorted
+files_sha() {
+  local f
+  LC_ALL=C sort | while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    printf '%s\n' "${f#"$SR_TREE"/}"
+    cat "$f"
+  done | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1
 }
 
 rule_tests_pass_lib_loaded=1
