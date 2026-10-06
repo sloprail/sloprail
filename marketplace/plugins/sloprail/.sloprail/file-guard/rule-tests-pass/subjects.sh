@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# One subject per `.sloprail` root the change touches. Its fingerprint is the rules plus the tests of that
-# root: every file under its `.sloprail/`, read from SR_TREE (check.sh runs the root's cases).
+# One subject per RULE touched by the change (a changed case of the rule, or a changed file of the rule itself),
+# as rule-tests-rigorous does: each is cached on its own and runs only that rule's cases, so a repo with many
+# rules is not one long run that times out under load. id is the rule's folder
+# (`<root>/.sloprail/<nature>/<rule>`; the structure gate's is its cases' folder,
+# `<root>/.sloprail/file-guard/structure.tests`). files are the changed paths of the rule whose CONTENT changed
+# (a mode-only change, same bytes, is still a subject, the engine needs one for the selected file, but lists
+# no file). The fingerprint is what the verdict reads: the rule's own files, ALL its case folders and the
+# plugin's manifest, read from SR_TREE.
 set -uo pipefail
 lib_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -18,19 +24,85 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null |
   exit 1
 }
 
-# one subject per touched `.sloprail` root: its id is the root (a dir relative to the tree, "." for the repo
-# root) and its files are the changed paths under that root's `.sloprail/`; the fingerprint is every file of
-# that `.sloprail/` (the rules and the tests of the root), read from SR_TREE
-paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
-# a mode-only change (same bytes, chmod) is not a change of a rule: a root it touches is still a subject (the
-# engine needs one for the selected file), but its files list only the paths whose content changed
-changed="$(printf '%s' "$payload" | content_changed_paths)"
+# every changed file, tagged with the rule it belongs to and whether its content changed. Paths are
+# NUL-delimited and kept in arrays, so a path with a tab, a newline or a backslash reaches the subject whole.
+ids=()
+paths=()
+real=()
+while IFS= read -r -d '' flag && IFS= read -r -d '' p; do
+  id="$(path_subject "$p")" || continue
+  if is_marker "$id"; then
+    # a shared file (lib/, schemas/, ...) can break the case of any rule of its root: every rule of the root is
+    # a subject, with the shared path among its files. The root's own marker is a subject too: a root with no
+    # rule still needs one for the selected file (it has nothing to run and passes)
+    ids+=("$id")
+    paths+=("$p")
+    real+=("$flag")
+    while IFS= read -r r; do
+      [ -n "$r" ] || continue
+      ids+=("$r")
+      paths+=("$p")
+      real+=("$flag")
+    done < <(root_rules "$(marker_root "$id")")
+    continue
+  fi
+  ids+=("$id")
+  paths+=("$p")
+  real+=("$flag")
+  # a file of a rule (not a case) can break the cases of every other rule that uses the rule (a file of it
+  # contains `/<rule>`, see rule_users): it is among the files of those rules too
+  if [[ "$p" == */tests/* ]]; then continue; fi
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    ids+=("$r")
+    paths+=("$p")
+    real+=("$flag")
+  done < <(rule_users "$id")
+done < <(printf '%s' "$payload" | jq -j '.changeset.files[] | (if (.status != "M" or .oldContent != .newContent) then "1" else "0" end) + "\u0000" + .path + "\u0000"')
+
+uniq=()
+for id in ${ids[@]+"${ids[@]}"}; do
+  seen=0
+  for u in ${uniq[@]+"${uniq[@]}"}; do
+    [ "$u" = "$id" ] && seen=1
+  done
+  [ "$seen" = 1 ] || uniq+=("$id")
+done
+
 out='[]'
-while IFS= read -r r; do
-  [ -n "$r" ] || continue
-  if [ "$r" = "." ]; then dir="$SR_TREE/.sloprail"; else dir="$SR_TREE/$r/.sloprail"; fi
-  files="$(printf '%s\n' "$changed" | jq -R -s -c --arg r "$r" '[split("\n")[] | select(length > 0) | select(if $r == "." then startswith(".sloprail/") else startswith($r + "/.sloprail/") end)]')"
-  fp="$(tree_sha "$dir")"
-  out="$(printf '%s' "$out" | jq -c --arg r "$r" --argjson f "$files" --arg fp "$fp" '. + [{id: $r, files: $f, fingerprint: $fp}]')"
-done < <(printf '%s\n' "$paths" | roots_of)
+for id in ${uniq[@]+"${uniq[@]}"}; do
+  if is_marker "$id"; then
+    mroot="$(marker_root "$id")"
+    msel=()
+    i=0
+    for other in "${ids[@]}"; do
+      [ "$other" = "$id" ] && [ "${real[$i]}" = 1 ] && msel+=("${paths[$i]}")
+      i=$((i + 1))
+    done
+    files="$(jq -nc '$ARGS.positional' --args ${msel[@]+"${msel[@]}"})"
+    fp="$({ shared_files "$mroot"; plugin_manifest "$mroot"; } | files_sha)"
+    out="$(printf '%s' "$out" | jq -c --arg c "$id" --argjson f "$files" --arg fp "$fp" '. + [{id: $c, files: $f, fingerprint: $fp}]')"
+    continue
+  fi
+  rule_split "$id" || continue
+  cases="$(rule_cases "$id")"
+  sel=()
+  i=0
+  for other in "${ids[@]}"; do
+    [ "$other" = "$id" ] && [ "${real[$i]}" = 1 ] && sel+=("${paths[$i]}")
+    i=$((i + 1))
+  done
+  files="$(jq -nc '$ARGS.positional' --args ${sel[@]+"${sel[@]}"})"
+  fp="$({
+    while IFS= read -r c; do
+      [ -n "$c" ] && find "$SR_TREE/$c" -type f
+    done <<<"$cases"
+    owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE"
+    plugin_manifest "$CASE_ROOT"
+    # what the cases also run: the shared files of the root and the files of other rules this rule sources
+    shared_files "$CASE_ROOT"
+    rule_refs "$id"
+  } | files_sha)"
+  out="$(printf '%s' "$out" | jq -c --arg c "$id" --argjson f "$files" --arg fp "$fp" '. + [{id: $c, files: $f, fingerprint: $fp}]')"
+done
 printf '%s\n' "$out"

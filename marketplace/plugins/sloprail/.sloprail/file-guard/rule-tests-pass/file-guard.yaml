@@ -1,20 +1,26 @@
-# rule-tests-pass: when anything under a `.sloprail/` changes, the sr-test cases it can break must pass, and
+# rule-tests-pass: when a rule or its cases change, the sr-test cases of that rule must pass, and
 # a rule the change adds or edits must have a case. A rule change that breaks a case, or a new rule nobody
 # proves fires, is refused here, not discovered later. The argument lives in README.md.
 #
-# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's).
+# match: any file under a `.sloprail/` at any depth (the root project's and a nested plugin's): a rule's files,
+# its cases, config.yaml, and the files shared by the rules (lib/, schemas/, a file one rule sources from
+# another), any of which a case can run or depend on.
 # deletions: include, so deleting a rule's last case (or a rule) is seen: the deleted case is then not run, and
 # the rule that lost its case is refused.
 deletions: include
 match: 'path matches "(^|/)[.]sloprail/."'
 
-# One subject per touched `.sloprail` root (its id is the root's dir, "." for the repo root), whose
-# fingerprint is the rules plus the tests of that root: every file of its `.sloprail/`, read from SR_TREE.
-# Editing any of them judges the root again.
+# One subject per RULE the change touches (a changed case, or a changed file of the rule), each cached on its
+# own. A shared file is no rule's: a change to one makes every rule of its root a subject (a case of any of them
+# can run it), and a change to a file of a rule makes every rule that uses it subjects too (a file of the other
+# contains `/<rule>`: it sources it, in one piece or split into a directory variable and a file). Each subject is cached on its own and run alone
+# (`sr-test run . --rule <nature>/<rule>`), as rule-tests-rigorous does: a repo with many rules is many small
+# runs that stay under the check timeout, not one long run that times out under load. The fingerprint is the
+# rule's own files, ALL its cases, the plugin's manifest, the root's shared files and the files of other rules
+# it sources, read from SR_TREE.
 subjects: ./subjects.sh
 
 checks:
-  # Script only: running cases is deterministic and asks no model. Per root it runs `sr-test run` over the
-  # cases the change can break (only the touched cases when only tests changed, all of the root's cases when
-  # anything else did), then `sr-test doctor` for the rules the change added or edited.
+  # Script only: running cases is deterministic and asks no model. Per rule it runs `sr-test run . --rule` over
+  # the rule's cases, then `sr-test doctor` for the rule when the change added or edited it.
   - script: ./check.sh

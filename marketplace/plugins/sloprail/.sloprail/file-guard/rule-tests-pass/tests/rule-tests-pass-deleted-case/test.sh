@@ -2,8 +2,8 @@
 set -euo pipefail
 # rule-tests-pass, deleted cases. The demo gate has two cases and the base is committed with the second ("b")
 # failing, untouched since.
-#   1. the range deletes the broken case "b": a deleted case is not run (it would fail) and the untouched "a"
-#      is not run either, so the range passes;
+#   1. the range deletes the broken case "b": a deleted case is not run (it would fail) and the remaining
+#      "a" passes, so the range passes;
 #   2. the range also deletes the last case "a": the demo gate, whose folder the range touched, has no case
 #      left, so the range is refused naming gate/demo;
 #   3. a new case in its folder passes the range.
