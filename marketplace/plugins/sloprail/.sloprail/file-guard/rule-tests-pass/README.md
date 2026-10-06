@@ -24,8 +24,9 @@ under the check timeout, not one long run that times out under load. One script 
    A case that does not pass refuses, with its subject, status and the tail of its output.
 
    A file that is no rule's own (a shared `lib/`, `schemas/`, `config.yaml`) can break any rule's case, so a change to one
-   makes every rule of its root a subject, with the shared path among its files. A file a rule keeps for
-   another to source (`../<rule>/<file>`) makes the rules that name it subjects too. Such a change runs the
+   makes every rule of its root a subject, with the shared path among its files. A change to a file of a rule
+   makes every other rule that uses it subjects too (one of their files contains `/<rule>`, the rule's folder
+   name after a path separator: wide on purpose, so a sourced lib is caught however its path is built). Such a change runs the
    cases but is not an edit of the rule, so a legacy rule with no case is not refused for it.
 2. **A changed rule has a case.** For a rule folder `<nature>/<rule>/` (or `structure.yaml`) the range
    adds or edits (including deleting a case) and that still stands at head, `sr-test doctor` must not list

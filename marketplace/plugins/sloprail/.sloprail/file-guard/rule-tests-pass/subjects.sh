@@ -45,15 +45,15 @@ while IFS= read -r -d '' flag && IFS= read -r -d '' p; do
   ids+=("$id")
   paths+=("$p")
   real+=("$flag")
-  # a file of a rule (not a case) that another rule names as `<rule>/<file>` (sourced from it) can break that
-  # cases of that rule: it is among the files of that rule too
+  # a file of a rule (not a case) can break the cases of every other rule that uses the rule (a file of it
+  # contains `/<rule>`, see rule_users): it is among the files of those rules too
   if [[ "$p" == */tests/* ]]; then continue; fi
   while IFS= read -r r; do
     [ -n "$r" ] || continue
     ids+=("$r")
     paths+=("$p")
     real+=("$flag")
-  done < <(rule_users "$id" "${p##*/}")
+  done < <(rule_users "$id")
 done < <(printf '%s' "$payload" | jq -j '.changeset.files[] | (if (.status != "M" or .oldContent != .newContent) then "1" else "0" end) + "\u0000" + .path + "\u0000"')
 
 uniq=()

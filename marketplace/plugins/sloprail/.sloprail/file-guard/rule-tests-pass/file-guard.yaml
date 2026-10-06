@@ -12,8 +12,8 @@ match: 'path matches "(^|/)[.]sloprail/."'
 
 # One subject per RULE the change touches (a changed case, or a changed file of the rule), each cached on its
 # own. A shared file is no rule's: a change to one makes every rule of its root a subject (a case of any of them
-# can run it), and a change to a file a rule keeps for another to source (`../<rule>/<file>`) makes the rules
-# that name it subjects too. Each subject is cached on its own and run alone
+# can run it), and a change to a file of a rule makes every rule that uses it subjects too (a file of the other
+# contains `/<rule>`: it sources it, in one piece or split into a directory variable and a file). Each subject is cached on its own and run alone
 # (`sr-test run . --rule <nature>/<rule>`), as rule-tests-rigorous does: a repo with many rules is many small
 # runs that stay under the check timeout, not one long run that times out under load. The fingerprint is the
 # rule's own files, ALL its cases, the plugin's manifest, the root's shared files and the files of other rules

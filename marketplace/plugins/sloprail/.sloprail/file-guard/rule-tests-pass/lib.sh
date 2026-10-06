@@ -105,10 +105,12 @@ shared_files() {
   done
 }
 
-# rule_users <rule id> <file name> -> the ids of the OTHER rules of its root whose own files name `<rule>/<file name>`:
-# a file a rule keeps for another to source (`../<rule>/cite-links.sh`). A change to it can break their cases.
+# rule_users <rule id> -> the ids of the OTHER rules of its root that use it: any of their own files contains
+# `/<rule>` (the rule's folder name after a path separator). Wide on purpose: it catches `../<rule>/x.sh` and
+# the split form too (`cd "$(dirname "$0")/../../file-guard/<rule>"` then `. "$lib_dir/x.sh"`). A change to a
+# file of the rule can break the cases of its users.
 rule_users() {
-  local id="$1" fname="$2" root name o f
+  local id="$1" root name o f
   rule_split "$id" || return 0
   [ "$CASE_NATURE" = structure ] && return 0
   root="$CASE_ROOT" name="$CASE_RULE"
@@ -117,7 +119,7 @@ rule_users() {
     rule_split "$o" || continue
     [ "$CASE_NATURE" = structure ] && continue
     owner_files "$CASE_ROOT" "$CASE_NATURE" "$CASE_RULE" | while IFS= read -r f; do
-      if grep -qF -- "$name/$fname" "$f" 2>/dev/null; then
+      if grep -qF -- "/$name" "$f" 2>/dev/null; then
         printf '%s\n' "$o"
         break
       fi
@@ -125,8 +127,9 @@ rule_users() {
   done
 }
 
-# rule_refs <rule id> -> the absolute path of every file of another rule that this rule's own files name as
-# `<other rule>/<file>` (what rule_users looks for from the other side), one per line
+# rule_refs <rule id> -> the absolute path of every file of another rule that this rule uses (what rule_users
+# looks for from the other side): the rule's own files, when one of this rule's own files contains
+# `/<other rule>`; one per line
 rule_refs() {
   local id="$1" root o f own
   rule_split "$id" || return 0
@@ -139,14 +142,12 @@ rule_refs() {
     rule_split "$o" || continue
     [ "$CASE_NATURE" = structure ] && continue
     local name="$CASE_RULE" nat="$CASE_NATURE" rr="$CASE_ROOT" g
-    owner_files "$rr" "$nat" "$name" | while IFS= read -r f; do
-      while IFS= read -r g; do
-        if grep -qF -- "$name/${f##*/}" "$g" 2>/dev/null; then
-          printf '%s\n' "$f"
-          break
-        fi
-      done <<<"$own"
-    done
+    while IFS= read -r g; do
+      if grep -qF -- "/$name" "$g" 2>/dev/null; then
+        owner_files "$rr" "$nat" "$name"
+        break
+      fi
+    done <<<"$own"
   done
 }
 
