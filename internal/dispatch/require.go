@@ -123,6 +123,7 @@ func (r Runner) prerequisiteApplies(req Request, when string) (bool, string, err
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
+		AgentID:        req.AgentID,
 		LaunchedBy:     req.LaunchedBy,
 		Env:            req.Env,
 	})

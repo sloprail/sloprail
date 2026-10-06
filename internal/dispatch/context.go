@@ -85,6 +85,10 @@ type ContextEnterRequest struct {
 	Workspace string
 	SessionID string
 
+	// AgentID is the sub-agent the hook fired inside, emitted as SR_AGENT_ID —
+	// see Request.AgentID.
+	AgentID string
+
 	// LaunchedBy is the re-entry provenance emitted as SLOPRAIL_LAUNCHED_BY, so a
 	// context whose enter spawns sr-agent does not re-enter itself on the launched
 	// agent's writes. The caller computes it (appendLaunchedBy) and threads it
@@ -126,6 +130,10 @@ type ContextExitRequest struct {
 	// see ContextEnterRequest. Empty leaves them unset.
 	Workspace string
 	SessionID string
+
+	// AgentID is the sub-agent the hook fired inside, emitted as SR_AGENT_ID —
+	// see Request.AgentID.
+	AgentID string
 
 	// LaunchedBy is the re-entry provenance emitted as SLOPRAIL_LAUNCHED_BY — see
 	// ContextEnterRequest.LaunchedBy. The caller threads it through so an exit that
@@ -183,6 +191,7 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 		GuardName:      req.Name,
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
+		AgentID:        req.AgentID,
 		TranscriptPath: req.TranscriptPath,
 		LaunchedBy:     req.LaunchedBy,
 	})
@@ -292,6 +301,7 @@ func (r Runner) ExitContext(req ContextExitRequest) (done bool, reason string, e
 		GuardName:      req.Name,
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
+		AgentID:        req.AgentID,
 		TranscriptPath: req.TranscriptPath,
 		LaunchedBy:     req.LaunchedBy,
 	})

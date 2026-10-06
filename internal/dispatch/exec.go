@@ -148,6 +148,14 @@ type scriptCall struct {
 	SessionID      string
 	TranscriptPath string
 
+	// AgentID is the sub-agent the hook fired inside, as the harness reported it
+	// (Claude Code's agent_id), emitted as SR_AGENT_ID. Empty in the main session.
+	// Unlike the session facts above it is always set, empty included: a check
+	// that spawns an agent hands its environment down, and an inherited sub-agent
+	// id would tell that agent's own hooks they run inside a sub-agent they are
+	// not. A rule refusing work inside sub-agents tests `[ -n "$SR_AGENT_ID" ]`.
+	AgentID string
+
 	// LaunchedBy is the colon-separated list of guards whose checks are on the
 	// current call stack, emitted as SLOPRAIL_LAUNCHED_BY so a check that spawns
 	// sr-agent marks provenance and the dispatch one level down declines to
@@ -342,6 +350,7 @@ func (s scriptCall) env() []string {
 	if s.TranscriptPath != "" {
 		env = append(env, "SR_TRANSCRIPT="+s.TranscriptPath)
 	}
+	env = append(env, "SR_AGENT_ID="+s.AgentID)
 	env = append(env, s.Env...)
 	// The re-entry provenance: which guards' checks are on this call stack. Set so
 	// a check that spawns sr-agent carries it across the exec into the launched

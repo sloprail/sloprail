@@ -35,6 +35,11 @@ const WorkspaceEnv = "SR_WORKSPACE"
 // given a sentinel instead.
 const TranscriptEnv = "SR_TRANSCRIPT"
 
+// AgentEnv names the sub-agent a hook fired inside (the harness's agent_id),
+// empty in the main session. internal/dispatch sets the same name for a
+// nature's checks.
+const AgentEnv = "SR_AGENT_ID"
+
 // Where a session's data lives is internal/sessionpath's answer, shared with
 // sr-checks so both find the same files. These are this package's names for it.
 var (
