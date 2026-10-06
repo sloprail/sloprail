@@ -9,9 +9,9 @@ import (
 // branch (the merge base) changes nothing a citation could ground, so the gate does not ask
 // for one; a partial restore still differs, and still needs one.
 
-// T058_40: a cited change, then an uncited commit restoring origin/main's content: not refused,
+// T058_50: a cited change, then an uncited commit restoring origin/main's content: not refused,
 // and nothing is wanted at Stop either.
-func TestT058_40_RestoringTheBasesContentNeedsNoCitation(t *testing.T) {
+func TestT058_50_RestoringTheBasesContentNeedsNoCitation(t *testing.T) {
 	e, proj := project(t)
 	e.PushBranch(proj, "main")
 	res := e.Run(proj, "s-058-40", prompt, Turns("done",
@@ -27,8 +27,8 @@ func TestT058_40_RestoringTheBasesContentNeedsNoCitation(t *testing.T) {
 	noCitationAtStop(t, e, proj, "s-058-40")
 }
 
-// T058_41: a partial restore (content that is neither the base's nor a cited state) is refused.
-func TestT058_41_APartialRestoreStillNeedsACitation(t *testing.T) {
+// T058_51: a partial restore (content that is neither the base's nor a cited state) is refused.
+func TestT058_51_APartialRestoreStillNeedsACitation(t *testing.T) {
 	e, proj := project(t)
 	e.PushBranch(proj, "main")
 	res := e.Run(proj, "s-058-41", prompt, Turns("done",

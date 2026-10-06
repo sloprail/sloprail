@@ -73,9 +73,9 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 		return nil, err
 	}
 	// What is already on the remote default branch is not work to answer for: a commit that
-	// restores a file to exactly the content it has at the merge base changes nothing a citation
-	// could ground (a partial restore still differs, and still needs one).
-	mergeBase, haveBase := gitrepo.RemoteDefaultBase(p.Root, rng.Head)
+	// restores a file to exactly the content (and mode) it has at the merge base changes nothing a
+	// citation could ground (a partial restore still differs, and still needs one). The
+	// remote-tracking ref is local state; CI's verify is the guarantee.
 	var out []string
 	for _, g := range guards {
 		match, err := guardrail.CompileFileMatch(g.Match)
@@ -99,7 +99,7 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 				if merging && !changedBy(cs, s.ID, rng.Head) {
 					continue
 				}
-				if haveBase && restoresBase(p.Root, mergeBase, cs, s.ID) {
+				if gitrepo.RestoresRemoteBase(p.Root, rng.Head, s.ID) {
 					continue
 				}
 				if !slices.Contains(out, s.ID) {
@@ -171,26 +171,6 @@ func changedBy(cs changeset.Changeset, path, sha string) bool {
 		if f.Path == path {
 			return slices.Contains(f.Commits, sha)
 		}
-	}
-	return false
-}
-
-// restoresBase reports whether the modified file's content in the changeset is byte-identical to
-// what it is at the merge base. A rename, an addition, a deletion and anything unreadable is not.
-func restoresBase(root, base string, cs changeset.Changeset, path string) bool {
-	for _, f := range cs.Files {
-		if f.Path != path {
-			continue
-		}
-		if f.Status != "M" || f.NewBlob == "" {
-			return false
-		}
-		want, err := gitrepo.BlobRaw(root, f.NewBlob)
-		if err != nil {
-			return false
-		}
-		got, err := gitrepo.BlobRaw(root, base+":"+path)
-		return err == nil && got == want
 	}
 	return false
 }
