@@ -227,7 +227,8 @@ func (ev *changesetEvaluation) note(o CheckOutcome) {
 // StopConcurrencyEnv bounds how many file-guard rules are evaluated at once.
 const StopConcurrencyEnv = "SLOPRAIL_STOP_CONCURRENCY"
 
-// defaultStopConcurrency is 6, not GOMAXPROCS: a judge waits on a model, not a CPU.
+// defaultStopConcurrency is 6, not GOMAXPROCS: a judge waits on a model, not a CPU. Judges are
+// bounded machine-wide by the judge semaphore, so this is not shared with the run slots.
 const defaultStopConcurrency = 6
 
 func stopConcurrency() int {

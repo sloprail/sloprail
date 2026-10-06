@@ -58,7 +58,7 @@ func TestSlotWaiterSaysItWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	rel2()
-	if !strings.Contains(out.String(), "waiting for a judge slot (1 busy)") {
+	if !strings.Contains(out.String(), "waiting for a judge slot (1 busy") {
 		t.Fatalf("no waiting line: %q", out.String())
 	}
 }

@@ -227,6 +227,16 @@ func execute(cmd *cobra.Command, m mode) error {
 			defer release()
 		}
 	}
+	if m == modeRun {
+		// The machine runs only a few of these at once: a run is a fan-out of git and shell
+		// processes, and a few of them already fill it. The rest queue.
+		release, err := judgelimit.New(cmd.ErrOrStderr()).HoldRunSlot()
+		if err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: WARNING: no run slot, running without the host-wide limit:", err)
+		} else {
+			defer release()
+		}
+	}
 	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun)
 	if err != nil {
 		return err
