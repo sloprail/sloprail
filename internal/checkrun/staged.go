@@ -72,6 +72,10 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// What is already on the remote default branch is not work to answer for: a commit that
+	// restores a file to exactly the content (and mode) it has at the merge base changes nothing a
+	// citation could ground (a partial restore still differs, and still needs one). The
+	// remote-tracking ref is local state; CI's verify is the guarantee.
 	var out []string
 	for _, g := range guards {
 		match, err := guardrail.CompileFileMatch(g.Match)
@@ -93,6 +97,9 @@ func StagedNeedingCitation(p StagedParams) ([]string, error) {
 			var subs []changeset.Subject
 			for _, s := range changeset.Subjects(cs, changeset.Requirement) {
 				if merging && !changedBy(cs, s.ID, rng.Head) {
+					continue
+				}
+				if gitrepo.RestoresRemoteBase(p.Root, rng.Head, s.ID) {
 					continue
 				}
 				if !slices.Contains(out, s.ID) {

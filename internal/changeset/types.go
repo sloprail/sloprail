@@ -105,6 +105,10 @@ type File struct {
 	// whitespace. Not part of the wire form: it decides which commits must carry a
 	// citation (ForFile).
 	Substantive []string `json:"-"`
+	// SameContent is the subset of Substantive that left the file byte-identical to what it is at
+	// head. Not part of the wire form: a later commit that restored such a state is grounded by
+	// the citation of the commit that made it (ForFile).
+	SameContent []string `json:"-"`
 }
 
 // Other is a file of the range the rule did not select.
@@ -216,6 +220,11 @@ func (cs Changeset) Change() string {
 // and is skipped: it can neither lend a citation to an earlier uncited change nor
 // take one away. A file whose every commit is whitespace-only is judged by the commit
 // that last changed it. A file no commit is known to have changed has no citations.
+//
+// Grounding is by content, not position: when the last real change is uncited but left the
+// file byte-identical to a state an earlier commit of the range made, and that commit is
+// cited, the file is grounded by that citation (a revert of an uncited tweak, a restore of
+// cited work). An uncited edit whose content no cited commit made stays uncited.
 func (cs Changeset) ForFile(f File) []Citation {
 	if len(f.Commits) == 0 {
 		return nil
@@ -228,6 +237,17 @@ func (cs Changeset) ForFile(f File) []Citation {
 	for _, c := range cs.Citations {
 		if slices.Contains(c.Commits, tip) {
 			out = append(out, c)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, c := range cs.Citations {
+		for _, same := range f.SameContent {
+			if same != tip && slices.Contains(c.Commits, same) {
+				out = append(out, c)
+				break
+			}
 		}
 	}
 	return out

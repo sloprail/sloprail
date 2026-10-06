@@ -82,3 +82,25 @@ func PinRef(dir, ref, sha string) error {
 	_, err := run(dir, "update-ref", ref, sha)
 	return err
 }
+
+// RestoresRemoteBase reports whether path at head is byte-identical, mode included, to path at
+// the merge base of head with the remote default branch. False when there is no such branch (no
+// origin, no shared history), the base lacks the file, or anything cannot be read: a restore is
+// then never assumed. The remote-tracking ref is local state a user can move; CI's verify,
+// which judges the squashed range, is the guarantee.
+func RestoresRemoteBase(dir, head, path string) bool {
+	base, ok := RemoteDefaultBase(dir, head)
+	if !ok {
+		return false
+	}
+	entry := func(rev string) string {
+		out, err := run(dir, "ls-tree", "-z", rev, "--", path)
+		if err != nil || strings.TrimSpace(out) == "" {
+			return ""
+		}
+		meta, _, _ := strings.Cut(out, "\t") // "<mode> <type> <oid>"
+		return meta
+	}
+	a, b := entry(base), entry(head)
+	return a != "" && a == b
+}

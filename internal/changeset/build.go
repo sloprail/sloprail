@@ -139,19 +139,21 @@ func attachCommits(dir string, r gitrepo.Range, cs *Changeset) error {
 	for i, f := range cs.Files {
 		refs[i] = gitrepo.FileRef{Path: f.Path, OldPath: f.OldPath}
 	}
-	byPath, err := gitrepo.FileCommits(dir, r.Base, r.Head, refs)
-	if err != nil {
-		return err
+	headBlobs := make(map[string]string, len(cs.Files))
+	for _, f := range cs.Files {
+		headBlobs[f.Path] = f.NewBlob
 	}
-	substantive, err := gitrepo.SubstantiveFileCommits(dir, r.Base, r.Head, refs)
+	hist, err := gitrepo.FileHistory(dir, r.Base, r.Head, refs, headBlobs)
 	if err != nil {
 		return err
 	}
 	for i := range cs.Files {
-		cs.Files[i].Substantive = substantive[cs.Files[i].Path]
-		commits := byPath[cs.Files[i].Path]
+		p := cs.Files[i].Path
+		cs.Files[i].Substantive = hist.Substantive[p]
+		cs.Files[i].SameContent = hist.SameAsHead[p]
+		commits := hist.Commits[p]
 		if len(commits) == 0 {
-			return fmt.Errorf("changeset: no commit of the range is found to have changed %q", cs.Files[i].Path)
+			return fmt.Errorf("changeset: no commit of the range is found to have changed %q", p)
 		}
 		cs.Files[i].Commits = commits
 	}
