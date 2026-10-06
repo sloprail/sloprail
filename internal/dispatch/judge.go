@@ -371,16 +371,23 @@ func judgeEnv(j judgeCall) []string {
 func judgeRefusal(stdout, stderr []byte) Verdict {
 	reason := judgeRefusalReason(stdout, stderr)
 	v := refuse(reason)
-	v.Unavailable = harnessFailureCause(stderr)
 	// Only the verifier's own reasoning of a pass:false answer is a verdict. Anything else —
 	// nothing written, an unparseable answer, an old sr-agent, the model's or the transport's
 	// failure text — is the judge failing to judge.
 	v.NoVerdict = true
+	answered := false
 	for _, b := range [][]byte{stderr, stdout} {
 		if r := reasonFromVerifierOutput(b); r != "" {
 			v.NoVerdict = strings.HasPrefix(r, noVerdictReason)
+			answered = true
 			break
 		}
+	}
+	// A harness that died with a named cause and answered nothing is the judges being down. What
+	// is stored and shown is the fixed words and the cause, never what the harness printed.
+	if cause := harnessFailureCause(stderr); !answered && cause != "" {
+		v.Unavailable = cause
+		v.Reason = "judge unavailable: " + cause
 	}
 	return v
 }
@@ -392,9 +399,15 @@ const harnessFailureMarker = "sr-agent: harness-failure:"
 // harnessFailureCause is the cause sr-agent named for a harness that died ("" when it named none).
 func harnessFailureCause(stderr []byte) string {
 	for _, line := range strings.Split(string(stderr), "\n") {
-		if i := strings.Index(line, harnessFailureMarker); i >= 0 {
-			return strings.TrimSpace(line[i+len(harnessFailureMarker):])
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, harnessFailureMarker) {
+			continue
 		}
+		switch cause := strings.TrimSpace(strings.TrimPrefix(line, harnessFailureMarker)); cause {
+		case "usage limit", "authentication", "version skew", "other":
+			return cause
+		}
+		return "other"
 	}
 	return ""
 }
@@ -402,10 +415,15 @@ func harnessFailureCause(stderr []byte) string {
 // judgeCrashed says a judge exited non-zero without answering: no reasoning of the verifier's
 // on either stream, and no "wrote no output" complaint. Such an exit is the substrate dying.
 func judgeCrashed(stdout, stderr []byte) bool {
-	if reasonFromVerifierOutput(stderr) != "" || reasonFromVerifierOutput(stdout) != "" {
+	if reasonFromVerifierOutput(stderr) != "" || reasonFromVerifierOutput(stdout) != "" || strings.Contains(string(stderr), noVerdictMarker) {
 		return false
 	}
-	return harnessFailureCause(stderr) != ""
+	// A bad login or a flag this harness does not know fails the same way again: not retried.
+	switch harnessFailureCause(stderr) {
+	case "usage limit", "other":
+		return true
+	}
+	return false
 }
 
 // judgeRetryBackoffEnv overrides the pause before a crashed judge is run once more.

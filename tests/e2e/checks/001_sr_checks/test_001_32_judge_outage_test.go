@@ -42,7 +42,7 @@ func TestT001_32_AJudgeOutageIsReportedOnceWithItsCause(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("an outage must stay fail-closed:\n%s", out)
 	}
-	contains(t, out, "judges unavailable: 3 checks not evaluated: usage limit", "alpha", "beta", "gamma")
+	contains(t, out, "judges unavailable: 3 rules not evaluated: usage limit", "alpha", "beta", "gamma")
 	if n := strings.Count(out, "could not be evaluated"); n != 1 {
 		t.Fatalf("the outage was reported %d times, want once:\n%s", n, out)
 	}

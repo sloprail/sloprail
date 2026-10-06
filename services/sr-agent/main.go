@@ -65,10 +65,10 @@ func exitCode(err error) int {
 type harnessRunError struct {
 	binary string
 	code   int
-	// cause and detail are what the harness's own output says went wrong (empty when it said
-	// nothing): the class (usage limit, authentication, version skew, other) and its last line.
-	cause  string
-	detail string
+	// cause is the class of the failure (usage limit, authentication, version skew, other). It is
+	// all that is kept of what the harness printed: its text can carry paths, tokens and model
+	// prose, and this error is stored and shown.
+	cause string
 }
 
 func (e *harnessRunError) Error() string {
@@ -76,11 +76,7 @@ func (e *harnessRunError) Error() string {
 	if e.cause == "" {
 		return msg
 	}
-	msg += ": " + e.cause
-	if e.detail != "" {
-		msg += " (" + e.detail + ")"
-	}
-	return msg
+	return msg + ": " + e.cause
 }
 
 // marker is the machine-readable line a caller reads the cause from.
@@ -484,10 +480,7 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		failure := &harnessRunError{binary: inv.Binary, code: exitErr.ExitCode()}
-		failure.cause = classifyFailure(errTail.String() + "\n" + outTail.String())
-		if failure.detail = lastLine(errTail.String()); failure.detail == "" {
-			failure.detail = lastLine(outTail.String())
-		}
+		failure.cause = classifyFailure(errTail.String(), outTail.String())
 		return failure
 	}
 

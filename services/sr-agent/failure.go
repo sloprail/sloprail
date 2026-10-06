@@ -25,37 +25,31 @@ const failureMarker = "sr-agent: harness-failure:"
 // maxTail bounds how much of a harness's output is kept for the diagnosis.
 const maxTail = 2048
 
+// The patterns are the harnesses' own words for a failure, anchored: a bare status number or a
+// word like "quota" or "authentication" also appears in stack traces, file paths and the model's
+// prose, and would name the wrong cause.
 var (
-	usageLimitRe = regexp.MustCompile(`(?i)usage limit|rate limit|rate_limit|quota|limit reached|too many requests|\b429\b|credit balance|overloaded|resource exhausted`)
-	authRe       = regexp.MustCompile(`(?i)not logged in|please run /login|authentication|unauthorized|\b401\b|invalid api key|invalid x-api-key|api key|login required|forbidden|\b403\b`)
-	skewRe       = regexp.MustCompile(`(?i)unknown (flag|option|argument|command)|unrecognized (flag|option|argument)|no such option|invalid (flag|option)|requires a newer|unsupported version`)
+	usageLimitRe = regexp.MustCompile(`(?i)usage limit (reached|exceeded)|hit your (usage )?limit|rate limit (exceeded|reached)|rate_limit_error|overloaded_error|\bHTTP 429\b|credit balance is too low`)
+	authRe       = regexp.MustCompile(`(?i)invalid (x-)?api[ -]key|please run /login|not logged in|authentication_error|\bHTTP 40[13]\b|failed to authenticate|oauth token has expired`)
+	skewRe       = regexp.MustCompile(`(?im)^\s*(error:\s*)?(unknown (flag|option|argument)|unrecognized (flag|option|argument))\b`)
 )
 
-// classifyFailure names the cause of a harness failure from the tail of its output.
-func classifyFailure(tail string) string {
+// classifyFailure names the cause of a harness failure from what it printed: stderr first, and
+// stdout only when stderr said nothing (claude reports a usage limit on stdout).
+func classifyFailure(stderr, stdout string) string {
+	text := stderr
+	if strings.TrimSpace(text) == "" {
+		text = stdout
+	}
 	switch {
-	case usageLimitRe.MatchString(tail):
+	case usageLimitRe.MatchString(text):
 		return causeUsageLimit
-	case authRe.MatchString(tail):
+	case authRe.MatchString(text):
 		return causeAuth
-	case skewRe.MatchString(tail):
+	case skewRe.MatchString(text):
 		return causeVersionSkew
 	}
 	return causeOther
-}
-
-// lastLine is the last non-empty line of a tail, bounded: the harness's own words for the failure.
-func lastLine(tail string) string {
-	lines := strings.Split(strings.TrimSpace(tail), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" {
-			if len(l) > 240 {
-				l = l[:240] + "..."
-			}
-			return l
-		}
-	}
-	return ""
 }
 
 // tailBuffer keeps the last max bytes written to it.

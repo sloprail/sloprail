@@ -1648,7 +1648,7 @@ func collapseUnavailable(refusals []FileGuardResult) []FileGuardResult {
 			names = append(names, r.Name)
 		}
 	}
-	reason := fmt.Sprintf("judges unavailable: %d checks not evaluated: %s. Rules not decided: %s. "+
+	reason := fmt.Sprintf("judges unavailable: %d rules not evaluated: %s. Not decided: %s. "+
 		"This is no verdict on the work: no judge ran. Run it again once the judges are available "+
 		"(refusing because a guard that could not decide must not be read as approval).\nFirst failure: %s",
 		len(down), strings.Join(causes, ", "), strings.Join(names, ", "), firstLine(down[0].Reason))
