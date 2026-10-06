@@ -153,3 +153,13 @@ func TestStartAfterTheSignalFails(t *testing.T) {
 		assert.True(t, gone(p))
 	}
 }
+
+// A target waited for since the snapshot is not signalled: its pid may be someone else's now.
+func TestTerminateSkipsTargetsNoLongerRegistered(t *testing.T) {
+	c := exec.Command("sleep", "60")
+	Own(c)
+	require.NoError(t, c.Start())
+	t.Cleanup(func() { _ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL); _ = c.Wait() })
+	terminate([]target{{pid: c.Process.Pid, group: true}}, 100*time.Millisecond) // never registered
+	assert.False(t, gone(c.Process.Pid), "an unregistered target was signalled")
+}

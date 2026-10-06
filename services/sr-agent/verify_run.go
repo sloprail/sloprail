@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/reap"
 )
 
@@ -108,6 +109,9 @@ func runVerified(
 		return nil
 	}
 
+	// A signal while the verifier (its own group) or the harness runs reaches both: the handler
+	// covers the whole loop, not just the harness call.
+	defer procgroup.ExitOnSignal(nil)()
 	var lastRejection error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		// Removed between attempts, so a second run that writes nothing at all

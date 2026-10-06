@@ -132,9 +132,25 @@ func KillAll(grace time.Duration) {
 	terminate(all, grace)
 }
 
+// registered reports whether t is still a registered child: one that was waited for since the
+// snapshot is gone, and its pid may belong to something else now.
+func registered(t target) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	for _, r := range state.live {
+		if r == t {
+			return true
+		}
+	}
+	return false
+}
+
 func terminate(all []target, grace time.Duration) {
 	var alive []target
 	for _, t := range all {
+		if !registered(t) {
+			continue
+		}
 		if err := t.kill(syscall.SIGTERM); err == nil {
 			alive = append(alive, t)
 		}
@@ -145,13 +161,18 @@ func terminate(all []target, grace time.Duration) {
 		alive = stillThere(alive)
 	}
 	for _, t := range alive {
-		_ = t.kill(syscall.SIGKILL)
+		if registered(t) {
+			_ = t.kill(syscall.SIGKILL)
+		}
 	}
 }
 
 func stillThere(all []target) []target {
 	var out []target
 	for _, t := range all {
+		if !registered(t) {
+			continue
+		}
 		if err := t.kill(0); err == nil || !errors.Is(err, syscall.ESRCH) {
 			out = append(out, t)
 		}

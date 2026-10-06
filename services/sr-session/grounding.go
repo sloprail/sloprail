@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -340,6 +341,10 @@ func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, []groun
 	defer cancel()
 	c := exec.CommandContext(ctx, "bash", "-c", line)
 	c.Dir = cwd
+	// Its own group (procgroup.Run): a timeout kills the group, and a signal to this hook kills it
+	// too, instead of orphaning the line the agent asked to run.
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	defer procgroup.ExitOnSignal(nil)()
 	c.Env = append(os.Environ(),
 		grounding.EnvResolveDir+"="+dir,
 		grounding.EnvTranscript+"="+transcriptPath,

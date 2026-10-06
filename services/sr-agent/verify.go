@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/sloprail/sloprail/internal/procgroup"
 )
@@ -228,6 +229,8 @@ func RunVerifier(ctx context.Context, verifier, outputPath string, attempt, atte
 
 	proc := exec.CommandContext(ctx, verifier, outputPath)
 	proc.Stdin = strings.NewReader(string(content))
+	// The verifier runs in its own group: a timeout kills the group, not just the script.
+	proc.Cancel = func() error { return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL) }
 	proc.Env = append(os.Environ(),
 		OutputPathEnv+"="+outputPath,
 		fmt.Sprintf("%s=%d", AttemptEnv, attempt),
