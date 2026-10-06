@@ -98,7 +98,7 @@ func natureDispatchStop(cmd *cobra.Command, p HookPayload, reg *module.Registry)
 // unresolved sentinel rather than an anchor guessed from this process's own
 // directory.
 func natureHookScope(cmd *cobra.Command, p HookPayload) hookScope {
-	scope := hookScope{ToolUseID: p.ToolUseID}
+	scope := hookScope{ToolUseID: p.ToolUseID, AgentID: p.AgentID}
 	if p.Cwd != "" {
 		scope.Workspace = workspaceAnchor(p.Cwd)
 	}
@@ -293,6 +293,7 @@ func runGatesForEvents(
 				Qualified:      g.Qualified(),
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				AgentID:        scope.AgentID,
 				// The re-entry provenance to hand a check that spawns sr-agent: this
 				// gate appended to whatever launched checks are already on the stack.
 				// So a judge check's own agent, whose Write re-fires this dispatch,

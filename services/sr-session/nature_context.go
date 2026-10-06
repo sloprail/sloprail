@@ -168,6 +168,7 @@ func runContextEnters(
 					GuardName:      c.Name,
 					Workspace:      scope.Workspace,
 					SessionID:      scope.SessionID,
+					AgentID:        scope.AgentID,
 					// Re-entry provenance, in case a `{skill}`-style require ever runs a
 					// check that spawns sr-agent: this context appended to the stack, so
 					// its own launched agent is not re-entered by it (isLaunchedBy above).
@@ -196,6 +197,7 @@ func runContextEnters(
 				Name:           c.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				AgentID:        scope.AgentID,
 				// Re-entry provenance for an enter that spawns sr-agent: this context
 				// appended to the stack, so its own launched agent is not re-entered
 				// by it (isLaunchedBy above, one exec down). See the gate dispatch.
@@ -330,6 +332,7 @@ func runContextExits(
 			Name:           c.Name,
 			Workspace:      scope.Workspace,
 			SessionID:      scope.SessionID,
+			AgentID:        scope.AgentID,
 			// Re-entry provenance for an exit that spawns sr-agent: this context
 			// appended to the stack, so its own launched agent is not re-entered by
 			// it (isLaunchedBy above, one exec down). See the gate dispatch.

@@ -151,6 +151,12 @@ type Request struct {
 	// it unset (diagnosable). Not load-bearing for the verdict.
 	SessionID string
 
+	// AgentID is the sub-agent the hook fired inside, as the harness reported it,
+	// passed as SR_AGENT_ID (empty, but set, in the main session) so a rule can
+	// tell a sub-agent's action from the main session's. Not load-bearing for the
+	// verdict.
+	AgentID string
+
 	// LaunchedBy is the re-entry provenance — the colon-separated list of guards
 	// whose checks are on the current call stack — passed into every check's
 	// environment as SLOPRAIL_LAUNCHED_BY. A check that spawns sr-agent (a judge,

@@ -83,6 +83,7 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Ve
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
+		AgentID:        req.AgentID,
 		LaunchedBy:     req.LaunchedBy,
 		Env:            req.Env,
 	})
@@ -322,6 +323,7 @@ func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
+		AgentID:        req.AgentID,
 		LaunchedBy:     req.LaunchedBy,
 		Env:            req.Env,
 	})

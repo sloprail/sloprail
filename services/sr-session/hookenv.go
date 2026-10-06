@@ -35,6 +35,10 @@ type hookScope struct {
 
 	// ToolUseID is the tool call a pre-tool hook decides on, for the decision log.
 	ToolUseID string
+
+	// AgentID is the sub-agent the hook fired inside (HookPayload.AgentID), empty
+	// in the main session. Checks get it as SR_AGENT_ID.
+	AgentID string
 }
 
 // env is the environment to run one guardrail's hook in.
@@ -75,6 +79,9 @@ func (s hookScope) env(guardrail string) []string {
 		// exec into a launched agent's own hooks, which is what lets the engine
 		// one level down decline to enforce the rule that launched it.
 		LaunchedByEnv+"="+appendLaunchedBy(os.Getenv, guardrail),
+		// Set even when empty, so an id inherited from an outer process never
+		// tells a main-session hook it runs inside a sub-agent.
+		AgentEnv+"="+s.AgentID,
 	)
 	env = append(env, s.workspaceEnv()...)
 	return append(env, s.transcriptEnv()...)

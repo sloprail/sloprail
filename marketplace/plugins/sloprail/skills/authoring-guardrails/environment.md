@@ -20,6 +20,7 @@ its append/dedup). This doc mirrors it.
 | `SR_WORKSPACE` | the repository root — prepend it to a `.event.path` to reach the file on disk | on every check, prepare, enter, exit |
 | `SR_SESSION_ID` | the session id, so one session's state is not another's | on every check, prepare, enter, exit |
 | `SR_TRANSCRIPT` | the session record (same value as the payload's `transcriptPath`) | on every check, prepare, enter, exit |
+| `SR_AGENT_ID` | the sub-agent the hook fired inside (the harness's `agent_id`); **empty in the main session**, and set even then, so an id inherited from an outer process never reads as a sub-agent. A rule refusing work inside sub-agents tests `[ -n "$SR_AGENT_ID" ]` | on every check, prepare, enter, exit |
 | `SR_TREE` | a **read-only snapshot of the range's `head`**, for a file-guard check to read files `match` did not select (a sibling spec, a test file) as committed, never the working tree | file-guard checks only |
 | `SR_BASE`, `SR_HEAD` | the range's two SHAs ([file-guard.md](file-guard.md)); `SR_BASE` is what stood before the work | file-guard checks only |
 | `SR_SESSION_START` | **deprecated** alias of `SR_BASE`, kept for rules written against it; it no longer means "HEAD when the session began". Write new rules against `SR_BASE` | file-guard checks only |
@@ -29,7 +30,7 @@ A file-guard check runs under `sr-checks run|verify`, which may run outside any
 session (CI, a `pre-push` hook): there `SR_SESSION_ID` and `SR_TRANSCRIPT` are
 unset, so a check that needs the transcript must say so rather than pass.
 
-Each `SR_*` variable is **left unset when its value is empty**, deliberately —
+Each `SR_*` variable except `SR_AGENT_ID` is **left unset when its value is empty**, deliberately —
 "unset is diagnosable" is a stance a rule can test for. Outside a hook there is no
 guardrail in scope, so `sr-session state` says so rather than guessing.
 

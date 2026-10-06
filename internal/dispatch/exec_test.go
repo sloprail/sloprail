@@ -224,3 +224,20 @@ func TestRunScript_RefusesWhatCannotBeExecedDirectly(t *testing.T) {
 		t.Errorf("a well-formed script must pass: %s", res.Reason)
 	}
 }
+
+// SR_AGENT_ID carries the sub-agent a hook fired inside, and is set even when
+// empty: a stale id inherited from an outer process (a check that launched an
+// agent hands its environment down) must not tell a main-session check it runs
+// inside a sub-agent.
+func TestRunScriptExec_AgentIDEnvOverridesInherited(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "want.sh"), []byte(`#!/bin/sh
+[ "${SR_AGENT_ID-unset}" = "$WANT" ] || { echo "SR_AGENT_ID was '${SR_AGENT_ID-unset}', want '$WANT'" >&2; exit 1; }
+`), 0o755))
+	t.Setenv("SR_AGENT_ID", "stale-outer-agent")
+	for _, id := range []string{"a17b8b227a41c5192", ""} {
+		res, err := runScriptExec(scriptCall{Dir: dir, Script: "./want.sh", AgentID: id, Env: []string{"WANT=" + id}})
+		require.NoError(t, err)
+		assert.True(t, res.Passed, "agent id %q: %s", id, res.Reason)
+	}
+}
