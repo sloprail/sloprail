@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/reap"
 )
 
 // runVerified runs the agent, has the caller's script judge what it wrote, and
@@ -236,6 +238,7 @@ func makeOutputFile(readonly []string) (path string, cleanup func(), err error) 
 			tried = append(tried, root)
 			continue
 		}
+		reap.Mark(dir)
 		return filepath.Join(dir, "answer"), func() { _ = os.RemoveAll(dir) }, nil
 	}
 	return "", func() {}, fmt.Errorf("%w: no place to write the answer outside the readonly dirs (tried %s)",

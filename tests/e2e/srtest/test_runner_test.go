@@ -186,6 +186,11 @@ dirname "$PWD" > %q`, filepath.Join(where, "dir")))
 			t.Errorf("kept dir lacks %s: %v", p, err)
 		}
 	}
+	// A later run reaps what killed runs left on start; what was asked to be kept is not that.
+	runCases(t, e, root)
+	if _, err := os.Stat(filepath.Join(m[1], "case/test.sh")); err != nil {
+		t.Errorf("a later run reaped the --keep directory: %v", err)
+	}
 }
 
 // TestSrTestEventsReachTheResult: the lines the case appends to SR_EVENTS_FILE are the result's events,
