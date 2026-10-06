@@ -14,6 +14,17 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
+// running reports whether pid runs: a killed orphan nobody reaps (a container's init may not) is a
+// zombie, which still answers kill(pid, 0) but runs nothing.
+func running(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	st := strings.TrimSpace(string(out))
+	return st != "" && st[0] != 'Z'
+}
+
 // TestSrTestSignalKillsTheCasesGroups: SIGTERM and SIGINT to `sr-test run` end the case it is
 // running and the processes that case started, instead of orphaning them (#273).
 func TestSrTestSignalKillsTheCasesGroups(t *testing.T) {
@@ -29,19 +40,19 @@ func TestSrTestSignalKillsTheCasesGroups(t *testing.T) {
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
-		var running []int
+		var procs []int
 		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) && len(running) < 2 {
-			running = running[:0]
+		for time.Now().Before(deadline) && len(procs) < 2 {
+			procs = procs[:0]
 			b, _ := os.ReadFile(pids)
 			for _, f := range strings.Fields(string(b)) {
 				if n, err := strconv.Atoi(f); err == nil {
-					running = append(running, n)
+					procs = append(procs, n)
 				}
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		if len(running) < 2 {
+		if len(procs) < 2 {
 			_ = cmd.Process.Kill()
 			t.Fatalf("%s: the case never started its processes", sig)
 		}
@@ -55,8 +66,8 @@ func TestSrTestSignalKillsTheCasesGroups(t *testing.T) {
 			t.Fatalf("%s: sr-test did not exit", sig)
 		}
 		time.Sleep(200 * time.Millisecond)
-		for _, p := range running {
-			if syscall.Kill(p, 0) == nil {
+		for _, p := range procs {
+			if running(p) {
 				_ = syscall.Kill(p, syscall.SIGKILL)
 				t.Errorf("%s: pid %d outlived sr-test", sig, p)
 			}

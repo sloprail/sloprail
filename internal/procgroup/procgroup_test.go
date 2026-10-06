@@ -42,19 +42,30 @@ func TestKillAllEndsRegisteredGroupsOnly(t *testing.T) {
 
 // A group that ignores SIGTERM is killed once the grace has passed.
 func TestKillAllEscalatesToSIGKILL(t *testing.T) {
-	c := exec.Command("sh", "-c", "trap '' TERM; while :; do sleep 1; done")
+	pidFile := filepath.Join(t.TempDir(), "pids")
+	// The pids are written after the trap is set, so seeing both means SIGTERM is already ignored.
+	c := exec.Command("sh", "-c", "trap '' TERM; echo $$ > "+pidFile+"; sleep 120 & echo $! >> "+pidFile+"; while :; do wait; done")
 	untrack, err := Start(c, true)
 	require.NoError(t, err)
 	defer untrack()
 	reaped := make(chan struct{})
 	go func() { _ = c.Wait(); close(reaped) }()
-	time.Sleep(200 * time.Millisecond) // the trap is installed
+	require.Eventually(t, func() bool { return len(readPids(pidFile)) == 2 }, 30*time.Second, 10*time.Millisecond)
 
 	start := time.Now()
 	KillAll(500 * time.Millisecond)
 	<-reaped
-	assert.True(t, gone(c.Process.Pid))
 	assert.GreaterOrEqual(t, time.Since(start), 400*time.Millisecond, "SIGTERM was given its grace first")
+	// Leader and its child, judged by state: an orphan killed under an init that does not reap is
+	// a zombie, which still answers kill(-pgid, 0).
+	assert.Eventually(t, func() bool {
+		for _, p := range readPids(pidFile) {
+			if !dead(p) {
+				return false
+			}
+		}
+		return true
+	}, 30*time.Second, 20*time.Millisecond, "the group survived the SIGKILL")
 }
 
 // A child that is not a group leader (stdin is a terminal) is signalled directly.

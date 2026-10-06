@@ -38,7 +38,16 @@ func waitPids(t *testing.T, file string, want int) []int {
 	return nil
 }
 
-func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+// running reports whether pid runs: a killed orphan nobody reaps (a container's init may not) is a
+// zombie, which still answers kill(pid, 0) but runs nothing.
+func alive(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	st := strings.TrimSpace(string(out))
+	return st != "" && st[0] != 'Z'
+}
 
 func startRun(t *testing.T, e *Env, proj, base string, extra ...string) *exec.Cmd {
 	t.Helper()

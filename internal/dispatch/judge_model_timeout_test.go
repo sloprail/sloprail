@@ -2,10 +2,10 @@ package dispatch
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -224,8 +224,19 @@ func TestRunShell_TimeoutEscalatesTermToKill(t *testing.T) {
 	require.NoError(t, err)
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	require.NoError(t, err)
-	assert.Eventually(t, func() bool { return syscall.Kill(pid, 0) != nil }, 5*time.Second, 50*time.Millisecond,
+	assert.Eventually(t, func() bool { return !running(pid) }, 5*time.Second, 50*time.Millisecond,
 		"the grandchild outlived the timeout kill")
+}
+
+// running reports whether pid runs: a killed orphan nobody reaps (a container's init may not) is a
+// zombie, which still answers kill(pid, 0) but runs nothing.
+func running(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	st := strings.TrimSpace(string(out))
+	return st != "" && st[0] != 'Z'
 }
 
 // runShell with a zero timeout falls back to the default bound rather than
