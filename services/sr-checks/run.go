@@ -16,6 +16,7 @@ import (
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/reap"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -236,6 +237,7 @@ func execute(cmd *cobra.Command, m mode) error {
 		} else {
 			defer release()
 		}
+		reap.Temp("", t.root) // what killed runs left in the temp dir, and their dead worktrees
 	}
 	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun)
 	if err != nil {

@@ -152,7 +152,7 @@ type changesetEvaluation struct {
 	statusMemo map[string][]checkstore.CheckStatusRow // verify only: nothing is written, so a rule's rows hold
 }
 
-// verifyTree is the one snapshot of head every rule of a verify shares, made on first need.
+// verifyTree is the one snapshot of head every rule shares (a read-only checkout), made on first need.
 func (ev *changesetEvaluation) verifyTree(head string) (*gitrepo.Snapshot, error) {
 	ev.sharedMu.Lock()
 	defer ev.sharedMu.Unlock()
@@ -574,10 +574,9 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 	subjects := []changeset.Subject{changeset.Whole(cs)}
 	trees := make([]*gitrepo.Snapshot, 0, 1)
 	snapshot := func() (*gitrepo.Snapshot, error) {
-		if ev.verify {
-			if tree, err := ev.verifyTree(r.Head); tree != nil || err != nil {
-				return tree, err
-			}
+		// One checkout of a head serves every rule: it is read-only, so a rule cannot tell.
+		if tree, err := ev.verifyTree(r.Head); tree != nil || err != nil {
+			return tree, err
 		}
 		ev.snapshots.Lock()
 		defer ev.snapshots.Unlock()

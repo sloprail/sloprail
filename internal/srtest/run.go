@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sloprail/sloprail/internal/reap"
 	"github.com/sloprail/sloprail/internal/scriptexec"
 )
 
@@ -160,6 +161,7 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	if err != nil {
 		return finish(Error, err.Error())
 	}
+	reap.Mark(dir) // a killed run leaves the directory: the next run reaps it by this owner
 	if opt.Keep {
 		mu.Lock()
 		fmt.Fprintf(opt.Stderr, "sr-test: kept %s (%s)\n", dir, c.Subject)

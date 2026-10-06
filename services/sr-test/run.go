@@ -14,6 +14,7 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
+	"github.com/sloprail/sloprail/internal/reap"
 	"github.com/sloprail/sloprail/internal/srtest"
 	"github.com/sloprail/sloprail/internal/srtest/agent"
 )
@@ -137,6 +138,7 @@ func execute(cmd *cobra.Command, args []string, f flags) ([]srtest.Result, error
 	} else {
 		defer release()
 	}
+	reap.Temp("", "") // what killed runs left in the temp dir
 	root := "."
 	if len(args) > 0 {
 		root = args[0]
