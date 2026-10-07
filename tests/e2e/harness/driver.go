@@ -38,6 +38,12 @@ const (
 	// CapPathLineBreaks: the harness's file tool can name a path holding a line break.
 	// Codex's apply_patch names a file on one line of the patch, so it cannot.
 	CapPathLineBreaks = "path-line-breaks"
+	// CapRecordPreamble: a fresh session's record opens with lines no reader counts as
+	// entries (custom-title / mode / last-prompt) and holds the hooks' own records
+	// (SessionStart attachments, the Stop hook summary), so an entry's physical line runs
+	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
+	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
+	CapRecordPreamble = "record-preamble"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -140,6 +146,11 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+
+	// IdentityPayload is a hook payload that names only the session and the project
+	// folder it runs in: no transcript path, so a reader resolves the session's record
+	// from the two, as the first hooks of a session make it.
+	IdentityPayload(e *Env, projDir, sessionID string) string
 
 	// TranscriptPath is where the harness keeps a session's root transcript.
 	TranscriptPath(e *Env, projDir, sessionID string) string
