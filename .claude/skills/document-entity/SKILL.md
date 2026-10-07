@@ -1,6 +1,6 @@
 ---
 name: document-entity
-description: Use when judging or writing an entity — a domain noun (User, Order, Product) and its fields. What a GOOD entity IS: domain concepts with typed fields, value constraints, and docs that DEFINE rather than rule. Reused by the spec-quality checks AND the authoring agent. For CLI mechanics see `a10n-spec apply --help`.
+description: Use when judging or writing an entity — a domain noun (User, Order, Product) and its fields. What a GOOD entity IS: domain concepts with typed fields, value constraints, and docs that DEFINE rather than rule. Reused by the spec-quality checks AND the authoring agent.
 ---
 
 # Document Entity
@@ -8,7 +8,7 @@ description: Use when judging or writing an entity — a domain noun (User, Orde
 An entity is a domain-layer concept the spec talks about; its fields are what invariants reference.
 An entity has a `name`, an `emoji`, `fields`, and an optional `doc`. Each field has a `type` and, all optional,
 a value constraint (`constraint_expr` and/or `enum`) and a `doc`. Structure (names, types) is
-enforced at apply — the rules below judge only MEANING, not presence.
+enforced by spec.cue — the rules below judge only MEANING, not presence.
 
 ## The rules
 
@@ -35,7 +35,7 @@ English elsewhere, and do not reject a constraint for being prose. A value's can
 ### An enum field is type string plus a separate enum array
 
 A fixed value set is `type: string` with a separate `enum: [...]` array — NOT `type: enum`, which
-the CLI rejects.
+spec.cue rejects.
 
 - ✅ `status: string enum: [pending, confirmed, cancelled]`
 - ❌ `status: enum ...`

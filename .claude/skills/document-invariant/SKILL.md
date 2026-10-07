@@ -1,6 +1,6 @@
 ---
 name: document-invariant
-description: Use when judging or writing an invariant — the atomic domain rules a spec asserts. What a GOOD invariant IS: an always-true, field-anchored statement of a domain truth. Reused by the spec-quality checks AND the authoring agent. For CLI mechanics see `a10n-spec apply --help`.
+description: Use when judging or writing an invariant — the atomic domain rules a spec asserts. What a GOOD invariant IS: an always-true, field-anchored statement of a domain truth. Reused by the spec-quality checks AND the authoring agent.
 ---
 
 # Document Invariant
