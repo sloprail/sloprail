@@ -404,7 +404,12 @@ func New(t *testing.T, opts ...Option) *Env {
 // column a measurement of nesting rather than of luck.
 func (e *Env) InstallClaudeShim(projDir string) {
 	e.t.Helper()
+	// sr-agent feeds its prompt on the shim's standard input; the shim answers with
+	// a fixed scenario whatever the prompt, so it reads and drops it (a pipe nobody
+	// reads would break sr-agent's write), and starts the mock with no stdin: the
+	// mock refuses a prompt argument beside a piped stdin.
 	script := "#!/bin/sh\n" +
+		"[ -t 0 ] || cat >/dev/null\n" +
 		"exec " + shellQuote(e.mock) + " \\\n" +
 		"  --output-format stream-json \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
@@ -412,7 +417,7 @@ func (e *Env) InstallClaudeShim(projDir string) {
 		"  --config-dir " + shellQuote(e.configDir) + " \\\n" +
 		"  --plugin-cache-dir " + shellQuote(e.pluginDir) + " \\\n" +
 		"  --session-id \"inner-$$\" \\\n" +
-		"  \"launched agent\"\n"
+		"  \"launched agent\" </dev/null\n"
 	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write claude shim: %v", err)
 	}
