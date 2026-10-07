@@ -50,6 +50,7 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 	}
 	var p hookPayload
 	_ = json.Unmarshal(b, &p)
+	toolName, toolInput := harness.Canonicalize(p.ToolName, p.ToolInput, toolAliases)
 
 	in := harness.HookInput{
 		Event:          p.HookEventName,
@@ -58,9 +59,10 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 		Cwd:            p.Cwd,
 		AgentID:        p.AgentID,
 		AgentType:      p.AgentType,
-		ToolName:       p.ToolName,
+		ToolName:       toolName,
+		NativeToolName: harness.NativeName(p.ToolName, toolName),
 		ToolUseID:      p.ToolUseID,
-		ToolInput:      p.ToolInput,
+		ToolInput:      toolInput,
 		StopHookActive: p.StopHookActive,
 	}
 	transcript := ""
@@ -82,6 +84,14 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 		in.Files = patchEffects(p.ToolInput, p.Cwd)
 	}
 	return in
+}
+
+// toolAliases maps Codex's tools onto the canonical vocabulary where it has an
+// equivalent: spawning a sub-agent (its input is {"message"}, recorded in harness-mocks
+// codex-mock/snapshots/runs/*agent*). The shell is already Bash; apply_patch keeps its
+// own name and states its effects in Files; MCP and the rest keep theirs.
+var toolAliases = map[string]harness.ToolAlias{
+	"spawn_agent": {Name: harness.ToolAgent, Keys: map[string]string{"message": "prompt"}},
 }
 
 // patchTools are the names a hook reports Codex's patch tool under; its matcher

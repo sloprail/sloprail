@@ -67,6 +67,7 @@ func ReadHook(r io.Reader) harness.HookInput {
 		return harness.HookInput{}
 	}
 	_ = json.Unmarshal(b, &p)
+	toolName, toolInput := harness.Canonicalize(p.ToolName, p.ToolInput, toolAliases)
 	return harness.HookInput{
 		Event:               p.HookEventName,
 		SessionID:           p.SessionID,
@@ -77,13 +78,21 @@ func ReadHook(r io.Reader) harness.HookInput {
 		AgentType:           p.AgentType,
 		Cwd:                 p.Cwd,
 		WorktreePath:        p.WorktreePath,
-		ToolName:            p.ToolName,
+		ToolName:            toolName,
+		NativeToolName:      harness.NativeName(p.ToolName, toolName),
 		ToolUseID:           p.ToolUseID,
-		ToolInput:           p.ToolInput,
+		ToolInput:           toolInput,
 		StopHookActive:      p.StopHookActive,
 		BackgroundTasks:     p.BackgroundTasks,
 		SessionCrons:        p.SessionCrons,
 	}
+}
+
+// toolAliases maps the names Claude Code has used onto the canonical ones, which are
+// its current names: the sub-agent tool was called Task before Agent. Every other
+// tool, MCP tools (mcp__<server>__<tool>) included, is already canonical.
+var toolAliases = map[string]harness.ToolAlias{
+	"Task": {Name: harness.ToolAgent},
 }
 
 // RenderHook implements harness.HookWire: Claude Code's hook output, which

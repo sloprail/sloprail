@@ -59,6 +59,10 @@ type HookInput struct {
 	// ToolName is the canonical name of the tool a tool hook is about.
 	ToolName string `json:"tool_name"`
 
+	// NativeToolName is the name the harness itself reported for it (Codex's
+	// spawn_agent, Cursor's Task, Claude's older Task): empty when ToolName is it.
+	NativeToolName string `json:"native_tool_name,omitempty"`
+
 	// ToolUseID names the tool call, for the decision log.
 	ToolUseID string `json:"tool_use_id"`
 
@@ -117,6 +121,14 @@ func (p HookInput) IsSubagent() bool {
 // Tool implements filemod.Pending: what the harness calls the tool it is about
 // to run, in the canonical vocabulary.
 func (p HookInput) Tool() string { return p.ToolName }
+
+// NativeTool implements tooluse.NativePending: the name the harness reported.
+func (p HookInput) NativeTool() string {
+	if p.NativeToolName != "" {
+		return p.NativeToolName
+	}
+	return p.ToolName
+}
 
 // Arguments implements filemod.Pending: the tool's own arguments, undecoded.
 func (p HookInput) Arguments() json.RawMessage { return p.ToolInput }

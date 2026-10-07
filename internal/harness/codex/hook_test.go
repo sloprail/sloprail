@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,6 +133,32 @@ func TestDetect_YieldsToClaudeCodeMarkers(t *testing.T) {
 		assert.False(t, Detect([]string{"CODEX_THREAD_ID=t", claude}), claude+": both marker sets is ambiguous, Claude Code wins")
 	}
 	assert.True(t, Detect([]string{"CODEX_THREAD_ID=t", "CLAUDECODE="}), "an empty marker is not one")
+}
+
+// Spawning a sub-agent is Agent with a prompt, whatever the harness calls it; the
+// recorded spawn_agent call (testdata/background-agent.payloads.jsonl) is
+// {"message": ...}.
+func TestParseHook_SpawnAgentIsTheCanonicalAgent(t *testing.T) {
+	in := payloads(t, "background-agent.payloads.jsonl", "/run")
+	var spawn *harness.HookInput
+	for i := range in {
+		if in[i].Event == "PreToolUse" && in[i].NativeToolName == "spawn_agent" {
+			spawn = &in[i]
+		}
+	}
+	require.NotNil(t, spawn, "the recording holds a spawn_agent PreToolUse")
+	assert.Equal(t, "Agent", spawn.ToolName)
+	assert.Equal(t, "spawn_agent", spawn.NativeTool())
+	var args map[string]any
+	require.NoError(t, json.Unmarshal(spawn.ToolInput, &args))
+	assert.Contains(t, args, "prompt", "the message is the canonical prompt")
+	assert.NotContains(t, args, "message")
+
+	for _, h := range in {
+		if h.ToolName == "Bash" {
+			assert.Empty(t, h.NativeToolName, "Codex's shell tool is already Bash")
+		}
+	}
 }
 
 func TestProjectSkillDirs_CodexReadsAgentsSkills(t *testing.T) {
