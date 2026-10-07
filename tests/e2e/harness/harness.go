@@ -1301,6 +1301,49 @@ func (e *Env) ConfigDir() string {
 // scratchpad and task outputs (<TmpDir>/claude-<uid>/<project dir>/<session>/).
 func (e *Env) TmpDir() string { return e.tmpDir }
 
+// HarnessSessionID is the id the harness gave the session a test calls id: the same id
+// for a harness that takes the caller's, the one the run printed for one that names its
+// sessions itself (what a tool run beside the harness, such as `sr-eval archive`, names it by).
+func (e *Env) HarnessSessionID(id string) string {
+	if v := e.harnessID(id); v != "" {
+		return v
+	}
+	return id
+}
+
+// SubagentRecordPath is where the record of the session's sub-agent is kept, "" for a
+// harness whose sub-agent record names no parent (see Driver.SubagentRecordPath).
+func (e *Env) SubagentRecordPath(projDir, sessionID, agentID string) string {
+	e.t.Helper()
+	return e.driver.SubagentRecordPath(e, projDir, sessionID, agentID)
+}
+
+// ForgeSubagentRecord writes the sub-agent's record in the harness's own shape and returns
+// its path, "" (nothing written) where the harness cannot tie one to its parent.
+func (e *Env) ForgeSubagentRecord(projDir, sessionID, agentID, cwd, prompt string) string {
+	e.t.Helper()
+	return e.driver.ForgeSubagentRecord(e, projDir, sessionID, agentID, cwd, prompt)
+}
+
+// SubagentHookPayload is a sub-agent hook's payload in the harness's own field shape.
+func (e *Env) SubagentHookPayload(projDir, sessionID, agentID, event, cwd string, extra map[string]any) string {
+	e.t.Helper()
+	return e.driver.SubagentHookPayload(e, projDir, sessionID, agentID, event, cwd, extra)
+}
+
+// ForgeBareTranscript writes a session record that holds one prompt and nothing else.
+func (e *Env) ForgeBareTranscript(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.driver.ForgeBareTranscript(e, projDir, sessionID)
+}
+
+// Companions are the files the harness keeps for the session beside its record
+// (archive-relative path -> content), nil where it keeps none.
+func (e *Env) Companions(projDir, sessionID string) map[string]string {
+	e.t.Helper()
+	return e.driver.Companions(e, projDir, sessionID)
+}
+
 // HomeDir is the HOME every process of this Env runs with (and so where sloprail's
 // state stores live).
 func (e *Env) HomeDir() string { return e.home }

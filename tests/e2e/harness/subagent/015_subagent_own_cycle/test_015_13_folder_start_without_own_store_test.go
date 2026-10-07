@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,18 +58,32 @@ func TestT015_13_AFolderIsFoundByItsPathWhenTheAgentsOwnStoreHasNoStart(t *testi
 	otherHead := e.Git(other, "rev-parse", "HEAD")
 	e.PushBranch(other, "main") // OLD has landed
 
-	record := e.TranscriptPath(proj, sess)
-	payload := func(event, cwd string, extra map[string]any) string {
-		m := map[string]any{
-			"session_id": sess, "transcript_path": record, "cwd": cwd,
-			"agent_id": "agentx", "agent_type": "general-purpose", "hook_event_name": event,
+	// A sub-agent's record is tied to its parent in the harness's own way, and its hooks are
+	// spelt in the harness's own fields (Env.SubagentRecordPath, Env.SubagentHookPayload). A
+	// harness that records no link from a sub-agent to its parent (no CapSubagentParentLink:
+	// Cursor's sub-agent is a conversation of its own, and its subagent hooks are not
+	// attributable) has no sub-agent worktree to find: it registers none, the root alone.
+	sidechain := e.SubagentRecordPath(proj, sess, "agentx")
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		if sidechain != "" || e.ForgeSubagentRecord(proj, sess, "agentx", wt, "make D") != "" {
+			t.Fatalf("a harness that cannot tie a sub-agent to its parent has a record path for one: %q", sidechain)
 		}
-		for k, v := range extra {
-			m[k] = v
+		if folders := e.SessionFolders(proj, sess); len(folders) != 1 || folders[0].Role != "root" {
+			t.Fatalf("session folders = %+v, want the root alone: no sub-agent can be told from the session", folders)
 		}
-		b, _ := json.Marshal(m)
-		return string(b)
+		return
 	}
+	payload := func(event, cwd string, extra map[string]any) string {
+		return e.SubagentHookPayload(proj, sess, "agentx", event, cwd, extra)
+	}
+	// the id the harness's hooks name the sub-agent by (Codex's is its thread id)
+	var named struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.Unmarshal([]byte(payload("PreToolUse", wt, nil)), &named); err != nil || named.AgentID == "" {
+		t.Fatalf("the sub-agent's hook names no agent: %v", err)
+	}
+	hookAgentID := named.AgentID
 	hook := func(cmd, in, dir string) harness.Result {
 		return e.CLIDirectStdinEnv(dir, in, e.SessionEnv(""), "sr-session", cmd)
 	}
@@ -85,16 +98,8 @@ func TestT015_13_AFolderIsFoundByItsPathWhenTheAgentsOwnStoreHasNoStart(t *testi
 	e.CommitAll(wt, "D: the sub-agent's own change")
 	e.WriteFile(other, "docs/new.md", "FORBIDDEN in NEW")
 	e.CommitAll(other, "NEW: the sub-agent's own change")
-	sidechain := filepath.Join(strings.TrimSuffix(record, ".jsonl"), "subagents", "agent-agentx.jsonl")
-	if err := os.MkdirAll(filepath.Dir(sidechain), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	line, _ := json.Marshal(map[string]any{
-		"type": "user", "uuid": "sub-origin", "cwd": wt, "sessionId": sess, "isSidechain": true,
-		"agentId": "agentx", "message": map[string]any{"role": "user", "content": "make D"},
-	})
-	if err := os.WriteFile(sidechain, append(line, '\n'), 0o644); err != nil {
-		t.Fatal(err)
+	if got := e.ForgeSubagentRecord(proj, sess, "agentx", wt, "make D"); got != sidechain {
+		t.Fatalf("the sub-agent's record was written at %q, not where it is kept, %q", got, sidechain)
 	}
 	// It judges what it committed: `sr-checks run` over each folder's range, as the session.
 	e.CheckRunRaw(wt, sess, "origin/main", "HEAD")
@@ -118,7 +123,7 @@ func TestT015_13_AFolderIsFoundByItsPathWhenTheAgentsOwnStoreHasNoStart(t *testi
 	byRole := map[string]string{}
 	for _, f := range folders {
 		byRole[f.Role] = f.BaseRef
-		if f.Role != "root" && f.AgentID != "agentx" {
+		if f.Role != "root" && f.AgentID != hookAgentID {
 			t.Fatalf("folder %+v is not owned by the sub-agent", f)
 		}
 	}

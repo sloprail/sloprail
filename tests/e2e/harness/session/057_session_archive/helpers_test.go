@@ -32,7 +32,6 @@ type world struct {
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	harness.RequireCap(t, harness.CapSessionArchive)
 	e := harness.New(t, harness.WithoutShippedFileGuards())
 	proj := e.Project()
 	e.GitInit(proj)
@@ -62,10 +61,23 @@ func (w *world) sessionIn(t *testing.T, proj, id string, extra ...harness.Turn) 
 	w.e.Run(proj, id, "write the doc "+id, harness.Turns("done", turns...))
 }
 
-// background is a turn that starts a background task: the transcript then names the session's
-// temp dir, and the task's output file is written there.
-func background(id string) harness.Turn {
-	return harness.Background("bg-"+id, "Bash", map[string]string{"command": "echo background-" + id})
+// background is a turn that starts a background task where the harness has them: the
+// transcript then names the session's temp dir, and the task's output file is written there.
+// Where it has not (Codex's and Cursor's receipts name no task) it is the same command run
+// in the foreground, and keepsTempDir is false.
+func background(t *testing.T, id string) harness.Turn {
+	t.Helper()
+	if keepsTempDir(t) {
+		return harness.Background("bg-"+id, "Bash", map[string]string{"command": "echo background-" + id})
+	}
+	return harness.Bash("bg-"+id, "echo background-"+id)
+}
+
+// keepsTempDir: the harness keeps a per-session temp directory (scratchpad, task outputs)
+// that an archive of the session holds. Declared by the capability that makes one exist.
+func keepsTempDir(t *testing.T) bool {
+	t.Helper()
+	return harness.HasCap(t, harness.CapBackgroundTasks)
 }
 
 // tempDir is where Claude Code keeps the session's scratchpad and tasks, as the transcript names it.
@@ -78,6 +90,22 @@ func (w *world) tempDir(t *testing.T, id string) string {
 	return m[0]
 }
 
+// id is the session's id as the harness names it, which is what the archive is asked for
+// and what it names the session's directory by (a test's own id is an alias of it on
+// harnesses that name their sessions themselves).
+func (w *world) id(sess string) string { return w.e.HarnessSessionID(sess) }
+
+// sessionArgs rewrites the test's session ids in an archive command line to the harness's.
+func (w *world) sessionArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "--session" {
+			out[i+1] = w.id(out[i+1])
+		}
+	}
+	return out
+}
+
 // archiveEnv is the environment of an operator running sr-eval beside Claude Code: its config
 // dir and temp root, and the sibling binaries on PATH.
 func (w *world) archiveEnv() []string {
@@ -86,7 +114,7 @@ func (w *world) archiveEnv() []string {
 
 func (w *world) archiveIn(t *testing.T, cwd string, args ...string) harness.Result {
 	t.Helper()
-	return w.e.CLIDirectEnv(cwd, w.archiveEnv(), "sr-eval", append([]string{"archive"}, args...)...)
+	return w.e.CLIDirectEnv(cwd, w.archiveEnv(), "sr-eval", append([]string{"archive"}, w.sessionArgs(args)...)...)
 }
 
 // archive runs it from the project and returns the entry directory it printed.
@@ -125,14 +153,16 @@ func git(t *testing.T, dir string, args ...string) string {
 }
 
 type manifest struct {
+	Harness string `json:"harness"`
 	Sources struct {
-		Scratchpad map[string]string `json:"scratchpad_roots"`
+		Companions map[string]map[string]string `json:"companions"` // session -> item -> where, and how it was found
 	} `json:"sources"`
-	Tools    map[string]string `json:"tool_versions"`
-	Label    string            `json:"label"`
-	Cwd      string            `json:"cwd"`
-	Sessions []string          `json:"sessions"`
-	Checks   []struct {
+	Subagents map[string]string `json:"subagents"` // session -> what became of its sub-agents
+	Tools     map[string]string `json:"tool_versions"`
+	Label     string            `json:"label"`
+	Cwd       string            `json:"cwd"`
+	Sessions  []string          `json:"sessions"`
+	Checks    []struct {
 		Repo     string   `json:"repo"`
 		File     string   `json:"file"`
 		Folders  []string `json:"folders"`

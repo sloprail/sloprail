@@ -23,6 +23,10 @@ const (
 	CapBackgroundTasks   = "background-tasks"
 	CapTranscript        = "transcript"
 
+	// CapForkSessions: a session can be forked (RunForked): a new session continuing another's
+	// conversation. Cursor's mock does not model a fork of a conversation.
+	CapForkSessions = "fork-sessions"
+
 	// CapAllowNotice: the harness can show the person a note on a hook that allows (a
 	// systemMessage). Cursor has no field for one: the note goes to stderr only.
 	CapAllowNotice = "allow-notice"
@@ -47,10 +51,6 @@ const (
 	// cursor-mock plays every step before the first Stop, and the retry says only the
 	// scenario's final result.
 	CapScriptedRetryText = "scripted-retry-text"
-
-	// CapSessionArchive: `sr-eval archive` reads the harness's sessions (it locates Claude
-	// Code's <config>/projects/<project>/<id>.jsonl and the temp dir beside it).
-	CapSessionArchive = "session-archive"
 
 	// CapSubagentParentLink: a sub-agent's conversation names the session that dispatched
 	// it, so what the sub-agent can cite (the user's words, a sibling's tool output) and
@@ -229,6 +229,27 @@ type Driver interface {
 	// ForkTranscript writes the transcript a re-forked session opens on.
 	ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string)
 
+	// SubagentRecordPath is where the record of the session's sub-agent agentID is (or will
+	// be) kept, in the layout this harness ties a sub-agent's record to its parent by.
+	// Empty for a harness with no such tie (no CapSubagentParentLink: Cursor's sub-agent is
+	// a conversation of its own that names no parent).
+	SubagentRecordPath(e *Env, projDir, sessionID, agentID string) string
+	// ForgeSubagentRecord writes, at SubagentRecordPath, the record of a sub-agent working
+	// in cwd that was given prompt, in this harness's own record shape. It writes nothing
+	// and returns "" where SubagentRecordPath is empty.
+	ForgeSubagentRecord(e *Env, projDir, sessionID, agentID, cwd, prompt string) string
+	// SubagentHookPayload is the payload of one of the sub-agent's hooks (event is the
+	// harness-neutral name: PreToolUse, SubagentStop) in this harness's own field shape.
+	SubagentHookPayload(e *Env, projDir, sessionID, agentID, event, cwd string, extra map[string]any) string
+	// ForgeBareTranscript writes a session record holding one user prompt and nothing else
+	// (no hook ever ran for it) where this harness keeps the session's, and returns its path.
+	ForgeBareTranscript(e *Env, projDir, sessionID string) string
+	// Companions are the files this harness keeps for a session beside its record, as an
+	// archive of the session keeps them: archive-relative path -> content. A harness whose
+	// companions are written by its own hooks (Cursor's tool outputs) reads them; one whose
+	// are the harness's own (Claude Code's tool results) plants them; one with none returns nil.
+	Companions(e *Env, projDir, sessionID string) map[string]string
+
 	// WrittenBytes is what the harness's file-writing tool leaves on disk when the agent
 	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
 	// ends every non-empty file with a newline).
@@ -317,6 +338,16 @@ func mustDriver() Driver {
 		panic(err.Error())
 	}
 	return d
+}
+
+// Selected is the name of the harness SR_HARNESS selects.
+func Selected(t testing.TB) string {
+	t.Helper()
+	d, err := selectDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.Name()
 }
 
 // HasCap reports whether the selected harness declares the capability, without skipping.
