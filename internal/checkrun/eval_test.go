@@ -712,8 +712,10 @@ func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
 	assert.Empty(t, guardRows(t, f.results, f.guard), "nothing is stored under the guard x subject key")
 }
 
-// A quote that does not resolve in a present session is a real refusal: stored as a FAIL.
-func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
+// A quote that does not resolve in a present session is a real refusal of THIS run, and only
+// of it: citations are not in the key, so it is no verdict about the content and is not stored
+// under it (it would supersede a pass of the same content). The next run asks again.
+func TestEvaluate_AnUnresolvedCitationIsRefusedAndNotStored(t *testing.T) {
 	f := citedFixture(t)
 	record := filepath.Join(t.TempDir(), "s-eval.jsonl")
 	require.NoError(t, os.WriteFile(record, []byte(""), 0o644))
@@ -723,21 +725,14 @@ func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
 	ev.identity = ev.runIdentity()
 	first, refused := ev.evaluate(f.guard)
 	require.True(t, refused)
-
-	rows := guardRows(t, f.results, f.guard)
-	require.Len(t, rows, 1, "run stored one verdict under the guard x subject key")
-	assert.Equal(t, checkstore.StatusFail, rows[0].Status)
-	assert.NotEmpty(t, rows[0].Fingerprint)
-	stored := rows[0]
+	assert.NotEmpty(t, first.Reason)
+	assert.Empty(t, guardRows(t, f.results, f.guard), "nothing is stored under the guard x subject key")
 
 	got := f.verifyReasons(t)
-	require.Len(t, got, 1, "verify reports the stored refusal (non-zero exit)")
-	assert.NotContains(t, got[0].Reason, "not judged yet")
-	assert.Equal(t, first.Reason, got[0].Reason, "verify reports the refusal's own reason")
-	assert.NotEmpty(t, got[0].Reason)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "not judged yet", "verify has no verdict for the content")
 
-	// A second run with the same input replays the stored FAIL: nothing new is recorded and
-	// no check script runs.
+	// A second run asks the citation again (nothing was replayed) and says the same.
 	counting := &recordCountingStore{Store: f.results}
 	p2 := f.params(t, counting)
 	p2.Transcript = record
@@ -745,15 +740,10 @@ func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
 	ev2.identity = ev2.runIdentity()
 	again, refused := ev2.evaluate(f.guard)
 	require.True(t, refused)
-	assert.Equal(t, first.Reason, again.Reason, "the stored refusal is replayed")
-	require.NotEmpty(t, counting.records)
+	assert.Equal(t, first.Reason, again.Reason)
 	for _, rec := range counting.records {
-		assert.Equal(t, true, rec.Metadata["replayed"], "%s is replayed from the store, not judged again", rec.Kind)
+		assert.NotEqual(t, true, rec.Metadata["replayed"], "%s was checked afresh", rec.Kind)
 	}
-	assert.Equal(t, 0, f.runs(t), "no check script ran")
-	rows = guardRows(t, f.results, f.guard)
-	require.Len(t, rows, 1)
-	assert.Equal(t, stored.Fingerprint, rows[0].Fingerprint, "same key")
 }
 
 // recordCountingStore collects the checks recorded through it.
@@ -1112,5 +1102,7 @@ func TestEvaluate_VerifyReusesAVerdictJudgedOverTheSameTrees(t *testing.T) {
 	runGit(t, f.repo, "commit", "-m", "squash of pr, main moved")
 	got, _ = f.verifyOver(t, moved)
 	require.Len(t, got, 1)
-	assert.Contains(t, got[0].Reason, "not judged yet")
+	// The content is the judged one (a stored pass is found by key), but the squash commit
+	// carries no citation and no trees match: the citation gate refuses it.
+	assert.Contains(t, got[0].Reason, "must cite the user's own words")
 }
