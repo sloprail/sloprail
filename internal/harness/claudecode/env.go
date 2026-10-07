@@ -86,3 +86,12 @@ func Hermetic(environ []string) []string {
 	}
 	return out
 }
+
+// SandboxEnv implements harness.SandboxEnv.
+func (Harness) SandboxEnv(configDir, pluginCacheDir, tmpDir string) []string {
+	return []string{
+		"CLAUDE_CONFIG_DIR=" + configDir,
+		"CLAUDE_CODE_PLUGIN_CACHE_DIR=" + pluginCacheDir,
+		"CLAUDE_CODE_TMPDIR=" + tmpDir,
+	}
+}

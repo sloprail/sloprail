@@ -200,7 +200,7 @@ fi
 #    tool's own config directory. Neither builds a prompt; neither can leak
 #    agent content into one. The signature of actually running a model is the
 #    binary being INVOKED, so the match requires a flag the CLI is called with
-#    (`--print` / `-p` / `--model`) — the dispatcher included, since it is
+#    (`--print` / `-p` / `--model`; `exec` for `codex`) — the dispatcher included, since it is
 #    called the same way (its own `--model` / `--prompt` / `--claude-args`).
 #    `claude_bin` covers the ordinary idiom of assigning the binary to a
 #    variable and calling that.
@@ -249,8 +249,16 @@ if [ -n "${path:-}" ]; then
   fi
 fi
 
+# The one list of non-interactive model invocations, each spelled as its CLI's `--help` prints it:
+#   claude        --print / -p / --model
+#   codex         `exec` (alias `e`) — `codex exec --help`: "Run Codex non-interactively"
+#   cursor-agent  -p / --print — `cursor-agent --help`; installed as `agent` too
+#   sr-agent      --model / --prompt / --claude-args (the dispatcher judges go through)
+# `agent` is matched only as a whole word, so `sr-agent` is not read as the Cursor CLI.
 _dispatcher="sr-agent"
-if printf '%s' "$body" | grep -qE "(claude|claude_bin|CLAUDE_BIN)[^|&;]*(--print|[[:space:]]-p[[:space:]]|--model)|${_dispatcher}[^|&;]*(--model|--prompt|--claude-args)" 2>/dev/null &&
+_print='--print|[[:space:]]-p[[:space:]]'
+_model_cli="(claude|claude_bin|CLAUDE_BIN)[^|&;]*(${_print}|--model)|(codex|CODEX_BIN)[^|&;]*[[:space:]](exec|e)[[:space:]]|(cursor-agent|cursor_agent|CURSOR_AGENT|(^|[^-[:alnum:]_])agent)[^|&;]*(${_print})|${_dispatcher}[^|&;]*(--model|--prompt|--claude-args)"
+if printf '%s' "$body" | grep -qE "$_model_cli" 2>/dev/null &&
    ! printf '%s%s' "$body" "$prompt_files" | grep -qiE 'as DATA|never as instruction' 2>/dev/null; then
   note "rules/judged-content-is-data — runs a model but never says the content is DATA.
     A judge reads whatever the agent just wrote, which is attacker-shaped by
