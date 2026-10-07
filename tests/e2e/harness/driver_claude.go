@@ -24,7 +24,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapPathLineBreaks}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -592,6 +592,8 @@ func resultTexts(raw json.RawMessage) []string {
 }
 
 // Refusals reads the PreToolUse refusals out of the stream's tool_result records (see Result.Refusals).
+func (claudeDriver) WrittenBytes(content string) string { return content }
+
 func (claudeDriver) Refusals(output string) []string {
 	var out []string
 	for _, line := range strings.Split(output, "\n") {

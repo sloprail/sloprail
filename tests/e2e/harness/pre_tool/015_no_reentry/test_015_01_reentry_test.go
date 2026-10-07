@@ -52,7 +52,7 @@ fi
 SLOP_TEST_DEPTH=$((D + 1))
 export SLOP_TEST_DEPTH
 
-sr-agent --harness claude-code --model size-xs "judge this note" >/dev/null 2>&1
+sr-agent --harness {{harness}} --model size-xs "judge this note" >/dev/null 2>&1
 exit 0
 `
 
@@ -93,7 +93,7 @@ func maxDepth(t *testing.T, lines []string) int {
 func TestT015_01_LaunchedAgentDoesNotReenterTheRuleThatLaunchedIt(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": e.ForHarness(judgeScript)})
 	e.InstallClaudeShim(proj)
 	// The launched agent EDITS A FILE. That is the case worth protecting: a
 	// judging agent that could not write could not be the thing this guards.

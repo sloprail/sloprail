@@ -1,10 +1,10 @@
 package harness
 
 import (
-	"github.com/sloprail/sloprail/internal/harness"
-	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
+	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +43,7 @@ func (cursorDriver) Name() string { return "cursor" }
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -450,6 +450,8 @@ func cursorRejections(output string) []string {
 	}
 	return out
 }
+
+func (cursorDriver) WrittenBytes(content string) string { return content }
 
 func (cursorDriver) Refusals(output string) []string { return cursorRejections(output) }
 
