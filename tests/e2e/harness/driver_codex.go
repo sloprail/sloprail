@@ -363,7 +363,9 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 // hook no session variable (the session is in its payload); a shell command the agent runs
 // has CODEX_THREAD_ID and CODEX_SESSION_ID.
 func (codexDriver) HookEnv(e *Env, sessionID string) []string {
-	env := []string{"CODEX_HOME=" + e.configDir,
+	// SLOPRAIL_HARNESS: the plugin's hook wrapper names the harness, and Codex's own markers
+	// (a thread id) are not in a hook's environment, so without it a call made as a hook is read as Claude's.
+	env := []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir,
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
 		id := e.harnessID(sessionID)
