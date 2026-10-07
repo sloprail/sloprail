@@ -173,6 +173,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 
 	var agentErrs []string
 	var dialogue []exchange
+	var sessionID string // the first turn's session, by which every later turn resumes it
 	message := prompt
 	for turn := 1; turn <= maxTurns; turn++ {
 		if turn > 1 {
@@ -194,7 +195,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 		}
 		var reply bytes.Buffer
 		if agentErr := launchAgent(ctx, io.MultiWriter(out, &reply), cmd.ErrOrStderr(), ws, binDir,
-			agentArgs(harnessID, fx.Model, message, turn > 1, fx.DisallowedTools), agent.env); agentErr != nil {
+			agentArgs(harnessID, fx.Model, message, sessionID, fx.DisallowedTools), agent.env); agentErr != nil {
 			agentErrs = append(agentErrs, fmt.Sprintf("turn %d: %v", turn, agentErr))
 			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error on turn %d: %v\n", turn, agentErr)
 			// Not returned yet: a refusal or a crash mid-run still leaves a
@@ -204,6 +205,16 @@ func runFixtureSteps(cmd *cobra.Command) error {
 			// transcript below is unrecoverable.
 		}
 		dialogue = append(dialogue, exchange{User: message, Agent: reply.String()})
+		if turn == 1 && maxTurns > 1 {
+			// Resumed by exact id: read off the record the first turn wrote. No id means
+			// no exact resume, and the harness's "latest session" form is not a substitute.
+			sessionID = prov.SessionID(findTranscript(h.Transcripts(), ws.project, configDir))
+			if sessionID == "" {
+				agentErrs = append(agentErrs, "the first turn left no session record to resume by id")
+				fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: %s\n", agentErrs[len(agentErrs)-1])
+				break
+			}
+		}
 	}
 	agentErrText := strings.Join(agentErrs, "; ")
 
@@ -282,21 +293,14 @@ func exitCode(err error) int {
 // going through sr-agent (rather than execing `claude` here) is what keeps
 // this harness-agnostic.
 //
-// `settings: "{}"` overrides sr-agent's baseArgs isolation: sr-agent appends
-// the caller's --claude-args AFTER its own baseArgs, and a later --settings
-// wins over an earlier one (claude's own flag semantics, confirmed in
-// sr-agent's BuildInvocation doc comment) — so this is the documented escape
-// hatch, not a workaround.
-//
-// `permission-mode: "bypassPermissions"` is what makes this an UNATTENDED
-// run: sr-agent's -p (print, non-interactive) mode still asks for per-tool
-// approval by default, and nothing here can answer that prompt. This does
-// NOT weaken what the eval proves — a gate's PreToolUse denial (sr-session's
-// deny()) fires as its own hook decision independent of Claude Code's
-// permission system, so the gate still refuses the agent's first write
-// exactly as it would under any permission mode. What bypassPermissions
-// removes is only Claude Code's OWN "may I write this file" question, which
-// exists for an interactive human, not for a fixture proving a guardrail.
+// `--agent-run` is sr-agent's own mode for the agent under test: its judge
+// isolation (hooks off, plugins unloaded) is replaced by the harness's unattended
+// flags (agentRunArgs in sr-agent's spec: bypassed permissions for Claude Code,
+// the approval/sandbox bypass for Codex, --force for Cursor), because nothing here
+// can answer a permission prompt. This does NOT weaken what the eval proves — a
+// gate's PreToolUse denial fires as its own hook decision independent of the
+// harness's permission system; what is removed is only the harness's OWN "may I
+// write this file" question, which exists for an interactive human.
 // env is the agent's own environment (agentHome): a HOME of its own inside
 // the workspace, logged in through the linked ~/Library keychain, with this
 // build's siblings first on PATH — or, for a FreshMachine run, nothing of
@@ -304,7 +308,7 @@ func exitCode(err error) int {
 // (which is why sr-agent is exec'd by absolute path).
 //
 // args is one turn's sr-agent argv, from agentArgs (user.go), which also pins
-// every turn of a run to one session.
+// every later turn of a run to the first turn's session, by its exact id.
 func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir string, args []string, env []string) error {
 	agentBin := filepath.Join(binDir, "sr-agent")
 

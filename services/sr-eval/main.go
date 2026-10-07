@@ -23,12 +23,13 @@
 // WHY THE AGENT-UNDER-TEST RUNS THROUGH sr-agent RATHER THAN A HARDCODED
 // `claude` invocation: an eval binary that shells out to `claude` directly has
 // smuggled the Claude-Code-specific coupling sr-agent exists to remove back in
-// through its most important caller. sr-agent's own isolation
-// (--settings '{"hooks":{},...}') exists so a JUDGE call cannot recurse into
-// this project's own guardrails — but the agent-under-test is the opposite
-// case: the whole point is for the project's real .sloprail/ gate to fire. So
-// sr-eval overrides that isolation explicitly via --claude-args, rather than
-// bypassing sr-agent to get hooks back. See run.go.
+// through its most important caller. sr-agent's own isolation (a harness's
+// hooks-off settings) exists so a JUDGE call cannot recurse into this project's
+// own guardrails — but the agent-under-test is the opposite case: the whole
+// point is for the project's real .sloprail/ gate to fire. So sr-eval asks
+// sr-agent for its --agent-run mode (the harness's unattended flags, no
+// isolation) under the harness --harness names, rather than bypassing sr-agent
+// to get hooks back. See run.go.
 //
 // EVERY RUN IS ARCHIVED, by default, into a local git repository under
 // ~/.local/share/sloprail/eval-runs/<fixture>/<run-id>/ (or

@@ -29,9 +29,10 @@ type exchange struct {
 
 // agentArgs is the sr-agent argv for one turn of the agent-under-test, under the
 // harness named by id. Everything harness-shaped (the unattended flags, how a session
-// is resumed, how a tool rule is spelt) is sr-agent's `--agent-run` / `--continue`:
-// this names the run and nothing more. The first turn starts the working directory's
-// session; every later one continues it, so all turns land in ONE transcript.
+// is resumed, how a tool rule is spelt) is sr-agent's `--agent-run` / `--resume`:
+// this names the run and nothing more. The first turn starts a session; every later
+// one resumes it by its exact id (resumeID, read off the first turn's record), so all
+// turns land in ONE transcript.
 // The fixture's disallowedTools ride on every turn, comma-joined, not space-joined:
 // a rule such as `Bash(gh search:*)` carries a space of its own, and a space-joined
 // list splits it in two, so neither half removes anything (fixture.go's
@@ -39,10 +40,10 @@ type exchange struct {
 //
 // --harness is named, never detected: sr-eval strips the operator's own harness session
 // from the agent's environment, and detection reads exactly those variables.
-func agentArgs(harnessID, model, prompt string, resume bool, disallowed []string) []string {
+func agentArgs(harnessID, model, prompt, resumeID string, disallowed []string) []string {
 	args := []string{"--harness", harnessID, "--model", model, "--agent-run"}
-	if resume {
-		args = append(args, "--continue")
+	if resumeID != "" {
+		args = append(args, "--resume", resumeID)
 	}
 	if len(disallowed) > 0 {
 		args = append(args, "--disallowed-tools", strings.Join(disallowed, ","))

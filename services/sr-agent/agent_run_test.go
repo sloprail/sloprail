@@ -8,13 +8,13 @@ import (
 	"github.com/sloprail/sloprail/internal/harness"
 )
 
-func agentRunArgv(t *testing.T, name Harness, resume bool) []string {
+func agentRunArgv(t *testing.T, name Harness, resumeID string) []string {
 	t.Helper()
 	spec, ok := lookupSpec(name)
 	if !ok {
 		t.Fatalf("no spec for %s", name)
 	}
-	run, err := spec.forAgentRun(resume)
+	run, err := spec.forAgentRun(resumeID)
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
@@ -29,18 +29,18 @@ func TestForAgentRun_PerHarnessArgv(t *testing.T) {
 		first, later string
 		never        []string
 	}{
-		{ClaudeCode, "-p --model m --permission-mode bypassPermissions -- do it", "-p --continue --model m --permission-mode bypassPermissions -- do it", []string{"--settings"}},
-		{Codex, "exec -m m --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -- do it", "exec resume --last -m m --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -- do it", []string{"--disable", "--ignore-user-config", "--ephemeral"}},
-		{Cursor, "-p --model m --trust --force -- do it", "-p --continue --model m --trust --force -- do it", nil},
+		{ClaudeCode, "-p --model m --permission-mode bypassPermissions -- do it", "-p --model m --resume SID --permission-mode bypassPermissions -- do it", []string{"--settings"}},
+		{Codex, "exec -m m --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -- do it", "exec resume SID -m m --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -- do it", []string{"--disable", "--ignore-user-config", "--ephemeral"}},
+		{Cursor, "-p --model m --trust --force -- do it", "-p --model m --resume SID --trust --force -- do it", nil},
 	} {
-		if got := strings.Join(agentRunArgv(t, c.name, false), " "); got != c.first {
+		if got := strings.Join(agentRunArgv(t, c.name, ""), " "); got != c.first {
 			t.Errorf("%s first turn:\n got %s\nwant %s", c.name, got, c.first)
 		}
-		if got := strings.Join(agentRunArgv(t, c.name, true), " "); got != c.later {
+		if got := strings.Join(agentRunArgv(t, c.name, "SID"), " "); got != c.later {
 			t.Errorf("%s later turn:\n got %s\nwant %s", c.name, got, c.later)
 		}
 		for _, bad := range c.never {
-			if slices.Contains(agentRunArgv(t, c.name, false), bad) {
+			if slices.Contains(agentRunArgv(t, c.name, ""), bad) {
 				t.Errorf("%s: the agent under test must not carry judge isolation %s", c.name, bad)
 			}
 		}
@@ -49,7 +49,7 @@ func TestForAgentRun_PerHarnessArgv(t *testing.T) {
 
 // A spec without agent-run args is refused, not run as a judge.
 func TestForAgentRun_RefusesASpecWithNone(t *testing.T) {
-	if _, err := (harnessSpec{name: "bare", binary: "bare"}).forAgentRun(false); err == nil {
+	if _, err := (harnessSpec{name: "bare", binary: "bare"}).forAgentRun(""); err == nil {
 		t.Fatal("a harness that cannot run unattended must be refused")
 	}
 }

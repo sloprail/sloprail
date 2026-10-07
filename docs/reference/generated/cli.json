@@ -493,11 +493,6 @@
         "usage": "Codex's own settings as a JSON object, passed through untouched (e.g. '{\"config\":\"model_reasoning_effort=low\"}')"
       },
       {
-        "name": "continue",
-        "default": "false",
-        "usage": "With --agent-run: resume the working directory's previous session, so a multi-turn run lands in one record"
-      },
-      {
         "name": "disallowed-tools",
         "usage": "Tool rules the agent is denied, in the same form; a deny beats every allow (e.g. \"Bash(curl * -o *)\")"
       },
@@ -522,6 +517,10 @@
         "name": "prompt-stdin",
         "default": "false",
         "usage": "Read the prompt from standard input, for one too large for a command line (the OS bounds argv and environment together)"
+      },
+      {
+        "name": "resume",
+        "usage": "With --agent-run: resume the session with this exact id (the harness's own session/thread/chat id), so a multi-turn run lands in one record"
       },
       {
         "name": "verify",

@@ -22,10 +22,10 @@ func flagValue(argv []string, flag string) string {
 // every harness, and neither spells a harness's own flags: sr-agent does.
 func TestAgentArgs_FirstTurnStartsLaterTurnsContinue(t *testing.T) {
 	for _, id := range []string{"claude", "codex", "cursor"} {
-		first := agentArgs(id, "m", "fix it", false, nil)
-		later := agentArgs(id, "m", "yes, commit it", true, []string{"Skill", "Task"})
-		if slices.Contains(first, "--continue") || !slices.Contains(later, "--continue") {
-			t.Errorf("%s: only a later turn continues the session: first %v, later %v", id, first, later)
+		first := agentArgs(id, "m", "fix it", "", nil)
+		later := agentArgs(id, "m", "yes, commit it", "sid-1", []string{"Skill", "Task"})
+		if slices.Contains(first, "--resume") || flagValue(later, "--resume") != "sid-1" || slices.Contains(later, "--continue") {
+			t.Errorf("%s: only a later turn resumes, and by the exact id: first %v, later %v", id, first, later)
 		}
 		if flagValue(later, "--disallowed-tools") != "Skill,Task" || slices.Contains(first, "--disallowed-tools") {
 			t.Errorf("%s: disallowedTools ride every turn they are given on, comma-joined: first %v, later %v", id, first, later)
@@ -140,10 +140,10 @@ func TestLoadFixture_User(t *testing.T) {
 // The agent-under-test runs with the operator's Claude Code session stripped from
 // its environment, so sr-agent cannot detect the harness: sr-eval must name it.
 func TestAgentArgs_NameTheHarness(t *testing.T) {
-	for _, resume := range []bool{false, true} {
+	for _, resume := range []string{"", "sid-1"} {
 		argv := agentArgs("claude", "haiku", "fix it", resume, nil)
 		if flagValue(argv, "--harness") != "claude" {
-			t.Errorf("resume=%v: argv %v does not name --harness claude; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
+			t.Errorf("resume=%q: argv %v does not name --harness claude; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
 		}
 	}
 }

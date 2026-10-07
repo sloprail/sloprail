@@ -16,14 +16,19 @@ type Provisioner interface {
 	Binary() string
 
 	// AuthFiles are the files, relative to HOME, that carry the login when it is a
-	// file (Codex's auth.json). A launcher copies exactly these and nothing else of the
-	// config directory. A login kept in the platform's keychain (Claude Code, Cursor)
+	// file (Codex's auth.json). A launcher LINKS exactly these and nothing else of the
+	// config directory (a rotated refresh token must land in the operator's real file). A login kept in the platform's keychain (Claude Code, Cursor)
 	// lists nothing: the launcher links ~/Library for every harness.
 	AuthFiles() []string
 
 	// ConfigDirIn is the harness's configuration directory under a given home: where
 	// its transcripts land in a sandbox whose HOME is not the process's own.
 	ConfigDirIn(home string) string
+
+	// SessionID is the harness's own id of the session whose record is at path
+	// (Claude's session id, Codex's thread id, Cursor's chat id), "" when the path
+	// names none. A multi-turn launcher resumes by exactly this id, never by recency.
+	SessionID(transcriptPath string) string
 
 	// InstallPlugins installs sloprail's plugin (and any further ones from the same
 	// marketplace) for a project, the way a user does, into the sandbox.

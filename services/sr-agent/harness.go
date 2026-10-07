@@ -104,10 +104,12 @@ type harnessSpec struct {
 	// a permission prompt). nil means the harness cannot be run that way.
 	agentRunArgs []string
 
-	// continueArgs resume the previous session of the working directory (`--continue`
-	// with `--agent-run`): a multi-turn run lands every turn in one record. They follow
-	// execArgs, so a subcommand (Codex's `exec resume --last`) comes where it must.
-	continueArgs []string
+	// resume spells resuming one session by its EXACT id (`--resume <id>` with
+	// `--agent-run`), so a multi-turn run lands every turn in one record: the one-shot
+	// subcommand words that carry the id (Codex's `exec resume <id>`, which replace
+	// execArgs) and/or flags that do (Claude's and Cursor's `--resume <id>`). Never the
+	// harness's "most recent session" form: that picks by recency, not by identity.
+	resume func(id string) (subcommand, flags []string)
 
 	// stdinPromptAbove is the prompt size, in bytes, above which the prompt goes
 	// to the harness on its STDIN instead of as a command-line argument. An argv
@@ -182,7 +184,7 @@ var claudeCodeSpec = harnessSpec{
 	binary: claudecode.Binary,
 
 	agentRunArgs: []string{"--permission-mode", "bypassPermissions"},
-	continueArgs: []string{"--continue"},
+	resume:       func(id string) (subcommand, flags []string) { return nil, []string{"--resume", id} },
 
 	stdinPromptAbove: 64 << 10,
 	detect: func(getenv func(string) string) bool {
@@ -451,7 +453,7 @@ var cursorSpec = harnessSpec{
 	// is the headless workspace-trust flag. Stop never fires in `-p`, so a fixture that
 	// relies on it declares the harnesses it needs.
 	agentRunArgs: []string{"--trust", "--force"},
-	continueArgs: []string{"--continue"},
+	resume:       func(id string) (subcommand, flags []string) { return nil, []string{"--resume", id} },
 
 	// CURSOR_AGENT=1 is set in the environment of every shell command the agent runs
 	// (recorded: runs/subprocess-session-env), which is where a judge check
@@ -576,17 +578,21 @@ func within(path, dir string) bool {
 }
 
 // forAgentRun is the spec for running the agent under test: its agentRunArgs stand in
-// for baseArgs and, when resume, continueArgs follow execArgs.
-func (s harnessSpec) forAgentRun(resume bool) (harnessSpec, error) {
+// for baseArgs and, resuming session resumeID, its spelling is added.
+func (s harnessSpec) forAgentRun(resumeID string) (harnessSpec, error) {
 	if s.agentRunArgs == nil {
 		return s, fmt.Errorf("%w: %s cannot be run as the agent under test (--agent-run)", ErrModeUnsupported, s.name)
 	}
-	if resume && s.continueArgs == nil {
-		return s, fmt.Errorf("%w: %s cannot resume a session (--continue)", ErrModeUnsupported, s.name)
+	if resumeID != "" && s.resume == nil {
+		return s, fmt.Errorf("%w: %s cannot resume a session (--resume)", ErrModeUnsupported, s.name)
 	}
 	s.baseArgs = s.agentRunArgs
-	if resume {
-		s.execArgs = append(append([]string{}, s.execArgsOrDefault()...), s.continueArgs...)
+	if resumeID != "" {
+		subcommand, flags := s.resume(resumeID)
+		if subcommand != nil {
+			s.execArgs = subcommand
+		}
+		s.baseArgs = append(append([]string{}, flags...), s.baseArgs...)
 	}
 	return s, nil
 }

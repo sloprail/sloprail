@@ -92,14 +92,14 @@ func TestLoadFixture_SetupMustBeExecutable(t *testing.T) {
 // disallowedTools reaches the harness as ONE comma-joined --disallowed-tools
 // value, so a rule with a space of its own survives as one entry.
 func TestAgentArgs_DisallowedToolsAreCommaJoined(t *testing.T) {
-	got := agentArgs("claude", "haiku", "fix it", false, []string{"WebSearch", "WebFetch", "Bash(gh search:*)"})
+	got := agentArgs("claude", "haiku", "fix it", "", []string{"WebSearch", "WebFetch", "Bash(gh search:*)"})
 	if flagValue(got, "--disallowed-tools") != "WebSearch,WebFetch,Bash(gh search:*)" {
 		t.Fatalf("agent args do not carry the tools comma-joined: %v", got)
 	}
 	if !slices.Contains(got, "--agent-run") {
 		t.Fatalf("agent args lost the unattended, hooks-on run: %v", got)
 	}
-	none := agentArgs("claude", "haiku", "fix it", false, nil)
+	none := agentArgs("claude", "haiku", "fix it", "", nil)
 	if slices.Contains(none, "--disallowed-tools") {
 		t.Fatalf("no disallowedTools must pass no --disallowed-tools: %v", none)
 	}

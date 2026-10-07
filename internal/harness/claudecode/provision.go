@@ -24,6 +24,14 @@ func (Harness) AuthFiles() []string { return nil }
 // ConfigDirIn implements harness.Provisioner.
 func (Harness) ConfigDirIn(home string) string { return filepath.Join(home, ".claude") }
 
+// SessionID implements harness.Provisioner: the record is <session id>.jsonl.
+func (Harness) SessionID(path string) string {
+	if filepath.Ext(path) != ".jsonl" {
+		return ""
+	}
+	return strings.TrimSuffix(filepath.Base(path), ".jsonl")
+}
+
 // InstallPlugins implements harness.Provisioner: `claude plugin marketplace add` and
 // `claude plugin install --scope project`, then the project's auto-memory switched off.
 //

@@ -97,21 +97,15 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	}
 	// The harness's own login, when it is a file: exactly those files, never the config
 	// directory around them (the operator's config.toml, sessions and caches stay behind).
-	for _, name := range prov.AuthFiles() {
-		src := filepath.Join(realHome, name)
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		dst := filepath.Join(home, name)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			return agentEnv{}, err
-		}
-		if err := copyFile(src, dst); err != nil {
-			return agentEnv{}, fmt.Errorf("copy ~/%s: %w", name, err)
-		}
-		if err := os.Chmod(dst, 0o600); err != nil {
-			return agentEnv{}, err
-		}
+	// LINKED, not copied: a ChatGPT login rotates its refresh token on use and the old one
+	// is dead afterwards (openai/codex login: a reused refresh token is the
+	// `refresh_token_reused` failure), so a refresh inside the sandbox on a copy would leave
+	// the operator's real login holding a dead token. Codex saves auth.json by opening the
+	// existing path and truncating it in place (no rename), which writes through the link:
+	// the rotated token lands in the real file. (An agent that logs out removes the link,
+	// not the file.)
+	if err := linkAuthFiles(realHome, home, prov.AuthFiles()); err != nil {
+		return agentEnv{}, err
 	}
 	for _, name := range []string{".gitconfig", filepath.Join(".config", "gh")} {
 		src := filepath.Join(realHome, name)
@@ -302,4 +296,23 @@ func onPath(name string, dirs []string) bool {
 		}
 	}
 	return false
+}
+
+// linkAuthFiles links each of the harness's login files (HOME-relative) from the real
+// HOME into the sandbox's, creating its directory. A file the operator does not have is skipped.
+func linkAuthFiles(realHome, home string, names []string) error {
+	for _, name := range names {
+		src := filepath.Join(realHome, name)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		dst := filepath.Join(home, name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			return fmt.Errorf("link ~/%s: %w", name, err)
+		}
+	}
+	return nil
 }

@@ -124,3 +124,51 @@ func TestFindTranscript_PerHarnessLayoutShallowestWins(t *testing.T) {
 		t.Errorf("no record must be \"\", got %q", got)
 	}
 }
+
+// A multi-turn run resumes by the id the first turn's record names, in each harness's
+// own record naming; a path that names no session yields "" (and the run stops rather
+// than resuming "the latest").
+func TestProvisioners_SessionIDFromTheRecord(t *testing.T) {
+	const uuid = "01a11733-19fd-77e1-ad17-861c4e893f60"
+	for _, c := range []struct{ id, path, want string }{
+		{"claude", "/h/.claude/projects/-p/" + uuid + ".jsonl", uuid},
+		{"codex", "/h/.codex/sessions/2026/10/07/rollout-2026-10-07T18-29-48-" + uuid + ".jsonl", uuid},
+		{"cursor", "/h/.cursor/projects/p/agent-transcripts/" + uuid + "/" + uuid + ".jsonl", uuid},
+		{"codex", "/h/.codex/sessions/other.jsonl", ""},
+		{"cursor", "/h/.cursor/projects/p/" + uuid + ".jsonl", ""},
+		{"claude", "/h/x.txt", ""},
+	} {
+		p, err := harness.ProvisionerOf(testHarness(t, c.id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.SessionID(c.path); got != c.want {
+			t.Errorf("%s %s: got %q want %q", c.id, c.path, got, c.want)
+		}
+	}
+}
+
+// A login file is linked, never copied: a rotated refresh token written inside the sandbox
+// must land in the operator's real file, or their real login is left holding a dead token.
+func TestLinkAuthFiles_WritesGoThroughToTheRealFile(t *testing.T) {
+	real, sandbox := t.TempDir(), t.TempDir()
+	rel := filepath.Join(".codex", "auth.json")
+	if err := os.MkdirAll(filepath.Join(real, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(real, rel), "old-token")
+	mustWriteFile(t, filepath.Join(real, ".codex", "config.toml"), "operator config")
+	if err := linkAuthFiles(real, sandbox, []string{rel, filepath.Join(".codex", "absent.json")}); err != nil {
+		t.Fatal(err)
+	}
+	// What codex does: open the existing path, truncate, write.
+	if err := os.WriteFile(filepath.Join(sandbox, rel), []byte("rotated-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(real, rel)); string(got) != "rotated-token" {
+		t.Errorf("the rotated token did not reach the real file: %q", got)
+	}
+	if _, err := os.Lstat(filepath.Join(sandbox, ".codex", "config.toml")); err == nil {
+		t.Error("only the login file is carried, never the config around it")
+	}
+}

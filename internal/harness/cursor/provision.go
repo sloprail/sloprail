@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/harness/cursor/record"
 )
 
 // Binary is Cursor's CLI agent.
@@ -23,6 +24,10 @@ func (Harness) AuthFiles() []string { return nil }
 
 // ConfigDirIn implements harness.Provisioner.
 func (Harness) ConfigDirIn(home string) string { return filepath.Join(home, ".cursor") }
+
+// SessionID implements harness.Provisioner: the chat id is the conversation id
+// agent-transcripts/<id>/<id>.jsonl names.
+func (Harness) SessionID(path string) string { return record.Transcripts{}.ConversationID(path) }
 
 // InstallPlugins implements harness.Provisioner: each plugin is copied from the
 // marketplace snapshot into the user's local plugins, <home>/.cursor/plugins/local/<name>,

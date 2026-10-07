@@ -60,7 +60,7 @@ var codexSpec = harnessSpec{
 	// the scorer reads), and nothing can answer an approval, so the sandbox is off, as
 	// Claude's bypassPermissions is; the run's own HOME and workspace are the boundary.
 	agentRunArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"},
-	continueArgs: []string{"resume", "--last"},
+	resume:       func(id string) (subcommand, flags []string) { return []string{"exec", "resume", id}, nil },
 
 	execArgs:         []string{"exec"},
 	modelFlag:        "-m",

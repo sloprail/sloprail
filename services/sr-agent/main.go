@@ -156,8 +156,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
 	cmd.Flags().Bool("agent-run", false,
 		"Run as the agent UNDER TEST rather than as a judge: the project's hooks and plugins stay live and the run is unattended (what sr-eval launches)")
-	cmd.Flags().Bool("continue", false,
-		"With --agent-run: resume the working directory's previous session, so a multi-turn run lands in one record")
+	cmd.Flags().String("resume", "",
+		"With --agent-run: resume the session with this exact id (the harness's own session/thread/chat id), so a multi-turn run lands in one record")
 	cmd.Flags().String("claude-args", "",
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
 	cmd.Flags().String("codex-args", "",
@@ -243,15 +243,15 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	agentRun, _ := cmd.Flags().GetBool("agent-run")
-	resume, _ := cmd.Flags().GetBool("continue")
-	if resume && !agentRun {
-		return errors.New("--continue resumes the agent under test's session, so it goes with --agent-run")
+	resumeID, _ := cmd.Flags().GetString("resume")
+	if resumeID != "" && !agentRun {
+		return errors.New("--resume resumes the agent under test's session, so it goes with --agent-run")
 	}
 	if agentRun {
 		if cmd.Flags().Changed("verify") {
 			return errors.New("--agent-run is the agent under test; --verify is for a judge, so pass only one")
 		}
-		if spec, err = spec.forAgentRun(resume); err != nil {
+		if spec, err = spec.forAgentRun(resumeID); err != nil {
 			return err
 		}
 	}
