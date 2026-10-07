@@ -25,6 +25,10 @@ const PluginRootEnv = "CURSOR_PLUGIN_ROOT"
 //
 //   - the plugin whose hook is running (CURSOR_PLUGIN_ROOT), however it was loaded
 //     (`--plugin-dir`, the account's marketplace);
+//   - the plugin the project's own hooks run: the install of sloprail's stop and
+//     sessionStart hooks (project-hooks install) names the plugin's script in
+//     <project>/.cursor/hooks.json, the one record, available to a command the agent
+//     runs in its shell and to the user's terminal, of where that plugin is;
 //   - the user's local plugins, <home>/.cursor/plugins/local/<name>, which Cursor
 //     loads at start (read off the cursor-agent binary: a directory or a symlink whose
 //     target stays inside that directory; dot-names skipped).
@@ -70,6 +74,10 @@ func Resolve(projectDir, home string) (harness.Resolution, error) {
 		add(filepath.Base(root), root)
 	}
 
+	for _, dir := range projectHookPlugins(projectDir) {
+		add(filepath.Base(dir), dir)
+	}
+
 	local := filepath.Join(home, ".cursor", "plugins", "local")
 	entries, err := os.ReadDir(local)
 	if err != nil {
@@ -98,4 +106,42 @@ func Resolve(projectDir, home string) (harness.Resolution, error) {
 		add(e.Name(), dir)
 	}
 	return res, nil
+}
+
+// projectHookPlugins are the plugin directories whose sloprail hook script the project's
+// .cursor/hooks.json runs (see InstallProjectHooks). A missing or unparsable hooks file
+// names none: it is the user's file, and whoever edits it reports a broken one.
+func projectHookPlugins(project string) []string {
+	raw, err := os.ReadFile(HooksPath(project))
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Hooks map[string][]struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	events := make([]string, 0, len(doc.Hooks))
+	for ev := range doc.Hooks {
+		events = append(events, ev)
+	}
+	sort.Strings(events)
+	var dirs []string
+	for _, ev := range events {
+		for _, h := range doc.Hooks[ev] {
+			i := strings.Index(h.Command, hookScript)
+			if i < 0 {
+				continue
+			}
+			script := h.Command[:i+len(hookScript)]
+			if strings.HasPrefix(script, "'") { // shellWord's quoting
+				script = strings.ReplaceAll(strings.TrimPrefix(script, "'"), `'\''`, "'")
+			}
+			dirs = append(dirs, filepath.Dir(filepath.Dir(script)))
+		}
+	}
+	return dirs
 }
