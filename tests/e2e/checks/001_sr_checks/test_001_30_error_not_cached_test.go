@@ -42,8 +42,6 @@ func runCount(t *testing.T, ledger string) int {
 }
 
 // T001_30: an error is refused, not cached; once the check works, the same content is judged afresh.
-// sr:proves checks/error-reports-are-not-answers
-// sr:proves cache/unfinished-never-stored
 func TestT001_30_AnErroredCheckIsRetriedNotReplayed(t *testing.T) {
 	e, proj := session(t)
 	dir := t.TempDir()
@@ -78,10 +76,10 @@ func TestT001_30_AnErroredCheckIsRetriedNotReplayed(t *testing.T) {
 	}
 }
 
-// T001_31: a check's own refusal is a verdict: the second run replays it without running the check.
-// sr:proves checks/error-reports-are-not-answers
-// sr:proves cache/finished-verdicts-reused
-func TestT001_31_ACheckRefusalIsStillReplayed(t *testing.T) {
+// T001_31: a script's refusal is stored (verify says why) but asked again by the next run: a
+// script is cheap and may read what is not in the key. A judge's refusal is replayed instead
+// (T001_31b).
+func TestT001_31_AScriptRefusalIsAskedAgain(t *testing.T) {
 	e, proj := session(t)
 	ledger := filepath.Join(t.TempDir(), "ledger")
 	e.FileGuard(proj, "docs", "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n", map[string]string{"check.sh": refusesAlways})
@@ -95,7 +93,24 @@ func TestT001_31_ACheckRefusalIsStillReplayed(t *testing.T) {
 			t.Fatalf("a refusal must refuse:\n%s", r.Output)
 		}
 	}
-	if n := runCount(t, ledger); n != 1 {
-		t.Fatalf("runs = %d, want 1: the refusal was not replayed", n)
+	if n := runCount(t, ledger); n != 2 {
+		t.Fatalf("runs = %d, want 2: a script refusal is asked again", n)
+	}
+}
+
+// T001_31b: a judge's refusal is replayed: repeated runs over still-failing content never pay
+// for the judge again.
+func TestT001_31b_AJudgeRefusalIsReplayedWithoutAskingTheJudge(t *testing.T) {
+	e, proj := session(t)
+	base := judged(t, e, proj, verdictFail)
+	for i := 0; i < 3; i++ {
+		r := checks(e, proj, "run", "--base", base, "--head", "HEAD")
+		if r.Code != 1 {
+			t.Fatalf("run %d: exit %d, want the judge's refusal:\n%s", i, r.Code, r.Output)
+		}
+		contains(t, r.Output, "the ADR is not cited")
+	}
+	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
+		t.Fatalf("the judge was asked %d times over three runs of the same content, want 1", n)
 	}
 }

@@ -282,8 +282,11 @@ func (s *segIdx) decodeAt(blob []byte, i int, d *zdict) (Found, error) {
 	c := r.Checks[pos]
 	key := r.CheckKey(c)
 	if k, _ := key16(key.ID()); k != s.Keys[i] {
-		if lk, _ := key16(legacyID(key, r.RuleHash)); lk == s.Keys[i] {
-			return Found{Run: r, Check: c}, nil
+		// A record of an older schema directory: its index holds the id its schema gave it.
+		for _, id := range []string{legacyID(key, r.RuleHash), key.idUnder("sr2")} {
+			if lk, _ := key16(id); lk == s.Keys[i] {
+				return Found{Run: r, Check: c}, nil
+			}
 		}
 		return Found{}, fmt.Errorf("%w: %s record does not match its index key", ErrCorrupt, s.Name)
 	}

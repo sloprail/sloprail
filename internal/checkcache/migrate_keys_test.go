@@ -7,17 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// legacyStore is a store whose results were filed by the previous build: in its schema
-// directory, under sr1 keys, which held the rule's hash.
-func legacyStore(t *testing.T, runs ...Run) *Store {
+// olderStore is a store whose results were filed by an older build: in that schema's
+// directory, under its ids (sr1 held the rule's hash).
+func olderStore(t *testing.T, dir, version string, runs ...Run) *Store {
 	t.Helper()
 	s := newRepo(t, "")
-	s.dir = legacySchemaDir
-	s.keyID = func(r Run, c Check) string { return legacyID(r.CheckKey(c), r.RuleHash) }
-	for _, r := range runs {
-		require.NoError(t, s.Put([]Run{r}))
-	}
-	s.dir, s.keyID = "", nil
+	require.NoError(t, PutAsOlder(Options{Dir: s.opt.Dir}, dir, version, runs...))
 	return s
 }
 
@@ -31,92 +26,166 @@ func twoRuleHashes() []Run {
 	return []Run{older, newer, other}
 }
 
-// The same input judged under two rule hashes is two results in an old store and one after the
-// migration: the newest. The new key (no rule hash) finds it; a second run, in this process or
-// a fresh one, writes nothing.
-// sr:proves cache/store-failures-not-misses
-func TestMigrateKeys_OldResultsUnderTwoRuleHashesBecomeTheNewest(t *testing.T) {
-	s := legacyStore(t, twoRuleHashes()...)
-
-	got, err := s.Lookup([]Key{key("fp"), key("other")})
-	require.NoError(t, err)
-	assert.Empty(t, got, "before the migration the new key finds nothing filed under an old one")
-
-	done, err := s.MigrateKeys()
-	require.NoError(t, err)
-	assert.True(t, done)
-	tip := s.tip()
-	assert.Contains(t, git(t, s.opt.Dir, "ls-tree", "--name-only", tip), legacySchemaDir, "the old directory stays for this release")
-
-	got, err = s.Lookup([]Key{key("fp"), key("other")})
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, StatusPass, got[key("fp").ID()].Check.Status, "the newest of the two rule hashes wins")
-	assert.Equal(t, "hash-2", got[key("fp").ID()].Run.RuleHash)
-	assert.Equal(t, StatusPass, got[key("other").ID()].Check.Status)
-	runs, err := s.Runs()
-	require.NoError(t, err)
-	assert.Len(t, runs, 3, "every run stays as history")
-
-	done, err = s.MigrateKeys()
-	require.NoError(t, err)
-	assert.False(t, done)
-	assert.Equal(t, tip, s.tip(), "the second run writes nothing")
-
-	fresh, err := Open(Options{Dir: s.opt.Dir})
-	require.NoError(t, err)
-	done, err = fresh.MigrateKeys()
-	require.NoError(t, err)
-	assert.False(t, done, "the migration is recorded in the store, not in the process")
-	assert.Equal(t, tip, fresh.tip())
+// rekey is a Rebuild that moves every pass to a new fingerprint ("new-"+old) and leaves the
+// rest as it was, like the engine's rebuild does for what it can reconstruct.
+func rekey(seen *[][]Run) Rebuild {
+	return func(old []Run) ([]Run, MigrationStats, error) {
+		if seen != nil {
+			*seen = append(*seen, old)
+		}
+		var st MigrationStats
+		out := make([]Run, 0, len(old))
+		for _, r := range old {
+			checks := append([]Check(nil), r.Checks...)
+			for i, c := range checks {
+				if c.Status != StatusPass {
+					st.Skip("not a pass")
+					continue
+				}
+				checks[i].Fingerprint = "new-" + c.Fingerprint
+				st.Migrated++
+			}
+			r.Checks = checks
+			out = append(out, r)
+		}
+		return out, st, nil
+	}
 }
 
-// A build that speaks the previous directory refuses the migrated ref rather than reading a
-// store it would only half understand.
-// sr:proves cache/store-failures-not-misses
-func TestMigrateKeys_AnOldBinaryRefusesTheNewDirectory(t *testing.T) {
-	s := legacyStore(t, twoRuleHashes()...)
-	_, err := s.MigrateKeys()
-	require.NoError(t, err)
+// Whatever the older schema, its verdicts are found under the new key after the migration,
+// and every run stays as history. A second call, in this process or a fresh one, writes nothing.
+func TestMigrateKeys_AnyOlderDirectoryIsRebuiltIntoTheCurrentOne(t *testing.T) {
+	for name, tc := range map[string]struct{ dir, version string }{
+		"v2026-10-03 (sr1 keys, released)": {"v2026-10-03", "sr1"},
+		"v2026-10-07 (sr2 keys)":           {"v2026-10-07", "sr2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := olderStore(t, tc.dir, tc.version, twoRuleHashes()...)
+			s.SetRebuild(rekey(nil))
 
-	old, err := Open(Options{Dir: s.opt.Dir})
+			got, err := s.Lookup([]Key{key("new-fp"), key("new-other")})
+			require.NoError(t, err)
+			assert.Empty(t, got, "before the migration the new key finds nothing")
+
+			stats, done, err := s.MigrateKeys()
+			require.NoError(t, err)
+			assert.True(t, done)
+			assert.Equal(t, 2, stats.Migrated)
+			assert.Equal(t, 1, stats.Skipped)
+			assert.Equal(t, "migrated 2, skipped 1 (not a pass: 1)", stats.String())
+			tip := s.tip()
+			assert.Contains(t, git(t, s.opt.Dir, "ls-tree", "--name-only", tip), tc.dir, "the older directory stays until a Gc")
+
+			got, err = s.Lookup([]Key{key("new-fp"), key("new-other")})
+			require.NoError(t, err)
+			require.Len(t, got, 2)
+			assert.Equal(t, StatusPass, got[key("new-fp").ID()].Check.Status)
+			assert.Equal(t, "hash-2", got[key("new-fp").ID()].Run.RuleHash)
+			runs, err := s.Runs()
+			require.NoError(t, err)
+			assert.Len(t, runs, 3, "every run stays as history")
+
+			_, done, err = s.MigrateKeys()
+			require.NoError(t, err)
+			assert.False(t, done)
+			assert.Equal(t, tip, s.tip(), "the second run writes nothing")
+
+			fresh, err := Open(Options{Dir: s.opt.Dir})
+			require.NoError(t, err)
+			fresh.SetRebuild(rekey(nil))
+			_, done, err = fresh.MigrateKeys()
+			require.NoError(t, err)
+			assert.False(t, done, "the migration is recorded in the store, not in the process")
+			assert.Equal(t, tip, fresh.tip())
+		})
+	}
+}
+
+// The newest older directory is the source: v2026-10-07 already holds what v2026-10-03's
+// migration carried, so a store with both is rebuilt from it alone.
+func TestMigrateKeys_TheNewestOlderDirectoryIsTheSource(t *testing.T) {
+	s := olderStore(t, "v2026-10-03", "sr1", run("2026-01-01T00:00:00Z", judge("in-03", StatusPass)))
+	require.NoError(t, PutAsOlder(Options{Dir: s.opt.Dir}, "v2026-10-07", "sr2", run("2026-02-01T00:00:00Z", judge("in-07", StatusPass))))
+	var seen [][]Run
+	s.SetRebuild(rekey(&seen))
+
+	_, done, err := s.MigrateKeys()
 	require.NoError(t, err)
-	old.dir = legacySchemaDir
-	_, err = old.Lookup([]Key{key("fp")})
-	assert.ErrorIs(t, err, ErrFutureSchema)
+	assert.True(t, done)
+	require.Len(t, seen, 1)
+	require.Len(t, seen[0], 1)
+	assert.Equal(t, "run_2026-02-01T00:00:00Z", seen[0][0].ID)
+}
+
+// A build that speaks an older directory refuses the migrated ref rather than reading a
+// store it would only half understand.
+func TestMigrateKeys_AnOldBinaryRefusesTheNewDirectory(t *testing.T) {
+	for _, dir := range schemaHistory {
+		t.Run(dir, func(t *testing.T) {
+			s := olderStore(t, dir, "sr2", twoRuleHashes()...)
+			s.SetRebuild(rekey(nil))
+			_, done, err := s.MigrateKeys()
+			require.NoError(t, err)
+			require.True(t, done)
+
+			old, err := Open(Options{Dir: s.opt.Dir})
+			require.NoError(t, err)
+			old.dir = dir
+			_, err = old.Lookup([]Key{key("fp")})
+			assert.ErrorIs(t, err, ErrFutureSchema)
+		})
+	}
 }
 
 // A write into an unmigrated store migrates first, so the old results are not hidden by the
-// fresh directory the write would otherwise create.
-// sr:proves cache/store-failures-not-misses
-func TestMigrateKeys_APutMigratesFirst(t *testing.T) {
-	s := legacyStore(t, twoRuleHashes()...)
+// fresh directory the write would otherwise create. With nothing to rebuild them by, it refuses.
+func TestMigrateKeys_APutMigratesFirstOrRefuses(t *testing.T) {
+	s := olderStore(t, "v2026-10-07", "sr2", twoRuleHashes()...)
+	err := s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))})
+	assert.ErrorIs(t, err, ErrMigrationPending)
+	got, err := s.Lookup([]Key{key("fresh")})
+	require.NoError(t, err)
+	assert.Empty(t, got, "a refused write stored nothing")
+
+	s.SetRebuild(rekey(nil))
 	require.NoError(t, s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))}))
-	got, err := s.Lookup([]Key{key("fp"), key("fresh")})
+	got, err = s.Lookup([]Key{key("new-fp"), key("fresh")})
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
 
 // Old segments are recognised by their old index keys, never called corrupt.
-// sr:proves cache/store-failures-not-misses
-func TestMigrateKeys_LegacySegmentsAreNotCorrupt(t *testing.T) {
-	s := legacyStore(t, twoRuleHashes()...)
-	s.dir = legacySchemaDir
-	runs, err := s.Runs()
-	require.NoError(t, err)
-	assert.Len(t, runs, 3)
-	_, err = s.Gc()
-	assert.NoError(t, err)
+func TestMigrateKeys_OlderSegmentsAreNotCorrupt(t *testing.T) {
+	for dir, version := range map[string]string{"v2026-10-03": "sr1", "v2026-10-07": "sr2"} {
+		s := olderStore(t, dir, version, twoRuleHashes()...)
+		s.dir = dir
+		runs, err := s.Runs()
+		require.NoError(t, err)
+		assert.Len(t, runs, 3, dir)
+		_, err = s.Gc()
+		assert.NoError(t, err, dir)
+	}
 }
 
 // Nothing stored, nothing to migrate; a store written by this build is already current.
 func TestMigrateKeys_EmptyAndCurrentStoresAreNoOps(t *testing.T) {
 	s := newRepo(t, "")
-	done, err := s.MigrateKeys()
+	_, done, err := s.MigrateKeys()
 	require.NoError(t, err)
 	assert.False(t, done)
 	require.NoError(t, s.Put([]Run{run("2026-01-01T00:00:00Z", judge("fp", StatusPass))}))
-	done, err = s.MigrateKeys()
+	_, done, err = s.MigrateKeys()
 	require.NoError(t, err)
 	assert.False(t, done)
+}
+
+// A future key change bumps SchemaDir and appends the old one: the history stays ordered and
+// older than the current directory, or the migration would pick the wrong source.
+func TestSchemaHistory_IsOrderedAndOlderThanTheCurrentDirectory(t *testing.T) {
+	for i, d := range schemaHistory {
+		assert.Less(t, d, SchemaDir)
+		if i > 0 {
+			assert.Less(t, schemaHistory[i-1], d)
+		}
+	}
 }

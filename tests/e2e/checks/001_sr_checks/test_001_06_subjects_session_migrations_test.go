@@ -110,10 +110,12 @@ func TestT001_06_SubjectsScriptOnePayloadAndVerdictPerSubject(t *testing.T) {
 		t.Fatalf("verify: exit %d, want the bad subject's refusal:\n%s", v.Code, v.Output)
 	}
 
-	// Each verdict is keyed by its own subject: a second run replays both, running nothing.
+	// Each verdict is keyed by its own subject: a second run over the same content finds good's
+	// pass (a hit, nothing runs) and asks the script again for bad only (a script's refusal is
+	// cheap and is checked again; only a judge's is replayed).
 	checks(e, proj, "run", "--base", base, "--head", "HEAD")
-	if got := ledgerLines(t, led); len(got) != 2 {
-		t.Fatalf("a second run re-ran the check: %q", got)
+	if got := ledgerLines(t, led); strings.Join(got, "|") != "bad specs/bad.md|bad specs/bad.md|good specs/good.md" {
+		t.Fatalf("a second run ran the check for %q, want bad again and good not at all", got)
 	}
 }
 

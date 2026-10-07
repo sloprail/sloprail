@@ -4,87 +4,33 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"slices"
-	"sort"
-
-	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // GuardFingerprint says what a guard's verdict over one subject is about, as one short string:
-// the cache key's last part (the rest — rule, rule hash, the guard's fixed step id, subject id —
-// is the checkcache key's own, and the rule hash covers every script and template of the rule).
+// the cache key's last part (the rest, the rule's name, the guard's fixed step id and the subject
+// id, is the checkcache key's own).
 //
-// It is the sha256 of three parts, none of which depends on the session or the history:
+// It is the sha256 of two parts, neither of which depends on the session or the history:
 //
 //   - files: FilesPart, the path and content of the subject's files, ALWAYS, whether or not any check
 //     reads them: the verdict is about those bytes.
 //   - subjectFP: the "fingerprint" the rule's `subjects:` script gave this subject, for whatever
 //     the verdict depends on beyond the files (a file a check opens with its own tools). It
 //     must be session-independent. Empty without `subjects:`.
-//   - citations: CitationPart, the quotes of the citations that ground the subject (the only
-//     citations its checks receive). A commit touching none of the subject's files is no input.
+//
+// Citations are NOT part of it: a stored pass says the content was fine, and a citation is only
+// a gate, which the engine checks afresh on every run (#291, #298).
 //
 // No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
 // are length-prefixed, so two parts cannot be re-cut into another pair.
-// sr:invariant cache/verdict-identity
-func GuardFingerprint(files, subjectFP, citations string) string {
+func GuardFingerprint(files, subjectFP string) string {
 	var buf []byte
-	for _, part := range []string{files, subjectFP, citations} {
+	for _, part := range []string{files, subjectFP} {
 		buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
 		buf = append(buf, part...)
 	}
 	sum := sha256.Sum256(buf)
 	return hex.EncodeToString(sum[:])
-}
-
-// CitationPart is what a `require: citation` rule's verdict additionally depends on: the
-// quotes (with their pools) of the citations that ground the payload's subject, sorted. Nothing
-// else of the range: not a commit's subject or body, not a trailer that grounds another
-// subject, never a commit SHA, and never where in a transcript a quote was found.
-func CitationPart(p Payload) (string, error) {
-	type quote struct {
-		Pool  []transcript.SourceType
-		Quote string
-	}
-	type grounded struct {
-		Path   string
-		Quotes []quote
-		// Evidence is every quote cited by a commit that changed the file
-		// (EvidenceForFile): what a check is handed, beyond what grounds it.
-		Evidence []quote
-	}
-	sorted := func(qs []quote) {
-		sort.Slice(qs, func(i, j int) bool {
-			a, b := qs[i], qs[j]
-			if a.Quote != b.Quote {
-				return a.Quote < b.Quote
-			}
-			return fmt.Sprint(a.Pool) < fmt.Sprint(b.Pool)
-		})
-	}
-	// Per file, not per subject: which file a quote grounds is part of the verdict (a quote
-	// that grounds one file of a subject and not another is not the same grounding).
-	var out []grounded
-	for _, f := range p.Changeset.Files {
-		if !slices.Contains(p.Subject.Files, f.Path) {
-			continue
-		}
-		g := grounded{Path: f.Path}
-		for _, c := range p.Changeset.ForFile(f) {
-			g.Quotes = append(g.Quotes, quote{Pool: c.SourceTypes, Quote: c.Quote})
-		}
-		for _, c := range p.Changeset.EvidenceForFile(f) {
-			g.Evidence = append(g.Evidence, quote{Pool: c.SourceTypes, Quote: c.Quote})
-		}
-		sorted(g.Quotes)
-		sorted(g.Evidence)
-		out = append(out, g)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	body, err := json.Marshal(out)
-	return string(body), err
 }
 
 // FilesPart is the path and content of the subject's matched files, in the subject's order:

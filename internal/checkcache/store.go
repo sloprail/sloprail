@@ -20,13 +20,21 @@ import (
 // SchemaDir is the schema version (a date) and the single directory the store
 // reads and writes. A ref carrying a newer v<date>/ directory is refused.
 //
-// v2026-10-07 re-keyed the records (key schema sr2: no rule hash in a key). The previous
-// directory, v2026-10-03, is read by MigrateKeys once and left in place; an older binary that
-// meets the new directory refuses it (ErrFutureSchema), so CI's sr-checks is upgraded with
-// the engine that writes it.
-const SchemaDir = "v2026-10-07"
+// A change to what a key is made of bumps it (with SchemaVersion) and adds the old directory
+// to schemaHistory: the first write open migrates the newest older directory into this one,
+// re-keying its verdicts by the rebuild the opener supplies (see MigrateKeys). The older
+// directories stay in the ref until a Gc replaces it. An older binary that meets the new
+// directory refuses it (ErrFutureSchema), so CI's sr-checks is upgraded with the engine that
+// writes it.
+//
+// v2026-10-08: sr3 keys, no citations in the fingerprint.
+const SchemaDir = "v2026-10-08"
 
-// legacySchemaDir is the directory whose records were keyed under sr1; see MigrateKeys.
+// schemaHistory lists every directory older builds wrote, oldest first. v2026-10-03 (released
+// as v0.4.1) held sr1 keys; v2026-10-07 held sr2 keys.
+var schemaHistory = []string{"v2026-10-03", "v2026-10-07"}
+
+// legacySchemaDir is the oldest of them, the one sr1 keys were filed under.
 const legacySchemaDir = "v2026-10-03"
 
 // ErrFutureSchema means the ref holds a schema directory newer than this binary.
@@ -84,6 +92,7 @@ type Store struct {
 	beforeGcPush func()                  // test seam: runs after Gc committed locally, before it pushes
 	keyID        func(Run, Check) string // test seam: put files results under this id (the previous key schema)
 	dir          string                  // test seam: the schema directory this store speaks (default SchemaDir)
+	rebuild      Rebuild                 // re-keys an older directory into the current one (SetRebuild)
 
 	pushErr error // why the last push of local results failed; they are retried on the next sync or put
 }
@@ -706,9 +715,11 @@ func (s *Store) Put(runs []Run) error {
 }
 
 func (s *Store) put(runs []Run) error {
-	_ = s.sync() // an unreachable remote is not a reason to lose results: they go in the local ref
-	if _, err := s.migrateKeys(); err != nil {
-		return err
+	_ = s.sync()        // an unreachable remote is not a reason to lose results: they go in the local ref
+	if s.keyID == nil { // a store speaking an older schema (PutAsOlder) never migrates
+		if _, _, err := s.migrateKeys(); err != nil {
+			return err
+		}
 	}
 	tip := s.tip()
 	sn, err := s.snapshotAt(tip)

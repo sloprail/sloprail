@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/changeset"
+	"github.com/sloprail/sloprail/internal/checkcache"
 	"github.com/sloprail/sloprail/internal/declaration"
 )
 
@@ -29,17 +29,13 @@ func twoFilePayload(extra bool) (changeset.Payload, changeset.Payload) {
 
 // #291: a commit that touches none of a subject's files, whatever citation it carries, must
 // not move that subject's key, for a rule that requires a citation and one that does not.
-// sr:proves cache/verdict-identity
 func TestGuardKey_ACommitOutsideTheSubjectDoesNotMoveItsKey(t *testing.T) {
 	for _, g := range []declaration.FileGuard{
 		{},
 		{Require: []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{}}}},
 	} {
-		key := func(p changeset.Payload) string {
-			k, err := guardKey(g, p)
-			require.NoError(t, err)
-			return k
-		}
+		_ = g
+		key := guardKey
 		a0, b0 := twoFilePayload(false)
 		a1, b1 := twoFilePayload(true)
 		assert.Equal(t, key(a0), key(a1))
@@ -47,19 +43,68 @@ func TestGuardKey_ACommitOutsideTheSubjectDoesNotMoveItsKey(t *testing.T) {
 	}
 }
 
-// What grounds the subject's own files still moves its key.
-// sr:proves cache/verdict-identity
-func TestGuardKey_TheSubjectsOwnCitationsMoveItsKey(t *testing.T) {
-	g := declaration.FileGuard{}
-	key := func(p changeset.Payload) string {
-		k, err := guardKey(g, p)
-		require.NoError(t, err)
-		return k
-	}
+// What grounds the subject's own files does not move its key either: a pass is about the
+// content, and a citation is only a gate, asked again on every run. The file's content, and a
+// subject's fingerprint, still do.
+func TestGuardKey_TheSubjectsOwnCitationsDoNotMoveItsKeyButItsContentDoes(t *testing.T) {
+	key := guardKey
 	a0, _ := twoFilePayload(false)
 	a1, _ := twoFilePayload(false)
 	a1.Changeset.Commits[0].Trailers = map[string][]string{changeset.TrailerCitesUser: {"better words"}}
-	assert.NotEqual(t, key(a0), key(a1))
+	assert.Equal(t, key(a0), key(a1))
+
+	edited, _ := twoFilePayload(false)
+	edited.Changeset.Files[0].NewContent = "x, edited"
+	assert.NotEqual(t, key(a0), key(edited), "a file's content moves the key")
+
+	fp, _ := twoFilePayload(false)
+	fp.Subject.Fingerprint = "v2"
+	assert.NotEqual(t, key(a0), key(fp), "the subject's fingerprint moves the key")
+}
+
+// The key's exact bytes, for fixed inputs. IF THIS FAILS, YOU CHANGED THE KEY: bump
+// checkcache.SchemaDir (and SchemaVersion), add the old directory to schemaHistory, and make
+// sure the rebuild migration (RebuildKeys) covers the change, or every stored verdict is
+// judged again. Only then update the ids below.
+func TestGuardKey_FixedInputsHaveFixedKeys(t *testing.T) {
+	payload := func(files []changeset.File, subject changeset.Subject) changeset.Payload {
+		paths := make([]string, 0, len(files))
+		for _, f := range files {
+			paths = append(paths, f.Path)
+		}
+		subject.Files = paths
+		return changeset.NewPayload(changeset.Changeset{Files: files}, subject, "")
+	}
+	for name, tc := range map[string]struct {
+		p     changeset.Payload
+		wantF string // the fingerprint
+		wantK string // the cache key id: sr3, rule, kind, subject, fingerprint
+	}{
+		"one file": {
+			p: payload([]changeset.File{{Path: "a.md", Status: "M", NewBlob: "1111111111111111111111111111111111111111"}},
+				changeset.Subject{ID: changeset.DefaultSubjectID}),
+			wantF: "21836223915d5aba29bd7761dfd2dc0fdcb5c01dac6d951349da0bc5aa4aee03", wantK: "a49b3086889415711c6d677a061803c1cf441820f6eb696493553de7a391e32e",
+		},
+		"two files and a subject fingerprint": {
+			p: payload([]changeset.File{
+				{Path: "a.md", Status: "M", NewBlob: "1111111111111111111111111111111111111111"},
+				{Path: "docs/b.md", Status: "A", NewBlob: "2222222222222222222222222222222222222222"},
+			}, changeset.Subject{ID: "api", Fingerprint: "schema-v7"}),
+			wantF: "c21e41170946c0eab54e8624cf13a2163d0519c9a12b1f519c426e854d250b27", wantK: "6400a4fcda3bc06af9ebc3cc6b534d437b65c324126baceb338029bbaf075f59",
+		},
+		"a deletion": {
+			p: payload([]changeset.File{{Path: "gone.md", Status: "D", OldBlob: "3333333333333333333333333333333333333333"}},
+				changeset.Subject{ID: "gone.md"}),
+			wantF: "37ff6e60ec0dd9192a7fbc5cf86def1c9f88c3c1a355ae33640350f022196b01", wantK: "147ec64499a73ad09aefb48e4ce5ae0008cfc0035d656b1b4b29cc59e88c8141",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fp := guardKey(tc.p)
+			assert.Equal(t, tc.wantF, fp, "the fingerprint")
+			id := checkcache.Key{Rule: "plugin/file-guard/rule", Kind: guardKind, Subject: tc.p.Subject.ID, Fingerprint: fp}.ID()
+			assert.Equal(t, tc.wantK, id, "the cache key id")
+		})
+	}
 }
 
 // What a subject's checks receive matches what its key covers: only the citations
@@ -92,9 +137,8 @@ func TestSubjectChangeset_ChecksSeeOnlyTheSubjectsCitations(t *testing.T) {
 }
 
 // Cited commits accumulate: a file changed by two cited commits hands its checks
-// both commits' proof, and the earlier commit's quote is in the key though only
-// the later one grounds the file — a reviewer judging that evidence must not be
-// reused when it changes (TestReview_CitedEditAfterCitedTransitionKeepsEvidence).
+// both commits' proof (TestReview_CitedEditAfterCitedTransitionKeepsEvidence), though
+// that evidence is no part of the stored verdict's key.
 func TestSubjectChangeset_EveryCommitOfTheFileIsEvidence(t *testing.T) {
 	build := func(first string) changeset.Payload {
 		cs := changeset.Changeset{
@@ -115,10 +159,5 @@ func TestSubjectChangeset_EveryCommitOfTheFileIsEvidence(t *testing.T) {
 	}
 	assert.Equal(t, []string{"PROOF-ONE", "PROOF-TWO"}, quotes, "both steps' proof reaches the checks")
 
-	key := func(p changeset.Payload) string {
-		k, err := guardKey(declaration.FileGuard{}, p)
-		require.NoError(t, err)
-		return k
-	}
-	assert.NotEqual(t, key(p), key(build("PROOF-ONE-REWORDED")), "the earlier commit's evidence is in the key")
+	assert.Equal(t, guardKey(p), guardKey(build("PROOF-ONE-REWORDED")), "the earlier commit's evidence is not in the key")
 }

@@ -214,11 +214,10 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 }
 
 // T015_08b: a re-fired stop is still judged — an agent does not pass a rule by being sent
-// round again. The always-refusing rule's stored FAIL is replayed at every re-fired stop (the
-// verdict is content-keyed: a retry that changes nothing is not a new question, so the check
-// is not re-rolled and runs once), and the loop still ends: the engine's default cap (8, the
+// round again. The always-refusing rule is a script: a stored script refusal is asked again at every
+// re-fired stop (only a pass or a judge refusal is replayed), so the script runs each time, and the loop still ends: the engine's default cap (8, the
 // harness's own) lets the turn end once it is reached, before the harness has to override.
-func TestT015_08b_AReFiredSubagentStopReplaysTheStoredRefusal(t *testing.T) {
+func TestT015_08b_AReFiredSubagentStopAsksTheScriptAgain(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysOutsideRules})
@@ -246,8 +245,8 @@ func TestT015_08b_AReFiredSubagentStopReplaysTheStoredRefusal(t *testing.T) {
 		t.Fatalf("the sub-agent was sent round %d time(s): the re-fired stop was not judged, so a rule "+
 			"gave way to the sub-agent simply being sent round again", n)
 	}
-	if lines := readLines(t, filepath.Join(proj, ".claude", "worktrees", theWorktree(t, proj), ".refused.log")); len(lines) != 1 {
-		t.Fatalf("the check ran %d times (%v): a stored refusal is replayed, never re-rolled", len(lines), lines)
+	if lines := readLines(t, filepath.Join(proj, ".claude", "worktrees", theWorktree(t, proj), ".refused.log")); len(lines) < 2 {
+		t.Fatalf("the script ran %d times (%v): a script refusal is asked again at a re-fired stop", len(lines), lines)
 	}
 }
 
