@@ -20,7 +20,8 @@ not a defence.
 
 ## How the check detects it
 
-A script that **invokes** a model — `claude` with `--print`/`-p`/`--model`, or
+A script that **invokes** a model — `claude` with `--print`/`-p`/`--model`,
+`codex exec` (or `codex e`), `cursor-agent`/`agent` with `--print`/`-p`, or
 `sr-agent` — and never says "as DATA" or "never as instructions", in the script
 **or in a prompt file beside it**.
 
