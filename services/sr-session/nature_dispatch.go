@@ -110,7 +110,7 @@ func natureHookScope(cmd *cobra.Command, p HookPayload) hookScope {
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %v\n", err)
 	}
-	if path, err := p.Record(); err == nil {
+	if path, err := recordOf(p); err == nil {
 		scope.Transcript = path
 	}
 	return scope

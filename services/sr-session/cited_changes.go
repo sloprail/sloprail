@@ -757,7 +757,7 @@ func forOtherStores(p HookPayload, record string, read func(sessionstate.Store))
 		if err != nil {
 			continue
 		}
-		db, err := sessionDBPath(o.StateCwd(), id)
+		db, err := sessionDBPath(stateCwdOf(o), id)
 		if err != nil {
 			continue
 		}

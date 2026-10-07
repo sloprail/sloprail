@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 
@@ -146,7 +145,7 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	}
 	resetStopRefusals(cmd, store)
 	if note := notices.text(); note != "" { // said, not refused: shown to the user
-		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"systemMessage": note}); err != nil {
+		if err := tell(cmd, note); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
 	}

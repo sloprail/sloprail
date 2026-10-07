@@ -40,7 +40,7 @@ func TestRecordReconstructsFromAgentIDAndSessionID(t *testing.T) {
 	root, sub := citedSubagentSession(t, cfg, tree, "sess-1", "abc")
 
 	// The sub-agent's PreToolUse: its agent id, the session id, no path.
-	got, err := HookPayload{SessionID: "sess-1", Cwd: tree, AgentID: "abc"}.Record()
+	got, err := recordOf(HookPayload{SessionID: "sess-1", Cwd: tree, AgentID: "abc"})
 	require.NoError(t, err)
 	assert.Equal(t, sub, got, "a sub-agent's call named by agent id alone resolved to the root's record")
 	assert.NotEqual(t, root, got)

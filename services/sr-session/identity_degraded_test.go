@@ -145,11 +145,11 @@ func TestStartupDoesNotRelocate(t *testing.T) {
 		`{"parentUuid":null,"type":"user","uuid":"someone-elses","sessionId":"`+sid+`"}`)
 	reported := filepath.Join(cfg, "projects", "-this-project", sid+".jsonl")
 
-	got, err := HookPayload{TranscriptPath: reported, SessionID: sid, Source: "startup"}.Record()
+	got, err := recordOf(HookPayload{TranscriptPath: reported, SessionID: sid, Source: "startup"})
 	require.NoError(t, err)
 	assert.Equal(t, reported, got, "startup must not adopt another project's transcript")
 
-	got, err = HookPayload{TranscriptPath: reported, SessionID: sid, Source: "resume"}.Record()
+	got, err = recordOf(HookPayload{TranscriptPath: reported, SessionID: sid, Source: "resume"})
 	require.NoError(t, err)
 	assert.NotEqual(t, reported, got, "a resume does look for the record where the session began")
 }
@@ -165,7 +165,7 @@ func TestClearDoesNotRelocate(t *testing.T) {
 		`{"parentUuid":null,"type":"user","uuid":"someone-elses","sessionId":"`+sid+`"}`)
 	reported := filepath.Join(cfg, "projects", "-this-project", sid+".jsonl")
 
-	got, err := HookPayload{TranscriptPath: reported, SessionID: sid, Source: "clear"}.Record()
+	got, err := recordOf(HookPayload{TranscriptPath: reported, SessionID: sid, Source: "clear"})
 	require.NoError(t, err)
 	assert.Equal(t, reported, got, "clear must not adopt another project's transcript")
 }
