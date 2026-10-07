@@ -133,7 +133,7 @@ jobs:
         env:
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          line="$(printf '%s\n' "$MSG" | grep -oE '\[e2e-only:[^]]*\]' | tail -1 || true)"
+          line="$(printf '%s\n' "$MSG" | grep -oE '\[e2e-only:[^]]*pkgs=[^]]*\]' | tail -1 || true)"
           if [ -z "$line" ]; then echo "adhoc=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           body="${line#\[e2e-only:}"; body="${body%\]}"
           harness=claude pkgs='' run=''
