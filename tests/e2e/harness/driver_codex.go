@@ -12,6 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
+	codexharness "github.com/sloprail/sloprail/internal/harness/codex"
 )
 
 // codexDriver is the Driver for OpenAI Codex, run through a10n-codex-mock (the
@@ -434,6 +437,9 @@ func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 		"  \"launched agent\" </dev/null\n"
 	return "codex", script
 }
+
+// SkillDir: Codex's project skills.
+func (codexDriver) SkillDir() string { return harness.ProjectSkillDirs(codexharness.New())[0] }
 
 // LargeJudgeModelArgs: size-lg is gpt-6.1-sol, named by Codex's short -m.
 func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }

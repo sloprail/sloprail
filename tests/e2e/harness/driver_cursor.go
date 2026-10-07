@@ -43,7 +43,7 @@ func (cursorDriver) Name() string { return "cursor" }
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapScopedToolRules, CapProseWithCallInOneEntry}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapProseWithCallInOneEntry}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -115,7 +115,7 @@ func (c cursorDriver) render(a Action) (string, error) {
 	case ActSkill:
 		// Cursor has no skill tool: reading the skill's SKILL.md is how it loads one.
 		return cursorLine(codexTool(a.ID, "Read", map[string]any{
-			"file_path": cursorWorkspaceMark + "/" + harness.ProjectSkillDirs(cursorharness.New())[0] + "/" + a.Text + "/SKILL.md"})), nil
+			"file_path": cursorWorkspaceMark + "/" + c.SkillDir() + "/" + a.Text + "/SKILL.md"})), nil
 	case ActBashBatch:
 		return "", c.unsupported(a, "several calls in one message are not modelled")
 	}
@@ -398,6 +398,9 @@ func (c cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script += "  \"launched agent\" </dev/null\n"
 	return "cursor-agent", script
 }
+
+// SkillDir: Cursor's project skills.
+func (cursorDriver) SkillDir() string { return harness.ProjectSkillDirs(cursorharness.New())[0] }
 
 // LargeJudgeModelArgs: size-lg is claude-opus-5-5-medium.
 func (cursorDriver) LargeJudgeModelArgs() (string, string) {

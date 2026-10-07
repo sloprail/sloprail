@@ -42,6 +42,7 @@ const PluginRootEnv = "CURSOR_PLUGIN_ROOT"
 func Resolve(projectDir, home string) (harness.Resolution, error) {
 	var res harness.Resolution
 	seen := map[string]bool{}
+	seenPlugin := map[string]bool{}
 	add := func(name, dir string) {
 		real := dir
 		if r, err := filepath.EvalSymlinks(dir); err == nil {
@@ -67,6 +68,12 @@ func Resolve(projectDir, home string) (harness.Resolution, error) {
 		if json.Unmarshal(raw, &m) == nil && m.Name != "" {
 			plugin.Name = m.Name
 		}
+		// One plugin installed at two places (the one its project hooks run and the user's
+		// local copy of it) is one plugin: the first found, the most specific, stands for it.
+		if seenPlugin[plugin.Key()] {
+			return
+		}
+		seenPlugin[plugin.Key()] = true
 		res.Roots = append(res.Roots, harness.Root{Plugin: plugin, Dir: dir})
 	}
 
