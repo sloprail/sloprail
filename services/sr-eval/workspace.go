@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -321,29 +322,13 @@ func (w *workspace) commitPaths(message string, allowEmpty bool, pathspecs ...st
 	return nil
 }
 
-// writeSettings wires the project to load this repo's sloprail plugin the way
-// a user actually installs it: `claude plugin marketplace add` +
-// `claude plugin install --scope project`, not a hand-written
-// .claude/settings.json.
-//
-// A hand-written settings.json (this function's original form) LOOKS right —
-// `claude plugin list` reports the plugin enabled — but does not actually
-// make its hooks fire on a genuinely fresh project path. Confirmed with a
-// minimal, isolated reproduction outside this repo: on a brand-new temp
-// project, writing enabledPlugins+extraKnownMarketplaces by hand leaves
-// Claude Code's own Stop hookCount at 1 (only some OTHER, ambient
-// user-scope plugin's hook runs; sr-session stop never fires, no error,
-// nothing in hookErrors) — while the exact same project, set up instead via
-// `claude plugin install --scope project -y`, gets hookCount 2 with
-// sr-session stop firing correctly. The difference is
-// ~/.claude/plugins/installed_plugins.json, a project-path-keyed install
-// registry that only the CLI install flow populates; settings.json alone
-// declares intent but does not register the install. Without this, every
-// context/gate-nature guardrail (which lives entirely on the Stop dispatch,
-// unlike a file-guard's git-diff path) silently never fires in a real
-// sr-eval run — first mistaken for a SessionStart baseline-timing race,
-// then (wrongly) for an ambient-plugin Stop-hook collision, before being
-// traced to this.
+// installPlugins wires the project to load this repo's sloprail plugin the way a
+// user actually installs it, through the harness's own install flow (its
+// Provisioner.InstallPlugins: for Claude Code `claude plugin marketplace add` +
+// `claude plugin install --scope project`, not a hand-written .claude/settings.json,
+// which LOOKS right but leaves a plugin's hooks silently never firing on a fresh
+// project path; for Codex `codex plugin add` and the hooks' trust; for Cursor a local
+// plugin).
 //
 // The marketplace added is a SNAPSHOT of this checkout's (snapshotMarketplace),
 // not the checkout itself: a directory-sourced plugin is served from its source
@@ -355,66 +340,16 @@ func (w *workspace) commitPaths(message string, allowEmpty bool, pathspecs ...st
 // by hand would test sr-eval's own arrangement rather than the product: the
 // whole point is that what fires is the plugin a real install gets, discovered
 // through hooks.json, not a hook this binary invented for the occasion.
-func (w *workspace) writeSettings(repoRoot string, env []string, plugins []string) error {
+func (w *workspace) installPlugins(ctx context.Context, prov harness.Provisioner, repoRoot string, agent agentEnv, plugins []string) error {
 	source, err := w.snapshotMarketplace(repoRoot)
 	if err != nil {
 		return fmt.Errorf("snapshot the marketplace: %w", err)
 	}
-	add := exec.Command("claude", "plugin", "marketplace", "add", source)
-	add.Dir = w.project
-	add.Env = env
-	if out, err := add.CombinedOutput(); err != nil {
-		return fmt.Errorf("claude plugin marketplace add: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-
-	for _, key := range append([]string{pluginKey}, pluginKeys(plugins)...) {
-		install := exec.Command("claude", "plugin", "install", key, "--scope", "project", "-y")
-		install.Dir = w.project
-		install.Env = env
-		if out, err := install.CombinedOutput(); err != nil {
-			return fmt.Errorf("claude plugin install %s: %w: %s", key, err, strings.TrimSpace(string(out)))
-		}
-	}
-
-	return w.disableAutoMemory()
-}
-
-// pluginKeys names each of a fixture's further plugins in this marketplace.
-func pluginKeys(plugins []string) []string {
-	keys := make([]string, len(plugins))
-	for i, p := range plugins {
-		keys[i] = p + "@" + marketplaceName
-	}
-	return keys
-}
-
-// disableAutoMemory sets autoMemoryEnabled: false in the project's
-// .claude/settings.json (the CLI install just wrote), merged in rather than
-// overwritten. Without this, the agent-under-test's cross-session
-// auto-memory can write real memories about a fixture's own throwaway
-// content into the operator's ~/.claude/projects memory store — the same
-// pattern that already caused two real fixtures this session (interlinking,
-// no-unasked-deletion) to have the agent confidently claim work it never
-// actually did in the project tree, because it wrote to its OWN memory tool
-// instead. The setting name and shape are the ones already in use for the
-// same purpose in this org's other repos (e.g. strategy's own
-// .claude/settings.json: "autoMemoryEnabled": false).
-func (w *workspace) disableAutoMemory() error {
-	settingsPath := filepath.Join(w.project, ".claude", "settings.json")
-	raw, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return fmt.Errorf("read settings.json written by claude plugin install: %w", err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return fmt.Errorf("parse settings.json written by claude plugin install: %w", err)
-	}
-	settings["autoMemoryEnabled"] = false
-	body, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode settings.json with autoMemoryEnabled: %w", err)
-	}
-	return os.WriteFile(settingsPath, body, 0o644)
+	return prov.InstallPlugins(ctx, harness.PluginInstall{
+		Env: agent.env, Project: w.project, Home: agent.home, BinDir: agent.binDir,
+		Marketplace: source, MarketplaceName: marketplaceName,
+		Plugins: append([]string{pluginName}, plugins...),
+	})
 }
 
 // repoRoot finds the sloprail checkout that is running this binary — the
@@ -442,7 +377,10 @@ func repoRoot() (string, error) {
 // the checkout itself was added; only the location changes.
 func (w *workspace) snapshotMarketplace(repoRoot string) (string, error) {
 	dst := filepath.Join(w.root, "sloprail-marketplace")
-	for _, dir := range []string{".claude-plugin", "marketplace"} {
+	for _, dir := range []string{".claude-plugin", ".agents", "marketplace"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, dir)); os.IsNotExist(err) {
+			continue // a harness's manifest directory a checkout may not carry
+		}
 		if err := copyTree(filepath.Join(repoRoot, dir), filepath.Join(dst, dir)); err != nil {
 			return "", err
 		}

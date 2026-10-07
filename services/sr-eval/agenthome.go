@@ -77,7 +77,7 @@ type agentEnv struct {
 // gap; buildRelease already stages into the workspace and never touches an
 // existing install.
 // sr:invariant authoring-tools/eval-agent-runs-isolated
-func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh bool) (agentEnv, error) {
+func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh bool, prov harness.Provisioner, h harness.Harness) (agentEnv, error) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
 		return agentEnv{}, fmt.Errorf("locate the real HOME: %w", err)
@@ -93,6 +93,24 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 			if err := os.Symlink(src, filepath.Join(home, name)); err != nil {
 				return agentEnv{}, fmt.Errorf("link ~/%s: %w", name, err)
 			}
+		}
+	}
+	// The harness's own login, when it is a file: exactly those files, never the config
+	// directory around them (the operator's config.toml, sessions and caches stay behind).
+	for _, name := range prov.AuthFiles() {
+		src := filepath.Join(realHome, name)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		dst := filepath.Join(home, name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return agentEnv{}, err
+		}
+		if err := copyFile(src, dst); err != nil {
+			return agentEnv{}, fmt.Errorf("copy ~/%s: %w", name, err)
+		}
+		if err := os.Chmod(dst, 0o600); err != nil {
+			return agentEnv{}, err
 		}
 	}
 	for _, name := range []string{".gitconfig", filepath.Join(".config", "gh")} {
@@ -121,9 +139,9 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 		return agentEnv{}, err
 	}
 
-	env := baseAgentEnv(os.Environ(), home, tmp, fresh)
+	env := baseAgentEnv(h, os.Environ(), home, tmp, fresh)
 
-	ae := agentEnv{home: home, configDir: filepath.Join(home, ".claude")}
+	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home)}
 
 	// Every run — fresh or ordinary — launches THIS checkout's own binaries,
 	// built new into the workspace rather than trusted from wherever binDir
@@ -148,7 +166,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 		return ae, nil
 	}
 
-	path, err := freshPath(home)
+	path, err := freshPath(home, prov.Binary())
 	if err != nil {
 		return agentEnv{}, err
 	}
@@ -177,19 +195,20 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 // state has to tell this run's work from what was already on disk itself —
 // research-rigor's depth gate counts only directories the run cloned.
 // sr:invariant authoring-tools/eval-agent-runs-isolated
-func baseAgentEnv(environ []string, home, tmp string, fresh bool) []string {
-	// The operator's own Claude Code session (CLAUDECODE, CLAUDE_CODE_SESSION_ID,
-	// CLAUDE_CODE_ENTRYPOINT, ...) is not the agent's: left in, the agent-under-test
-	// believes it is nested inside that session.
-	environ = harness.Current().SessionEnv(environ)
+func baseAgentEnv(h harness.Harness, environ []string, home, tmp string, fresh bool) []string {
+	// The operator's own harness session (CLAUDECODE, CLAUDE_CODE_SESSION_ID, ...) is not
+	// the agent's: left in, the agent-under-test believes it is nested inside that
+	// session. Then the agent's own harness's scrub (HermeticEnv): its session identity,
+	// where it keeps its state (CLAUDE_CONFIG_DIR, CODEX_HOME), the platform's per-user
+	// directories, and any SLOPRAIL_*/SR_* variable.
+	environ = h.HermeticEnv(harness.Current().SessionEnv(environ))
 	env := make([]string, 0, len(environ)+3)
 	for _, kv := range environ {
 		key, _, _ := strings.Cut(kv, "=")
 		switch {
-		case key == "HOME", key == "PATH", key == "TMPDIR", key == "CLAUDE_CONFIG_DIR",
-			key == "CLAUDE_CODE_TMPDIR", key == "XDG_CONFIG_HOME", key == "XDG_DATA_HOME":
+		case key == "HOME", key == "PATH", key == "TMPDIR":
 			continue
-		case fresh && (key == "GOBIN" || key == "GOPATH" || strings.HasPrefix(key, "SLOPRAIL_")):
+		case fresh && (key == "GOBIN" || key == "GOPATH"):
 			continue
 		}
 		env = append(env, kv)
@@ -240,11 +259,11 @@ func buildRelease(ctx context.Context, repoRoot, dir string) error {
 }
 
 // freshPath is the caller's PATH minus every directory holding a sloprail
-// binary. The harness itself (claude) often shares such a directory
+// binary. The harness itself often shares such a directory
 // (~/.local/bin holds both), so when dropping those directories loses it, a
 // directory holding only a link to it is put first.
-func freshPath(home string) (string, error) {
-	claudeBin, _ := exec.LookPath("claude")
+func freshPath(home, harnessBinary string) (string, error) {
+	harnessBin, _ := exec.LookPath(harnessBinary)
 
 	var kept []string
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
@@ -254,12 +273,12 @@ func freshPath(home string) (string, error) {
 		kept = append(kept, dir)
 	}
 
-	if claudeBin != "" && !onPath("claude", kept) {
+	if harnessBin != "" && !onPath(harnessBinary, kept) {
 		shim := filepath.Join(home, ".sr-eval-harness-bin")
 		if err := os.MkdirAll(shim, 0o755); err != nil {
 			return "", err
 		}
-		if err := os.Symlink(claudeBin, filepath.Join(shim, "claude")); err != nil {
+		if err := os.Symlink(harnessBin, filepath.Join(shim, harnessBinary)); err != nil {
 			return "", fmt.Errorf("link the harness binary: %w", err)
 		}
 		kept = append([]string{shim}, kept...)

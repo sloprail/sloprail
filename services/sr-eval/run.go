@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -30,6 +31,7 @@ could not be completed (nothing to score at all).`,
 		RunE: runFixture,
 	}
 	cmd.Flags().String("fixture", "", "Path to the fixture directory (fixture.yaml + prompt.md + score script)")
+	cmd.Flags().String("harness", "", "The harness the agent-under-test runs under: "+strings.Join(harness.Names(), ", ")+" (default: $"+harness.SelectEnv+", else "+defaultHarness+")")
 	cmd.Flags().String("model", "", "Override the fixture's own model set — run the same fixture against a different model without editing fixture.yaml")
 	cmd.Flags().Bool("keep", false, "Do not remove the isolated workspace after scoring — print its path instead")
 	cmd.Flags().Bool("no-archive", false, "Do not record this run in the local eval-run archive (~/.local/share/sloprail/eval-runs, or $SLOPRAIL_EVAL_RUNS_DIR)")
@@ -73,9 +75,26 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	keep, _ := cmd.Flags().GetBool("keep")
 	noArchive, _ := cmd.Flags().GetBool("no-archive")
 
+	harnessFlag, _ := cmd.Flags().GetString("harness")
+	h, err := resolveHarness(harnessFlag, os.Getenv)
+	if err != nil {
+		return err
+	}
+	harnessID := h.Name()
+	prov, err := harness.ProvisionerOf(h)
+	if err != nil {
+		return err
+	}
+
 	fx, err := LoadFixture(fixtureDir)
 	if err != nil {
 		return err
+	}
+	if !fx.Supports(harnessID) {
+		// Not a failure and not a pass: nothing ran, nothing is archived.
+		fmt.Fprintf(out, "sr-eval: SKIP — fixture %s declares harnesses %s; it does not run under %s\n",
+			filepath.Base(fx.Dir), strings.Join(fx.Harnesses, ", "), harnessID)
+		return nil
 	}
 	if modelOverride != "" {
 		fx.Model = modelOverride
@@ -106,7 +125,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	// longer trusts whatever sr-agent happens to be first on ITS OWN PATH
 	// (the old siblingBinDir), which silently tested a stale install when one
 	// existed. See agentHome's doc comment for the measured gap this closes.
-	agent, err := ws.agentHome(ctx, root, fx.FreshMachine)
+	agent, err := ws.agentHome(ctx, root, fx.FreshMachine, prov, h)
 	if err != nil {
 		return fmt.Errorf("build the agent's HOME: %w", err)
 	}
@@ -117,7 +136,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	} else {
 		fmt.Fprintf(out, "sr-eval: agent HOME %s (isolated; the real one is never written)\n", agent.home)
 	}
-	if err := ws.writeSettings(root, agent.env, fx.Plugins); err != nil {
+	if err := ws.installPlugins(ctx, prov, root, agent, fx.Plugins); err != nil {
 		return fmt.Errorf("wire project settings: %w", err)
 	}
 
@@ -139,14 +158,10 @@ func runFixtureSteps(cmd *cobra.Command) error {
 
 	fmt.Fprintf(out, "sr-eval: fixture %s\n", fx.Dir)
 	fmt.Fprintf(out, "sr-eval: project %s\n", ws.project)
-	fmt.Fprintf(out, "sr-eval: launching agent-under-test (model %q)...\n", fx.Model)
+	fmt.Fprintf(out, "sr-eval: launching agent-under-test (harness %s, model %q)...\n", harnessID, fx.Model)
 
 	configDir := agent.configDir
 
-	sessionID, err := newSessionID()
-	if err != nil {
-		return fmt.Errorf("make a session id: %w", err)
-	}
 	brief, err := fx.UserBrief()
 	if err != nil {
 		return err
@@ -161,7 +176,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	message := prompt
 	for turn := 1; turn <= maxTurns; turn++ {
 		if turn > 1 {
-			next, done, userErr := simulateUser(ctx, binDir, fx.User.UserModel(), brief, dialogue)
+			next, done, userErr := simulateUser(ctx, harnessID, binDir, fx.User.UserModel(), brief, dialogue)
 			if userErr != nil {
 				// The conversation cannot go on, but what already happened is
 				// a transcript worth scoring — same reasoning as an agent
@@ -179,7 +194,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 		}
 		var reply bytes.Buffer
 		if agentErr := launchAgent(ctx, io.MultiWriter(out, &reply), cmd.ErrOrStderr(), ws, binDir,
-			agentArgs(fx.Model, message, sessionID, turn > 1, fx.DisallowedTools), agent.env); agentErr != nil {
+			agentArgs(harnessID, fx.Model, message, turn > 1, fx.DisallowedTools), agent.env); agentErr != nil {
 			agentErrs = append(agentErrs, fmt.Sprintf("turn %d: %v", turn, agentErr))
 			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error on turn %d: %v\n", turn, agentErr)
 			// Not returned yet: a refusal or a crash mid-run still leaves a
@@ -192,19 +207,19 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	}
 	agentErrText := strings.Join(agentErrs, "; ")
 
-	transcriptPath := findTranscript(ws.project, configDir)
+	transcriptPath := findTranscript(h.Transcripts(), ws.project, configDir)
 	if transcriptPath == "" {
-		return fmt.Errorf("no transcript found under %s/projects — the agent-under-test never wrote one", configDir)
+		return fmt.Errorf("no transcript found under %s — the agent-under-test never wrote one", h.Transcripts().ProjectDir(configDir, ws.project))
 	}
 	fmt.Fprintf(out, "sr-eval: transcript %s\n", transcriptPath)
 
-	sr, scoreErr := score(ctx, fx, ws, transcriptPath, binDir, agent.home)
+	sr, scoreErr := score(ctx, fx, ws, harnessID, transcriptPath, binDir, agent.home)
 
 	rec := runRecord{
 		Fixture:    filepath.Base(fx.Dir),
 		FixtureDir: fx.Dir,
 		Model:      fx.Model,
-		Harness:    "claude",
+		Harness:    harnessID,
 		Passed:     sr.Passed,
 		Reason:     sr.Reason,
 		AgentError: agentErrText,
@@ -301,38 +316,57 @@ func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, b
 	return c.Run()
 }
 
-// findTranscript locates the .jsonl the agent-under-test wrote, via the same
-// project-dir encoding the harness itself uses (internal/transcript.ProjectDir)
-// — the one place that rule is defined. configDir is the agent's own
-// ~/.claude, inside its isolated HOME (agentHome). There is exactly
-// one project dir for the (fresh, temp) project path and exactly one session
-// transcript in it — a multi-turn run resumes the SAME session on every turn
-// (agentArgs), and Claude Code appends each resumed turn to that one file — so
-// the newest .jsonl is the one to score.
-func findTranscript(projectDir, configDir string) string {
-	projDir := transcript.ProjectDir(configDir, projectDir)
-	if projDir == "" {
-		return ""
-	}
+// defaultHarness is the harness a run uses when neither --harness nor SLOPRAIL_HARNESS names one.
+const defaultHarness = "claude"
 
-	entries, err := os.ReadDir(projDir)
-	if err != nil {
+// resolveHarness is the harness a run's agent-under-test uses: the flag, else
+// SLOPRAIL_HARNESS, else Claude Code. Never detected from the operator's own session:
+// whichever harness the operator happens to be typing in must not pick the one under test.
+func resolveHarness(flag string, getenv func(string) string) (harness.Harness, error) {
+	id := flag
+	if id == "" {
+		id = getenv(harness.SelectEnv)
+	}
+	if id == "" {
+		id = defaultHarness
+	}
+	h, ok := harness.Lookup(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown harness %q — one of %s", id, strings.Join(harness.Names(), ", "))
+	}
+	return h, nil
+}
+
+// findTranscript locates the session record the agent-under-test wrote, through the
+// harness's own layout (Transcripts.ProjectDir: Claude Code's project directory,
+// Cursor's, Codex's date-sharded sessions tree), under configDir, the agent's own
+// config directory inside its isolated HOME (agentHome). The run's HOME is fresh, so
+// whatever .jsonl lies under that directory is this run's; a multi-turn run continues
+// ONE session, so its record is one file. Sub-agent records sit deeper than their
+// parent's (Claude's <session>/subagents/, Cursor's alongside), so the shallowest file
+// wins and, among equals, the newest.
+func findTranscript(t harness.Transcripts, projectDir, configDir string) string {
+	root := t.ProjectDir(configDir, transcript.ResolveWorkDir(projectDir))
+	if root == "" {
 		return ""
 	}
-	var newest string
-	var newestTime time.Time
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
+	var best string
+	var bestDepth int
+	var bestTime time.Time
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
+			return nil
 		}
-		info, err := e.Info()
+		info, err := d.Info()
 		if err != nil {
-			continue
+			return nil
 		}
-		if info.ModTime().After(newestTime) {
-			newestTime = info.ModTime()
-			newest = filepath.Join(projDir, e.Name())
+		rel, _ := filepath.Rel(root, path)
+		depth := strings.Count(rel, string(filepath.Separator))
+		if best == "" || depth < bestDepth || (depth == bestDepth && info.ModTime().After(bestTime)) {
+			best, bestDepth, bestTime = path, depth, info.ModTime()
 		}
-	}
-	return newest
+		return nil
+	})
+	return best
 }

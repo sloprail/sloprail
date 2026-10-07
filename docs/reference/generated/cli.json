@@ -476,6 +476,11 @@
         "usage": "A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)"
       },
       {
+        "name": "agent-run",
+        "default": "false",
+        "usage": "Run as the agent UNDER TEST rather than as a judge: the project's hooks and plugins stay live and the run is unattended (what sr-eval launches)"
+      },
+      {
         "name": "allowed-tools",
         "usage": "Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")"
       },
@@ -486,6 +491,11 @@
       {
         "name": "codex-args",
         "usage": "Codex's own settings as a JSON object, passed through untouched (e.g. '{\"config\":\"model_reasoning_effort=low\"}')"
+      },
+      {
+        "name": "continue",
+        "default": "false",
+        "usage": "With --agent-run: resume the working directory's previous session, so a multi-turn run lands in one record"
       },
       {
         "name": "disallowed-tools",
