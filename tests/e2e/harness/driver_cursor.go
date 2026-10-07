@@ -135,32 +135,12 @@ PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - ${SLOP_BASE:-0} -
 
 // pluginDirs are the directories the run loads with --plugin-dir.
 //
-// The plugin's hooks name their commands relative to the plugin ("./hooks/x.sh"); the mock
-// runs every hook with the workspace as its directory and does not resolve a plugin's
-// relative command against the plugin (the run is then a silent no-op: nothing refuses
-// anything). So the directory loaded is a stand-in manifest whose hooks are the plugin's
-// own, each command made absolute — the same commands, found from wherever the mock runs them.
+// Known mock gap (harness-mocks, cursor-mock): the plugin's hooks name their commands
+// relative to the plugin ("./hooks/x.sh"), cursor-agent runs a plugin hook from the plugin's
+// directory with CURSOR_PLUGIN_ROOT set, and the mock does neither, so on it those hooks
+// do nothing and every test that needs a refusal fails. Not worked around here: fixed in the mock.
 func (cursorDriver) pluginDirs(e *Env) []string {
-	root := filepath.Join(e.repoRoot, "marketplace", "plugins", pluginName)
-	raw, err := os.ReadFile(filepath.Join(root, "hooks", "cursor-hooks.json"))
-	if err != nil {
-		e.t.Fatalf("harness: %v", err)
-	}
-	// cursor-agent runs a plugin's hook from the plugin's directory with CURSOR_PLUGIN_ROOT (and
-	// CLAUDE_PLUGIN_ROOT) naming it; the mock does neither, so the command says both itself.
-	abs := strings.ReplaceAll(string(raw), `"./hooks/`,
-		`"cd `+root+` && CURSOR_PLUGIN_ROOT=`+root+` CLAUDE_PLUGIN_ROOT=`+root+` `+filepath.Join(root, "hooks")+`/`)
-	dir := filepath.Join(e.tmpDir, "cursor-plugin")
-	if err := os.MkdirAll(filepath.Join(dir, ".cursor-plugin"), 0o755); err != nil {
-		e.t.Fatalf("harness: %v", err)
-	}
-	manifest := `{"name":"` + pluginName + `","hooks":"./hooks.json"}`
-	for p, body := range map[string]string{".cursor-plugin/plugin.json": manifest, "hooks.json": abs} {
-		if err := os.WriteFile(filepath.Join(dir, p), []byte(body), 0o644); err != nil {
-			e.t.Fatalf("harness: %v", err)
-		}
-	}
-	return []string{dir}
+	return []string{filepath.Join(e.repoRoot, "marketplace", "plugins", pluginName)}
 }
 
 // Command builds the cursor-mock invocation for one run.
