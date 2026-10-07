@@ -1554,7 +1554,7 @@ func openRefsSession(cmd *cobra.Command) (refsSession, error) {
 	if p.Cwd == "" {
 		p.Cwd = cwd
 	}
-	if rec, err := p.Record(); err == nil && rec != "" {
+	if rec, err := recordOf(p); err == nil && rec != "" {
 		p.TranscriptPath = rec
 	} else if cur := transcript.CurrentSessionPath(p.Cwd); cur != "" {
 		p.TranscriptPath = cur
@@ -1827,7 +1827,7 @@ func lazyRecordedCitations(p HookPayload, store sessionstate.Store) func() map[s
 // per file with `sr-file --cite`, oldest first: what a refusal hands back as the trailer to paste.
 func recordedCitations(p HookPayload, store sessionstate.Store) map[string][]transcript.Citation {
 	out := map[string][]transcript.Citation{}
-	record, _ := p.Record()
+	record, _ := recordOf(p)
 	others, _ := otherHistories(p, record)
 	for _, hist := range []map[string][]historyPoint{historyIn(store, true), others} {
 		for path, pts := range hist {

@@ -2,6 +2,9 @@ package harness
 
 import (
 	"fmt"
+	"os"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -9,7 +12,9 @@ import (
 // it runs inside. One implementation per harness lives in a sibling package,
 // internal/harness/<name>/, and registers itself from init (Register); a service's
 // main package chooses the harness by importing that package (blank import), and
-// no other package may import an implementation (tests/repo enforces it).
+// no other package may import an implementation (tests/repo enforces it). A main
+// may import several; which one a process runs is decided by Current. A main
+// may import several; which one a process runs is decided by Current.
 //
 // The interface is deliberately small: what generic code (the engine, gates,
 // file-guards, sr-checks) needs to be harness-independent, and nothing a single
@@ -42,35 +47,110 @@ type Harness interface {
 
 	// Transcripts is how the harness's session record is parsed and located.
 	Transcripts() Transcripts
+
+	// The hook protocol: parsing a hook's input and spelling the engine's answer.
+	HookWire
 }
 
+// Detector is what a Harness MAY also implement so that it can be recognised from
+// the environment of the process running under it (see Current).
+type Detector interface {
+	// Detect reports whether environ (KEY=VALUE entries) is that of a process
+	// running under this harness, from variables the harness itself sets.
+	Detect(environ []string) bool
+}
+
+// TranscriptLocator is what a Harness MAY implement when a hook's payload does not
+// always name the session's record (Cursor's first events carry a null path): it
+// finds the record another way, so the engine does not conclude "no transcript"
+// and switch guardrails off for a record that exists. It is asked only when the
+// payload names none, and returns "" when it cannot tell.
+type TranscriptLocator interface {
+	LocateTranscript(in HookInput) string
+}
+
+// ChildEnvBlocklist is what a Harness MAY implement to name the variables that
+// carry its own live session's identity or IPC (beyond the ones sr-agent already
+// strips), so a one-shot judge started from within a session does not inherit them.
+type ChildEnvBlocklist interface {
+	ChildEnvBlocklist() []string
+}
+
+// Default is the harness a process runs under when nothing selects another.
+const Default = "claudecode"
+
+// SelectEnv names, when set, the harness a process runs under, overriding
+// detection. It is how a harness's plugin wires its hooks explicitly (the hook
+// command sets it), where the environment alone would not say.
+const SelectEnv = "SLOPRAIL_HARNESS"
+
 var (
-	mu      sync.RWMutex
-	current Harness
+	mu       sync.RWMutex
+	registry = map[string]Harness{}
 )
 
-// Register makes h the process's harness. An implementation package calls it from
-// init, so importing the package is what selects it; a second, different harness
-// registering in the same process is a wiring mistake and panics rather than
-// letting import order pick one.
+// Register adds h to the process's harnesses, keyed by Name; registering a name
+// again replaces it. An implementation package calls it from init, so importing the
+// package is what makes it available; a service's main package chooses which to
+// import and Current chooses among those. Adding a harness is a new file that
+// registers itself, never an edit to a shared switch.
 func Register(h Harness) {
 	mu.Lock()
 	defer mu.Unlock()
-	if current != nil && current.Name() != h.Name() {
-		panic(fmt.Sprintf("harness: %q registered while %q already is; a process runs one harness", h.Name(), current.Name()))
-	}
-	current = h
+	registry[h.Name()] = h
 }
 
-// Current is the registered harness. It panics when none is: a service main that
-// forgot to import its harness would otherwise run with plugin discovery and
-// session handling silently doing nothing, which is the failure this product
-// exists to prevent.
-func Current() Harness {
+// Current is the harness this process runs under, decided in this order:
+//
+//  1. SelectEnv, when set: it must name a registered harness (anything else
+//     panics, since a misspelt name silently falling back would run the wrong
+//     harness's rules).
+//  2. The registered harnesses that implement Detector and recognise the
+//     environment, in name order; the first wins.
+//  3. Default, when registered; else the only registered harness.
+//
+// It panics when none is registered: a service main that forgot to import its
+// harness would otherwise run with plugin discovery and session handling silently
+// doing nothing, which is the failure this product exists to prevent.
+func Current() Harness { return Select(os.Environ()) }
+
+// Select is Current over an explicit environment.
+func Select(environ []string) Harness {
 	mu.RLock()
 	defer mu.RUnlock()
-	if current == nil {
+	if len(registry) == 0 {
 		panic("harness: none registered; import an internal/harness/<name> package from the service's main package")
 	}
-	return current
+	for _, kv := range environ {
+		if v, ok := strings.CutPrefix(kv, SelectEnv+"="); ok && v != "" {
+			h, found := registry[v]
+			if !found {
+				panic(fmt.Sprintf("harness: %s=%q names no registered harness (registered: %s)", SelectEnv, v, names()))
+			}
+			return h
+		}
+	}
+	for _, name := range sortedNames() {
+		if d, ok := registry[name].(Detector); ok && d.Detect(environ) {
+			return registry[name]
+		}
+	}
+	if h, ok := registry[Default]; ok {
+		return h
+	}
+	for _, h := range registry {
+		return h
+	}
+	panic("unreachable")
 }
+
+func sortedNames() []string {
+	out := make([]string, 0, len(registry))
+	for n := range registry {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func names() string { return strings.Join(sortedNames(), ", ") }

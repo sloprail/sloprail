@@ -129,7 +129,7 @@ func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 		return flag, HookPayload{}, nil
 	}
 	p := readPayloadIfWaiting(cmd)
-	path, err := p.Record()
+	path, err := recordOf(p)
 	if err != nil {
 		return "", p, err
 	}
