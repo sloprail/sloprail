@@ -1,0 +1,21 @@
+# The e2e suite under tests/ runs sequentially and takes about an hour on one machine; CI runs it
+# in 16 parallel shards in 10-15 minutes. An agent that starts it locally burns the hour and
+# usually is not even the one waiting for the answer.
+#
+# Refused, decided from the command's argv alone (no compiling, no judge):
+#   - `make test-e2e` and `make test-e2e-shard`;
+#   - a `go test` with a package argument under tests/ when any of: (a) one such argument holds
+#     `...`, (b) more than 2 of them, (c) there is no -run / -test.run flag.
+# Everything else passes: unit packages (./internal/..., ./services/...) and up to 2 concrete
+# e2e packages with -run naming the tests. `env ... go test`, `cd x && go test` and `bash -c`
+# arrive as separate invocations, which the match already walks.
+#
+# The user said: "let's create a, a gate that will disallow commands that run more than" and
+# "push it to use CI for that instead, yeah. UCI is much faster. Unless it's literally just
+# like a few tests."
+on:
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, ((.bin == "go" or .bin endsWith "/go") and any(.argv, # == "test")) or (.bin == "make" and any(.argv, # == "test-e2e" or # == "test-e2e-shard")))
+checks:
+  - script: ./refuse.sh
