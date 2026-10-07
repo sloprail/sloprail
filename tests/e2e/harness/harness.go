@@ -2618,14 +2618,35 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, mode SessionMod
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
 	} else if err != nil {
-		e.t.Fatalf("harness: run mock: %v\n%s", err, out)
+		e.t.Fatalf("harness: run mock: %v\n%s", err, clipLongLines(string(out), maxLoggedLine))
 	}
-	e.t.Logf("mock:\n%s", out)
+	e.t.Logf("mock:\n%s", clipLongLines(string(out), maxLoggedLine))
 	e.driver.Observe(e, Launch{
 		ProjDir: projDir, WorkDir: workDir, ScriptPath: scriptPath, Prompt: prompt,
 		Mode: mode, SessionID: sessionID, FromSessionID: fromSessionID,
 	}, string(out))
 	return Result{Output: string(out), Code: code}
+}
+
+// maxLoggedLine bounds one line of the mock's output in the test log.
+const maxLoggedLine = 4096
+
+// clipLongLines shortens every line of out longer than max, saying how much it left
+// out. The mock's stream echoes a tool call's arguments, so a test that writes a
+// megabyte puts megabyte lines in the log; CI's log pipe handles those at a few KB a
+// second, which stalls the test writing them until the job is cancelled. The log is
+// for reading; what a test asserts on is the unclipped output.
+func clipLongLines(out string, max int) string {
+	if len(out) <= max {
+		return out
+	}
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if len(l) > max {
+			lines[i] = fmt.Sprintf("%s ... [%d more bytes not logged]", l[:max], len(l)-max)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // EngineErrored reports whether an sr-session answer captured with 2>&1 carries
