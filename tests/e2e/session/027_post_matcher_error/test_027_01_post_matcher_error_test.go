@@ -98,6 +98,7 @@ exit 1
 // symmetry only means something if both sides are measured against the same running
 // build. This is 014_01's claim; if it ever stops holding, the comparison below is
 // comparing against nothing.
+// sr:proves matching/unevaluable-never-passes
 func TestT027_01_TheSameMatcherErrorRefusesBeforeTheAction(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "npm-access", gateErroringMatcher, map[string]string{"check.sh": permitCheck})
@@ -137,6 +138,7 @@ func TestT027_01_TheSameMatcherErrorRefusesBeforeTheAction(t *testing.T) {
 // What still differs from the pre-tool point is the CHANNEL, not the verdict: a
 // Post event is reported after the change is on disk, so the reason arrives as a
 // blocking error at Stop rather than denying the action outright.
+// sr:proves matching/unevaluable-never-passes
 func TestT027_02_AMatcherErrorAtTheCyclesHookPointRefuses(t *testing.T) {
 	e, proj := project(t)
 	// A file-guard whose match compiles and cannot be evaluated on the settled file.

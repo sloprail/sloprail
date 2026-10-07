@@ -126,6 +126,7 @@ func recordContextState(cmd *cobra.Command, store sessionstate.Store, contextMap
 // map is mutated in place so a context entering earlier in the loop is visible to
 // one whose `require` names it later (the ordering `{context}` needs, within this
 // cycle's enters).
+// sr:invariant contexts/enter-activates-and-replaces-payload
 func runContextEnters(
 	cmd *cobra.Command,
 	reg *module.Registry,
@@ -213,6 +214,7 @@ func runContextEnters(
 				// reads it would silently not fire. So the trigger is REFUSED (the caller
 				// denies a Pre* event, and blocks the Stop that handled a Post* one), and the
 				// reason is still reported on stderr.
+				// sr:invariant contexts/unrunnable-enter-refuses-trigger
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q: %s\n", c.Name, v.Reason)
 				if repairsContext(events, c, scope.Workspace) {
 					// The call repairs the context's own script: refusing it would make the fault
@@ -222,6 +224,7 @@ func runContextEnters(
 				refused = append(refused, contextRefusal{Context: c.Name, Reason: v.Reason})
 				break // one refusal per context per dispatch: the next occurrence would say the same
 			}
+			// sr:invariant contexts/nonzero-enter-declines
 			if !active {
 				// enter declined to (re-)activate on this trigger: leave the state as
 				// it was (an already-active context stays active with its payload).
@@ -230,6 +233,7 @@ func runContextEnters(
 			if !current.Active {
 				srevents.Emit(srevents.Event{Kind: srevents.ContextActivated, Rule: srevents.Rule(c.Origin.Plugin, c.Name), On: fired.Kind, ToolUseID: scope.ToolUseID})
 			}
+			// sr:invariant contexts/enter-activates-and-replaces-payload
 			recordContextState(cmd, store, contextMap, c.Name, natures.ContextState{Active: true, Payload: payload})
 		}
 	}
@@ -256,6 +260,7 @@ func contextRefusalReasons(rs []contextRefusal) []string {
 // even for a context that was never triggered (nothing else would have said so). It reads the
 // files, not the history, so it stops refusing the moment the script is fixed. A context whose
 // enter already refused at this Stop (seen) is not named twice.
+// sr:invariant contexts/broken-script-refuses-the-turn
 func brokenContextScripts(contexts []declaration.Context, seen []contextRefusal) []string {
 	done := map[string]bool{}
 	for _, r := range seen {
@@ -295,6 +300,7 @@ func brokenContextScripts(contexts []declaration.Context, seen []contextRefusal)
 //
 // Runs AFTER the Stop gates so a gate requiring a context reads it still active,
 // then the context closes for the next cycle.
+// sr:invariant contexts/exit-only-deactivates
 func runContextExits(
 	cmd *cobra.Command,
 	contexts []declaration.Context,
@@ -342,6 +348,7 @@ func runContextExits(
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q exit: %v\n", c.Name, err)
 			continue
 		}
+		// sr:invariant contexts/killed-exit-refuses
 		if fault != "" {
 			// An exit that could not run (killed on its timeout, or the file went bad since the
 			// sweep) never answered: the context stays active and the turn is refused, never
@@ -351,6 +358,7 @@ func runContextExits(
 					"This turn is refused until the exit answers (context %s)", c.Name, c.Exit, fault, c.Name))
 			continue
 		}
+		// sr:invariant contexts/exit-only-deactivates
 		if !done {
 			// A non-zero exit is the ORDINARY way a context says "not done yet": it stays
 			// active for another cycle, quietly.
@@ -359,6 +367,7 @@ func runContextExits(
 		// Done (clean exit): mark inactive, KEEPING the last payload so a later cycle
 		// can still read what the closed context last measured.
 		srevents.Emit(srevents.Event{Kind: srevents.ContextDeactivated, Rule: srevents.Rule(c.Origin.Plugin, c.Name), On: stop.Kind})
+		// sr:invariant contexts/payload-survives-deactivation
 		recordContextState(cmd, store, contextMap, c.Name, natures.ContextState{Active: false, Payload: current.Payload})
 	}
 	return refusals
@@ -401,6 +410,7 @@ func runContextExits(
 // whose match keeps erring shows up as a scope that never opens, which is visible
 // on its own; none of the suites here exercise a context match-eval error, and this
 // is documented rather than left as a bare `continue`.
+// sr:invariant matching/context-unevaluable-does-not-enter
 func contextMatchingEvents(cmd *cobra.Command, reg *module.Registry, c declaration.Context, events []event.Event, contextMap map[string]natures.ContextState) []event.Event {
 	var matched []event.Event
 	seen := map[int]bool{}

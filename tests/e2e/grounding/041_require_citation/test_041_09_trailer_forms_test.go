@@ -63,6 +63,7 @@ func TestT041_50_ACitationInAnyParagraphIsRead(t *testing.T) {
 // so does a sloprail query tool. Those echoes are not a second match: one genuine
 // output plus its echoes is one source. Two genuine outputs of the same words stay
 // ambiguous.
+// sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
 	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, "s-041-51", prompt, Turns("done",
@@ -89,6 +90,7 @@ func TestT041_51_AnEchoOfTheCommitIsNotASecondMatch(t *testing.T) {
 // T041_52: the user's words in a `Sloprail-Cites-Tool:` trailer, and the agent's own
 // `git log` output as the only place a quote sits, ground nothing. A genuine output
 // of the same words does.
+// sr:proves citations/pool-is-not-borrowed
 func TestT041_52_TheUsersWordsAndAGitLogGroundNoToolCitation(t *testing.T) {
 	e, proj := guardedUncited(t, toolResultGuard)
 	e.Run(proj, "s-041-52", prompt, Turns("done",

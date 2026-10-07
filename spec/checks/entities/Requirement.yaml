@@ -1,0 +1,17 @@
+doc: A prerequisite of a rule, evaluated before any of its checks.
+fields:
+  - name: skill
+    type: string
+    doc: A skill that must have been loaded in the session's own record first.
+  - name: files
+    type: string
+    doc: Pages of that skill that must also have been read.
+  - name: context
+    type: string
+    doc: A context that must be active.
+  - name: when
+    type: string
+    doc: A script deciding whether the requirement applies here.
+  - name: hint
+    type: string
+    doc: Advice a when script prints for meeting the requirement, appended to the refusal.

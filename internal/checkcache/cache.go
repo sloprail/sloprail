@@ -171,6 +171,7 @@ type Cache interface {
 // pass or a fail — or is a fail that was resolved as stale (a skip carrying metadata
 // "staleFrom"), which is found so that, being the newest result of its key, it supersedes
 // the fail it resolves: a reader sees a skip, and a skip is no hit.
+// sr:invariant cache/unfinished-never-stored
 func Findable(c Check) bool {
 	if c.Fingerprint == "" {
 		return false

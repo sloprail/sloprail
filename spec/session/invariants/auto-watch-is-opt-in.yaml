@@ -1,0 +1,3 @@
+predicate: >-
+  A {@ent:session:TrackedRange} has {@fld:session:TrackedRange.added_by} auto only when automatic watching of git refs is switched on, which it is not by default; otherwise only ranges the agent tracks itself are verified at turn end.
+why: Branches the agent never touched are blamed on the session, or ranges it tracked itself go unverified.

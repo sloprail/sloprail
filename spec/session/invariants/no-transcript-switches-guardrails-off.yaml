@@ -1,0 +1,4 @@
+predicate: >-
+  A session whose harness keeps no transcript has {@fld:session:Session.guardrails_active} false, and the person is told so once on screen.
+why: Rules that need the record deadlock the run, or silently do nothing without anyone knowing.
+needs: [session-transcript-file]

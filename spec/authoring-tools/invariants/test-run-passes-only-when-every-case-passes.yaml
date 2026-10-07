@@ -1,0 +1,6 @@
+predicate: >-
+  `sr test run` exits non-zero unless every {@ent:authoring-tools:TestCase} has
+  {@fld:authoring-tools:TestCase.status} pass, and a case that outlives its
+  {@fld:authoring-tools:TestCase.timeout} is an error, its processes killed.
+why: >-
+  A hung or erroring case that reads as a pass would let a broken rule ship.

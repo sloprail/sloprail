@@ -29,6 +29,7 @@ func twoFilePayload(extra bool) (changeset.Payload, changeset.Payload) {
 
 // #291: a commit that touches none of a subject's files, whatever citation it carries, must
 // not move that subject's key, for a rule that requires a citation and one that does not.
+// sr:proves cache/verdict-identity
 func TestGuardKey_ACommitOutsideTheSubjectDoesNotMoveItsKey(t *testing.T) {
 	for _, g := range []declaration.FileGuard{
 		{},
@@ -46,6 +47,7 @@ func TestGuardKey_ACommitOutsideTheSubjectDoesNotMoveItsKey(t *testing.T) {
 // What grounds the subject's own files does not move its key either: a pass is about the
 // content, and a citation is only a gate, asked again on every run. The file's content, and a
 // subject's fingerprint, still do.
+// sr:proves cache/verdict-identity
 func TestGuardKey_TheSubjectsOwnCitationsDoNotMoveItsKeyButItsContentDoes(t *testing.T) {
 	key := guardKey
 	a0, _ := twoFilePayload(false)
@@ -66,6 +68,7 @@ func TestGuardKey_TheSubjectsOwnCitationsDoNotMoveItsKeyButItsContentDoes(t *tes
 // checkcache.SchemaDir (and SchemaVersion), add the old directory to schemaHistory, and make
 // sure the rebuild migration (RebuildKeys) covers the change, or every stored verdict is
 // judged again. Only then update the ids below.
+// sr:proves cache/verdict-identity
 func TestGuardKey_FixedInputsHaveFixedKeys(t *testing.T) {
 	payload := func(files []changeset.File, subject changeset.Subject) changeset.Payload {
 		paths := make([]string, 0, len(files))

@@ -200,6 +200,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 
 // T041_22: a sub-agent citing its dispatch prompt as the user's words is
 // refused — those are the parent agent's words — and nothing lands.
+// sr:proves citations/user-pool-is-the-root-conversation
 func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -328,6 +329,7 @@ checks:
 // T041_25: a sub-agent's reply is its own model-written text, not a tool's
 // output — a sub-agent told what to say says it. A quote found only in that
 // reply does not ground a tool_result citation.
+// sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -356,6 +358,7 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 // T041_26: a sub-agent quotes its command's output in its reply. The root
 // citing that output grounds it once, in the sub-agent's record where the
 // command printed it — the reply is not a second, ambiguous match.
+// sr:proves citations/quote-resolves-to-exactly-one-entry
 func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

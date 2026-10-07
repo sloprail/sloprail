@@ -81,6 +81,7 @@ func TestT003_01_RefuseThenFixThenPassIsStored(t *testing.T) {
 
 // T003_02: `match` selecting nothing in a computed range is a pass — and is
 // recorded, so the watermark advances over it.
+// sr:proves fileguard/nothing-selected-passes
 func TestT003_02_NothingSelectedIsAPass(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	floor := e.Git(proj, "rev-parse", "HEAD")

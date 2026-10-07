@@ -21,6 +21,7 @@ func unjudgedCommit(t *testing.T, e *Env, proj, sess string) {
 }
 
 // T056_10: a Stop whose payload names no session, and no readable record of one, is refused.
+// sr:proves session/turn-end-that-cannot-observe-refuses
 func TestT056_10_AStopThatCannotNameItsSessionIsRefused(t *testing.T) {
 	e, proj := project(t)
 	unjudgedCommit(t, e, proj, "s-056-10")
@@ -37,6 +38,7 @@ func TestT056_10_AStopThatCannotNameItsSessionIsRefused(t *testing.T) {
 
 // T056_11: a session whose registry of tracked ranges is unreadable is refused at Stop with
 // a reason; it is never read as "no ranges".
+// sr:proves session/turn-end-that-cannot-observe-refuses
 func TestT056_11_AnUnreadableRegistryRefusesTheStop(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-11"

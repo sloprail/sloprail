@@ -1,0 +1,6 @@
+predicate: >-
+  A {@fld:contexts:Context.enter} that cannot run, or prints no flat JSON
+  object, refuses the action that triggered it, because a context left off
+  silently disarms every rule that reads it.
+why: A broken enter would turn off its protections with no sign.
+needs: [pretooluse-refusal]

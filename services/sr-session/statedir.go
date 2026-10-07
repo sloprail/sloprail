@@ -64,6 +64,7 @@ func hookStateCwd() string {
 // fallback to the process's own directory must not be reached — a hook's process
 // directory is the guardrail's own folder, so falling back would key this rule's
 // state by where its scripts live and hand every rule a private database.
+// sr:invariant subagents/own-session
 func sessionDBPath(cwd, sessionID string) (string, error) {
 	if cwd == unresolvedWorkspace {
 		return "", errUnresolvedWorkspace()

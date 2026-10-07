@@ -37,6 +37,8 @@ exit 0
 // while a check runs) leaves nothing stored: a run that never finished is no pass. The next Stop
 // has no result to start from — it checks the range again — rather than finding it already
 // passed and empty.
+// sr:proves fileguard/passes-not-re-examined
+// sr:proves cache/unfinished-never-stored
 func TestT003_25_ACrashThatLeftARunUnfinishedIsNotAWatermark(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

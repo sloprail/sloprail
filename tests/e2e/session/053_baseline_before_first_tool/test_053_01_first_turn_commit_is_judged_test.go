@@ -93,6 +93,7 @@ func setUpBilling(t *testing.T, e *Env, proj string) (string, *harness.Ledger) {
 //
 // Taken at the first tool call instead, the point is the setup commit: the
 // commit came from a tool call, and every tool call reaches PreToolUse first.
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestT053_01_FirstTurnCommitIsStillJudged(t *testing.T) {
 	e := New(t)
 	e.SetStopBlockCap(1)

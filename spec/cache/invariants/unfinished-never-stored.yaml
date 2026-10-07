@@ -1,0 +1,5 @@
+predicate: >-
+  An error, an interrupted run, a skipped check, a judge that returned no
+  verdict, and a refusal reached without a session are never a
+  {@ent:cache:StoredVerdict}, so the next run asks again.
+why: A transient failure becomes a permanent refusal or a permanent pass.

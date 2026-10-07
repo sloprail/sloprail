@@ -74,6 +74,7 @@ allow:
 // T030_02: an invalid declaration is reported by name with its fault, and the
 // command exits 1 — the status a CI step or hook reads. This is the load-time
 // refusal the whole slice exists to produce, observed through the binary.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestT030_02_InvalidDeclarationIsReportedAndExitsOne(t *testing.T) {
 	e := New(t)
 	proj := t.TempDir()
@@ -104,6 +105,7 @@ checks:
 // T030_03: one bad declaration does not stop the others being reported as loaded.
 // The engine loads every sound declaration and refuses only the broken one — a
 // single typo must not disarm a whole project.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestT030_03_OneBadDoesNotDisarmTheRest(t *testing.T) {
 	e := New(t)
 	proj := t.TempDir()
@@ -245,6 +247,7 @@ func repoRootForExamples(t *testing.T) string {
 // split it: a PreFileWrite gate for the prevention plus a plain file-guard for the
 // result. The sound gate beside it still loads. The command exits 1, the status a
 // CI step or a session start reads.
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestT030_07_PreventiveFileGuardIsRefusedWithTheSplit(t *testing.T) {
 	e := New(t)
 	for _, value := range []string{"true", "false"} {

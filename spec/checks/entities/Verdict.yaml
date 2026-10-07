@@ -1,0 +1,15 @@
+doc: What a rule's requirements and checks conclude about one action.
+fields:
+  - name: refused
+    type: bool
+    doc: True when the action must not proceed.
+  - name: reason
+    type: string
+    doc: What the agent is told on a refusal.
+    constraint_expr: non-empty whenever refused
+  - name: abstained
+    type: bool
+    doc: True for a check that reached no verdict of its own and drops out of the run.
+  - name: no_verdict
+    type: bool
+    doc: True for a refusal made for want of an answer rather than as a finding on the content.

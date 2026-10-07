@@ -58,6 +58,7 @@ exit 0
 // A single-valued marker passes T015_01 and fails here — which is exactly why
 // the engine appends (appendLaunchedBy) rather than replacing: the chain carries
 // every launcher above it, not merely the nearest.
+// sr:proves checks/check-launched-agent-does-not-reenter-its-rule
 func TestT015_04_SubagentDoesNotReenterEitherRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

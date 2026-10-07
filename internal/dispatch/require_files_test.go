@@ -55,6 +55,7 @@ func TestSkillSubpagePaths_EmptyWorkspaceNameOrFileYieldsNothing(t *testing.T) {
 
 // TestSubpageReadInTrajectory_ReadToolCounts is the headline case: a Read
 // tool_use naming the subpage's own resolved path satisfies the check.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSubpageReadInTrajectory_ReadToolCounts(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkillFile(t, workspace, "authoring-guardrails")
@@ -73,6 +74,7 @@ func TestSubpageReadInTrajectory_ReadToolCounts(t *testing.T) {
 }
 
 // TestSubpageReadInTrajectory_CatCounts is the Bash half.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSubpageReadInTrajectory_CatCounts(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkillFile(t, workspace, "authoring-guardrails")
@@ -179,6 +181,7 @@ func TestSubpageReadInTrajectory_SubagentOwnRecordCounts(t *testing.T) {
 // TestCheckSkill_FilesAllSatisfiedEndToEnd drives checkSkill (the Runner's own
 // entry point) with a Request naming both the skill and two files, all of
 // them satisfied — the shape a real authoring-guardrails-style rule declares.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_FilesAllSatisfiedEndToEnd(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "authoring-guardrails")
@@ -212,6 +215,7 @@ func TestCheckSkill_FilesAllSatisfiedEndToEnd(t *testing.T) {
 // when the skill itself was never loaded at all, the refusal is the skill's
 // own remedy, not a confusing "read script-checks.md" that never mentions the
 // skill is missing too — checkSkill's own doc comment states this ordering.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_SkillMissingTakesPriorityOverFiles(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkillFile(t, workspace, "authoring-guardrails")
@@ -243,6 +247,7 @@ func TestCheckSkill_SkillMissingTakesPriorityOverFiles(t *testing.T) {
 // refusal names the SPECIFIC missing page and does not also demand the one
 // already read — the agent has already read one page and should not be told
 // to start over.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_OneOfSeveralFilesMissingNamesOnlyTheMissingOne(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "authoring-guardrails")
@@ -279,6 +284,7 @@ func TestCheckSkill_OneOfSeveralFilesMissingNamesOnlyTheMissingOne(t *testing.T)
 // when NEITHER of two files was read, both are named in the single refusal
 // rather than the agent being told about only the first and discovering the
 // second only after a second write-and-refuse cycle.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_AllMissingFilesNamedInOneRefusal(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "authoring-guardrails")
@@ -314,6 +320,7 @@ func TestCheckSkill_AllMissingFilesNamedInOneRefusal(t *testing.T) {
 // the subpage to an actual path on disk when one exists — an agent should not
 // have to go resolve the skill's own directory a second time to find the page
 // it is being told to read.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_FilesRemedyNamesAConcretePath(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "authoring-guardrails")

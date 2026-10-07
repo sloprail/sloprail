@@ -1,0 +1,5 @@
+predicate: >-
+  Values rendered into a {@fld:judges:Judge.template} cannot close the tag
+  they sit in or end the attribute they sit in, whatever the judged agent
+  wrote.
+why: The agent being judged writes text that closes the material's tag and issues instructions to its own judge.

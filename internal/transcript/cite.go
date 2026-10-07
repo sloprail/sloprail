@@ -279,6 +279,7 @@ func otherToolUses(entries []LinedEntry) map[string]bool {
 // summary (isCompactSummary / isVisibleInTranscriptOnly) is a MODEL's account
 // of the conversation, and an isSidechain one is a sub-agent's, whose "user" is
 // the parent agent's dispatch.
+// sr:invariant citations/user-pool-is-the-persons-own-words
 func notThePerson(e Entry) bool {
 	return e.IsMeta || e.IsSidechain || e.IsCompactSummary || e.IsVisibleInTranscriptOnly
 }

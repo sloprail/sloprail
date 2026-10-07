@@ -38,6 +38,7 @@ func twoRuleProject(t *testing.T) (*Env, string, string) {
 // stops firing — and the rule beside it keeps refusing. The docs rule refuses a
 // forbidden file first (the control: it fires); the agent then retires it and
 // commits forbidden content under both rules; only the strict rule speaks.
+// sr:proves loading/disabled-by-qualified-name
 func TestT003_18_ARuleRemovedOrDisabledStopsFiring(t *testing.T) {
 	retire := map[string]string{
 		"removed":  "git rm -rq .sloprail/file-guard/docs && git commit -qm 'remove the docs rule'",
@@ -87,6 +88,7 @@ func TestT003_18_ARuleRemovedOrDisabledStopsFiring(t *testing.T) {
 // T003_19: a rule added mid-session judges from its own add commit (its floor, the
 // commit's parent), not from the session's start: the session's work committed before
 // the rule existed (a forbidden doc) is grandfathered, the work after it is judged.
+// sr:proves fileguard/rule-age-floor
 func TestT003_19_ARuleAddedMidSessionJudgesFromItsOwnCommit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -35,6 +35,7 @@ func scannerTree(t *testing.T) string {
 // guarding that file never saw a deletion, because the line named a directory
 // and a directory is not a file. Every file under it now gets its own
 // PreFileDelete, carrying the bytes about to be lost, at its canonical path.
+// sr:proves events/recursive-removal-per-file
 func TestExtractCommand_RemovingADirectoryRecursivelyDeletesEveryFileInIt(t *testing.T) {
 	root := scannerTree(t)
 	dir := filepath.Join(root, "scanners", "x")
@@ -86,6 +87,7 @@ func TestExtractCommand_ACdPrefixedDirectoryRemovalIsResolved(t *testing.T) {
 // reverse: plain `rm dir` fails on a directory and removes no file, so it must
 // not be reported as removing the files inside — a rule refusing it would be
 // refusing a command that changes nothing.
+// sr:proves events/recursive-removal-per-file
 func TestExtractCommand_ANonRecursiveRemoveOfADirectoryDeletesNothing(t *testing.T) {
 	root := scannerTree(t)
 	for _, command := range []string{
@@ -102,6 +104,7 @@ func TestExtractCommand_ANonRecursiveRemoveOfADirectoryDeletesNothing(t *testing
 // TestExtractCommand_ARecursiveRemoveDoesNotFollowALinkedDirectory holds the
 // walk to what rm -r itself does: a link to a directory is removed as a link,
 // and nothing in what it points at is reported.
+// sr:proves events/recursive-removal-per-file
 func TestExtractCommand_ARecursiveRemoveDoesNotFollowALinkedDirectory(t *testing.T) {
 	root := scannerTree(t)
 	outside := t.TempDir()
@@ -118,6 +121,7 @@ func TestExtractCommand_ARecursiveRemoveDoesNotFollowALinkedDirectory(t *testing
 // TestExtractCommand_ATooLargeDirectoryIsNamedNotExpanded bounds the walk: one
 // removal of a huge tree must not read every file inside a hook. Past the bound
 // the directory is a named problem and predicts nothing.
+// sr:proves events/recursive-removal-per-file
 func TestExtractCommand_ATooLargeDirectoryIsNamedNotExpanded(t *testing.T) {
 	root := t.TempDir()
 	big := filepath.Join(root, "big")
@@ -137,6 +141,7 @@ func TestExtractCommand_ATooLargeDirectoryIsNamedNotExpanded(t *testing.T) {
 // directory. `rm -rf scanners/x` still deletes scanners/x/scanner.yaml when
 // scanners/x/zz is unreadable, so the prediction keeps what it found, and the
 // part it could not read is named as a problem.
+// sr:proves events/recursive-removal-per-file
 func TestExtractCommand_AnUnreadableSubdirectoryHidesOnlyItself(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a 0o000 directory anyway")
@@ -211,6 +216,7 @@ func deleteEvents(t *testing.T, events []event.Event) map[string]FileEvent {
 // did, let one padding file hide the removal from every PreFileDelete gate;
 // and stopping every read once a big file had spent the budget blinded content
 // rules to the small guarded files sorting after it.
+// sr:proves events/recursive-removal-per-file
 func TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread(t *testing.T) {
 	old := maxRemovedDirectoryBytes
 	maxRemovedDirectoryBytes = 64
@@ -258,6 +264,7 @@ func TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread(t *testing.T
 
 // TestExtractCommand_AnOversizeFileIsPredictedUnread: one file larger than a
 // delete read takes is predicted with oldContentKnown false, not read whole.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractCommand_AnOversizeFileIsPredictedUnread(t *testing.T) {
 	reads := countReads(t)
 	root := t.TempDir()
@@ -278,6 +285,7 @@ func TestExtractCommand_AnOversizeFileIsPredictedUnread(t *testing.T) {
 // FIFO used to block the hook forever (the read waits for a writer), and one to
 // /dev/zero read without end. Both are predicted as deletes of the link, with
 // no bytes — and both must return promptly.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractCommand_ALinkToAFIFOOrADeviceIsNotRead(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "d")

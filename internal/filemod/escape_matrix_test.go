@@ -36,6 +36,7 @@ import (
 // Verified by mutation: making the relative branch lexical again turns the
 // tool-write AND command relative cells red together, reporting exactly
 // "escape/id_rsa" — the string round 2 measured.
+// sr:proves events/path-inside-or-absolute
 func TestR3_EscapeRefusedOnEveryPathAndSpelling(t *testing.T) {
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("KEY"), 0o600))

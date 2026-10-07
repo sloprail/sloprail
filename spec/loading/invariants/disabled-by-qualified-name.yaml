@@ -1,0 +1,6 @@
+predicate: >-
+  A name in {@fld:loading:Config.disabled} switches off exactly the
+  {@ent:loading:Rule} with that {@fld:loading:Rule.qualified_name}, even one
+  that fails to load, and leaves a same-named rule of another origin or
+  nature enforced.
+why: Switching off a plugin rule would also remove the project's own, or a broken plugin rule would stay noisy and unfixable.

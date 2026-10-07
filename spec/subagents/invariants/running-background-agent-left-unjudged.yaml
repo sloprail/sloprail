@@ -1,0 +1,4 @@
+predicate: >-
+  While a {@ent:subagents:SubAgent} with {@fld:subagents:SubAgent.background} true has {@fld:subagents:SubAgent.status} running, its commit ranges are left unjudged at the end of the parent's turn, which says so without refusing, and they are judged at the first turn end after its terminal notification.
+why: The parent is refused for work its background agent has not finished, or the agent's work is never judged.
+needs: [background-agent, task-notifications]

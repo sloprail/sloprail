@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:fileguard:FileGuard} passes when its
+  {@fld:fileguard:FileGuard.match} selects nothing in the range, so
+  {@fld:fileguard:Changeset.files} is empty.
+why: Rules refuse work they have no business with.

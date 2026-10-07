@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestClassifyFailure(t *testing.T) {
 	for _, c := range []struct{ stderr, stdout, want string }{
 		{"", "Claude AI usage limit reached|1760000000", causeUsageLimit},
@@ -42,6 +43,7 @@ func TestClassifyFailure_FalsePositives(t *testing.T) {
 }
 
 // What the harness printed is never part of the error: it can carry tokens, paths and model prose.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestHarnessRunErrorNamesTheCauseOnly(t *testing.T) {
 	err := &harnessRunError{binary: "claude", code: 1, cause: causeUsageLimit}
 	assert.Equal(t, "claude exited with status 1: usage limit", err.Error())
@@ -49,6 +51,7 @@ func TestHarnessRunErrorNamesTheCauseOnly(t *testing.T) {
 	assert.Equal(t, "claude exited with status 1", (&harnessRunError{binary: "claude", code: 1}).Error())
 }
 
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestRunHarnessErrorNeverCarriesAHarnessSecret(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "claude")
@@ -64,6 +67,7 @@ func TestRunHarnessErrorNeverCarriesAHarnessSecret(t *testing.T) {
 }
 
 // The marker is on a line of its own however the harness ended its stderr.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestFailureReportPutsTheMarkerOnItsOwnLine(t *testing.T) {
 	err := &harnessRunError{binary: "claude", code: 1, cause: causeAuth}
 	got := failureReport(err)

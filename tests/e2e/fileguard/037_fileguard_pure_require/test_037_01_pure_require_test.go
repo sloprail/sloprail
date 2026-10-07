@@ -83,6 +83,7 @@ func TestT037_01b_SkillRequireOnAFileGuardIsRefusedNamingTheGate(t *testing.T) {
 // tool_use for document-topic and the require fails. Being a gate, it
 // denies at pre-tool, so the write never reaches disk — proving the require is
 // evaluated and enforced even though the guard carries no check at all.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestT037_02_UnmetSkillRequireRefusesWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -113,6 +114,7 @@ func TestT037_02_UnmetSkillRequireRefusesWrite(t *testing.T) {
 // checks to run the guard permits the write. This is the positive half of the
 // pure-require enforcement and the control that proves T037_02 blocks for the
 // require and not for some unrelated reason.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestT037_03_LoadedSkillRequirePermitsWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

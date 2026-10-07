@@ -50,12 +50,14 @@ func key(t *testing.T, _ declaration.FileGuard, _ declaration.Check, p changeset
 	return guardKey(p)
 }
 
+// sr:proves cache/verdict-identity
 func TestGuardKey_SameCheckInTwoSnapshotDirsKeysTheSame(t *testing.T) {
 	g, c, _ := keyRule(t, true)
 	assert.Equal(t, key(t, g, c, keyPayload(), "/tmp/sr-tree-111", ""), key(t, g, c, keyPayload(), "/tmp/sr-tree-222", ""))
 }
 
 // A subjects script's fingerprint is added to the key; no fingerprint is today's default.
+// sr:proves cache/verdict-identity
 func TestGuardKey_ASubjectFingerprintChangesTheKey(t *testing.T) {
 	g, c, _ := keyRule(t, false)
 	none := key(t, g, c, keyPayload(), "", "")
@@ -74,6 +76,7 @@ func TestGuardKey_RunAndVerifyComputeOneKey(t *testing.T) {
 	assert.Equal(t, key(t, g, c, run, "/t1", "fp"), key(t, g, c, verify, "/t2", "fp"))
 }
 
+// sr:proves cache/verdict-identity
 func TestGuardKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 	g, c, _ := keyRule(t, false)
 	other := keyPayload()
@@ -86,6 +89,7 @@ func TestGuardKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 // A citation is no input for any rule: a stored pass is about the content, and the citation
 // requirements are checked afresh on every run. Nor are the volatile Call field, SHAs or a
 // commit's message.
+// sr:proves cache/verdict-identity
 func TestGuardKey_ACitationRewordDoesNotChangeTheKey(t *testing.T) {
 	reword := func(p *changeset.Payload) {
 		p.Changeset.Commits[0].Trailers[changeset.TrailerCitesUser] = []string{"another"}
@@ -112,6 +116,7 @@ func TestGuardKey_ACitationRewordDoesNotChangeTheKey(t *testing.T) {
 
 // The key is the matched files' content and the subject's fingerprint. Not the template, not the
 // rendered prompt, not prepare's context, not the transcript, not the citations, not the history.
+// sr:proves cache/verdict-identity
 func TestGuardKey_AFileChangeTheTemplateDoesNotRenderChangesTheKey(t *testing.T) {
 	g, c, dir := keyRule(t, false)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte("Judge the file at {{ subject.id }}.\n"), 0o644))

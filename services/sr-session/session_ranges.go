@@ -655,6 +655,7 @@ func trackSessionBranches(reg sessionstate.Store, sessionID, folder string, f se
 const autoWatchEnv = "SR_AUTO_WATCH_GIT_REFS"
 
 // autoWatchGitRefs reports whether the engine may track refs automatically.
+// sr:invariant session/auto-watch-is-opt-in
 func autoWatchGitRefs() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(autoWatchEnv))) {
 	case "", "0", "false", "no", "off":
@@ -864,6 +865,7 @@ func homeFolder(reg sessionstate.Store, sessionID, folder string) (sessionstate.
 // verifyTrackedRanges is the Stop's file-guard work: each tracked range of this agent's folders
 // is verified against the stored results (no model is asked, nothing is written), and the
 // refusals are returned, with a note on what the agent untracked.
+// sr:invariant session/tracked-ranges-verified-from-recorded-results
 func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store) []string {
 	if p.IsSubagent() && !declaration.EnableSubagentStopCheck(dotDir(p.Cwd)) {
 		// A sub-agent does not see the whole picture: its folders' ranges are tracked (here too,
@@ -1054,6 +1056,7 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 // be judged. That is a refusal, never a pass. The folder this hook runs in is still verified,
 // from the start of its history (the start is unknown), so what can be found is not hidden
 // behind the missing identity either.
+// sr:invariant session/turn-end-that-cannot-observe-refuses
 func identityRefusal(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store, cause error) []string {
 	out := []string{fmt.Sprintf("the session this Stop belongs to cannot be identified (%v), so its tracked ranges are unknown and cannot be verified; refusing because a session that cannot be named must not be read as 'nothing to judge'. To recover: make sure the hook payload carries the session's transcript_path (for a sub-agent, agent_transcript_path and the parent's record) and that the record exists, then stop again.", cause)}
 	if folder, err := gitrepo.Root(p.Cwd); err == nil && folder != "" {
@@ -1242,6 +1245,7 @@ func verifyRangeWith(cmd *cobra.Command, p HookPayload, reg *module.Registry, qu
 }
 
 // withoutUnjudged drops the refusals that only say a key has no stored verdict yet.
+// sr:invariant session/tracked-ranges-verified-from-recorded-results
 func withoutUnjudged(refusals []checkrun.FileGuardResult) []checkrun.FileGuardResult {
 	kept := refusals[:0:0]
 	for _, f := range refusals {
@@ -2336,6 +2340,7 @@ func pruneSiblingAuto(reg sessionstate.Store, sessionID string) error {
 // settleRootAgents is the sub-agent registry's answer for the ROOT's Stop (see settleAgents): which
 // agents' ranges are left for later. Only when some range is an agent's or the registry knows an
 // agent; a sub-agent's own Stop waits for no one. An agent the registry does not know is judged.
+// sr:invariant subagents/ranges-verified-at-the-parents-turn-end
 func settleRootAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string, p HookPayload, ranges []sessionstate.TrackedRange) agentPlan {
 	if p.AgentID != "" {
 		return agentPlan{}

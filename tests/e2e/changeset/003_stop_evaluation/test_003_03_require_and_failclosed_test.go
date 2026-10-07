@@ -61,6 +61,7 @@ func TestT003_03_CitationTrailersGroundTheRange(t *testing.T) {
 // read: the Stop is refused — never read as an empty range — and `sr-checks
 // status` shows an error carrying the cause. Restoring the object lets the same
 // Stop pass, and the failed run moved nothing.
+// sr:proves fileguard/unreadable-range-refuses
 func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	e.Run(proj, "s-003-04", "hello", Turns("done", Bash("b1", "true")))

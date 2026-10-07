@@ -43,6 +43,7 @@ could not be completed (nothing to score at all).`,
 // agent that wrote no transcript) is "could not be completed", not a failed
 // eval, and must never end silent: measured, runs that died on ENOSPC left
 // empty stdout and stderr and an exit status that read like an ordinary FAIL.
+// sr:invariant authoring-tools/eval-unrunnable-is-not-a-failure
 func runFixture(cmd *cobra.Command, _ []string) error {
 	err := runFixtureSteps(cmd)
 	if err == nil {

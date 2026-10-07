@@ -1,0 +1,5 @@
+predicate: >-
+  Applying a {@ent:cli:Marker} that is already present for its {@fld:cli:Marker.fqn} leaves the
+  file unchanged.
+why: >-
+  Repeated applies would stack duplicate markers in the code.

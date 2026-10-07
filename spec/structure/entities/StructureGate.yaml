@@ -1,0 +1,17 @@
+doc: An allowlist of the paths that may be written, belonging to the project or to a plugin.
+fields:
+  - name: origin
+    type: string
+    enum: [project, plugin]
+    doc: Whether the project or a plugin declared it.
+  - name: scope
+    type: string[]
+    doc: The folders a plugin's structure owns; empty for the project's, which covers its whole tree.
+  - name: allow
+    type: string[]
+    constraint_expr: each entry is a glob or a regular expression
+    doc: The paths that may be written.
+  - name: deny
+    type: string[]
+    constraint_expr: each entry is a glob or a regular expression
+    doc: Exceptions carved out of what allow permits.

@@ -22,6 +22,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 
 // A protected rule's `disabled:` entry counts only when the config committed at the trusted
 // commit lists it: the working tree, and the agent's own later commits, cannot switch it off.
+// sr:proves loading/protected-disable-needs-trusted-config
 func TestTrustProtected(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, ".sloprail")

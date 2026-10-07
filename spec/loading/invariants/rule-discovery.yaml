@@ -1,0 +1,6 @@
+predicate: >-
+  Only a named folder holding its nature's YAML under the file-guard, gate or
+  context rule folders, plus the one structure file, is a
+  {@ent:loading:Rule}; a rule's own test-case folders and stray files are
+  never read as rules, and a project with no rules loads cleanly.
+why: A test fixture or note would arm a phantom rule, or a project without rules would fail to load.

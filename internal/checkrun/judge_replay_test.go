@@ -15,6 +15,7 @@ import (
 // repeated runs over still-failing content must never re-judge. (A refusal by a citation
 // requirement or a script is cheap and is checked again: see the other tests of this file's
 // neighbours.)
+// sr:proves cache/finished-verdicts-reused
 func TestEvaluate_AJudgeRefusalIsReplayedWithoutAskingTheJudgeAgain(t *testing.T) {
 	var ledger string
 	f := newEvalFixture(t, func(g *declaration.FileGuard) {

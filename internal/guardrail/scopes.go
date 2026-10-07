@@ -162,6 +162,7 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 // No `gates` here: the spec gives a file-guard's scope no gates map (no unit so
 // far has a file-guard reading a gate's verdict), and adding one would be
 // claiming a variable the spec does not.
+// sr:invariant matching/scope-reads-its-own-facts
 func fileMatchScope() types.Map {
 	return types.Map{
 		"path":       types.String,
@@ -187,6 +188,7 @@ func fileMatchScope() types.Map {
 // PreCommandInvoke's `event.invocations[].bin` is as checkable here as
 // `invocations[].bin` is in the retired EventBinding scope — and a name the
 // kind does not declare, `event.paht`, is refused at load.
+// sr:invariant matching/scope-reads-its-own-facts
 func eventMatchScope(kind module.KindDecl) types.Map {
 	return types.Map{
 		scopeEventKey:   structure(kind.Fields),
@@ -240,6 +242,8 @@ func markerElem() types.Type {
 //     it rides in a closure, as data;
 //   - `path` is read through the same env the full expression uses, so a glob
 //     and a full expression see the identical `path` variable.
+//
+// sr:invariant matching/glob-or-expression
 func compileGlob(pattern string) (*Matcher, error) {
 	re, err := globRegexp(pattern)
 	if err != nil {
@@ -315,6 +319,7 @@ func compileGlob(pattern string) (*Matcher, error) {
 // compileGlob runs at load: a string that passes this surface test but is a
 // malformed glob (an unterminated `[`) is still refused there, by its own error
 // rather than an expression parser's.
+// sr:invariant matching/glob-or-expression
 func looksLikeGlob(src string) bool {
 	return !strings.ContainsAny(src, " \t\n\"'")
 }

@@ -52,6 +52,7 @@ func TestT040_08_ProxyAndPathSpellings(t *testing.T) {
 // T040_09: sr-file refuses to change a file through a symbolic link — the change
 // would land where the link points, not at the path a rule judged — and the
 // link's target is untouched.
+// sr:proves citations/file-command-writes-nothing-unless-exact
 func TestT040_09_SymbolicLinkIsRefused(t *testing.T) {
 	e, proj, env := session(t, "s-040-09")
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n")

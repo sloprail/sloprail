@@ -23,6 +23,7 @@ func unwatchedFailingProject(t *testing.T) (*Env, string) {
 	return e, proj
 }
 
+// sr:proves session/auto-watch-is-opt-in
 func TestT056_20_WithoutTheVariableACommitIsNotAutoWatched(t *testing.T) {
 	e, proj := unwatchedFailingProject(t)
 	const sess = "s-056-20a"
@@ -40,6 +41,7 @@ func TestT056_20_WithoutTheVariableACommitIsNotAutoWatched(t *testing.T) {
 	}
 }
 
+// sr:proves session/auto-watch-is-opt-in
 func TestT056_20_AManuallyTrackedRefIsStillVerifiedAtStop(t *testing.T) {
 	e, proj := unwatchedFailingProject(t)
 	const sess = "s-056-20b"

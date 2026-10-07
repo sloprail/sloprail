@@ -20,6 +20,7 @@ func samplePayload() Payload {
 	return NewPayload(cs, Whole(cs), "/t.jsonl")
 }
 
+// sr:proves cache/verdict-identity
 func TestGuardFingerprint_IsDeterministicAndFilesSensitive(t *testing.T) {
 	assert.Equal(t, GuardFingerprint("f", ""), GuardFingerprint("f", ""))
 	assert.NotEqual(t, GuardFingerprint("f", ""), GuardFingerprint("g", ""))
@@ -33,6 +34,7 @@ func TestGuardFingerprint_SubjectFingerprintMovesTheKey(t *testing.T) {
 }
 
 // The matched files' content is keyed; a SHA, a base or a transcript never is.
+// sr:proves cache/verdict-identity
 func TestFilesPart_ContentOnly(t *testing.T) {
 	a, b := samplePayload(), samplePayload()
 	b.Changeset.Base, b.Changeset.Head, b.TranscriptPath = "x", "y", "/other.jsonl"
@@ -48,6 +50,7 @@ func TestFilesPart_ContentOnly(t *testing.T) {
 
 // Citations are not an input: a pass is about the content, a citation only a gate. Whatever
 // happens to the citations, the commits or their messages, the key is the same.
+// sr:proves cache/verdict-identity
 func TestGuardKey_CitationsAndCommitMessagesAreNotInputs(t *testing.T) {
 	key := func(p Payload) string { return GuardFingerprint(FilesPart(p), p.Subject.Fingerprint) }
 	for name, mutate := range map[string]func(*Payload){
@@ -88,6 +91,7 @@ func TestGuardKey_ARebuiltRangeWithTheSameContentHits(t *testing.T) {
 }
 
 // The key is over blob ids: the same blob at the same path is the same key without any bytes read.
+// sr:proves cache/verdict-identity
 func TestFilesPart_FromBlobIDsNotBytes(t *testing.T) {
 	mk := func(blob, content string) Payload {
 		return Payload{Subject: Subject{Files: []string{"a.md"}}, Changeset: Changeset{Files: []File{{Path: "a.md", Status: "M", NewBlob: blob, NewContent: content}}}}
@@ -124,6 +128,7 @@ func TestGuardKey_FQNSubjectIsItsFingerprint(t *testing.T) {
 }
 
 // A deletion is keyed by what was deleted: the same path deleted with other old content is another change.
+// sr:proves cache/verdict-identity
 func TestFilesPart_DeletedFileKeyHasItsOldBlob(t *testing.T) {
 	mk := func(oldBlob, oldContent string) Payload {
 		return Payload{Subject: Subject{Files: []string{"a.md"}}, Changeset: Changeset{Files: []File{{Path: "a.md", Status: "D", OldBlob: oldBlob, OldContent: oldContent}}}}

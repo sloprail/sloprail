@@ -1,0 +1,8 @@
+predicate: >-
+  At session start, every rule problem the engine reports to the person (a rule that did not
+  load, a shadowed rule, an unresolved plugin) is also told to the agent as not in force, while
+  bookkeeping lines are never presented as such a problem; this applies whenever the
+  {@fld:install:Engine.installed} is true.
+why: >-
+  The agent often wrote the rules, and a rule that silently failed to load is one it believes is enforcing.
+needs: [plugin-hooks, session-start-hook, hook-additional-context]

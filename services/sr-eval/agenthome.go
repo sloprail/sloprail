@@ -77,6 +77,7 @@ type agentEnv struct {
 // ~/.local/bin. Building fresh here, every ordinary run too, removes that
 // gap; buildRelease already stages into the workspace and never touches an
 // existing install.
+// sr:invariant authoring-tools/eval-agent-runs-isolated
 func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh bool) (agentEnv, error) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
@@ -176,6 +177,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 // and only a sandbox could stop that. A guardrail that must not credit stale
 // state has to tell this run's work from what was already on disk itself —
 // research-rigor's depth gate counts only directories the run cloned.
+// sr:invariant authoring-tools/eval-agent-runs-isolated
 func baseAgentEnv(environ []string, home, tmp string, fresh bool) []string {
 	// The operator's own Claude Code session (CLAUDECODE, CLAUDE_CODE_SESSION_ID,
 	// CLAUDE_CODE_ENTRYPOINT, ...) is not the agent's: left in, the agent-under-test

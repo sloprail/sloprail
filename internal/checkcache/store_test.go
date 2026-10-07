@@ -187,6 +187,7 @@ func TestLookupAcrossManySegmentsAndFreshProcess(t *testing.T) {
 	}
 }
 
+// sr:proves cache/finished-verdicts-reused
 func TestDuplicateKeysResolveLatestWins(t *testing.T) {
 	s := newRepo(t, "")
 	a := genRuns(7, 1)[0]
@@ -320,6 +321,7 @@ func TestGcPreservesLatestResults(t *testing.T) {
 	}
 }
 
+// sr:proves cache/store-failures-not-misses
 func TestCorruptSegmentIsAnErrorNotAMiss(t *testing.T) {
 	s := newRepo(t, "")
 	rs := genRuns(5, 10)
@@ -349,6 +351,7 @@ func TestCorruptSegmentIsAnErrorNotAMiss(t *testing.T) {
 	}
 }
 
+// sr:proves cache/store-failures-not-misses
 func TestCorruptFrameDetected(t *testing.T) {
 	s := newRepo(t, "")
 	rs := genRuns(6, 5)
@@ -373,6 +376,7 @@ func TestCorruptFrameDetected(t *testing.T) {
 	}
 }
 
+// sr:proves cache/store-failures-not-misses
 func TestFutureSchemaRefused(t *testing.T) {
 	s := newRepo(t, "")
 	if err := s.Put(genRuns(8, 3)); err != nil {

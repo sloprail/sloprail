@@ -92,6 +92,7 @@ func TestExtract_CarriesSeenOnTheWire(t *testing.T) {
 
 // --- the scanner ------------------------------------------------------------
 
+// sr:proves events/tags-are-said-not-shown
 func TestScan_FindsASingleTag(t *testing.T) {
 	assert.Equal(t, []string{"update"}, labels(scan(nil, []string{"#update"})))
 }
@@ -134,6 +135,7 @@ func TestScan_DedupAcrossMessages(t *testing.T) {
 }
 
 // A markdown heading is `#` followed by a space — punctuation, not a tag.
+// sr:proves events/tags-are-said-not-shown
 func TestScan_MarkdownHeadingIsNotATag(t *testing.T) {
 	assert.Empty(t, scan(nil, []string{"# Heading", "## Subheading", "###"}),
 		"# followed by whitespace is a heading, not a tag")
@@ -156,6 +158,7 @@ func TestScan_HashMidTokenIsNotATag(t *testing.T) {
 }
 
 // A tag may not start with a digit — that tells it from an issue reference.
+// sr:proves events/tags-are-said-not-shown
 func TestScan_IssueReferenceIsNotATag(t *testing.T) {
 	assert.Empty(t, scan(nil, []string{"fixes #42", "see PR #1234"}),
 		"#<digits> is an issue reference, not a tag")
@@ -254,6 +257,7 @@ func TestScan_EmphasisedTagInQuotedFormsIsNotATag(t *testing.T) {
 // exists to prevent from recurring.
 
 // A fenced example showing what to reply is not the agent replying.
+// sr:proves events/tags-are-said-not-shown
 func TestScan_FencedCodeBlockIsNotATag(t *testing.T) {
 	assert.Empty(t, scan(nil, []string{"Here's an example:\n```\nreply with #skip if nothing to record\n```\nThat's the mechanism."}),
 		"a #tag inside a fenced block is being SHOWN, not declared")
@@ -262,6 +266,7 @@ func TestScan_FencedCodeBlockIsNotATag(t *testing.T) {
 }
 
 // An inline code span naming a tag while explaining it is not using it.
+// sr:proves events/tags-are-said-not-shown
 func TestScan_InlineCodeSpanIsNotATag(t *testing.T) {
 	assert.Empty(t, scan(nil, []string{"The token `#skip` means nothing here, explaining it."}),
 		"an inline span is a mention, not a declaration")
@@ -269,6 +274,7 @@ func TestScan_InlineCodeSpanIsNotATag(t *testing.T) {
 
 // A blockquote of a rule's own refusal — which necessarily CONTAINS the literal
 // tag it is telling the agent to use — is not the agent using it.
+// sr:proves events/tags-are-said-not-shown
 func TestScan_BlockquotedLineIsNotATag(t *testing.T) {
 	assert.Empty(t, scan(nil, []string{"> MEMORY GUARDRAIL: ... use #skip if nothing needs recording.\nI read the above."}),
 		"a quoted line is not the agent's own words")
@@ -294,6 +300,7 @@ func postWith(messages []string) module.Input {
 	}
 }
 
+// sr:proves events/tags-are-said-not-shown
 func TestExtract_OneBulkEventCarryingEveryTag(t *testing.T) {
 	events, err := New().Extract(postWith([]string{"#update #decision", "and #done"}))
 	require.NoError(t, err)
@@ -304,6 +311,7 @@ func TestExtract_OneBulkEventCarryingEveryTag(t *testing.T) {
 	assert.Equal(t, []string{"update", "decision", "done"}, labels(got.Tags))
 }
 
+// sr:proves events/tags-are-said-not-shown
 func TestExtract_EmptyEventWhenNoTags(t *testing.T) {
 	// The event still fires, carrying an empty tags list — a truthful "the agent
 	// wrote nothing tagged this cycle", which a context reacting to the ABSENCE

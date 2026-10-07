@@ -1,0 +1,18 @@
+doc: One invocation of `sr checks run`, `verify` or `show` over a range of commits.
+fields:
+  - name: mode
+    type: string
+    doc: Which verb was invoked.
+    enum: [run, verify, show]
+  - name: base
+    type: string
+    doc: The revision the range starts from.
+    constraint_expr: required, must resolve to a commit
+  - name: head
+    type: string
+    doc: The revision the range ends at.
+    constraint_expr: required, must resolve to a commit
+  - name: exit_status
+    type: int32
+    doc: The process exit status.
+    constraint_expr: 0 or 1 for a range that resolved

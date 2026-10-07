@@ -1,0 +1,5 @@
+predicate: >-
+  A {@fld:contexts:Context.enter} that exits non-zero leaves the context's
+  {@fld:contexts:Context.active} and {@fld:contexts:Context.payload} as they
+  were and refuses nothing.
+why: Declining would either close a working context or block unrelated work.

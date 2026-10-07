@@ -57,6 +57,7 @@ func TestRequireCitation(t *testing.T) {
 
 // A prerequisite's `when` script decides whether it applies: only exit 1
 // waives it; exit 0, any other code, or a script that cannot run applies it.
+// sr:proves checks/when-waives-only-on-exit-one
 func TestRequireWhen(t *testing.T) {
 	dir := t.TempDir()
 	writeScript := func(name, body string) string {
@@ -89,6 +90,7 @@ func TestRequireWhen(t *testing.T) {
 
 // A `when` script that applies its prerequisite may say, on stdout, how to meet
 // it in this case; the refusal carries that after the engine's own remedy.
+// sr:proves checks/when-waives-only-on-exit-one
 func TestRequireWhenHint(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hint.sh"),
@@ -227,6 +229,8 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'"'"
 // or the citation does not hold; with no `when`, no such part may exist. A
 // cited write states the whole file and grounds everything before it; a
 // change the agent never made (Foreign) is never charged.
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
+// sr:proves citations/between-turn-changes-are-charged-only-with-running-work
 func TestRequireCitationOnTheUncitedPartsOfAChange(t *testing.T) {
 	dir := t.TempDir()
 	// Applies unless the part leaves everything after the first line alone.
@@ -315,6 +319,7 @@ func TestUncitedPartCarriesNoCitations(t *testing.T) {
 
 // A change that landed between turns while work the agent had started may have
 // been running is charged, and the refusal says so and names the work.
+// sr:proves citations/between-turn-changes-are-charged-only-with-running-work
 func TestBetweenTurnsChangeIsChargedAndExplained(t *testing.T) {
 	contents := map[string]string{"c": "cited", "u": "user edit"}
 	cited := HistoryState{Exists: true, Hash: "c"}

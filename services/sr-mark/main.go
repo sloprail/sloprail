@@ -179,6 +179,7 @@ type applyArgs struct {
 // a "kind", also let `sr-mark delete blueprint --foo` silently register `--foo` and succeed. With
 // a fixed verb the shape is unambiguous, so the tail is parsed directly here and anything that is
 // not a recognised flag or a well-formed pair is an ERROR rather than a silently-accepted flag.
+// sr:invariant cli/mark-apply-invalid-writes-nothing
 func parseApplyArgs(args []string) (applyArgs, error) {
 	out := applyArgs{pairs: map[string]string{}}
 	// A bare `sr-mark apply` (or with only -h) should print help rather than error.
@@ -319,6 +320,7 @@ func validateFQN(fqn string) error {
 // `sr:<kind> <fqn>` marker per pair. It validates every pair BEFORE writing any, writes in a
 // STABLE (fqn-sorted) order for deterministic output, and is idempotent per marker.go's
 // WriteMarker.
+// sr:invariant cli/mark-apply-invalid-writes-nothing
 func runApply(cmd *cobra.Command, parsed applyArgs) error {
 	type marker struct {
 		fqn  string

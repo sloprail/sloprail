@@ -25,6 +25,7 @@ func runResults(t *testing.T, out string) map[string]layoutResult {
 // TestSrTestOwnerLayout: a case lives in its owning rule's folder. `sr-test run` finds
 // <nature>/<rule>/tests/<case> and file-guard/structure.tests/<case>, names each result
 // "<owner>:<case>" with an owner field, ignores the retired top-level tests/, and --rule / --only select.
+// sr:proves authoring-tools/test-case-has-one-owner
 func TestSrTestOwnerLayout(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()

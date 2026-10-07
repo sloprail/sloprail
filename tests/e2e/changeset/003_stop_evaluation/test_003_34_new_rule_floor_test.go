@@ -16,6 +16,7 @@ import (
 // T003_34: three violating commits, THEN the rule is added. The first Stop judges only
 // the add commit and later: the earlier violations are not reported. A violation
 // committed after the rule is refused, and reverting it passes.
+// sr:proves fileguard/rule-age-floor
 func TestT003_34_ARuleAddedAfterViolationsJudgesOnlyFromItsAddCommit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -84,6 +85,7 @@ func TestT003_35_ARuleFromSessionStartStillJudgesABadCommitBeforeASloprailTouch(
 
 // T003_36: a rule deleted and re-added in the session existed at session start, so it
 // keeps the strict range: the bad commit before the delete is still judged.
+// sr:proves fileguard/rule-age-floor
 func TestT003_36_ARuleDeletedAndReAddedStaysStrict(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	const sess = "s-003-36"
@@ -145,6 +147,7 @@ func TestT003_37_ARuleOlderThanTheSessionJudgesOnlyTheSessionsOwnCommits(t *test
 // T003_38: a rule added mid-session in commit A, violating commits B and C after it, then a
 // commit D touching another .sloprail file. The base is the parent of the commit that FIRST
 // added the rule, not of D's predecessor: B and C are refused, then fixed, then pass.
+// sr:proves fileguard/rule-age-floor
 func TestT003_38_ALaterSloprailTouchDoesNotHideViolationsAfterTheRuleWasAdded(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

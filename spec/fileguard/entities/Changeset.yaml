@@ -1,0 +1,17 @@
+doc: "The net change a file-guard is handed: one squashed difference over a commit range, with the commits that made it."
+fields:
+  - name: base
+    type: string
+    doc: "The commit the range starts from."
+  - name: head
+    type: string
+    doc: "The commit the range ends at."
+  - name: files
+    type: string[]
+    doc: "Paths of the changed files the rule selected."
+  - name: others
+    type: string[]
+    doc: "Paths of changed files the rule did not select."
+  - name: commits
+    type: string[]
+    doc: "Every commit of the range."

@@ -83,6 +83,7 @@ func tagsSeen(t *testing.T, e *Env, proj, sess, contextName string) string {
 
 // T030_01: the tags the agent wrote in its messages reach a rule bound to
 // PostTagWrite, as one bulk event.
+// sr:proves events/tags-are-said-not-shown
 func TestT030_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -126,6 +127,7 @@ func TestT030_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 // The absence is a real answer a context reacting to a missing tag depends on,
 // and folding it away would make "the agent wrote no tag" indistinguishable from
 // "the event never fired".
+// sr:proves events/tags-are-said-not-shown
 func TestT030_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

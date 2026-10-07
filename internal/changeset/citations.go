@@ -39,6 +39,8 @@ func (u Unresolved) String() string {
 // quote cited twice is one citation carried by both commits: a rule's base does
 // not move until it passes, so the range grows and its grounding grows with it.
 // Which files a citation grounds is AttributeFiles's to say, once the files are known.
+// sr:invariant citations/pool-is-not-borrowed
+// sr:invariant citations/unresolved-trailers-are-reported-not-dropped
 func ResolveCitations(commits []Commit, resolve Resolver) ([]Citation, []Unresolved) {
 	cites := []Citation{}
 	var unresolved []Unresolved

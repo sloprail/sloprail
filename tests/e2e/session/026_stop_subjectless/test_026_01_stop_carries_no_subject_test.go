@@ -146,6 +146,8 @@ func project(t *testing.T) (*Env, string) {
 //     null, which is the shape that makes an ordinary check crash and turns a
 //     reporting event into a refusal. This is the flat-form version of the old
 //     `"fields":{}` assertion — an empty subject, present as an object.
+//
+// sr:proves events/turn-end-every-turn
 func TestT026_01_StopCarriesAnEmptySubject(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
@@ -194,6 +196,7 @@ func TestT026_01_StopCarriesAnEmptySubject(t *testing.T) {
 //
 // The scenario runs a command that touches nothing, so the difference is empty and
 // the only event that can reach the check is the cycle's own Stop.
+// sr:proves events/turn-end-every-turn
 func TestT026_02_StopFiresWhenNothingChanged(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
@@ -298,6 +301,8 @@ checks:
 //
 // The check records into the ledger, so "never ran" is observable as the absence
 // of a file rather than inferred from silence on a stream.
+// sr:proves events/turn-end-every-turn
+// sr:proves matching/checked-at-load
 func TestT026_04_AMatchOnStopDoesNotLoad(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "narrowed-cycle", `on:
@@ -326,6 +331,7 @@ checks:
 // leaves, and what a check the engine could not execute leaves. Only running the
 // same gate — same kind, same check, same script — with the one offending line
 // removed tells those apart.
+// sr:proves events/turn-end-every-turn
 func TestT026_04b_TheSameRuleWithoutTheMatchRuns(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "narrowed-cycle", boundToStop, map[string]string{"record.sh": recordEvent})

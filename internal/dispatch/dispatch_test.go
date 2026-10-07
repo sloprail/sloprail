@@ -84,6 +84,7 @@ func (rr *recordingRunner) runner() Runner {
 }
 
 // A pure-checks gate that passes every check admits.
+// sr:proves checks/first-refusal-ends-the-run
 func TestRun_AllChecksPass_Admits(t *testing.T) {
 	rr := &recordingRunner{}
 	v, err := rr.runner().Run(gateReq([]declaration.Check{scriptCheck("a.sh"), scriptCheck("b.sh")}, nil))
@@ -93,6 +94,7 @@ func TestRun_AllChecksPass_Admits(t *testing.T) {
 }
 
 // The first refusing check ends it — later checks do not run.
+// sr:proves checks/first-refusal-ends-the-run
 func TestRun_FirstRefusalEndsIt(t *testing.T) {
 	rr := &recordingRunner{scriptPass: map[string]bool{"b.sh": false}}
 	v, err := rr.runner().Run(gateReq(
@@ -104,6 +106,7 @@ func TestRun_FirstRefusalEndsIt(t *testing.T) {
 }
 
 // A mixed script+judge list runs in order; a judge refusal is a refusal.
+// sr:proves checks/first-refusal-ends-the-run
 func TestRun_MixedScriptAndJudge_OrderAndVerdict(t *testing.T) {
 	rr := &recordingRunner{judgePass: map[string]bool{"j.md.j2": false}}
 	v, err := rr.runner().Run(gateReq(
@@ -118,6 +121,7 @@ func TestRun_MixedScriptAndJudge_OrderAndVerdict(t *testing.T) {
 
 // require is evaluated BEFORE any check — a missing prerequisite refuses without
 // paying for a check.
+// sr:proves checks/requirements-before-checks
 func TestRun_RequireRefusesBeforeChecks(t *testing.T) {
 	rr := &recordingRunner{}
 	r := rr.runner()
@@ -133,6 +137,7 @@ func TestRun_RequireRefusesBeforeChecks(t *testing.T) {
 }
 
 // A pure-require gate (no checks) that is met admits.
+// sr:proves checks/requirements-before-checks
 func TestRun_PureRequireMet_Admits(t *testing.T) {
 	rr := &recordingRunner{}
 	v, err := rr.runner().Run(gateReq(nil, []declaration.Prerequisite{{Skill: "document-topic"}}))
@@ -142,6 +147,7 @@ func TestRun_PureRequireMet_Admits(t *testing.T) {
 
 // -- require: skill --
 
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_LoadedAdmits_MissingRefuses(t *testing.T) {
 	// Loaded.
 	r := Runner{skillLoaded: func(_ string, _ string, s string) (bool, error) {
@@ -162,6 +168,7 @@ func TestCheckSkill_LoadedAdmits_MissingRefuses(t *testing.T) {
 
 // A skill require fails CLOSED when the transcript cannot be read — a precondition
 // that could not be checked is not one that passed.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_UnreadableTranscript_FailsClosed(t *testing.T) {
 	r := Runner{skillLoaded: func(string, string, string) (bool, error) {
 		return false, assertAnError{}
@@ -173,6 +180,7 @@ func TestCheckSkill_UnreadableTranscript_FailsClosed(t *testing.T) {
 }
 
 // A skill require fails CLOSED when no transcript path was resolved at all.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_NoTranscriptPath_FailsClosed(t *testing.T) {
 	req := gateReq(nil, []declaration.Prerequisite{{Skill: "document-topic"}})
 	req.TranscriptPath = ""

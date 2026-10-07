@@ -1,0 +1,5 @@
+predicate: >-
+  On every matching trigger, active or not, a clean
+  {@fld:contexts:Context.enter} sets {@fld:contexts:Context.active} true and
+  replaces {@fld:contexts:Context.payload} with what it printed.
+why: Rules reading the context would see it off, or see an out-of-date payload.

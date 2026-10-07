@@ -9,6 +9,7 @@ import (
 // T001_20: a rename is selected if `match` holds on its new path OR on the path it
 // left. Moving a file out of a guarded path is a change to it: the rule is asked about
 // it, with the old path's content as oldContent.
+// sr:proves fileguard/rename-selected-by-either-path
 func TestT001_20_ARenameOutOfAGuardedPathIsSelected(t *testing.T) {
 	e, proj, floor, _ := repoWithRule(t, docsRule(""))
 	if err := os.MkdirAll(filepath.Join(proj, "archive"), 0o755); err != nil {

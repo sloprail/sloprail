@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:gates:Gate} that cannot reach a verdict (its check fails to run,
+  its trigger cannot be evaluated) refuses, saying why, and is never read as
+  approval.
+why: A broken gate would silently permit what it was meant to stop.

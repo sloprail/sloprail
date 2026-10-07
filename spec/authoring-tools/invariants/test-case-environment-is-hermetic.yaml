@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:authoring-tools:TestCase} sees only the {@fld:authoring-tools:TestCase.environment}
+  sr test builds for it, in a fresh git project of its own, so nothing the caller has set
+  (credentials, an enclosing agent session, another case's files) reaches it.
+why: >-
+  A case that passes on one machine and fails on another, or reaches real credentials, cannot be trusted.

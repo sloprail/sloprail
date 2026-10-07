@@ -33,6 +33,8 @@ func walk(raw string) []Invocation {
 // place the module feeds such text back into the parser, so if any input can
 // find a parser bug it is this one — and losing the outer `sh` on top of the
 // payload would turn a partial answer into no answer.
+// sr:invariant events/command-nesting-flattened
+// sr:invariant events/command-undecidable-not-guessed
 func walkAt(raw string, depth int) (invs []Invocation) {
 	defer func() {
 		_ = recover()

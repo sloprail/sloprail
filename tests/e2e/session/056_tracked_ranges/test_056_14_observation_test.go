@@ -85,6 +85,7 @@ func TestT056_16_ACherryPickedTipIsTracked(t *testing.T) {
 
 // T056_17: a git error while observing fails CLOSED: the Stop refuses with a reason, it never
 // reads "could not look" as "nothing tracked".
+// sr:proves session/turn-end-that-cannot-observe-refuses
 func TestT056_17_AGitErrorWhileObservingRefusesTheStop(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-17"
@@ -100,6 +101,7 @@ func TestT056_17_AGitErrorWhileObservingRefusesTheStop(t *testing.T) {
 
 // T056_18: a Stop that cannot name its session asks for identity only where there is something to
 // verify; a project with no rule at all is never blocked for it.
+// sr:proves session/turn-end-that-cannot-observe-refuses
 func TestT056_18_ASessionlessStopInAProjectWithNoRulesIsNotBlocked(t *testing.T) {
 	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.NoAutoCheck())
 	proj := e.Project()

@@ -29,6 +29,8 @@ func TestT001_01_TheTrackedRangeStartsAtTheMergeBase(t *testing.T) {
 
 // T001_01: from an explicit base, the payload is the squashed net change to HEAD (the
 // base was the last commit before the rule's folder).
+// sr:proves fileguard/net-diff-of-commits
+// sr:proves fileguard/rule-age-floor
 func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 	e, proj, floor, led := repoWithRule(t, docsRule(""))
 

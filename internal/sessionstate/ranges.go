@@ -47,6 +47,7 @@ func (r TrackedRange) Tracked() bool { return r.UntrackedReason == "" }
 // TrackRange records a range. An automatic tracking only adds what is not there and refreshes
 // the commit its head last pointed at: what the agent stated or dropped stays so. The agent's
 // replaces the base and tracks the range again if it was untracked.
+// sr:invariant session/untracked-range-returns-when-tip-moves
 func (s *store) TrackRange(r TrackedRange) error {
 	if r.SessionID == "" || r.Folder == "" || r.Head == "" {
 		return errors.New("sessionstate: a tracked range needs a session, a folder and a head")
@@ -85,6 +86,7 @@ func (s *store) TrackRange(r TrackedRange) error {
 // reason and all, so the Stop can name it; a range that was never tracked is recorded as
 // untracked so an automatic tracking does not bring it back while its branch stays at tip (the
 // tip it was untracked at, never empty). A branch whose tip moves is tracked again.
+// sr:invariant session/untracked-range-returns-when-tip-moves
 func (s *store) UntrackRange(sessionID, folder, head, reason, agentID, tip string) error {
 	if reason == "" {
 		return errors.New("sessionstate: untracking a range needs a reason")

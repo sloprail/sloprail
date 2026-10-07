@@ -21,6 +21,7 @@ func compactSummaryMsg(uuid, parent, summary string) string {
 // A compaction summary is a model's words about the conversation, written into
 // a user-typed record. It must never resolve as the user's own words: in any
 // long session it would let --cite:user rest on text an agent wrote.
+// sr:proves citations/user-pool-is-the-persons-own-words
 func TestCompactSummaryIsNotTheUsersWords(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",

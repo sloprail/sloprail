@@ -80,6 +80,7 @@ func (f *rekeyFixture) evaluate(t *testing.T, write bool) (string, []FileGuardRe
 // key and asks no judge (an unmocked judge is an error here). Records whose commits are
 // unreachable, whose subject is gone or whose rule is no longer declared are skipped and
 // counted, and a second run writes nothing.
+// sr:proves cache/older-passes-not-rejudged
 func TestRekey_OlderStoresAreRebuiltWithoutJudging(t *testing.T) {
 	for name, tc := range map[string]struct{ dir, version string }{
 		"v2026-10-03 (sr1)": {"v2026-10-03", "sr1"},
@@ -132,6 +133,7 @@ func countCommitsMatching(t *testing.T, repo, text string) int {
 
 // What the rebuild stores is a pure function of the record and the repository: the new
 // fingerprint is the key `run` computes now, whatever the old one held.
+// sr:proves cache/older-passes-not-rejudged
 func TestRekey_RebuiltKeysEqualTheKeysRunComputes(t *testing.T) {
 	f := newRekeyFixture(t)
 	fps, reason := rangeFingerprints(f.repo, map[string]declaration.FileGuard{f.guard.Qualified(): f.guard},

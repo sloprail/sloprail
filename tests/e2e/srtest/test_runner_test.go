@@ -82,6 +82,7 @@ func want(t *testing.T, got map[string]result, subject, status string) result {
 // TestSrTestStatusAndExitCode: exit 0 is pass, 1 (or any other non-zero) is fail, 2 is error; a failing
 // case carries its output, a passing one none, and `sr-test run` exits non-zero when any case did not pass
 // and zero when every one did.
+// sr:proves authoring-tools/test-run-passes-only-when-every-case-passes
 func TestSrTestStatusAndExitCode(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
@@ -116,6 +117,7 @@ func TestSrTestStatusAndExitCode(t *testing.T) {
 
 // TestSrTestTimeoutKillsTheCase: a case that outlives --timeout is an error saying so, and the
 // processes it started (its whole process group) are killed with it.
+// sr:proves authoring-tools/test-run-passes-only-when-every-case-passes
 func TestSrTestTimeoutKillsTheCase(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
@@ -225,6 +227,7 @@ echo '{"kind":"Stop","n":2}' >> "$SR_EVENTS_FILE"`)
 // TestSrTestWorkspaceIsolation: each case starts in a fresh empty git repository of its own with a fixed
 // test identity, a fake HOME, and its own folder outside the project. A case may still `git init` again or
 // override the identity.
+// sr:proves authoring-tools/test-case-environment-is-hermetic
 func TestSrTestWorkspaceIsolation(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
@@ -279,6 +282,7 @@ test "$(git log -1 --format='%an <%ae>')" = "sr-test <sr-test@sloprail.invalid>"
 
 // TestSrTestAmbientHomeAndSessionDoNotLeak: the caller's HOME and its Claude Code session never reach a
 // case, so it passes the same on a machine and in CI.
+// sr:proves authoring-tools/test-case-environment-is-hermetic
 func TestSrTestAmbientHomeAndSessionDoNotLeak(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
@@ -324,6 +328,7 @@ func judgeEvent(t *testing.T, r result) (outcome, reason string) {
 
 // TestSrTestJudges: with no judge mock the judge is an error that names the missing entry and never reaches
 // a model, quickly; with a mock, the mock's verdict (pass or refusal with its reasoning) is the check's.
+// sr:proves authoring-tools/test-case-never-reaches-a-model
 func TestSrTestJudges(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
@@ -366,6 +371,7 @@ echo '{"pass":true,"reasoning":"the-mock-allows-this"}'
 
 // TestSrTestJudgeMocksAreAlwaysSet: a case always has SR_CHECKS_JUDGE_MOCKS={}, so an unmocked judge is an
 // error and no case reaches a model.
+// sr:proves authoring-tools/test-case-never-reaches-a-model
 func TestSrTestJudgeMocksAreAlwaysSet(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()
@@ -376,6 +382,7 @@ func TestSrTestJudgeMocksAreAlwaysSet(t *testing.T) {
 
 // TestSrTestParallelCasesDoNotShareAWorkspace: cases running at the same time (each waits until every
 // one has started) each get their own project, HOME, case folder and events file.
+// sr:proves authoring-tools/test-case-environment-is-hermetic
 func TestSrTestParallelCasesDoNotShareAWorkspace(t *testing.T) {
 	e := New(t)
 	root := t.TempDir()

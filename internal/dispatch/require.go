@@ -45,6 +45,7 @@ import (
 // one-refusal-at-a-time shape the checks use. A prerequisite that sets neither
 // field is impossible in a loaded rule (the validator refuses it), so it is
 // treated as vacuously satisfied here rather than guarded against a second time.
+// sr:invariant checks/requirements-before-checks
 func (r Runner) checkRequire(req Request) (Verdict, error) {
 	for _, p := range req.Require {
 		v, err := r.checkPrerequisite(req, p)
@@ -110,6 +111,7 @@ func (r Runner) checkUnconditional(req Request, p declaration.Prerequisite) (Ver
 // A script that applies it may print `{"hint": "..."}` on stdout: the rule's
 // own advice for meeting the requirement in this case, appended to the refusal.
 // Anything else on stdout is ignored.
+// sr:invariant checks/when-waives-only-on-exit-one
 func (r Runner) prerequisiteApplies(req Request, when string) (bool, string, error) {
 	payload, err := r.checkPayloadJSON(req)
 	if err != nil {
@@ -165,6 +167,7 @@ func (r Runner) prerequisiteApplies(req Request, when string) (bool, string, err
 // not a precondition that passed. This is the fail-closed rule the deprecated
 // script spelled out at length, kept here: turning a gap in the environment into
 // consent is the one failure a guardrail must not have.
+// sr:invariant checks/skill-requirement-reads-the-record
 func (r Runner) checkSkill(req Request, skill string, files []string) (Verdict, error) {
 	if req.TranscriptPath == "" {
 		// No record to read, so whether the skill was loaded is unknowable. Refuse
@@ -289,6 +292,7 @@ func subpagesRemedy(skill string, files []string, workspace string) string {
 // context that has not entered. That refuses, with a remedy naming the context,
 // because a rule that depends on a context having run must not admit the action
 // when it has not.
+// sr:invariant contexts/gate-requires-context
 func (r Runner) checkContext(req Request, name string) Verdict {
 	st, ok := req.Context[name]
 	if ok && st.Active {

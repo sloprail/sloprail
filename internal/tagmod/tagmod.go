@@ -166,6 +166,7 @@ var quotedForms = []*regexp.Regexp{
 // possible with adjacent shapes) does not get spliced back together into
 // something new. What remains is what the agent SAID in its own prose, which is
 // the only text this module's tags are read from.
+// sr:invariant events/tags-are-said-not-shown
 func stripQuoted(msg string) string {
 	for _, p := range quotedForms {
 		msg = p.ReplaceAllString(msg, " ")
@@ -271,6 +272,7 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 // its tags are marked Seen. A label that turns up again in the new text is not a
 // re-send — the agent wrote it again — so it is un-marked, keeping its first
 // position. Seen therefore means "only in re-sent text".
+// sr:invariant events/tags-are-said-not-shown
 func scan(seenMessages, messages []string) []Tag {
 	index := map[string]int{}
 	var tags []Tag

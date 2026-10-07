@@ -41,6 +41,7 @@ exit 1
 // the harness fires its PreToolUse hook, the plugin reaches the new nature
 // dispatch, the gate matches, and the refusal travels back through
 // the tool result.
+// sr:proves matching/scope-reads-its-own-facts
 func TestT001_01_MatcherAdmitsWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -65,6 +66,7 @@ func TestT001_01_MatcherAdmitsWrite(t *testing.T) {
 // guardrail refusing every write looks identical to a correct one until something
 // outside its scope is tried. `elsewhere/notes.md` is not under `guarded/**`, so
 // the guard must not match it.
+// sr:proves matching/scope-reads-its-own-facts
 func TestT001_02_MatcherRejectsOtherPath(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

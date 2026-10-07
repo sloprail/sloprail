@@ -1,0 +1,5 @@
+predicate: >-
+  A gate's {@fld:loading:Rule.trigger_events} are pre-action kinds or turn
+  end and a context's are pre-action, post-write or tag-write kinds but never
+  turn end; any other event name is refused at load.
+why: A rule would be accepted yet never fire.

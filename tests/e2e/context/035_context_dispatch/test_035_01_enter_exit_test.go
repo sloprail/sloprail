@@ -89,6 +89,7 @@ func TestT035_01_ContextEntersOnTrigger(t *testing.T) {
 // Cycle 1 enters the context (no DONE marker, so exit keeps it active). Cycle 2
 // creates the DONE marker; exit then says done and the context goes inactive —
 // the turn still ends cleanly.
+// sr:proves contexts/exit-only-deactivates
 func TestT035_02_ContextExitDoesNotBlockAndFlipsActive(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

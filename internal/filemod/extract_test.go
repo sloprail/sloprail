@@ -121,6 +121,7 @@ func TestExtract_NoFilePathProducesNoEvents(t *testing.T) {
 // write-shaped payload; a tool NOT on that list produces none, however its
 // arguments are shaped — including a payload that looks exactly like a real
 // write. There is no shape fallback: this is what "sole gate" means.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtract_ToolNameIsNowAuthoritative(t *testing.T) {
 	writeShapedArgs := json.RawMessage(`{"file_path":"does-not-exist.md","content":"x"}`)
 
@@ -148,6 +149,7 @@ func TestExtract_ToolNameIsNowAuthoritative(t *testing.T) {
 // the base case and carries the full argument for why) across the other
 // argument shapes a real Read call sends, so the fix is not accidentally
 // narrow to one exact payload.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_ReadVariantsProduceNoEvent(t *testing.T) {
 	for name, args := range map[string]string{
 		"path only":         `{"file_path":"does-not-exist.md"}`,
@@ -196,6 +198,7 @@ func TestExtractPending_ReadVariantsProduceNoEvent(t *testing.T) {
 // the property that keeps a future read-only tool silent on day one, whatever
 // a vendor calls it — the same drift-immunity extractPending's doc comment
 // argues for the create/update side, applied to the read side.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_APathNamedWithNoWriteKeyProducesNoEventWhateverTheTool(t *testing.T) {
 	for _, tool := range []string{"Read", "", "SomeFutureReadTool"} {
 		events, err := New().Extract(module.Input{
@@ -271,6 +274,7 @@ func TestExtractPending_ShapeAlreadyFiltersToolsWithoutAFilePath(t *testing.T) {
 // The two phases must report one spelling. A rule bound to PreFileCreate and
 // PostFileCreate with the same matcher is one rule, and it cannot be written at
 // all if the two kinds disagree about what a path looks like.
+// sr:proves events/path-inside-or-absolute
 func TestExtractPending_AbsoluteFilePathIsReportedRelativeToTheWorkspace(t *testing.T) {
 	root := t.TempDir()
 	abs := filepath.Join(root, "memories", "topics", "t", "TOPIC.md")
@@ -296,6 +300,7 @@ func TestExtractPending_AbsoluteFilePathIsReportedRelativeToTheWorkspace(t *test
 // inventing one — `../../etc/passwd` — would let it be admitted by a matcher
 // written for a folder inside the project. It stays absolute, so a rule about
 // `memories/` does not match it, which is the correct outcome.
+// sr:proves events/path-inside-or-absolute
 func TestExtractPending_PathOutsideTheWorkspaceKeepsItsAbsoluteSpelling(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "repo")
 	require.NoError(t, os.MkdirAll(root, 0o755))
@@ -334,6 +339,7 @@ func TestExtractPending_PathOutsideTheWorkspaceKeepsItsAbsoluteSpelling(t *testi
 // project-relative matcher admits it, so the rule declines to speak about a
 // write outside its subject rather than being handed a spelling that resolves
 // somewhere it does not mean.
+// sr:proves events/path-inside-or-absolute
 func TestExtractPending_SymlinkedParentDoesNotProduceACleanRelativePath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "repo")
 	require.NoError(t, os.MkdirAll(root, 0o755))
@@ -409,6 +415,7 @@ func TestExtractPending_NoRootLeavesThePathAsGiven(t *testing.T) {
 // Found by running the migrated guardrails in a scratch repo under /tmp, where
 // both rules permitted a write they had just refused when the same repo was
 // named by its resolved path.
+// sr:proves events/path-inside-or-absolute
 func TestExtractPending_SymlinkedWorkspaceStillRelativizes(t *testing.T) {
 	real := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
@@ -494,6 +501,7 @@ func TestExtract_EmptyFileCreateCarriesContent(t *testing.T) {
 
 // --- the create/update fork, which needs a real file ------------------------
 
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtract_NonexistentPathIsACreateCarryingContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "new.md")
 
@@ -513,6 +521,7 @@ func TestExtract_NonexistentPathIsACreateCarryingContent(t *testing.T) {
 		"a create has no oldContent: nothing preceded it")
 }
 
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtract_ExistingPathIsAnUpdateCarryingBothContents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("old\n"), 0o644))
@@ -537,6 +546,7 @@ func TestExtract_ExistingPathIsAnUpdateCarryingBothContents(t *testing.T) {
 		"newContent is the body the write would leave")
 }
 
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtract_ExistingDirectoryIsNotAFileAndProducesNoEvent(t *testing.T) {
 	// lookAt distinguishes a regular file from anything else at the path, so a
 	// directory is neither a create nor an update: no file write can land on

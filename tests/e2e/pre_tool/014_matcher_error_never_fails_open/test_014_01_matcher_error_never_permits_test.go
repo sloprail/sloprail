@@ -113,6 +113,8 @@ exit 0
 //
 // The check here PERMITS, so a refusal cannot come from it: the only thing that
 // can refuse this command is the engine's response to the matcher error.
+// sr:proves matching/unevaluable-never-passes
+// sr:proves gates/undecidable-gate-refuses
 func TestT014_01_MatcherErrorRefusesTheAction(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -190,6 +192,7 @@ func TestT014_03_AMatcherThatDeclinesStillPermits(t *testing.T) {
 // the mirror of the bug rather than a fix for it. The gate's trigger is on
 // PreCommandInvoke only, so a PreFileCreate never reaches the erroring match at
 // all: the engine fix must not over-broaden past the binding that failed.
+// sr:proves matching/unevaluable-never-passes
 func TestT014_04_AnErroringMatcherDoesNotBlockAnotherEvent(t *testing.T) {
 	// The harness's own pre-Stop `sr-checks run` is a command this gate's erroring match would
 	// refuse; the test is about the write alone.
@@ -214,6 +217,7 @@ func TestT014_04_AnErroringMatcherDoesNotBlockAnotherEvent(t *testing.T) {
 // write-gate is the only one that fires, and it must produce its OWN check's reason
 // rather than the engine's diagnostic leaking onto it. Having a broken command-rule
 // loaded must not poison an unrelated sound write-rule.
+// sr:proves matching/unevaluable-never-passes
 func TestT014_05_ASoundRuleKeepsItsOwnReason(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

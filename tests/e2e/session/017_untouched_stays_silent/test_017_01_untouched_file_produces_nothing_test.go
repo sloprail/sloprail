@@ -60,6 +60,7 @@ func installWatcher(e *Env, proj string, led *harness.Ledger) {
 // project here is seeded with untouched files exactly as in T017_02, and the
 // session touches one of them. If this fails, the ledger in this directory
 // cannot register anything at all, and every absence asserted below is vacuous.
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -92,6 +93,7 @@ func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 // The untouched file is not merely absent from a list that might be empty: the
 // assertion below runs against a ledger that has just been shown to contain the
 // other file.
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -130,6 +132,7 @@ func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 // This separates an engine that compares the tree against the baseline from one
 // that accumulates every path it noticed being written during the cycle. Both
 // pass T017_02; only the comparing one passes this.
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

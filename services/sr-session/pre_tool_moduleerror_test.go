@@ -87,6 +87,7 @@ const alwaysRefuse = "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"nothing is 
 // match selects guarded.md refuses the deletion of the bytes about to be lost, so
 // a denial on stdout is proof the good PreFileDelete event reached the matching
 // stage rather than being dropped alongside the errored one.
+// sr:proves events/one-bad-path-keeps-the-rest
 func TestPreTool_ModuleErrorDoesNotDiscardItsEvents(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root traverses a 0000 directory, so the unreadable path cannot be staged")

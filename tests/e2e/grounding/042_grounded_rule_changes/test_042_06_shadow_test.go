@@ -12,6 +12,7 @@ import (
 // of its own, with a match that selects nothing, needs no grounding as an added file, and
 // without protection it would take the plugin rule's name and judge nothing, so the same
 // commit could loosen a rule freely. The plugin's rule claims its name first.
+// sr:proves loading/precedence-and-shadowing
 func TestT042_18_AProjectRuleCannotShadowIt(t *testing.T) {
 	e := NewUncited(t)
 	proj := project(t, e)
@@ -39,6 +40,7 @@ func TestT042_18_AProjectRuleCannotShadowIt(t *testing.T) {
 // T042_19: a rule switched off in a config committed BEFORE the session began is the user's
 // own decision and is honoured (the control for T042_15, where the same entries written
 // during the session are not).
+// sr:proves loading/protected-disable-needs-trusted-config
 func TestT042_19_ADisableCommittedBeforeTheSessionIsHonoured(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

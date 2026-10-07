@@ -26,6 +26,7 @@ import (
 // format has no per-rule `enabled: false`), and the plugin remedy quotes the same
 // `disabled: [...]` key and config file the sibling Shadow.Message does — the
 // consistency the D1 restore exists to keep.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestInvalidRemedy_VariesByOwnerAndByWhetherItParsed(t *testing.T) {
 	plugin := Origin{Plugin: "acme", Root: "/cache/acme/0.0.1"}
 	malformed := []Problem{{Kind: ErrMalformed, Fault: FaultDeclaration}}

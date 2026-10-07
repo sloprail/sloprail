@@ -80,6 +80,7 @@ exit 1
 // refusal that reached the agent while the file was removed anyway would be an
 // opinion rather than a prevention; a file left in place with no refusal would
 // mean the command simply failed for its own reasons.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_01_ADeleteRuleRefusesRm(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -103,6 +104,7 @@ func TestT021_01_ADeleteRuleRefusesRm(t *testing.T) {
 // The spelling the defect report measured. Flags must not hide the file: if
 // `-rf` were read as an operand the rule would narrow on the wrong path and let
 // the deletion through.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_02_FlagsDoNotHideTheFile(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -132,6 +134,7 @@ func TestT021_02_FlagsDoNotHideTheFile(t *testing.T) {
 // not need a password prompt or real privileges to run. What it exercises is the
 // same nesting: the deletion sits inside a construct the top-level parse does not
 // stop at.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_03_NestingDoesNotHideTheDeletion(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -161,6 +164,7 @@ func TestT021_03_NestingDoesNotHideTheDeletion(t *testing.T) {
 // session gets past it, and then the command half is refused. Running the two
 // in one session also proves the command path does not depend on being the
 // first thing that happened.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_04_OneRuleHoldsAgainstBothMechanisms(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

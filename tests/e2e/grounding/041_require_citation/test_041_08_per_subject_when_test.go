@@ -16,6 +16,8 @@ import (
 // never to flag.md itself (its own subject), so the refusal names a.md alone, and the
 // command the refusal gives — a follow-up commit that changes it and carries the quote — grounds it.
 // With HEAD pushed the amend is not even offered.
+// sr:proves checks/when-waives-only-on-exit-one
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
 func TestT041_40_AWhenReadingTheWholeChangesetAsContext(t *testing.T) {
 	const guard = `match: "memories/**"
 require:

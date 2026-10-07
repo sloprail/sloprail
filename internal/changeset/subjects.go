@@ -15,6 +15,7 @@ import (
 // neither would be keyed by nothing, so it is an error (fail closed), never an empty key. An
 // empty list is an error: a rule that selected files has something to judge, and a script
 // that names nothing must not read as a pass.
+// sr:invariant fileguard/subject-contract
 func ParseSubjects(stdout []byte, cs Changeset) ([]Subject, error) {
 	var raw []struct {
 		ID          string   `json:"id"`

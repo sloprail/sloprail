@@ -10,6 +10,7 @@ import (
 // form the harness honours (the agent is driven on past it), naming the path and
 // the rule; nothing is committed for the agent. Then the agent commits, and the
 // same Stop passes.
+// sr:proves fileguard/commit-required
 func TestT002_01_UncommittedGuardedWorkRefusesTheStopUntilItIsCommitted(t *testing.T) {
 	e, proj := project(t)
 	before := e.Git(proj, "rev-parse", "HEAD")
@@ -52,6 +53,7 @@ func TestT002_01_UncommittedGuardedWorkRefusesTheStopUntilItIsCommitted(t *testi
 
 // T002_02: only paths a rule SELECTS count. Scratch files and unguarded paths
 // never trigger it, and neither does a clean tree.
+// sr:proves fileguard/commit-required
 func TestT002_02_UnguardedWorkNeverTriggersIt(t *testing.T) {
 	e, proj := project(t)
 	e.Run(proj, "s-002-02", "take notes", Turns("done",
@@ -65,6 +67,7 @@ func TestT002_02_UnguardedWorkNeverTriggersIt(t *testing.T) {
 
 // T002_03: the kinds of change: a staged change counts, a modification counts, a
 // deletion counts only when the rule admits deletions.
+// sr:proves fileguard/commit-required
 func TestT002_03_StatusesAndDeletions(t *testing.T) {
 	// Default `deletions: skip`: an uncommitted deletion of a guarded file is
 	// not selected.
@@ -95,6 +98,7 @@ func TestT002_03_StatusesAndDeletions(t *testing.T) {
 }
 
 // T002_04: a project with no file-guards is never asked to commit.
+// sr:proves fileguard/commit-required
 func TestT002_04_NoFileGuardsNoCommitRequired(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -109,6 +113,7 @@ func TestT002_04_NoFileGuardsNoCommitRequired(t *testing.T) {
 // default `deletions: skip` too (a rename is not a deletion): moving docs/seed.md
 // away is a change to the guarded file, and leaving it uncommitted would leave the
 // rule nothing to judge. A rename between unguarded paths is not.
+// sr:proves fileguard/commit-required
 func TestT002_09_AnUncommittedRenameOutOfAGuardedPathIsOwedACommit(t *testing.T) {
 	e, proj := project(t)
 	before := e.Git(proj, "rev-parse", "HEAD")

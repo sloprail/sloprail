@@ -1,0 +1,6 @@
+predicate: >-
+  A file-guard {@ent:matching:Match} reads only facts about one changeset file
+  (path, status, markers, old markers, trailers) and has no session context,
+  while a gate or context Match reads the fired event under `event` and the
+  contexts under `context`.
+why: A rule author conditions a file-guard on session state it cannot see, or a trigger on a field its event lacks.

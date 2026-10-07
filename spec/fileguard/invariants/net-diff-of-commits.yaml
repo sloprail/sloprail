@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:fileguard:Changeset} is the one net change from the merge base of
+  the stated base and {@fld:fileguard:Changeset.head} up to head, read from
+  commits only, so an uncommitted edit never appears in
+  {@fld:fileguard:Changeset.files}.
+why: A rule judges something other than the commits the agent made, so a bad commit slips through or a half-done edit is blamed.

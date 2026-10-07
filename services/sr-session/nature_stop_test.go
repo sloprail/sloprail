@@ -44,6 +44,7 @@ func TestJoinRefusals_OneIsRenderedBare(t *testing.T) {
 // about to spend a turn on this, and reporting one at a time turns one correction
 // into as many turns as there are rules; so every refusal must survive the join,
 // each attributable to its own rule.
+// sr:proves session/turn-end-refusal-is-one-block-naming-each-rule
 func TestJoinRefusals_AllCollectedNotStoppedAtFirst(t *testing.T) {
 	refusals := []string{
 		"secrets must not be committed (file-guard \"no-secrets\")",

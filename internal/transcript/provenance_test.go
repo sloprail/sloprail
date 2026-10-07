@@ -20,6 +20,7 @@ func namedCall(uuid, parent, id, name, input string) string {
 // A result whose call is not in the record is of unknown provenance — it could
 // answer a sub-agent dispatch in a file split off by a restart — so it is not
 // tool output.
+// sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestOrphanToolResultIsNotCitable(t *testing.T) {
 	p := newProject(t)
 	path := p.write("the-session",

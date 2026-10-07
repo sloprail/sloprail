@@ -110,6 +110,7 @@ func (*Module) Kinds() []module.KindDecl {
 // tool is about to run, and a rule narrowing on `tool` alone must see it. The
 // input is a convenience for a rule that wants more, not a gate on whether the
 // event exists.
+// sr:invariant events/any-tool-call-is-an-event
 func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	if in[module.InputPhase] == module.PhasePost {
 		// A tool having run is not a difference a diff establishes; the file

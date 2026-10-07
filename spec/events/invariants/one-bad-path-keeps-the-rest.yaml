@@ -1,0 +1,6 @@
+predicate: >-
+  When one path of a call or turn cannot be classified (it will not stat, lies
+  outside the repository or is not a regular file), the problem is reported
+  and the {@ent:events:FileChange}s of the other paths are still produced and
+  judged.
+why: One unreadable path in a command lets the guarded files beside it through.

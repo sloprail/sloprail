@@ -36,6 +36,7 @@ func runSubagentCommit(t *testing.T, e *Env, proj, sess string) harness.Result {
 // T056_05: by default a sub-agent's folders are tracked, but only the ROOT's Stop verifies
 // them: the sub-agent's own Stop does not (it does not see the whole picture), and the root's
 // refuses the range with a stored FAIL, naming the sub-agent's worktree.
+// sr:proves subagents/ranges-verified-at-the-parents-turn-end
 func TestT056_05_ByDefaultOnlyTheRootsStopVerifiesASubagentsRange(t *testing.T) {
 	e, proj := subagentProject(t, false)
 	const sess = "s-056-05"
@@ -52,6 +53,7 @@ func TestT056_05_ByDefaultOnlyTheRootsStopVerifiesASubagentsRange(t *testing.T) 
 }
 
 // T056_06: with `enable_subagent_stop_check: true` the sub-agent's own Stop verifies its ranges too.
+// sr:proves subagents/ranges-verified-at-the-parents-turn-end
 func TestT056_06_OptingInMakesTheSubagentsOwnStopVerify(t *testing.T) {
 	e, proj := subagentProject(t, true)
 	const sess = "s-056-06"

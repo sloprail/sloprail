@@ -1,0 +1,6 @@
+predicate: >-
+  A path matching an entry of {@fld:structure:StructureGate.deny} is refused
+  even when {@fld:structure:StructureGate.allow} permits it, while a deny
+  entry matching nothing allowed changes nothing.
+why: An excluded path would stay writable, or an unrelated deny would block valid writes.
+needs: [pretooluse-refusal]

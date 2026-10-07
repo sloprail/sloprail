@@ -11,6 +11,7 @@ import (
 // that last changed it. None of them is a real change, so none grounds anything: an empty
 // commit, a blank line, a stripped final newline, CRLF line endings, an indent. (A real
 // follow-up change that cites does ground the file: T041_70.)
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestT041_71_NoTouchOfAnUncitedChangeGroundsIt(t *testing.T) {
 	const original = "# log\nthe decision\n"
 	touches := []struct {

@@ -1,0 +1,6 @@
+predicate: >-
+  Every program a shell command line runs is a {@ent:events:CommandInvocation}
+  on its command {@ent:events:Event}, however the line nests it (pipelines,
+  chains, subshells, substitutions, control flow, wrappers, a literal
+  interpreter payload), the wrapper and the wrapped program both being listed.
+why: An agent hides a forbidden program inside a wrapper or subshell and a rule on that program never fires.

@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:cli:StateEntry} is read and written only by the {@fld:cli:StateEntry.rule} that owns it,
+  in its own session; another rule may only list, never get or set, its entries, and outside a
+  running check no rule is in scope.
+why: >-
+  A rule reading or overwriting another's state, or another session's, would behave by what happened elsewhere.

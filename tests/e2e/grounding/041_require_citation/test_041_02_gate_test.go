@@ -69,6 +69,7 @@ func TestT041_09_CiteChainGroundsTheCommand(t *testing.T) {
 }
 
 // T041_10: a cite chain whose quote does not resolve grounds nothing.
+// sr:proves citations/quote-resolves-to-exactly-one-entry
 func TestT041_10_UnresolvedCiteChainIsRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -86,6 +87,7 @@ func TestT041_10_UnresolvedCiteChainIsRefused(t *testing.T) {
 
 // T041_11: source_types narrows the accepted pool — a gate requiring tool_result
 // refuses the user's words and accepts a tool's output.
+// sr:proves citations/pool-is-not-borrowed
 func TestT041_11_SourceTypesSelectThePool(t *testing.T) {
 	const gate = `on:
   - event: PreCommandInvoke

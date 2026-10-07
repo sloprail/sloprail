@@ -15,6 +15,7 @@ import (
 // check. A pass says the content was fine (and so the citation was right), so the same content
 // reached over other or no citations stays passing, in `run` and `verify` alike. Changed
 // content is a miss, and a miss runs everything: its citation requirement refuses it.
+// sr:proves cache/finished-verdicts-reused
 func TestCachedPass_NothingRunsForTheSameContentWhateverTheCitations(t *testing.T) {
 	f := citedFixture(t)
 	session := filepath.Join(t.TempDir(), "session.jsonl")
@@ -56,6 +57,7 @@ func TestCachedPass_NothingRunsForTheSameContentWhateverTheCitations(t *testing.
 
 // A citation refusal is stored under the content key like any other refusal, so verify can say
 // why; the next run judges the content again, since only a pass is a hit.
+// sr:proves cache/finished-verdicts-reused
 func TestCachedPass_ACitationRefusalIsStoredAndJudgedAgain(t *testing.T) {
 	f := citedFixture(t)
 	record := filepath.Join(t.TempDir(), "s.jsonl")

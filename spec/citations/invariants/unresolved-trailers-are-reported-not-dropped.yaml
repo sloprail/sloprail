@@ -1,0 +1,5 @@
+predicate: >-
+  Every {@ent:citations:UnresolvedCitation} is reported with its {@fld:citations:UnresolvedCitation.commit}, trailer and {@fld:citations:UnresolvedCitation.reason}, never silently dropped.
+why: >-
+  An agent that cited real words in a wrong form hunts for a typo instead of learning why the quote does not count.
+needs: [session-transcript-file]

@@ -140,6 +140,7 @@ func (r regexMatcher) matches(path string) (bool, error) {
 // could not be evaluated is treated as matching, because the engine cannot show
 // the path is outside the exception. Both directions refuse, which is the safe way
 // to be wrong about a write.
+// sr:invariant structure/deny-by-default
 func (sg *StructureGate) Allows(path string) (allowed bool, reason string) {
 	matchedAllow := false
 	for _, m := range sg.allow {
@@ -159,6 +160,7 @@ func (sg *StructureGate) Allows(path string) (allowed bool, reason string) {
 		return false, structureDenyReason(path)
 	}
 
+	// sr:invariant structure/deny-subtracts-from-allow
 	// Allowed by an allow entry; now a deny exception can still carve it out.
 	for _, m := range sg.deny {
 		ok, err := m.matches(path)
@@ -177,6 +179,7 @@ func (sg *StructureGate) Allows(path string) (allowed bool, reason string) {
 
 // matchesDeny reports whether any `deny` entry matches path. A deny entry that
 // errors is treated as matching — fail-closed, as in Allows.
+// sr:invariant structure/deny-subtracts-from-allow
 func (sg *StructureGate) matchesDeny(path string) bool {
 	for _, m := range sg.deny {
 		ok, err := m.matches(path)
@@ -319,10 +322,13 @@ func (s *StructureSet) Decide(path string) (bool, string) {
 	}
 
 	switch {
+	// sr:invariant structure/two-owners-conflict
 	case len(owners) > 1:
 		return false, ownershipConflictReason(path, owners)
+	// sr:invariant structure/plugin-owns-its-scope
 	case len(owners) == 1:
 		o := owners[0]
+		// sr:invariant structure/project-deny-vetoes-plugin
 		if s.project != nil && s.project.matchesDeny(path) {
 			return false, projectVetoReason(path, o)
 		}
@@ -333,6 +339,7 @@ func (s *StructureSet) Decide(path string) (bool, string) {
 			return false, pluginDenyExceptionReason(path, o)
 		}
 		return true, ""
+	// sr:invariant structure/unowned-paths-are-the-projects
 	case s.project != nil:
 		return s.project.Allows(path)
 	default:

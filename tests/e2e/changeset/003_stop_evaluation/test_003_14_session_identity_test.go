@@ -15,6 +15,7 @@ import (
 // T003_14: an unrelated conversation judging IDENTICAL content reuses the cached
 // judge pass (the judge is asked once in total); judging DIFFERENT content asks
 // the judge again.
+// sr:proves cache/verdict-identity
 func TestT003_14_AnUnrelatedSessionInheritsNoVerdicts(t *testing.T) {
 	e, proj := judgeProject(t, verdictPass)
 	e.Run(proj, "s-003-14-second", "look around", Turns("done", Bash("b0", "true")))
@@ -53,6 +54,7 @@ func TestT003_14_AnUnrelatedSessionInheritsNoVerdicts(t *testing.T) {
 // refused by a failing judge over ITS range (the floor, both files). When session
 // one next stops its range covers that same content, so it sees that content's
 // verdict, replayed from the shared store; its earlier pass never excused session two.
+// sr:proves cache/finished-verdicts-reused
 func TestT003_15_TwoConversationsKeepVerdictsAndWatermarksApart(t *testing.T) {
 	e, proj := judgeProject(t, verdictPass)
 	e.Run(proj, "s-003-15-two", "look around", Turns("done", Bash("b0", "true")))

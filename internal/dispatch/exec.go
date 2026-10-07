@@ -221,6 +221,8 @@ type scriptResult struct {
 // The relative-to-Dir resolution matches the spec's "resolved relative to the
 // guard's folder": an author writes `./verify.sh` and it runs from the guard's
 // directory, so a relative path finds the sibling script.
+// sr:invariant checks/exit-status-is-the-verdict
+// sr:invariant checks/check-that-cannot-answer-refuses
 func runScriptExec(s scriptCall) (scriptResult, error) {
 	// A script/prepare has no per-check timeout — its runtime is the author's to
 	// bound (spec: model/timeout are judge-only) — so it always runs under the
@@ -309,6 +311,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 // set them on ITS OWN environment (see the caller in services/sr-session), and
 // the payload on stdin carries transcriptPath for a check that reads the record.
 // Adding them again would duplicate a resolution this runner does not own.
+// sr:invariant checks/check-launched-agent-does-not-reenter-its-rule
 func (s scriptCall) env() []string {
 	env := os.Environ()
 	if s.GuardName != "" {
@@ -350,6 +353,7 @@ func (s scriptCall) env() []string {
 	if s.TranscriptPath != "" {
 		env = append(env, "SR_TRANSCRIPT="+s.TranscriptPath)
 	}
+	// sr:invariant subagents/subagent-id-reaches-checks
 	env = append(env, "SR_AGENT_ID="+s.AgentID)
 	env = append(env, s.Env...)
 	// The re-entry provenance: which guards' checks are on this call stack. Set so
@@ -579,6 +583,7 @@ func structuredReason(stdout []byte) string {
 
 // structuredError reads the {"error": true} flag off a script's stdout: the script ran but could
 // not reach a verdict.
+// sr:invariant checks/error-reports-are-not-answers
 func structuredError(stdout []byte) bool {
 	var res struct {
 		Error bool `json:"error"`

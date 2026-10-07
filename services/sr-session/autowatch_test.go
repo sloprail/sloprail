@@ -20,6 +20,7 @@ func TestMain(m *testing.M) {
 // With SR_AUTO_WATCH_GIT_REFS unset the engine tracks nothing on its own: not the checked-out
 // branch, not a branch the session committed on. What the agent adds with `refs track` is
 // still a tracked row.
+// sr:proves session/auto-watch-is-opt-in
 func TestAutoWatch_UnsetTracksNothingAutomatically(t *testing.T) {
 	t.Setenv(autoWatchEnv, "")
 	proj, reg, rs := ruledAndObserved(t, nil)
@@ -45,6 +46,7 @@ func TestAutoWatch_UnsetTracksNothingAutomatically(t *testing.T) {
 
 // Turning the variable off stops auto rows left behind from being verified: they are untracked
 // at the next observation. A range the agent tracked itself stays.
+// sr:proves session/auto-watch-is-opt-in
 func TestAutoWatch_UnsetDropsLeftoverAutoRowsAndKeepsManualOnes(t *testing.T) {
 	proj, reg, rs := ruledAndObserved(t, nil) // variable set: main is auto-tracked
 	require.True(t, trackedIn_(t, reg, rs.ID, proj, "main"))

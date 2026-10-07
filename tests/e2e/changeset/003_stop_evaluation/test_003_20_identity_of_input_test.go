@@ -26,6 +26,7 @@ exit 1
 // T003_20: identical bytes are judged at every path. Bytes that passed at one path
 // are still refused at another, and bytes refused at one path do not silence the
 // judgement of the same bytes at a second.
+// sr:proves cache/verdict-identity
 func TestT003_20_IdenticalBytesAreJudgedAtEveryPath(t *testing.T) {
 	e, proj, _ := seededProject(t, docsRule, map[string]string{"docs/seed.md": "seed\n"},
 		func(string) string { return badPathCheck })
@@ -61,6 +62,7 @@ func TestT003_20_IdenticalBytesAreJudgedAtEveryPath(t *testing.T) {
 // body back: a pass for the fix does not stand in for the body it replaced. The
 // refused body's own verdict (a stored fail, terminal while its input stands) is
 // replayed, so the judge is not asked about it a second time.
+// sr:proves cache/finished-verdicts-reused
 func TestT003_21_ContentEditedBackToARefusedBodyIsRefusedAgain(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 	const sess = "s-003-21"
@@ -101,6 +103,7 @@ func TestT003_21_ContentEditedBackToARefusedBodyIsRefusedAgain(t *testing.T) {
 // range the old failure goes stale (the range passes, nothing outstanding), and
 // when the same file comes back the stored fail for that content is replayed:
 // refused again, without asking the judge a second time.
+// sr:proves cache/finished-verdicts-reused
 func TestT003_22_AStaleFailIsJudgedAgainWhenItsInputReturns(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 	const sess = "s-003-22"

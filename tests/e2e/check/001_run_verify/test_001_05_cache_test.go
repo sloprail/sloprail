@@ -7,6 +7,7 @@ func judgeProject(t *testing.T, verdict string) (*Env, string, string) {
 }
 
 // T001_05: a judge's PASS is reused: the same range again is not judged again.
+// sr:proves cache/finished-verdicts-reused
 func TestT001_05_APassIsReusedWithoutAskingTheJudge(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictPass)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -26,6 +27,7 @@ func TestT001_05_APassIsReusedWithoutAskingTheJudge(t *testing.T) {
 }
 
 // T001_06: the same content after a rebase or an amend (new SHAs, same change) is a hit.
+// sr:proves cache/verdict-identity
 func TestT001_06_TheSameContentAfterARebaseIsAHit(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictPass)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -45,6 +47,7 @@ func TestT001_06_TheSameContentAfterARebaseIsAHit(t *testing.T) {
 }
 
 // T001_07: the same net content after a SQUASH (fewer commits, other messages) is a hit.
+// sr:proves cache/squash-reuses-verdict
 func TestT001_07_TheSameContentAfterASquashIsAHit(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictPass)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -65,6 +68,7 @@ func TestT001_07_TheSameContentAfterASquashIsAHit(t *testing.T) {
 }
 
 // T001_08: a change that is reverted hits the verdict of the content it returns to.
+// sr:proves cache/verdict-identity
 func TestT001_08_ARevertedChangeIsAHit(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictPass)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -86,6 +90,8 @@ func TestT001_08_ARevertedChangeIsAHit(t *testing.T) {
 }
 
 // T001_09: a changed subject is judged.
+// sr:proves cache/finished-verdicts-reused
+// sr:proves cache/verify-read-only
 func TestT001_09_AChangedSubjectIsJudged(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictPass)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -100,6 +106,8 @@ func TestT001_09_AChangedSubjectIsJudged(t *testing.T) {
 
 // T001_10: a fail is terminal until the input changes: verify shows it, and run replays it
 // instead of asking the judge again.
+// sr:proves cache/finished-verdicts-reused
+// sr:proves cache/verify-read-only
 func TestT001_10_AFailIsShownByVerifyAndReplayedByRun(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictFail)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -132,6 +140,7 @@ func TestT001_10_AFailIsShownByVerifyAndReplayedByRun(t *testing.T) {
 // T001_11: verify never asks a model and never writes: with nothing stored a judge is red
 // ("missing"), asked of no one, and after run it is green. Another clone of the repository
 // shares the results: they are about the content, not the checkout.
+// sr:proves cache/verify-read-only
 func TestT001_11_VerifyReadsWhatRunStoredAndAsksNoOne(t *testing.T) {
 	e, proj, base := judgeProject(t, verdictPass)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")

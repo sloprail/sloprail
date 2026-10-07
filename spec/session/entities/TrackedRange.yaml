@@ -1,0 +1,24 @@
+doc: A range of commits in one folder that a session answers for, from a base to a head.
+fields:
+  - name: session
+    type: session.Session
+  - name: folder
+    type: string
+    doc: The repository folder the range lives in.
+  - name: head
+    type: string
+    doc: A branch name, followed as it moves, or a commit.
+  - name: base
+    type: string
+    doc: The revision the range starts after.
+  - name: added_by
+    type: string
+    doc: Who attached the range to the session.
+    enum: [auto, agent]
+  - name: untracked_reason
+    type: string
+    doc: Why the agent stopped answering for the range; empty while it is tracked.
+    constraint_expr: "non-empty whenever the range is untracked"
+  - name: abandoned_tip
+    type: string
+    doc: The commit the head pointed at when the range was untracked; empty while tracked.

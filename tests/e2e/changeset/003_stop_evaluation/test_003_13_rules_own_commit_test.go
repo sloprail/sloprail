@@ -12,6 +12,7 @@ import (
 // is the PARENT of the last commit touching the rule's folder; with the commit
 // itself as the floor, touching a rule's folder in the same commit as a violation
 // would have been a way to get the violation past it.
+// sr:proves fileguard/rule-age-floor
 func TestT003_13_ACommitThatTouchesTheRulesFolderAndViolatesItIsRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

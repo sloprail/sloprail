@@ -154,6 +154,7 @@ func TestT024_01_OneRefusalBlocksTheTurnWithoutUndoingTheWrite(t *testing.T) {
 //
 // "Blocked once at the end" is asserted as its own fact: one blocking
 // attachment carrying three reasons, not three separate blocks.
+// sr:proves session/turn-end-refusal-is-one-block-naming-each-rule
 func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 	e, proj := project(t)
 	logs := map[string]string{}
@@ -327,6 +328,7 @@ func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 //
 // Both rules are proven to have run, so "the passer is not named" is about the
 // reporting rather than about a rule that never fired.
+// sr:proves session/turn-end-refusal-is-one-block-naming-each-rule
 func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 	e, proj := project(t)
 	refuserLog := refusingGuardrail(t, e, proj, "zzrefuser", "this is the objection")

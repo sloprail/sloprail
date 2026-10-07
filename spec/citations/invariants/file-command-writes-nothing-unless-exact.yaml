@@ -1,0 +1,5 @@
+predicate: >-
+  Sloprail's own citation-carrying file command writes nothing, and says why, when any {@fld:citations:Citation.quote} it names fails to resolve or when its path goes through a symbolic link.
+why: >-
+  A change whose grounding was never confirmed, or that lands where no rule judged, would reach disk.
+needs: [file-tools]

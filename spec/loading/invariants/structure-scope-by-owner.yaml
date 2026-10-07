@@ -1,0 +1,5 @@
+predicate: >-
+  A project's own {@ent:structure:StructureGate} declares no
+  {@fld:loading:Rule.scope}, while a plugin's must declare folders it owns,
+  and its allow and deny entries must lie inside them.
+why: A plugin could govern the whole tree, or carry entries that can never apply.

@@ -62,6 +62,7 @@ install_hint='curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/mai
 # and prints the resolved path on stdout if found. It does not itself modify
 # $PATH; the one directory it finds is added below, for the engine's own
 # siblings, and nothing else is widened.
+# sr:invariant install/engine-found-outside-the-path
 find_sr_session() {
   if command -v sr-session >/dev/null 2>&1; then
     command -v sr-session
@@ -111,6 +112,7 @@ plugin_version() {
 # same fetch either way, install.sh always replacing the whole set in place
 # (Makefile's distribute-local comment: "copying only the changed ones is how
 # a stale sr-session outlives the sr that dispatches to it").
+# sr:invariant install/session-start-installs-the-matching-release
 run_auto_install() {
   tag="${1:-v$(plugin_version)}"
   install_log="$(mktemp)"
@@ -191,6 +193,7 @@ fi
 # the engine — only that directory, which holds nothing but sloprail's binaries.
 saved_path="$PATH"
 if [ -n "$sr_session_bin" ]; then
+  # sr:invariant install/engine-found-outside-the-path
   PATH="$(dirname "$sr_session_bin"):$PATH"
   export PATH
 fi
@@ -241,12 +244,14 @@ Then start a new session — this one will keep warning until sr-session is foun
     payload="$(cat)"
     tool="$(printf '%s' "$payload" | tr -d '\n' | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     case "$tool" in
+    # sr:invariant install/missing-engine-refuses-file-writes
     Write | Edit | MultiEdit | NotebookEdit)
       echo "BLOCKED: sloprail cannot check this write because its sr-session binary is not installed. Install it (from a shell), then retry:" >&2
       echo "  ${install_hint}" >&2
       echo "(sloprail/sloprail may be private: if that URL 404s, fetch install.sh with your git/gh access and run it.)" >&2
       exit 2
       ;;
+    # sr:invariant install/missing-engine-blocks-nothing-else
     *)
       echo "$message" >&2
       exit 0
@@ -254,6 +259,7 @@ Then start a new session — this one will keep warning until sr-session is foun
     esac
     ;;
   *)
+    # sr:invariant install/missing-engine-blocks-nothing-else
     # start / stop / subagent-stop: not a guarded action by itself. Warn
     # loudly (this is what a person reads at SessionStart) and let the
     # session continue — a missing install must not brick Claude Code
@@ -283,6 +289,7 @@ if [ "$subcommand" = "start" ]; then
   # which plugin owns which folders, a baseline that could not be recorded, the
   # load check's own summary (printed only without a session payload), and the
   # session-identity notice (sr-session already put that on stdout itself).
+  # sr:invariant install/start-tells-the-agent-which-rules-did-not-load
   problems="$(grep -v ' owns \|no baseline recorded\|rules loaded\|^sloprail: identity:' "$report" 2>/dev/null || true)"
   if [ -n "$problems" ]; then
     echo

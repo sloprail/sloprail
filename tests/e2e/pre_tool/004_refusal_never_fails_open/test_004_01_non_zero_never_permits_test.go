@@ -80,6 +80,8 @@ func TestT004_01_StderrRefusalReachesTheAgent(t *testing.T) {
 // enforced, so the write is REFUSED at run time with a message naming the file and the fix; the
 // problem is also reported at the next session start. Scripts are run directly, never as
 // `sh <file>`, so a script that cannot be exec'd never runs and never approves.
+// sr:proves checks/check-that-cannot-answer-refuses
+// sr:proves gates/undecidable-gate-refuses
 func TestT004_02_UnrunnableCheckRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -115,6 +117,7 @@ func TestT004_02_UnrunnableCheckRefuses(t *testing.T) {
 // is never run through its interpreter, so its own verdict is never read, and the refusal names the
 // fix. An agent can `chmod -x` a gate's script (not a write, so no hook sees it); the gate must keep
 // refusing, not stop applying.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT004_02b_MissingExecuteBitRefusesNamingTheFix(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -152,6 +155,7 @@ func TestT004_02b_MissingExecuteBitRefusesNamingTheFix(t *testing.T) {
 // nothing to quote back, so the engine has to supply a reason itself rather than
 // treat an empty one as consent. scriptRefusalReason falls through to "the check
 // … refused (exit 1) but gave no reason".
+// sr:proves checks/exit-status-is-the-verdict
 func TestT004_03_SilentNonZeroRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -238,6 +242,7 @@ func TestT004_04b_PlainNonZeroOutputRefuses(t *testing.T) {
 // guardrail that refuses work its check approved is as broken as one that
 // approves work its check refused, and only this test tells the two fixes apart.
 // Chatter on both streams at exit 0 must not be mistaken for a refusal.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT004_05_ZeroExitStillPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

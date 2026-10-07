@@ -102,6 +102,7 @@ func promptsIn(answer string, markers ...string) []string {
 // The guardrail is swapped for a clean one before the second cycle so that the
 // second cycle completes and its answer can be read without a refusal in the
 // way. Both write to the same ledger file, so the answers accumulate in order.
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -177,6 +178,7 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 // is the same claim 018's T018_01 makes; it is repeated here because what it
 // pins down in THIS directory is that completion is what licenses the advance.
 // If T019_01 passes and this fails, the mark is simply never moving.
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

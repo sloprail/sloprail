@@ -1,0 +1,6 @@
+predicate: >-
+  A file-guard that still uses the removed preventive key, requires a skill
+  or context, or reads context in its match is refused at load with the gate
+  to write instead, and {@fld:loading:Rule.deletions} outside its three
+  values is refused rather than read as skip.
+why: A write the author meant to stop would be silently unguarded, or deletions silently skipped.

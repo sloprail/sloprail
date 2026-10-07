@@ -412,6 +412,7 @@ var childEnvBlocklist = map[string]bool{
 // might need, and getting that wrong silently breaks auth or configuration
 // that used to work. A blocklist only has to name the specific vars that are
 // actively wrong to inherit, which is a much smaller and more stable claim.
+// sr:invariant judges/judge-agent-runs-isolated
 func sanitizeChildEnv(environ []string) []string {
 	out := make([]string, 0, len(environ))
 	for _, kv := range environ {

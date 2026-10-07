@@ -312,6 +312,7 @@ type ruleRun struct {
 //
 // Within a rule the declared order and first-refusal-ends are kept. The judged
 // verdicts are put in the cache once, at the end (one write per run).
+// sr:invariant fileguard/refusals-independent
 func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 	guards := p.Guards
 	if len(guards) == 0 {
@@ -482,6 +483,7 @@ func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checks
 // prepare readies one rule over the range: the changeset, the snapshot, and the run recorded
 // RUNNING. A nil ruleRun means there is nothing more to do — the result and whether it
 // refused are the outcome.
+// sr:invariant fileguard/nothing-selected-passes
 func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, FileGuardResult, bool) {
 	rule := g.Qualified()
 	// RULE AGE: the range is the stated one, raised to the rule's floor (the parent of its last
@@ -635,6 +637,7 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 
 // ruleRange is the stated range raised to the rule's floor (the parent of its last change)
 // when that is later: the one range `run`, `verify` and `changeset` judge a rule over.
+// sr:invariant fileguard/rule-age-floor
 func (ev *changesetEvaluation) ruleRange(g declaration.FileGuard) (gitrepo.Range, error) {
 	r := ev.rng
 	if rel, err := filepath.Rel(ev.root, g.Dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -653,6 +656,7 @@ const maxEffectiveCandidates = 200
 // Starting at the requested base, the furthest such head becomes the base, and so on until
 // nothing advances: sequential passes B1..H1 then H1..H2 reach H2, while a pass over a narrow
 // range B2..H with B2 after B1 leaves the span B1..B2 unjudged and so advances nothing.
+// sr:invariant fileguard/passes-not-re-examined
 func (ev *changesetEvaluation) effectiveBase(g declaration.FileGuard, r gitrepo.Range) gitrepo.Range {
 	if ev.store == nil || g.Subjects != "" || ev.params.WholeRange {
 		// A `subjects:` script names units whose verdicts depend on more than the diff (the
@@ -814,6 +818,7 @@ func (ev *changesetEvaluation) agentEnv(env ...string) []string {
 // session (it must give the same list in `run` and in `verify`), the subjects as JSON on
 // stdout. The citations it is handed are the commit trailers' quotes in both modes (what
 // `verify` has), never the session-resolved ones, so a script cannot key the two differently.
+// sr:invariant fileguard/subject-contract
 func (ev *changesetEvaluation) guardSubjects(g declaration.FileGuard, r gitrepo.Range, cs changeset.Changeset, tree string) ([]changeset.Subject, error) {
 	trusted := cs
 	TrustTrailers(&trusted)
@@ -923,6 +928,7 @@ func (ev *changesetEvaluation) skipDeferred(rr *ruleRun) {
 
 // finish settles a rule: its run is finished, and its outcome is the verdict (or the engine
 // error, which is a refusal and leaves the run unfinished).
+// sr:invariant fileguard/unreadable-range-refuses
 func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict, failed error) {
 	g := rr.g
 	defer func() {
@@ -1370,6 +1376,7 @@ func withoutSession(req dispatchcore.Request) dispatchcore.Request {
 // identical content share their verdicts, and the run that stored one and the verify that reads
 // it compute one key. A citation is only a gate: it is checked afresh on every run
 // (citationGate), never stored with the verdict.
+// sr:invariant cache/verdict-identity
 func guardKey(payload changeset.Payload) string {
 	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint)
 }
@@ -1426,6 +1433,8 @@ func stepStatus(s string) string {
 //     engine error stores nothing: the next run starts again from the first step.
 //
 // settled says the rule's verdict is v (and err an engine failure).
+// sr:invariant cache/finished-verdicts-reused
+// sr:invariant cache/verify-read-only
 func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err error, settled bool) {
 	g := rr.g
 	rr.key = guardKey(rr.payload)
@@ -1525,6 +1534,7 @@ func storedSteps(meta map[string]any) []stepRow {
 
 // recordGuard stores the guard's verdict over its subject, with each step inside it. An
 // engine error never reaches here (it is no verdict), and a refusal reached without a session is not stored.
+// sr:invariant cache/unfinished-never-stored
 func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Verdict) {
 	if ev.store == nil || ev.verify || rr.runID == "" || rr.key == "" || rr.replayed {
 		return
@@ -1679,6 +1689,7 @@ func citationItems(e event.Event, unresolved []changeset.Unresolved) []checkstor
 
 // unresolvedNote says which citation trailers did not resolve, so an agent that
 // cited something the session never said hears why it does not count.
+// sr:invariant citations/unresolved-trailers-are-reported-not-dropped
 func unresolvedNote(unresolved []changeset.Unresolved) string {
 	if len(unresolved) == 0 {
 		return ""
@@ -1722,6 +1733,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (FileGuardResul
 
 // BrokenFileGuards names every file-guard that failed to load, with why: a rule that cannot be
 // read judges nothing, so a run (or a Stop) that passes over it must fail instead of reading as clean.
+// sr:invariant fileguard/unloadable-guard-refuses
 func BrokenFileGuards(l declaration.Loaded) []string {
 	var out []string
 	for _, iv := range l.Invalid {

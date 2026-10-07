@@ -112,6 +112,7 @@ func ResolveSubagentCitation(path string, req CitationRequest) (Citation, error)
 	return resolveCitation(path, req, true)
 }
 
+// sr:invariant citations/quote-resolves-to-exactly-one-entry
 func resolveCitation(path string, req CitationRequest, subagent bool) (Citation, error) {
 	if req.Quote == "" {
 		return Citation{}, fmt.Errorf("an empty quote grounds nothing")
@@ -200,6 +201,7 @@ func CiteInSession(path, quote string, sources []SourceType) ([]CitationMatch, e
 	return citeInSession(path, quote, sources, false)
 }
 
+// sr:invariant citations/user-pool-is-the-root-conversation
 func citeInSession(path, quote string, sources []SourceType, subagent bool) ([]CitationMatch, error) {
 	userIn, toolIn, err := citationRecords(path, subagent)
 	if err != nil {

@@ -39,6 +39,7 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 // revision that does not name a commit is an error saying which; two histories that
 // share nothing are an error too, never an empty range. The empty tree is the one base that
 // is not a commit: it stands for a range that starts before the first commit.
+// sr:invariant fileguard/net-diff-of-commits
 func ResolveRange(dir, baseRev, headRev string) (Range, error) {
 	head, err := commitOf(dir, headRev, "--head")
 	if err != nil {

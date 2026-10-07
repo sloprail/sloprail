@@ -200,6 +200,7 @@ func anchorTargets(targets []commandmod.FileTarget, dir string) []commandmod.Fil
 // default still exists for a write whose bytes cannot be worked out (a
 // notebook edit). The gate decides WHETHER a call is a write; resultFor still
 // decides WHAT it writes.
+// sr:invariant events/pre-file-change-only-for-writes
 func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	pending, ok := in[module.InputPayload].(Pending)
 	if !ok {
@@ -403,6 +404,7 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // folder in the project must not be handed a spelling that could climb into
 // one. Leaving it absolute means no project-relative matcher admits it, which
 // is the honest answer — the write is outside the rule's subject.
+// sr:invariant events/path-inside-or-absolute
 func Reportable(path, root string) string {
 	if !filepath.IsAbs(path) {
 		clean := filepath.ToSlash(filepath.Clean(path))
@@ -607,6 +609,7 @@ func Reportable(path, root string) string {
 // folded. Here it decides the same thing, so it is refused the same way. On the
 // tool-write path an unknown chooses between two events over a path the tool
 // named either way, which is why that one folds instead.
+// sr:invariant events/command-changes-are-file-changes
 func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	// The tool-name gate is the CALLER's, not this function's: extractPending
 	// only reaches here for a tool in commandmod.HarnessCommandTools. This
@@ -888,6 +891,7 @@ var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory ho
 // used to discard the files already collected: one 0o000 subdirectory beside
 // scanners/x/scanner.yaml made `rm -rf scanners/x` predict nothing, although
 // rm still deletes the scanner — a way past every PreFileDelete gate.
+// sr:invariant events/recursive-removal-per-file
 func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.FileTarget, map[string]bool, []error) {
 	var out []commandmod.FileTarget
 	unread := map[string]bool{}
@@ -1167,6 +1171,7 @@ var readContent = ReadRegular
 // appears, so a stat-then-open would still hang on a FIFO swapped in between;
 // with O_NONBLOCK the open returns at once and the fstat rejects it. The read
 // itself is capped as well, since a file can grow after the fstat.
+// sr:invariant events/unknown-bytes-are-flagged
 func ReadRegular(path string, limit int64) (string, bool) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -1211,6 +1216,7 @@ func ReadRegular(path string, limit int64) (string, bool) {
 // The work is split across two passes over the paths, for the reason
 // baselinesFor gives: a spelling breach is a property of the whole list, and an
 // event already appended cannot be taken back.
+// sr:invariant events/post-changes-are-the-tree-diff
 func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 	observed, ok := in[module.InputPayload].(Observed)
 	if !ok {

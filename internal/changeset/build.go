@@ -69,6 +69,8 @@ type Options struct {
 // tree, so an uncommitted edit is invisible here, however close to done.
 //
 // Citations are not part of what Build knows; see ResolveCitations.
+// sr:invariant fileguard/net-diff-of-commits
+// sr:invariant fileguard/unreadable-range-refuses
 func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 	if o.Scan == nil || o.Select == nil {
 		return Changeset{}, fmt.Errorf("changeset: Scan and Select are required")
@@ -168,6 +170,7 @@ func attachCommits(dir string, r gitrepo.Range, cs *Changeset) error {
 // change a guarded file that no rule is asked about. The second question is the
 // old path, the old markers as `markers`, and the same status: the file the rule
 // guards, as it was.
+// sr:invariant fileguard/rename-selected-by-either-path
 func Selects(sel func(Scope) (bool, error), s Scope) (bool, error) {
 	ok, err := sel(s)
 	if err != nil || ok || s.Status != "R" || s.OldPath == "" {
@@ -180,6 +183,7 @@ func Selects(sel func(Scope) (bool, error), s Scope) (bool, error) {
 
 // Admits says whether a status may enter `files` at all under a deletions mode.
 // A rename is not a deletion.
+// sr:invariant fileguard/deletions-filter
 func Admits(mode DeletionMode, status byte) bool {
 	switch mode {
 	case IncludeDeletions:

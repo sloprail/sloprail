@@ -1,0 +1,6 @@
+predicate: >-
+  A call that changes several files is refused whole when any file is
+  refused, and the one refusal lists every refused file in
+  {@fld:gates:Refusal.files}, each gate having been asked about every file.
+why: The agent would fix one file per turn, or be refused for a file it was never told about.
+needs: [pretooluse-refusal]

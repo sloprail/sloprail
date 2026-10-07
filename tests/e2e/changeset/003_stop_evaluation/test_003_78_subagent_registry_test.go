@@ -33,6 +33,7 @@ func registryOf(t *testing.T, e *Env, proj, sess string) []registryRow {
 // dispatched is in the session's registry once its run ended (SubagentStart opened it,
 // SubagentStop closed it), with the range it owns, and a later turn, even one that compacts the
 // conversation, does not lose it.
+// sr:proves subagents/agent-registry-survives-compaction
 func TestT003_78_ADispatchedSubagentIsInTheRegistryAcrossACompaction(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	const sess = "s-003-78"

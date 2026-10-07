@@ -1,0 +1,7 @@
+predicate: >-
+  A tag in {@fld:events:Event.tags} is a hash-tag the agent said in its own
+  prose this turn; one inside text it shows (a fenced block, an inline code
+  span, a quoted line) is not a tag, and a turn with no tag still yields the
+  event with an empty list.
+why: An example or quoted refusal message in the agent's reply satisfies a tag-requiring rule.
+needs: [stop-hook-payload, session-transcript-file]

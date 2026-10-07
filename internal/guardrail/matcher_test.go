@@ -89,6 +89,7 @@ func TestMatch_ReadsListFieldsWithAnd0r(t *testing.T) {
 	assert.False(t, admitted)
 }
 
+// sr:proves matching/checked-at-load
 func TestCompileMatcher_SyntaxErrorIsRefused(t *testing.T) {
 	// A matcher that will not compile must not degrade into a permissive
 	// default: an unparseable rule is louder as a load failure than as a rule
@@ -106,6 +107,7 @@ func TestCompileMatcher_SyntaxErrorIsRefused(t *testing.T) {
 	}
 }
 
+// sr:proves matching/checked-at-load
 func TestCompileMatcher_NonBooleanIsRefusedAtCompile(t *testing.T) {
 	// expr.AsBool() makes "must be a boolean" a compile-time contract for any
 	// expression whose type is statically known.
@@ -164,6 +166,7 @@ func preFileCreate() module.KindDecl {
 //
 // A declared field the event omits is now supplied at its type's zero value, so
 // the expression sees the shape it was compiled against.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_DeclaredFieldOmittedByTheProducerIsItsZeroValue(t *testing.T) {
 	// Exactly what filemod emits for an empty file: newContent omitted.
 	empty := event.Event{Kind: "PreFileCreate", Fields: map[string]any{"path": "empty.txt"}}
@@ -178,6 +181,7 @@ func TestMatch_DeclaredFieldOmittedByTheProducerIsItsZeroValue(t *testing.T) {
 		`newContent == "" is the rule for an empty file and must fire on one`)
 }
 
+// sr:proves matching/absent-field-is-zero
 func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
 	// One declared field per type, none of them carried by the event. Each
 	// expression is one only that type supports, so a wrong-shaped fill-in
@@ -228,6 +232,7 @@ func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
 // where the expression was type-checked against a list, exactly the shape this
 // whole mechanism exists to prevent. `l == nil` is the only expression that
 // tells them apart.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_ZeroValueOfAListIsEmptyNotNil(t *testing.T) {
 	kind := module.KindDecl{Name: "K", Fields: []module.FieldDecl{
 		{Name: "l", Type: module.TypeList},
@@ -300,6 +305,7 @@ var enumeratedKind = module.KindDecl{
 // An explicit JSON null is the likeliest real trigger: it is the ordinary
 // unmarshal shape of a producer that sent the key with no value. The key is
 // PRESENT, so the absence check skipped it and the expression met a nil.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_ExplicitNullIsTheZeroValueNotAnError(t *testing.T) {
 	nulled := event.Event{Kind: "PreFileCreate", Fields: map[string]any{
 		"path": "a.txt", "newContent": nil,
@@ -318,6 +324,7 @@ func TestMatch_ExplicitNullIsTheZeroValueNotAnError(t *testing.T) {
 // An enumerated map the producer omitted entirely. zeroOf returned a flat
 // map[string]any{}, so `meta.user` was a nil where matcherEnv had built a closed
 // type over `user` and promised a string.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_OmittedEnumeratedMapFillsItsDeclaredKeys(t *testing.T) {
 	bare := event.Event{Kind: "PreThing", Fields: map[string]any{"path": "a"}}
 
@@ -355,6 +362,7 @@ func TestMatch_PresentMapMissingADeclaredKey(t *testing.T) {
 
 // A list element missing a field its Elem declares. This is the `commandmod`
 // rule shape the spec documents, so it is the one most likely to be written.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_ListElementMissingADeclaredField(t *testing.T) {
 	partial := event.Event{Kind: "PreThing", Fields: map[string]any{
 		"path":        "a",
@@ -574,6 +582,7 @@ func TestMatch_UnenumeratedMapIsNotGivenInventedKeys(t *testing.T) {
 // occurrence it was written to catch.
 // ---------------------------------------------------------------------------
 
+// sr:proves matching/absent-field-is-zero
 func TestMatch_WrongTypedCarriedValueErrors(t *testing.T) {
 	// The real rule, verbatim: this is not a synthetic expression.
 	m, err := CompileMatcherFor(`path startsWith "guarded/"`, preFileCreate())
@@ -606,6 +615,7 @@ func TestMatch_WrongTypedCarriedValueErrors(t *testing.T) {
 
 // The same claim for every declared type, so this is the rule rather than one
 // special case for strings.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_WrongTypeErrorsForEveryDeclaredType(t *testing.T) {
 	kind := module.KindDecl{Name: "Everything", Fields: []module.FieldDecl{
 		{Name: "s", Type: module.TypeString},
@@ -652,6 +662,7 @@ func TestMatch_WrongTypeErrorsForEveryDeclaredType(t *testing.T) {
 // inside an enumerated map or a typed list element is the same fact one level
 // down, and stopping at the top would leave the fail-open exactly where the
 // recursion was added to close it.
+// sr:proves matching/absent-field-is-zero
 func TestMatch_WrongTypeErrorsInsideNestedStructures(t *testing.T) {
 	t.Run("enumerated map key", func(t *testing.T) {
 		m, err := CompileMatcherFor(`meta.user == "nikita"`, enumeratedKind)
@@ -722,6 +733,7 @@ func TestMatch_CarriedValueBeatsTheZeroValue(t *testing.T) {
 	assert.True(t, admitted, "a carried value is what the expression reads")
 }
 
+// sr:proves matching/absent-field-is-zero
 func TestMatch_UndeclaredFieldIsNotSuppliedAZeroValue(t *testing.T) {
 	// The fill-in covers DECLARED fields only. A typo is caught at load by
 	// CompileMatcherFor, and inventing a value for an unknown name here would
@@ -927,6 +939,7 @@ func TestCompileMatcherFor_AcceptsDeclaredField(t *testing.T) {
 
 // The point of the whole task: the typo and the rule are both well-formed
 // expressions, and only the kind's declared fields tell them apart.
+// sr:proves matching/checked-at-load
 func TestCompileMatcherFor_RefusesMisspelledField(t *testing.T) {
 	_, err := CompileMatcherFor(`pth startsWith "guarded/"`, fileKind)
 	require.Error(t, err)
@@ -947,6 +960,7 @@ func TestCompileMatcherFor_AcceptsEveryDeclaredField(t *testing.T) {
 // `newContent` (declared on the create fixture) is unknown against it — the real
 // PreFileUpdate declares newContent too, but the property under test is that a
 // field of one kind is refused on a kind that does not declare it.
+// sr:proves matching/checked-at-load
 func TestCompileMatcherFor_FieldOfAnotherKindIsUnknown(t *testing.T) {
 	preUpdate := module.KindDecl{
 		Name:   "PreFileUpdate",
@@ -967,6 +981,7 @@ func TestCompileMatcherFor_RefusesNonBoolean(t *testing.T) {
 	assert.Contains(t, err.Error(), "bool")
 }
 
+// sr:proves matching/checked-at-load
 func TestCompileMatcherFor_RefusesMismatchedComparison(t *testing.T) {
 	// path is declared a string, so comparing it to a number is a rule that
 	// could never hold — caught by the same type check that catches the typo.
@@ -1000,6 +1015,7 @@ func TestCompileMatcherFor_AcceptsSpecCommandExample(t *testing.T) {
 // The predicate body is where a command rule actually lives, so a misspelling
 // inside it is the same silent never-fires as one at the top level. Catching it
 // is what the element shape on invocations buys.
+// sr:proves matching/checked-at-load
 func TestCompileMatcherFor_RefusesMisspelledFieldInsidePredicate(t *testing.T) {
 	_, err := CompileMatcherFor(`any(invocations, .nosuchfield == "x")`, commandKind)
 	require.Error(t, err)

@@ -54,6 +54,7 @@ func rekey(seen *[][]Run) Rebuild {
 
 // Whatever the older schema, its verdicts are found under the new key after the migration,
 // and every run stays as history. A second call, in this process or a fresh one, writes nothing.
+// sr:proves cache/older-passes-not-rejudged
 func TestMigrateKeys_AnyOlderDirectoryIsRebuiltIntoTheCurrentOne(t *testing.T) {
 	for name, tc := range map[string]struct{ dir, version string }{
 		"v2026-10-03 (sr1 keys, released)": {"v2026-10-03", "sr1"},
@@ -103,6 +104,7 @@ func TestMigrateKeys_AnyOlderDirectoryIsRebuiltIntoTheCurrentOne(t *testing.T) {
 
 // The newest older directory is the source: v2026-10-07 already holds what v2026-10-03's
 // migration carried, so a store with both is rebuilt from it alone.
+// sr:proves cache/older-passes-not-rejudged
 func TestMigrateKeys_TheNewestOlderDirectoryIsTheSource(t *testing.T) {
 	s := olderStore(t, "v2026-10-03", "sr1", run("2026-01-01T00:00:00Z", judge("in-03", StatusPass)))
 	require.NoError(t, PutAsOlder(Options{Dir: s.opt.Dir}, "v2026-10-07", "sr2", run("2026-02-01T00:00:00Z", judge("in-07", StatusPass))))
@@ -119,6 +121,7 @@ func TestMigrateKeys_TheNewestOlderDirectoryIsTheSource(t *testing.T) {
 
 // A build that speaks an older directory refuses the migrated ref rather than reading a
 // store it would only half understand.
+// sr:proves cache/store-failures-not-misses
 func TestMigrateKeys_AnOldBinaryRefusesTheNewDirectory(t *testing.T) {
 	for _, dir := range schemaHistory {
 		t.Run(dir, func(t *testing.T) {

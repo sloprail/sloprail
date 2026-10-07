@@ -23,6 +23,7 @@ const handbackPatch = `"${TMPDIR:-/tmp}/handback.patch"`
 // The backup is a file and never a branch, a tag or a stash: every branch is
 // recorded and judged at the sub-agent's Stop, so a backup branch would be
 // refused again.
+// sr:invariant subagents/citation-refusal-hands-the-change-back
 func subagentHandback(subject string, req Request) string {
 	base, files := "<base>", "<files>"
 	if req.Changeset != nil {

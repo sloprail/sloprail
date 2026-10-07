@@ -38,6 +38,7 @@ import (
 // is taken as zero and a cap that cannot be read as the default, each reported.
 // The rule then keeps judging, and the harness's own cap is still there if the
 // loop never ends.
+// sr:invariant session/turn-end-retry-judged-until-cap
 func stopHookBlockCapReached(cmd *cobra.Command, store sessionstate.Store, p HookPayload) bool {
 	if !p.StopHookActive {
 		resetStopRefusals(cmd, store)
@@ -83,6 +84,7 @@ func stopRefusals(cmd *cobra.Command, store sessionstate.Store) int {
 }
 
 // countStopRefusal records one more refusal in the current sequence.
+// sr:invariant session/turn-end-retry-judged-until-cap
 func countStopRefusal(cmd *cobra.Command, store sessionstate.Store) {
 	n := stopRefusals(cmd, store) + 1
 	if err := store.SetMeta(sessionstate.MetaStopRefusals, strconv.Itoa(n)); err != nil {
@@ -91,6 +93,7 @@ func countStopRefusal(cmd *cobra.Command, store sessionstate.Store) {
 }
 
 // resetStopRefusals ends the current sequence.
+// sr:invariant session/turn-end-retry-judged-until-cap
 func resetStopRefusals(cmd *cobra.Command, store sessionstate.Store) {
 	if err := store.SetMeta(sessionstate.MetaStopRefusals, "0"); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: refusal count not reset:", err)

@@ -1,0 +1,6 @@
+predicate: >-
+  A stored pass, and a fail given by a judge, for a key is replayed by a run
+  or verify without executing any check, citation requirements included, with
+  the fail's {@fld:cache:StoredVerdict.reasons}, until the input changes; a
+  refusal given by a cheap check that may read citations is run again.
+why: Judges are paid for twice, or a refusal vanishes without the work changing.

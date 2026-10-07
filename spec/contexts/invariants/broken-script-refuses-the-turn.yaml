@@ -1,0 +1,6 @@
+predicate: >-
+  While any {@fld:contexts:Context.enter} or {@fld:contexts:Context.exit}
+  script cannot run, the end of the turn is refused with the fix, even for a
+  context never triggered; an action that repairs the script is not refused.
+why: A turn could end with a mode silently off, or the fault could be unfixable.
+needs: [stop-block-continuation]

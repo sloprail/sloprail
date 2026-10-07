@@ -70,6 +70,7 @@ func equal(a, b map[string]string) bool {
 
 // T001_05: `deletions:` is a status filter. The default (skip) leaves deleted
 // files out of `files` and names them in `others`; a rename is not a deletion.
+// sr:proves fileguard/deletions-filter
 func TestT001_05_DeletionsSkipIsTheDefault(t *testing.T) {
 	for _, extra := range []string{"", "deletions: skip\n"} {
 		got := statusesRepo(t, extra)
@@ -89,6 +90,7 @@ func TestT001_05_DeletionsSkipIsTheDefault(t *testing.T) {
 
 // T001_06: `deletions: include` lets deleted files in, with their old content
 // and no new content.
+// sr:proves fileguard/deletions-filter
 func TestT001_06_DeletionsInclude(t *testing.T) {
 	got := statusesRepo(t, "deletions: include\n")
 	want := map[string]string{"docs/new.md": "R", "docs/kept.md": "M", "docs/added.md": "A", "docs/gone.md": "D"}
@@ -103,6 +105,7 @@ func TestT001_06_DeletionsInclude(t *testing.T) {
 }
 
 // T001_07: `deletions: only` keeps just the deleted files.
+// sr:proves fileguard/deletions-filter
 func TestT001_07_DeletionsOnly(t *testing.T) {
 	got := statusesRepo(t, "deletions: only\n")
 	if want := map[string]string{"docs/gone.md": "D"}; !equal(filesOf(got), want) {

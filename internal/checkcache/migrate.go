@@ -105,6 +105,7 @@ func (s *Store) MigrateKeys() (MigrationStats, bool, error) {
 	return s.migrateKeys()
 }
 
+// sr:invariant cache/older-passes-not-rejudged
 func (s *Store) migrateKeys() (MigrationStats, bool, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {

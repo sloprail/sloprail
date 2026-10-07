@@ -58,6 +58,7 @@ func watermarkRepo(t *testing.T) (e *Env, proj, rule, hash, start, c1 string) {
 // T001_17: a verdict is keyed on its input, not on the rule's definition. Edit the rule and the
 // hash it is recorded under changes, but the pass reached under the older rule is still the
 // answer for the same input: the judge is not asked again.
+// sr:proves cache/verdict-identity
 func TestT001_17_AnEditedRuleKeepsItsVerdicts(t *testing.T) {
 	e, proj, _, hash, start, c1 := watermarkRepo(t)
 	if r := e.CheckRunRaw(proj, wmSession, start, c1); r.Code != 0 || e.JudgeCalls(proj, wmPrompt, "") != 1 {

@@ -1,0 +1,3 @@
+predicate: >-
+  A {@ent:session:GuardrailState} entry can be read or written by single key only by the guardrail named in {@fld:session:GuardrailState.guardrail}, within its own {@fld:session:GuardrailState.session}; any other guardrail may only list its entries, read-only, and only within the same session.
+why: A rule reads or clobbers another rule's memory, or one session's memory leaks into another.

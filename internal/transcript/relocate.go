@@ -58,6 +58,7 @@ import (
 // Climbing from path's own directory names sidesteps this: whatever path a
 // caller was handed, its own ancestry is asked directly, never compared to a
 // second, independently-built path.
+// sr:invariant session/resume-from-another-directory
 func RelocateRecord(configDir, path string) string {
 	if path == "" || configDir == "" {
 		return path

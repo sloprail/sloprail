@@ -121,6 +121,7 @@ func TestT001_06_SubjectsScriptOnePayloadAndVerdictPerSubject(t *testing.T) {
 
 // T001_07: a range that quotes citations can only be judged where the session's transcript
 // is. A run with no session says so, and stores nothing, so verify still says "not judged yet".
+// sr:proves cache/unfinished-never-stored
 func TestT001_07_RunWithoutASessionNeedsOneToJudgeCitations(t *testing.T) {
 	e, proj := session(t)
 	e.FileGuard(proj, "docs", "match: \"docs/**\"\nrequire:\n  - citation: {source_types: [user]}\nchecks:\n  - script: ./check.sh\n",
@@ -152,6 +153,7 @@ func repoFile(parts ...string) string {
 // T001_09: a session's state.db written by an older engine (before session_refs became the
 // table of tracked ranges) is migrated in place when a hook next opens it: the hook works
 // and the rows it held are kept, an abandoned one now reading as untracked.
+// sr:proves cache/store-failures-not-misses
 func TestT001_09_SessionRefsMigrationKeepsOldRows(t *testing.T) {
 	e, proj := session(t)
 	path := e.StateDBPath(proj, sessionID)

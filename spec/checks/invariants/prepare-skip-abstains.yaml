@@ -1,0 +1,6 @@
+predicate: >-
+  A {@fld:checks:Check.prepare} that asks to skip makes its check an
+  {@fld:checks:Verdict.abstained} one: the check is not run, it counts
+  neither as a pass nor a refusal, a later check still runs and can still
+  refuse, and a rule whose checks all abstain permits.
+why: A skipped judge either masks a later refusing check or blocks actions it never applied to.

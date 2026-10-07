@@ -13,6 +13,7 @@ const passCheck = "#!/bin/sh\ncat >/dev/null\nexit 0\n"
 // T001_14: a citation requirement is checkable from the repository alone: verify counts a
 // Sloprail-Cites-User trailer on the commit that last changed the file (the author's `run`
 // resolved the quote against the transcript), and refuses a change that carries none.
+// sr:proves cache/verify-read-only
 func TestT001_14_VerifyReadsCitationsFromCommitTrailers(t *testing.T) {
 	e, proj, base := project(t, citeRule, map[string]string{"check.sh": passCheck}, "")
 	// The session the author's run resolves the quote against: the user's own words.

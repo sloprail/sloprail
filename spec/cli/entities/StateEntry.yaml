@@ -1,0 +1,11 @@
+doc: A value a rule's check keeps under a key for the rest of the session.
+fields:
+  - name: rule
+    type: string
+    doc: The rule that owns the entry.
+  - name: key
+    type: string
+    doc: The name the value is stored under.
+  - name: value
+    type: string
+    doc: The stored text, opaque to sloprail.

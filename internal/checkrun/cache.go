@@ -18,6 +18,7 @@ import (
 // pushes what is pending; without it (`verify`, `show`) it only reads: nothing is pushed,
 // migrated or written. guards are the rules in force: an older store's verdicts are re-keyed
 // by them (a verdict of a rule not among them is left behind).
+// sr:invariant cache/verify-read-only
 func OpenCache(w io.Writer, root string, write bool, guards []declaration.FileGuard) (*checkcache.Store, error) {
 	opt := checkcache.Options{Dir: root}
 	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").Output(); err == nil && strings.TrimSpace(string(out)) != "" {

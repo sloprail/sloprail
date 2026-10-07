@@ -264,6 +264,7 @@ func TestT026_03_AFileWithNoTrailingNewlineIsReportedAndUnaltered(t *testing.T) 
 // The content half is asserted through a rule that reads the file, because the
 // event carries a path rather than the bytes: the fixture greps the file on disk
 // and records what it found, which is exactly what a real content rule does.
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *testing.T) {
 	e, proj, ledger := project(t)
 	content := filepath.Join(t.TempDir(), "content")

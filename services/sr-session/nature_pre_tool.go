@@ -112,6 +112,7 @@ func dispatchOwnNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Reg
 	// A context's enter populates the map (and persists it); a verdict does not block. But an
 	// enter that could not run is no decline: it denies the event that triggered it, because
 	// the context stays off and what it guards would silently go unjudged.
+	// sr:invariant contexts/unrunnable-enter-refuses-trigger
 	enterRefused := contextRefusalReasons(runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap, nil))
 	withEnter := func(rest string) string {
 		if rest != "" {
@@ -155,6 +156,7 @@ func dispatchOwnNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Reg
 // call changes and every gate that refused one (preRefusals names each refused
 // file in the one deny); the first refusal about the call as a whole (a command, a
 // tool, a trigger that could not be decided) is added in the order it was reached.
+// sr:invariant gates/multi-file-call-refused-whole
 func gateRefusal(results []gateResult, events []event.Event, workspace string) string {
 	refusals := newPreRefusals(events, workspace)
 	sawWhole := false
@@ -162,6 +164,7 @@ func gateRefusal(results []gateResult, events []event.Event, workspace string) s
 		if !r.Refused {
 			continue
 		}
+		// sr:invariant gates/refusal-names-gate-and-plugin
 		reason := fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)
 		if r.Path != "" {
 			// The first refusal of a file is the one the agent hears: a second gate
@@ -241,6 +244,7 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 // far as it exists, is not under the resolved root. With no root there is no
 // tree to be outside of, and the path stays the structure's — refused unless
 // allowed, as before.
+// sr:invariant structure/outside-project-not-governed
 func outsideProject(root, path string) bool {
 	if !filepath.IsAbs(path) {
 		clean := filepath.Clean(path)
@@ -300,6 +304,7 @@ func resolveExistingPrefix(path string) string {
 // one, so it is not subject to the write-allowlist — the structure gate answers
 // "may a write go here", and a delete is not a write. The path is read off the
 // event's `path` field, the flat field filemod declares.
+// sr:invariant structure/deletes-are-not-writes
 func writePath(e event.Event) (string, bool) {
 	switch e.Kind {
 	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate:
@@ -321,6 +326,7 @@ func writePath(e event.Event) (string, bool) {
 // A module returning events ALONGSIDE an error has its events kept and the error
 // reported, the module contract the old path also honours — one path a module
 // could not classify must not drop the events it did produce.
+// sr:invariant events/one-bad-path-keeps-the-rest
 func extractPreEvents(cmd *cobra.Command, p HookPayload, reg *module.Registry, bound []string) []event.Event {
 	in := module.Input{
 		module.InputPhase:   module.PhasePre,

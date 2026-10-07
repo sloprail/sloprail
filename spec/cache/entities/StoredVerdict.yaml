@@ -1,0 +1,24 @@
+doc: "A finished pass or fail of one file-guard over one subject, kept so the same question is not asked twice."
+fields:
+  - name: rule
+    type: string
+    doc: "The rule's name."
+  - name: subject
+    type: string
+    doc: "The subject judged."
+  - name: files_content
+    type: string
+    doc: "The paths and content of the subject's files."
+  - name: subject_fingerprint
+    type: string
+    doc: "The subject's own fingerprint, when its script gave one."
+  - name: schema_version
+    type: string
+    doc: "The key-schema version the verdict was made under."
+  - name: status
+    type: string
+    doc: "How the judgement ended."
+    enum: [pass, fail]
+  - name: reasons
+    type: string
+    doc: "Why it failed."

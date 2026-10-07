@@ -14,6 +14,7 @@ const exitHangs = "#!/bin/sh\ncat >/dev/null\nsleep 30\nexit 0\n"
 
 // T035_28: an exit that sleeps past the timeout refuses the Stop, naming the context and the
 // timeout, and the context stays active.
+// sr:proves contexts/killed-exit-refuses
 func TestT035_28_TimedOutExitRefusesTheStop(t *testing.T) {
 	e := New(t)
 	e.SetCheckTimeout("2s")

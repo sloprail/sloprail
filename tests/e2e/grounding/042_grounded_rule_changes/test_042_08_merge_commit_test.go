@@ -61,6 +61,7 @@ func citedEditThenMerge(t *testing.T, e *harness.Env, proj, sess, ask, edited, m
 // and the refusal never names it. The range is the branch against the upstream it
 // merged (base origin/<main>), the way a caller judges a branch for its target: the
 // upstream commit is the target's, not the branch's.
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestT042_30_ACleanMergeIsNotTheLastChanger(t *testing.T) {
 	e := New(t)
 	proj := project(t, e)

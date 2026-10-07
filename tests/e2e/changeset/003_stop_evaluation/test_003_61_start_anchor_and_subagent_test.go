@@ -11,6 +11,7 @@ import (
 
 // T003_61 (b): a SubagentStop whose identity cannot be resolved does not pass silently: its
 // folder's file-guards run with what is known and refuse what they find.
+// sr:proves subagents/unidentifiable-subagent-still-judged
 func TestT003_61_ASubagentWithoutAnIdentityIsStillJudged(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	// The judging a real agent asks for before it stops runs inside its session (a run without one

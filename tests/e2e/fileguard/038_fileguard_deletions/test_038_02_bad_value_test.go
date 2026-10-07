@@ -12,6 +12,7 @@ import (
 //
 // On the old engine the key was an unknown field, tolerated and ignored, so the
 // guard loaded clean.
+// sr:proves fileguard/deletions-filter
 func TestT038_07_UnknownDeletionsValueIsRefusedAtLoad(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

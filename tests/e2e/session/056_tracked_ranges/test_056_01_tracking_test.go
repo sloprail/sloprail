@@ -64,6 +64,7 @@ func TestT056_09_UnpushedCommitsFromBeforeTheSessionAreInItsRange(t *testing.T) 
 
 // T056_02: the Stop reports failures only. A range nobody has judged passes it, silently: it is
 // CI's to refuse (and the push gate's, if enabled), and the Stop asked no model.
+// sr:proves session/tracked-ranges-verified-from-recorded-results
 func TestT056_02_AnUnjudgedRangePassesTheStopSilently(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-02"
@@ -82,6 +83,7 @@ func TestT056_02_AnUnjudgedRangePassesTheStopSilently(t *testing.T) {
 }
 
 // T056_02 (b): a stored FAIL is still refused at Stop, with its reason.
+// sr:proves session/tracked-ranges-verified-from-recorded-results
 func TestT056_02_AStoredFailStillRefusesTheStop(t *testing.T) {
 	e, proj := failingProject(t)
 	const sess = "s-056-02b"
@@ -117,6 +119,7 @@ func TestT056_02_ThePrePushGateStillRefusesTheUnjudgedRange(t *testing.T) {
 
 // T056_03: a range the agent untracks, with a reason, is not verified; it stays listed with the
 // reason, and automatic tracking does not bring it back while its tip does not move.
+// sr:proves session/untracked-range-returns-when-tip-moves
 func TestT056_03_AnUntrackedRangeIsNotVerifiedAndStaysListed(t *testing.T) {
 	e, proj := failingProject(t)
 	const sess = "s-056-03"
@@ -145,6 +148,7 @@ func TestT056_03_AnUntrackedRangeIsNotVerifiedAndStaysListed(t *testing.T) {
 
 // T056_03 (b): an untrack is no escape: the range is tracked again, automatically, once the
 // branch's tip moves.
+// sr:proves session/untracked-range-returns-when-tip-moves
 func TestT056_03_AnUntrackedRangeIsTrackedAgainWhenItsTipMoves(t *testing.T) {
 	e, proj := project(t)
 	const sess = "s-056-03b"

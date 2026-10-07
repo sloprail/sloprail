@@ -1,0 +1,5 @@
+predicate: >-
+  An `sr mark apply` call that contains a {@ent:cli:Marker} with an invalid {@fld:cli:Marker.kind},
+  {@fld:cli:Marker.fqn} or location fails with a non-zero status and writes none of its markers.
+why: >-
+  A half-applied call leaves some markers in the code and not others, with nothing to say which.

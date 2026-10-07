@@ -37,6 +37,7 @@ func fileNamed(t *testing.T, cs Changeset, path string) File {
 	return File{}
 }
 
+// sr:proves fileguard/net-diff-of-commits
 func TestBuild_SquashesTheRangeIntoOneNetDiffWithEveryCommitListed(t *testing.T) {
 	dir := initRepo(t)
 	base := put(t, dir, "seed", map[string]string{"a.go": "one\n"})
@@ -60,6 +61,7 @@ func TestBuild_SquashesTheRangeIntoOneNetDiffWithEveryCommitListed(t *testing.T)
 	assert.Contains(t, f.Diff, "+three", "one diff for the whole range, not per commit")
 }
 
+// sr:proves fileguard/net-diff-of-commits
 func TestBuild_ReadsCommitsNeverTheWorkingTree(t *testing.T) {
 	dir := initRepo(t)
 	base := put(t, dir, "seed", map[string]string{"a.go": "one\n"})
@@ -115,6 +117,7 @@ func deletionFixture(t *testing.T) (dir, base, head string) {
 	return dir, base, git(t, dir, "rev-parse", "HEAD")
 }
 
+// sr:proves fileguard/deletions-filter
 func TestBuild_DeletionsSkipLeavesDeletedFilesInOthers(t *testing.T) {
 	dir, base, head := deletionFixture(t)
 	for _, mode := range []DeletionMode{"", SkipDeletions} {
@@ -133,6 +136,7 @@ func TestBuild_DeletionsIncludeAdmitsDeletedFiles(t *testing.T) {
 	assert.Empty(t, cs.Others)
 }
 
+// sr:proves fileguard/deletions-filter
 func TestBuild_DeletionsOnlyKeepsJustDeletedFiles(t *testing.T) {
 	dir, base, head := deletionFixture(t)
 	cs, err := Build(dir, rng(base, head), Options{Deletions: OnlyDeletions, Scan: scan, Select: selectAll})
@@ -157,6 +161,7 @@ func TestBuild_MatchSelectsFilesAndTheRestAreOthersByName(t *testing.T) {
 	}
 }
 
+// sr:proves fileguard/nothing-selected-passes
 func TestBuild_MatchNothingIsAnEmptyChangesetNotAnError(t *testing.T) {
 	dir := initRepo(t)
 	base := put(t, dir, "seed", map[string]string{"a.md": "1"})
@@ -178,6 +183,7 @@ func TestBuild_AnEmptyRangeIsAnEmptyChangeset(t *testing.T) {
 
 // a10n #7: a diff that could not be computed read as an empty batch, and the
 // base was promoted over a bad draft.
+// sr:proves fileguard/unreadable-range-refuses
 func TestBuild_AFailedDiffIsAnErrorNeverAnEmptyChangeset(t *testing.T) {
 	dir := initRepo(t)
 	head := put(t, dir, "seed", map[string]string{"a.md": "1"})
@@ -266,6 +272,7 @@ func TestBuild_GitlinkChangesAreListedWithoutContent(t *testing.T) {
 	assert.Contains(t, f.Diff, "Subproject commit")
 }
 
+// sr:proves fileguard/rename-selected-by-either-path
 func TestBuild_ARenameIsSelectedWhenTheOldPathIsGuarded(t *testing.T) {
 	dir := initRepo(t)
 	base := put(t, dir, "seed", map[string]string{"memories/x.md": "a long enough body to be seen as a rename\nsecond line\n"})
@@ -287,6 +294,7 @@ func TestBuild_ARenameIsSelectedWhenTheOldPathIsGuarded(t *testing.T) {
 	assert.Empty(t, other.Files)
 }
 
+// sr:proves fileguard/rename-selected-by-either-path
 func TestBuild_ARenamesOldMarkersAreWhatTheOldPathIsMatchedOn(t *testing.T) {
 	dir := initRepo(t)
 	base := put(t, dir, "seed", map[string]string{"a/x.md": "sr:invariant Order.total\nbody line one\nbody line two\n"})

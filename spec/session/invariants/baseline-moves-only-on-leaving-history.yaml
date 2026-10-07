@@ -1,0 +1,4 @@
+predicate: >-
+  A {@fld:session:Session.baseline} is taken before the agent's first action and changes only when the working tree leaves the history it was recorded in, never because the session's own commits, a new branch off them or a branch rename moved HEAD; in a repository with no commit the {@fld:session:Session.start_commit} is the empty tree, so the first turn's commits are judged.
+why: The agent's own commits drop out of the difference, or a branch switch delivers a whole other branch to one cycle.
+needs: [pretooluse-refusal]

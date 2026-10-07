@@ -1,0 +1,6 @@
+predicate: >-
+  The install script installs the commands of a release into {@fld:install:Engine.install_dir} only
+  when the archive matches the release's published checksum, and installs nothing when it does
+  not or when the release lacks one of the commands.
+why: >-
+  A corrupt or tampered download, or a partial set that cannot resolve its siblings, must not end up on the user's machine.

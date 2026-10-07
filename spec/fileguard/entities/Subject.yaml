@@ -1,0 +1,14 @@
+doc: "One unit of a changeset judged, and given a verdict, on its own."
+fields:
+  - name: id
+    type: string
+    doc: "The subject's name in results."
+    constraint_expr: "unique within a changeset, non-empty"
+  - name: files
+    type: string[]
+    doc: "The selected files the subject is about."
+    constraint_expr: "each is in the changeset's files"
+  - name: fingerprint
+    type: string
+    doc: "What else the verdict depends on beyond the files."
+    constraint_expr: "required when files is empty"

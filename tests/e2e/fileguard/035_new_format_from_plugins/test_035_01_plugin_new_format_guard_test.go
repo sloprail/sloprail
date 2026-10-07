@@ -200,6 +200,7 @@ func TestT035_04_PluginAfterCheckGuardAdmitsFineFile(t *testing.T) {
 // `<plugin>/<nature>/<name>`. The write here is the one T035_01 proved is refused,
 // so this is that test's own control inverted: the same plugin, the same content,
 // one config file different.
+// sr:proves loading/disabled-by-qualified-name
 func TestT035_05_ADisabledPluginNewFormatGuardIsInert(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

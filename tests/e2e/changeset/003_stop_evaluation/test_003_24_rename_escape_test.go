@@ -36,6 +36,7 @@ func movedProject(t *testing.T) (*Env, string) {
 // T003_24: a rename OUT of a guarded path is judged by the rule that guards the old
 // path. `git mv memories/x.md archive/x.md` leaves nothing at memories/, and a rule
 // that only asked about the new path would never see the loss of the file.
+// sr:proves fileguard/rename-selected-by-either-path
 func TestT003_24_ARenameOutOfAGuardedPathIsJudged(t *testing.T) {
 	e, proj := movedProject(t)
 	e.Run(proj, "s-003-24", "archive the memory", Turns("done",

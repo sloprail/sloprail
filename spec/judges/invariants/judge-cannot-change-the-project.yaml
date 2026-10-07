@@ -1,0 +1,5 @@
+predicate: >-
+  The agent a {@ent:judges:Judge} runs can read the project under judgment
+  and cannot change it, and a deny among its tool rules beats any allow.
+why: A judge asked to review a change edits the very files under review.
+needs: [noninteractive-run]

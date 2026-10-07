@@ -1,0 +1,6 @@
+predicate: >-
+  A call that targets another git project is also judged by that project's
+  own {@ent:gates:Gate} and structure, and is refused when that project's
+  rules cannot be read.
+why: An agent could bypass a project's rules by writing into it from a neighbouring project.
+needs: [pretooluse-refusal]

@@ -70,6 +70,7 @@ exit 0
 // and reads the file, writing stdout. Reporting it as a write would mean the
 // vocabulary was matched on the NAME alone rather than on what the arguments
 // say the program will do.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_05_ReadingCommandsProduceNoEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -97,6 +98,7 @@ func TestT021_05_ReadingCommandsProduceNoEvent(t *testing.T) {
 // touch, and this engine does not pretend otherwise — it says nothing rather
 // than guessing. A guess here would be an event naming a file the command may
 // never open, and a rule refusing work on the strength of it.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_06_UnknowableCommandsProduceNoEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -156,6 +158,7 @@ func TestT021_07_AnotherFileDoesNotFireThisRule(t *testing.T) {
 // yields PreFileDelete and `sed -i` yields PreFileUpdate, and getting those two
 // the wrong way round would leave a delete rule guarding an in-place edit and
 // nothing guarding the deletion.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_08_TheSameRuleDoesFireOnRealChanges(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -188,6 +191,7 @@ func TestT021_08_TheSameRuleDoesFireOnRealChanges(t *testing.T) {
 // all. It also fires for a program the engine has never heard of, which is what
 // this asserts: `some-unknown-tool > notes.md` changes notes.md, and the rule
 // holds without the engine knowing anything about the tool.
+// sr:proves events/command-changes-are-file-changes
 func TestT021_09_ARedirectionIsSeenWhateverRanInFrontOfIt(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -1,0 +1,7 @@
+predicate: >-
+  A {@fld:matching:Match.expression} is checked against the fields of the
+  event kinds it reads when its rule loads: a syntax error, a non-boolean
+  result, an unknown or misspelled field (even inside a list predicate), a
+  mismatched comparison, or a field the kind does not declare refuses the rule
+  rather than loading and never firing.
+why: A typo in a match makes a guardrail that silently never fires.

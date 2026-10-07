@@ -1,0 +1,4 @@
+predicate: >-
+  Every check run for a hook is told the {@fld:subagents:SubAgent.agent_id} of the sub-agent the hook fired in, empty but present in the main session.
+why: A rule cannot tell a sub-agent's action from the main session's.
+needs: [hook-common-payload]

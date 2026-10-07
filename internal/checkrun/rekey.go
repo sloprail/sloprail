@@ -42,6 +42,7 @@ const (
 // The rebuild is per (rule, range), so a rule's `subjects:` script runs once per range however
 // many runs and subjects were stored for it. It does not depend on what the old key held, so a
 // future key change reuses it as it is: bump the schema directory and this derives the keys.
+// sr:invariant cache/older-passes-not-rejudged
 func RebuildKeys(root string, guards []declaration.FileGuard) checkcache.Rebuild {
 	return func(old []checkcache.Run) ([]checkcache.Run, checkcache.MigrationStats, error) {
 		return rekeyRuns(root, guards, old)

@@ -44,6 +44,7 @@ func TestT001_08_MatchSeesStatusAndTrailers(t *testing.T) {
 
 // T001_09: a rule reads commits, never the working tree: an uncommitted edit and
 // an untracked file are invisible to it.
+// sr:proves fileguard/net-diff-of-commits
 func TestT001_09_TheDirtyTreeIsInvisible(t *testing.T) {
 	e, proj, floor, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, "docs/a.md", "one\ncommitted\n")

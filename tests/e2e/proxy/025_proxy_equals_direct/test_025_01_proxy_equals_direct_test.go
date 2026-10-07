@@ -31,6 +31,7 @@ import (
 // one of today's services. Should a service ever exit 2 — the code Claude Code
 // treats as a refusal, per the measured table in
 // services/sr-session/session_pre_tool.go — add it here too.
+// sr:proves cli/proxy-forwards-unchanged
 func TestT025_01_ProxyMatchesDirectInvocation(t *testing.T) {
 	e := New(t)
 	dir := t.TempDir()
@@ -110,6 +111,7 @@ func TestT025_01_ProxyMatchesDirectInvocation(t *testing.T) {
 // derives the session's stable identity from the transcript named on the
 // payload. Given no payload it reports that, and the two spellings must report
 // it identically.
+// sr:proves cli/proxy-forwards-unchanged
 func TestT025_02_ProxyForwardsStdin(t *testing.T) {
 	e := New(t)
 	dir := t.TempDir()

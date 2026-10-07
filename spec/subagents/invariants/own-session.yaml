@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:subagents:SubAgent} has its own {@fld:subagents:SubAgent.session}: its record, stored state and baseline are never pooled with its parent's or a sibling's.
+why: A sub-agent's verdicts exempt or refuse its parent, or two agents overwrite each other's state.
+needs: [subagent-transcripts, hook-common-payload]

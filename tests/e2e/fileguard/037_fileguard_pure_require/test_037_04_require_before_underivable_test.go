@@ -36,6 +36,7 @@ import (
 // resolved — that is the actual isUnderivablePreWrite branch this test needs to
 // reach. So the file is created (and committed, out of the cycle diff) BEFORE
 // the underivable Bash write updates it.
+// sr:proves checks/requirements-before-checks
 func TestT037_04_UnderivableWriteWithUnmetRequireNamesTheSkill(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

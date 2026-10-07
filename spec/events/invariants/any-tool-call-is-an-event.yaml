@@ -1,0 +1,5 @@
+predicate: >-
+  Every tool call yields a pre-action {@ent:events:Event} carrying
+  {@fld:events:Event.tool} and {@fld:events:Event.input}, whatever the tool,
+  so a rule can gate a tool no file or command event describes.
+why: A rule cannot gate a web fetch or other tool outside file and shell work.

@@ -56,6 +56,7 @@ func refuses(t *testing.T, rule, command string) bool {
 // things an agent writes — running it through a shell. `sh -c` is how a harness
 // packs a compound command into a single tool call, and a harness that wraps
 // everything in `bash -lc` made EVERY command rule cover nothing at all.
+// sr:proves events/command-nesting-flattened
 func TestGuardrail_RefusesNpmPublishThroughAnInterpreter(t *testing.T) {
 	const rule = `any(invocations, .bin == "npm")`
 
@@ -122,6 +123,7 @@ func TestGuardrail_RefusesNpmPublishThroughAnInterpreter(t *testing.T) {
 // string `npm publish`, character for character identical to the case above, and
 // is still not knowable. Only literalness separates the two, which is why
 // literalness is the test rather than the resolved value.
+// sr:proves events/command-undecidable-not-guessed
 func TestGuardrail_DoesNotGuessAtAnUnreadablePayload(t *testing.T) {
 	const rule = `any(invocations, .bin == "npm")`
 
@@ -160,6 +162,7 @@ func TestGuardrail_DoesNotGuessAtAnUnreadablePayload(t *testing.T) {
 // interpreter with its payload would close the npm gap and open an identical
 // one on `sh` — a rule about shelling out would stop firing on the lines that
 // shell out. Fixing one rule by breaking another is not a fix.
+// sr:proves events/command-nesting-flattened
 func TestGuardrail_RuleAboutTheInterpreterStillFires(t *testing.T) {
 	const shellRule = `any(invocations, .bin == "sh" || .bin == "bash")`
 

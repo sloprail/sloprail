@@ -40,6 +40,7 @@ func notice(t *testing.T, out string) bool {
 
 // T058_01: the gate refuses when a transcript exists (the control), and does nothing, with the
 // notice, when the path is missing (claude --no-session-persistence) or null (codex --ephemeral).
+// sr:proves session/no-transcript-switches-guardrails-off
 func TestT058_01_NoTranscriptSwitchesTheSessionOff(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -74,6 +75,7 @@ func TestT058_01_NoTranscriptSwitchesTheSessionOff(t *testing.T) {
 
 // T058_02: the Stop and SessionStart hooks of such a session do nothing either (at SessionStart a missing
 // file proves nothing: the file of a fresh session is not written yet, so it never fails there).
+// sr:proves session/no-transcript-switches-guardrails-off
 func TestT058_02_StopAndStartDoNothingWithoutATranscript(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

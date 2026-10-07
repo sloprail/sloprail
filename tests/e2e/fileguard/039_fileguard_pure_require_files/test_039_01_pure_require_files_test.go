@@ -44,6 +44,7 @@ func TestT039_01_PureRequireFilesGateValidates(t *testing.T) {
 // satisfied) but the required subpage was never read, so the `files` half is not
 // — and the whole prerequisite must still refuse. This is the property `files`
 // exists for: without it, loading the skill alone would have been enough.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestT039_02_SkillLoadedButFileUnreadStillRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -70,6 +71,7 @@ func TestT039_02_SkillLoadedButFileUnreadStillRefuses(t *testing.T) {
 
 // T039_03: neither skill nor files — refused, naming the skill (not the file):
 // the skill itself takes priority when it was never loaded at all.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestT039_03_NeitherSkillNorFileRefusesNamingTheSkillFirst(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -98,6 +100,7 @@ func TestT039_03_NeitherSkillNorFileRefusesNamingTheSkillFirst(t *testing.T) {
 // The subpage is read with a Read tool_use naming its own resolved path, which is
 // exactly the same evidence a bare `{skill}` already accepts for a skill's own
 // SKILL.md, extended here to the subpage `files` names.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestT039_04_SkillLoadedAndFileReadPermitsWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -123,6 +126,7 @@ func TestT039_04_SkillLoadedAndFileReadPermitsWrite(t *testing.T) {
 // T039_05: the Bash half — the subpage read as a `cat`, not a Read tool_use, still
 // satisfies `files`. Mirrors 037's own Bash coverage of the bare `{skill}` case
 // (require_read_test.go's TestSkillLoadedInTrajectory_CatOnSkillFileCounts).
+// sr:proves checks/skill-requirement-reads-the-record
 func TestT039_05_CatOnTheSubpagePermitsWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

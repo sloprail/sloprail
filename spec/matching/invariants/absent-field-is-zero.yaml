@@ -1,0 +1,6 @@
+predicate: >-
+  A field a {@ent:matching:Match} reads that the event kind declares but the
+  event omits reads as its type's zero value (empty string, false, 0, empty
+  list), so `newContent == ""` evaluates instead of erroring, while a field of
+  the wrong type makes the match error.
+why: A rule on an empty value errors on every occurrence, or a mistyped producer is silently coerced.

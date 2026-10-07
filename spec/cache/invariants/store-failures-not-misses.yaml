@@ -1,0 +1,4 @@
+predicate: >-
+  A results store that is corrupt or written by a newer schema is an error,
+  never read as a missing {@ent:cache:StoredVerdict}.
+why: Verdicts silently vanish or are judged against a store nobody can read.

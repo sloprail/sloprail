@@ -19,6 +19,7 @@ import (
 // The same reason given for several files (`sed -i` over three files, each an
 // update the engine cannot compute) is said once, followed by every file it
 // applies to, rather than repeated per file.
+// sr:invariant gates/multi-file-call-refused-whole
 type preRefusals struct {
 	// multiFile is true when the call changes more than one file. Only then is a
 	// refusal prefixed with the file it is about: a single-file call's refusal

@@ -158,6 +158,7 @@ func TestT041_02_CitedSRFileWriteLands(t *testing.T) {
 
 // T041_03: a quote the user never said resolves to nothing, so the write is
 // refused and does not land.
+// sr:proves citations/quote-resolves-to-exactly-one-entry
 func TestT041_03_UnresolvedQuoteIsRefused(t *testing.T) {
 	e, proj := guardedPre(t)
 

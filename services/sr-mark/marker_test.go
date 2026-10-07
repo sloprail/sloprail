@@ -47,6 +47,7 @@ func TestWriteMarker_KindIsParametrized(t *testing.T) {
 	assertContains(t, p, "// sr:otherkind user.User.role")
 }
 
+// sr:proves cli/mark-apply-is-idempotent
 func TestWriteMarker_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.go")
@@ -189,6 +190,7 @@ func TestApply_KindIsFreeformData(t *testing.T) {
 // (plus the `:`/`_`/`-`/`.` separators a kind namespaces itself with), nothing else. A kind
 // carrying a space or a shell/comment metacharacter would corrupt the written `sr:<kind> <fqn>`
 // line, so it never reaches a file.
+// sr:proves cli/mark-apply-invalid-writes-nothing
 func TestApply_RejectsInvalidKind(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.go")
@@ -216,6 +218,7 @@ func TestApply_RejectsInvalidKind(t *testing.T) {
 // URL admits, but NOT whitespace: the written form is `sr:<kind> <fqn>` on one line and the
 // reader in marker.go is `(\S+)`, so `--a b=...` would write intact and read back truncated to
 // "a". Rejecting it at write time is the whole point — a truncated marker fails silently later.
+// sr:proves cli/mark-apply-invalid-writes-nothing
 func TestApply_RejectsWhitespaceFQN(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.go")

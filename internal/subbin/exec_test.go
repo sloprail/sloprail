@@ -78,6 +78,7 @@ func main() {
 // verdict IS the exit status, so a proxy that returned an error instead of the
 // child's code would turn every distinct status into 1 and silently change what
 // a hook reports. 2 in particular is a refusal.
+// sr:proves cli/proxy-forwards-unchanged
 func TestExecPreservesExitCode(t *testing.T) {
 	dir := t.TempDir()
 	proxy := buildProxy(t, dir)
@@ -101,6 +102,7 @@ func TestExecPreservesExitCode(t *testing.T) {
 
 // TestExecPassesStreamsThrough: stdin reaches the child, and both of the
 // child's streams reach the caller unaltered.
+// sr:proves cli/proxy-forwards-unchanged
 func TestExecPassesStreamsThrough(t *testing.T) {
 	dir := t.TempDir()
 	proxy := buildProxy(t, dir)

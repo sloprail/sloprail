@@ -152,6 +152,7 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 // folder was denied every read of the project it judged), and every file-writing
 // tool is denied there (a deny rule beats any allow), while the only write grant
 // is the answer directory. The engine also tells the judge where the project is.
+// sr:proves judges/judge-cannot-change-the-project
 func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 	e := New(t)
 	proj := guardProject(t, e, "rule-quality")

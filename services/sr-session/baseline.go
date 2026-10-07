@@ -87,6 +87,7 @@ const (
 // treating an unreadable state as a different one — would move the point on a
 // transient git failure, and the whole reason the point holds still is so that
 // unfixed work stays inside the difference.
+// sr:invariant session/baseline-moves-only-on-leaving-history
 func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, error) {
 	pos, err := gitrepo.Head(dir)
 	if err != nil {
@@ -230,6 +231,7 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 // Keeping it out of here keeps this path to two reads of the already-open store
 // on every call after the first — no git process at all — and leaves one place,
 // the one that announces it, where the point ever moves.
+// sr:invariant session/baseline-moves-only-on-leaving-history
 func ensureBaselineRecorded(store sessionstate.Store, dir string) (baselineOutcome, error) {
 	_, hadCommit, err := store.Meta(sessionstate.MetaBaselineCommit)
 	if err != nil {

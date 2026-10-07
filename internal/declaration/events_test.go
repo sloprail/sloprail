@@ -17,6 +17,7 @@ import (
 
 // gateEventKinds is exactly the spec's GateEventKind union: the pre-action
 // file/command/tool events plus Stop, and no Post event.
+// sr:proves loading/event-kinds-by-nature
 func TestEventKinds_GateMatchesSpecUnion(t *testing.T) {
 	want := map[string]bool{
 		"PreFileCreate":    true,
@@ -32,6 +33,7 @@ func TestEventKinds_GateMatchesSpecUnion(t *testing.T) {
 // contextEventKinds is exactly the spec's ContextEventKind union: every
 // pre-action kind a gate has EXCEPT Stop, plus the Post file events and
 // PostTagWrite.
+// sr:proves loading/event-kinds-by-nature
 func TestEventKinds_ContextMatchesSpecUnion(t *testing.T) {
 	want := map[string]bool{
 		"PreFileCreate":    true,
@@ -87,6 +89,7 @@ func TestEventKinds_EveryAdmittedKindIsDeclaredByAModule(t *testing.T) {
 
 // PreFileWrite expands to PreFileCreate + PreFileUpdate on a gate — the spec's
 // GateDeclaration.on doc (~854) and GateTrigger doc (~713).
+// sr:proves loading/event-kinds-by-nature
 func TestExpandGateEvent_PreFileWriteAlias(t *testing.T) {
 	kinds, known := expandGateEvent(AliasPreFileWrite)
 	require.True(t, known)
@@ -121,6 +124,7 @@ func TestExpandContextEvent_PreFileWriteAlias(t *testing.T) {
 
 // PostFileWrite expands to PostFileCreate + PostFileUpdate on a context — the
 // spec's ContextTrigger doc (~688).
+// sr:proves loading/event-kinds-by-nature
 func TestExpandContextEvent_PostFileWriteAlias(t *testing.T) {
 	kinds, known := expandContextEvent(AliasPostFileWrite)
 	require.True(t, known)
@@ -147,6 +151,7 @@ func TestExportedExpandersMatchUnexported(t *testing.T) {
 }
 
 // A context does not enter on Stop even though a gate does.
+// sr:proves loading/event-kinds-by-nature
 func TestExpandContextEvent_StopRejected(t *testing.T) {
 	_, known := expandContextEvent(KindStop)
 	assert.False(t, known)

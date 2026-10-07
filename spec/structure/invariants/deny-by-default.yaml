@@ -1,0 +1,5 @@
+predicate: >-
+  A write to a path that no entry of {@fld:structure:StructureGate.allow}
+  matches is refused, and the refusal names the path.
+why: Files could appear anywhere in the tree despite the project's layout rules.
+needs: [pretooluse-refusal]

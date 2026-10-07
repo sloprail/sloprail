@@ -107,6 +107,7 @@ func sameConversation(t *testing.T, e *harness.Env, proj string, sessions ...str
 // ahead of the original's, as the real ones happened to, so a walk taking "any
 // other file holding the logical parent" goes from one fork to the other and
 // back, and the session runs with no store.
+// sr:proves session/identity-survives-reissued-ids
 func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 	e, proj, ledger := project(t)
 
@@ -230,6 +231,7 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 // transcript_path under the new directory's project folder, where no file
 // exists. Resumed from a subdirectory of the same repository, the session is
 // the same tree, so the same store.
+// sr:proves session/resume-from-another-directory
 func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	e, proj, _ := project(t)
 	sub := proj + "/sub"

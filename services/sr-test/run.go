@@ -56,6 +56,7 @@ func newRunCmd() *cobra.Command {
 					bad++
 				}
 			}
+			// sr:invariant authoring-tools/test-run-passes-only-when-every-case-passes
 			if bad > 0 {
 				return fmt.Errorf("sr-test: %d of %d cases did not pass", bad, len(results))
 			}

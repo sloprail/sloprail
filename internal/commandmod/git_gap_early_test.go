@@ -36,6 +36,7 @@ func TestGitGapEarly_GlobalOptionsTable(t *testing.T) {
 // gitGapEarly is what the git gates match on: a git invocation that lost a word among its global
 // options or where its subcommand stands. A gap after the subcommand, a program that is known and
 // is not git, and the harness's own pre-stop command are never matched.
+// sr:proves events/command-undecidable-not-guessed
 func TestGitGapEarly(t *testing.T) {
 	cases := []struct {
 		line string

@@ -41,6 +41,7 @@ func script(status string) CheckRecord {
 	return CheckRecord{Subject: "changeset", Kind: "check[0]:script:./size.sh", Status: status}
 }
 
+// sr:proves cache/finished-verdicts-reused
 func TestCachedCheck_APassIsReplayedByFingerprint(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("pass", "fp1"))
@@ -53,6 +54,7 @@ func TestCachedCheck_APassIsReplayedByFingerprint(t *testing.T) {
 }
 
 // a fail is terminal: replayed exactly like a pass (a10n's CacheHit reads only passes).
+// sr:proves cache/finished-verdicts-reused
 func TestCachedCheck_AFailIsReplayedToo(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("fail", "fp1"))
@@ -64,6 +66,7 @@ func TestCachedCheck_AFailIsReplayedToo(t *testing.T) {
 	assert.Equal(t, "because fail", c.Metadata["reasoning"])
 }
 
+// sr:proves cache/unfinished-never-stored
 func TestCachedCheck_OnlyPassAndFailAreCached(t *testing.T) {
 	s := openTestStore(t)
 	for i, st := range []string{StatusSkip, StatusError, StatusInterrupted} {
@@ -74,6 +77,7 @@ func TestCachedCheck_OnlyPassAndFailAreCached(t *testing.T) {
 	}
 }
 
+// sr:proves cache/verdict-identity
 func TestCachedCheck_EveryPartOfTheKeyMatters(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("pass", "fp1"))
@@ -102,6 +106,7 @@ func TestCachedCheck_AScriptHasNoFingerprintAndIsNeverCached(t *testing.T) {
 	assert.False(t, found)
 }
 
+// sr:proves cache/finished-verdicts-reused
 func TestCachedCheck_TheMostRecentWins(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("pass", "fp1"))
@@ -469,6 +474,7 @@ func TestCheckResults_ClosedStoreRefusesEveryMethod(t *testing.T) {
 
 // EffectiveRuns is the input of a10n's GetEffectiveBase over evaluations: the runs of one batch
 // over one head are one evaluation (a run per subject), and it passed only when every one did.
+// sr:proves fileguard/passes-not-re-examined
 func TestEffectiveRuns_AnEvaluationPassesOnlyWhenEverySubjectDid(t *testing.T) {
 	s := openTestStore(t)
 	a := func(head, batch string) CheckRun { r := run(head); r.BatchID = batch; r.RuleHash = "h1"; return r }

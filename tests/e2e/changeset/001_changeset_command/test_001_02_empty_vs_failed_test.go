@@ -12,6 +12,7 @@ import (
 // The failing half first: a command with no --base has no range, so it refuses instead of
 // guessing. Given the base, the range — with nothing after the rule's commit — selects
 // no files, which is a success.
+// sr:proves fileguard/nothing-selected-passes
 func TestT001_02_EmptyRangeIsAnAnswerAndNoBaseIsAnError(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -44,6 +45,7 @@ func TestT001_02_EmptyRangeIsAnAnswerAndNoBaseIsAnError(t *testing.T) {
 }
 
 // T001_03: a git error is an error, never an empty changeset.
+// sr:proves fileguard/unreadable-range-refuses
 func TestT001_03_AGitErrorFailsClosed(t *testing.T) {
 	e, proj, floor, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, ".git/HEAD", "garbage\n")

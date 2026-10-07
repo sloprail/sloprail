@@ -258,6 +258,7 @@ var gitFlagOptions = map[string]bool{
 // which may take the next word as its value. Fail closed: only options known to take no value, and
 // the known value-taking ones with their value consumed, let the scan reach the subcommand. A gap
 // after the subcommand (a ref, a path, a message) cannot change which command runs.
+// sr:invariant events/command-undecidable-not-guessed
 func gitGapEarly(inv Invocation) bool {
 	if inv.Bin != "git" {
 		return false

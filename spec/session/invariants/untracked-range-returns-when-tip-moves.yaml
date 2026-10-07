@@ -1,0 +1,3 @@
+predicate: >-
+  A {@ent:session:TrackedRange} with an {@fld:session:TrackedRange.untracked_reason} is left unverified only while its head still points at {@fld:session:TrackedRange.abandoned_tip}; once the head moves it is tracked again.
+why: Untracking becomes a permanent escape for everything committed afterwards.

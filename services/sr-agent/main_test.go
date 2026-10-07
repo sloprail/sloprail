@@ -312,6 +312,7 @@ func TestRunHarness_SuccessIsSilent(t *testing.T) {
 // The falsifier for "the blocklist is actually applied": all four documented
 // session-identity/IPC variables must be gone, together, in one pass — not
 // just whichever one a narrower test happened to check.
+// sr:proves judges/judge-agent-runs-isolated
 func TestSanitizeChildEnv_StripsSessionIdentityAndIPCVars(t *testing.T) {
 	in := []string{
 		"CLAUDE_CODE_SESSION_ID=parent-session-abc",
@@ -329,6 +330,7 @@ func TestSanitizeChildEnv_StripsSessionIdentityAndIPCVars(t *testing.T) {
 // `claude -p` actually needs to behave correctly as a one-shot, non-interactive
 // call — the same pair claudeCodeSpec.detect reads. Stripping session identity
 // must not take these with it.
+// sr:proves judges/judge-agent-runs-isolated
 func TestSanitizeChildEnv_KeepsEntrypointDetectionVars(t *testing.T) {
 	in := []string{
 		"CLAUDECODE=1",
@@ -344,6 +346,7 @@ func TestSanitizeChildEnv_KeepsEntrypointDetectionVars(t *testing.T) {
 // most of all — must survive untouched. This is the blocklist-not-allowlist
 // property: sanitizeChildEnv has no idea what ANTHROPIC_API_KEY is for and
 // must not need to.
+// sr:proves judges/judge-agent-runs-isolated
 func TestSanitizeChildEnv_KeepsUnrelatedVars(t *testing.T) {
 	in := []string{
 		"PATH=/usr/bin:/bin",
@@ -389,6 +392,7 @@ func TestSanitizeChildEnv_NothingToStrip(t *testing.T) {
 // CLAUDE_CODE_SESSION_ID in its own environment, even though the test process
 // running this assertion has it set — runHarness must be the thing that
 // strips it, not merely a helper function nobody calls.
+// sr:proves judges/judge-agent-runs-isolated
 func TestRunHarness_ChildDoesNotInheritSessionIdentity(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")

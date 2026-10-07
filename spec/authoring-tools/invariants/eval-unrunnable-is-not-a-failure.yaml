@@ -1,0 +1,6 @@
+predicate: >-
+  An {@ent:authoring-tools:Eval} whose run could not be completed (the fixture does not load,
+  there is no disk or transcript, the scorer cannot run) has {@fld:authoring-tools:Eval.exit_status}
+  2 and says why, and only a scorer that ran and said no has 1.
+why: >-
+  An eval that never ran must not be read as a guardrail that failed, nor as one that passed.

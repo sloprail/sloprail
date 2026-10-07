@@ -20,6 +20,7 @@ func judge(fp, status string) Check {
 	return Check{Subject: "changeset", Kind: "check[0]:judge:./r.md.j2", Status: status, Fingerprint: fp}
 }
 
+// sr:proves cache/verdict-identity
 func TestKey_EveryPartIsPartOfTheIdentity(t *testing.T) {
 	base := key("f")
 	for name, k := range map[string]Key{
@@ -36,6 +37,7 @@ func TestKey_EveryPartIsPartOfTheIdentity(t *testing.T) {
 
 // A verdict is a fact about its input: the rule's definition is not in the key, so editing the
 // rule's yaml, script or template (a different RuleHash on the run) reads the same verdict.
+// sr:proves cache/verdict-identity
 func TestKey_TheRulesDefinitionIsNotPartOfTheIdentity(t *testing.T) {
 	c := judge("f", "pass")
 	old, edited := run("1", c), run("2", c)
@@ -81,6 +83,7 @@ func TestCache_ACheckIsFoundByItsKeyWithItsRun(t *testing.T) {
 	}
 }
 
+// sr:proves cache/finished-verdicts-reused
 func TestCache_TheLatestRunOfAKeyWins(t *testing.T) {
 	for name, c := range implementations(t) {
 		t.Run(name, func(t *testing.T) {
@@ -93,6 +96,7 @@ func TestCache_TheLatestRunOfAKeyWins(t *testing.T) {
 	}
 }
 
+// sr:proves cache/unfinished-never-stored
 func TestCache_OnlyAFinishedPassOrFailIsFindable(t *testing.T) {
 	for name, c := range implementations(t) {
 		t.Run(name, func(t *testing.T) {
