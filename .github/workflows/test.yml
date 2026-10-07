@@ -148,7 +148,7 @@ jobs:
           case "$harness" in claude|codex|cursor) ;; *) echo "[e2e-only]: harness must be claude, codex or cursor" >&2; exit 1 ;; esac
           [ -n "$pkgs" ] || { echo "[e2e-only]: pkgs= is required" >&2; exit 1; }
           case "$pkgs" in *[!a-zA-Z0-9_./\ -]*) echo "[e2e-only]: pkgs takes package paths only" >&2; exit 1 ;; esac
-          case "$run" in *[!a-zA-Z0-9_|^$.*()/-]*) echo "[e2e-only]: run takes a go test -run regex only" >&2; exit 1 ;; esac
+          if printf '%s' "$run" | grep -q '[^a-zA-Z0-9_|^$.*()/-]'; then echo "[e2e-only]: run takes a go test -run regex only" >&2; exit 1; fi
           { echo "adhoc=true"; echo "harness=$harness"; echo "pkgs=$pkgs"; echo "run=$run"; } >> "$GITHUB_OUTPUT"
 
   unit:
