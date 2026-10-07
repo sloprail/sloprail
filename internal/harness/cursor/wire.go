@@ -95,7 +95,6 @@ func toolOutputText(tool, raw string) string {
 //   - preToolUse: the call's slot (its tool_use_id and Identity), for every tool.
 //   - postToolUse / postToolUseFailure: the call's outcome, by tool_use_id.
 //   - beforeReadFile: the bytes of a file a Read is about to return.
-//   - sessionEnd: the conversation's file is deleted.
 func (Harness) RecordToolResult(in harness.HookInput) error {
 	switch in.Event {
 	case string(PreToolUse):
@@ -126,8 +125,6 @@ func (Harness) RecordToolResult(in harness.HookInput) error {
 			Kind: record.KindContent, Path: filePathOf(in.ToolInput),
 			Generation: in.GenerationID, Output: in.Result.Output,
 		})
-	case string(SessionEnd):
-		return record.RemoveToolResults(in.SessionID)
 	}
 	return nil
 }

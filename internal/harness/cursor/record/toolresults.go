@@ -29,8 +29,10 @@ import (
 //
 // The file is append-only and keyed by conversation_id, which stays the same across
 // /compress and a resumed session (harness-mocks runs/compaction-transcript-continuity,
-// session-resume), so a compaction loses nothing; it is deleted when the session ends
-// (RemoveToolResults) and orphans are swept after a TTL.
+// session-resume), so a compaction or a resume loses nothing. It is never deleted when a
+// session ends (a resumed conversation's earlier outputs stay citable); a file is swept
+// only when its last write and its transcript are both older than the TTL, or the
+// transcript is gone.
 //
 // WHAT PAIRS A RESULT WITH A CALL. The transcript's tool_use blocks carry no id, and
 // Cursor's hooks carry a tool_use_id the transcript does not (measured: no id, no
@@ -239,18 +241,6 @@ func AppendLine(conversationID string, l StoredLine) error {
 	return f.Close()
 }
 
-// RemoveToolResults deletes the conversation's file (its session ended).
-func RemoveToolResults(conversationID string) error {
-	path, err := ToolResultsPath(conversationID)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
 // sweep removes files nobody wrote to for TTL (an orphan: its session never ended
 // cleanly), at most once a day, marked by the directory's own modification time.
 func sweep(dir string) {
@@ -263,9 +253,14 @@ func sweep(dir string) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > TTL {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) <= TTL {
+			continue // written within the TTL: live
 		}
+		if transcriptLive(strings.TrimSuffix(e.Name(), ".jsonl")) {
+			continue // a resumed conversation keeps its earlier outputs citable
+		}
+		_ = os.Remove(filepath.Join(dir, e.Name()))
 	}
 	_ = os.WriteFile(marker, nil, 0o600)
 	now := time.Now()
@@ -483,4 +478,19 @@ func (st *store) text(f *os.File, r ref) (string, bool) {
 		return "", false
 	}
 	return l.Output, true
+}
+
+// transcriptLive reports whether the conversation's transcript still exists and was
+// written within the TTL: its store is then kept even if no tool ran for a long time.
+func transcriptLive(conversationID string) bool {
+	if conversationID == "" || strings.ContainsAny(conversationID, `/\*?[`) {
+		return false
+	}
+	matches, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", "agent-transcripts", conversationID, conversationID+".jsonl"))
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && time.Since(fi.ModTime()) <= TTL {
+			return true
+		}
+	}
+	return false
 }

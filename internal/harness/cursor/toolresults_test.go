@@ -39,8 +39,7 @@ type line struct {
 	Line      int    `json:"sloprail_line"`
 }
 
-// replay feeds a recorded run's hooks, in order, into an isolated store (a sessionEnd,
-// which would delete it, is not replayed) and places its transcript where Cursor writes it.
+// replay feeds a recorded run's hooks, in order, into an isolated store and places its transcript where Cursor writes it.
 func replay(t *testing.T, conversation, payloads, transcript string) string {
 	t.Helper()
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
@@ -371,17 +370,37 @@ func TestAFullStoreRefusesRatherThanEvicting(t *testing.T) {
 	assert.Equal(t, int64(record.MaxStoreBytes), fi.Size(), "nothing was written, nothing evicted")
 }
 
-func TestSessionEndDeletesTheConversationsFile(t *testing.T) {
+func TestSessionEndKeepsTheConversationsFileForAResume(t *testing.T) {
 	f := newFeeder(t)
 	shellPre(f, "u1", "ls")
 	p, _ := record.ToolResultsPath("abc")
-	_, err := os.Stat(p)
-	require.NoError(t, err)
 	f.hook(`{"hook_event_name":"sessionEnd",` + common + `,"reason":"completed"}`)
-	_, err = os.Stat(p)
-	assert.True(t, os.IsNotExist(err))
-	// and ending a session that kept nothing is fine
-	f.hook(`{"hook_event_name":"sessionEnd",` + common + `}`)
+	_, err := os.Stat(p)
+	assert.NoError(t, err, "a resumed conversation keeps its earlier outputs citable")
+}
+
+func TestAnOldStoreWithALiveTranscriptSurvivesTheSweep(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	f := newFeeder(t)
+	shellPre(f, "u1", "ls")
+	p, _ := record.ToolResultsPath("abc")
+	dir := filepath.Dir(p)
+	aged := time.Now().Add(-record.TTL - time.Hour)
+	tdir := filepath.Join(home, ".cursor", "projects", "w", "agent-transcripts", "resumed")
+	require.NoError(t, os.MkdirAll(tdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tdir, "resumed.jsonl"), []byte("{}\n"), 0o644))
+	for _, name := range []string{"resumed", "gone"} {
+		old := filepath.Join(dir, name+".jsonl")
+		require.NoError(t, os.WriteFile(old, []byte("{}\n"), 0o600))
+		require.NoError(t, os.Chtimes(old, aged, aged))
+	}
+	require.NoError(t, os.Chtimes(filepath.Join(dir, ".swept"), aged, aged))
+	shellPre(f, "u2", "ls")
+	_, err := os.Stat(filepath.Join(dir, "resumed.jsonl"))
+	assert.NoError(t, err, "no write for ages, but its transcript is live")
+	_, err = os.Stat(filepath.Join(dir, "gone.jsonl"))
+	assert.True(t, os.IsNotExist(err), "old store, no transcript: swept")
 }
 
 func TestOrphansOlderThanTheTTLAreSweptOnceADay(t *testing.T) {
