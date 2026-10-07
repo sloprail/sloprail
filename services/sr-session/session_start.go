@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
@@ -37,6 +38,11 @@ func newSessionStartCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
+			// A harness that cannot tell a sub-agent's conversation from the session's own by
+			// its record learns the root here (Cursor: sessionStart fires for the root only).
+			if rec, ok := harness.Current().(harness.ToolResultRecorder); ok {
+				_ = rec.RecordToolResult(p)
+			}
 			if skipWithoutTranscript(cmd, p, true) {
 				return nil
 			}

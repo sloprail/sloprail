@@ -39,6 +39,10 @@ type cursorLine struct {
 	// SloprailLine is the number a merged tool_result line is cited under (opener.go);
 	// Cursor's own lines have none.
 	SloprailLine int `json:"sloprail_line"`
+
+	// SloprailSidechain marks a line of a conversation not proven to be the session's own
+	// root (opener.go markSidechain): its user lines are not the user's words.
+	SloprailSidechain bool `json:"sloprail_sidechain"`
 }
 
 // ErrNotARecord: the line is JSON but neither a conversation message nor a
@@ -61,7 +65,7 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 		return harness.Record{}, err
 	}
 	sum := sha256.Sum256(line)
-	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message), Timestamp: l.Timestamp, Line: l.SloprailLine}
+	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message), Timestamp: l.Timestamp, Line: l.SloprailLine, IsSidechain: l.SloprailSidechain}
 	switch {
 	case l.Role == "user":
 		r.Type = string(harness.EntryUser)

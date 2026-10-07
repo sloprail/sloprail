@@ -125,7 +125,8 @@ func (c cursorDriver) RenderScript(s Scenario) (string, error) {
 	b.WriteString(`set -u
 SF="${A10N_MOCK_SESSION_FILE:-/dev/null}"
 cnt() { n=$(grep -c "$1" "$SF" 2>/dev/null); echo "${n:-0}"; }
-PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - ${SLOP_BASE:-0} - 1 ))
+BASE=0; [ "$SF" = "${SLOP_BASE_FILE:-}" ] && BASE=${SLOP_BASE:-0}
+PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - BASE - 1 ))
 `)
 	for i, t := range s.turns {
 		line, err := c.render(t.act)
@@ -186,7 +187,9 @@ func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
 		if p := c.TranscriptPath(e, l.ProjDir, l.SessionID); fileExists(p) {
 			if b, err := os.ReadFile(p); err == nil {
 				n := strings.Count(string(b), `"type":"tool_use"`) + strings.Count(string(b), `"role":"user"`)
-				cmd.Env = append(cmd.Env, fmt.Sprintf("SLOP_BASE=%d", n))
+				// the base is of THIS session's file only: a sub-agent inherits the environment
+				// and runs its own script over a transcript of its own, which starts at zero
+				cmd.Env = append(cmd.Env, fmt.Sprintf("SLOP_BASE=%d", n), "SLOP_BASE_FILE="+p)
 			}
 		}
 	}

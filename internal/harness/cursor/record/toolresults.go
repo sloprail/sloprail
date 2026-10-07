@@ -57,6 +57,13 @@ const (
 	KindPre = "pre"
 	// KindPost is a call's outcome (postToolUse, or postToolUseFailure with IsError).
 	KindPost = "post"
+	// KindRoot marks the conversation as the session's own root: its sessionStart fired.
+	// Cursor fires sessionStart for the session only, never for a sub-agent's conversation,
+	// whose tool hooks nonetheless fire under its own conversation_id (recorded in
+	// harness-mocks runs/subagent-lifecycle-hooks, nested-subagents, foreground-subagent-result,
+	// subagent-transcripts). No payload and no transcript line names a conversation's parent,
+	// so this is the only recorded way to tell the root from a sub-agent.
+	KindRoot = "root"
 	// KindContent is the bytes of a file a Read is about to return (beforeReadFile).
 	KindContent = "content"
 )
@@ -305,6 +312,9 @@ func (s *slot) result() (r ref, isErr bool, ok bool) {
 type store struct {
 	path  string
 	byKey map[string][]*slot
+
+	// root: a KindRoot line was seen, so the conversation is the session's own.
+	root bool
 }
 
 // loadStore streams the file, keeping per line only where it is (not its text: outputs
@@ -368,6 +378,8 @@ func loadStore(conversationID string) *store {
 						s.open = true
 						open = append(open, s)
 					}
+				case KindRoot:
+					st.root = true
 				case KindPost:
 					s := byID[l.ToolUseID]
 					if s == nil || s.postRecorded || toolClass(l.Tool) != toolClass(s.tool) {

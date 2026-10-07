@@ -22,6 +22,12 @@ const (
 	CapForkResumeCompact = "fork-resume-compact"
 	CapBackgroundTasks   = "background-tasks"
 	CapTranscript        = "transcript"
+
+	// CapSubagentParentLink: a sub-agent's conversation names the session that dispatched
+	// it, so what the sub-agent can cite (the user's words, a sibling's tool output) and
+	// what the root can cite of it are resolvable. Cursor records no parent anywhere (hook
+	// payloads, transcripts and layout hold none: harness-mocks runs/subagent-transcripts).
+	CapSubagentParentLink = "subagent-parent-link"
 )
 
 // SessionMode is how a launch relates to the session id it names.

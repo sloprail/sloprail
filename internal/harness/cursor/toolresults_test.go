@@ -440,3 +440,43 @@ func TestParseHookPostToolUseCarriesTheOutput(t *testing.T) {
 	assert.Nil(t, inputOf(t, ins, "preToolUse", nil).Result, "a pre-tool hook has no result")
 	assert.NotEmpty(t, inputOf(t, ins, "preToolUse", nil).ToolUseID)
 }
+
+// Recorded (harness-mocks runs/subagent-transcripts): sessionStart fires for the session's
+// own conversation only; the sub-agent's conversation gets tool hooks under its own id and
+// nothing in a payload or a transcript names its parent. So a conversation without a
+// sessionStart is not proven to be the session's own, and its "user" lines (the dispatch
+// prompt) are not the user's words.
+func TestSubagentConversationsUserLinesAreSidechain(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	h := New().(harness.ToolResultRecorder)
+	f, err := os.Open("testdata/subagent-transcripts.payloads.jsonl")
+	require.NoError(t, err)
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 1<<16), 1<<20)
+	for sc.Scan() {
+		in := New().ParseHook(strings.NewReader(sc.Text()))
+		if in.Event == string(SessionEnd) {
+			continue
+		}
+		require.NoError(t, h.RecordToolResult(in))
+	}
+	read := func(conv, file string) harness.Record {
+		body, err := os.ReadFile("testdata/" + file)
+		require.NoError(t, err)
+		path := placeTranscript(t, conv, string(body))
+		rc, err := New().Transcripts().(harness.RecordOpener).OpenRecord(path)
+		require.NoError(t, err)
+		defer rc.Close()
+		br := bufio.NewReader(rc)
+		b, err := br.ReadBytes('\n')
+		require.NoError(t, err)
+		r, err := New().Transcripts().ParseRecord(b[:len(b)-1])
+		require.NoError(t, err)
+		require.Equal(t, string(harness.EntryUser), r.Type)
+		return r
+	}
+	assert.False(t, read("2d25ba87-93e7-4b09-a106-a597b00777e4", "subagent-transcripts.root.jsonl").IsSidechain, "the root's user line is the user's")
+	assert.True(t, read("3ed4fb85-351b-40d8-ab3b-f564a04f219a", "subagent-transcripts.sub.jsonl").IsSidechain, "the sub-agent's is its dispatch prompt")
+	assert.True(t, read("00000000-0000-0000-0000-00000000dead", "subagent-transcripts.root.jsonl").IsSidechain, "a conversation with no sessionStart is not proven the root: fail closed")
+}
