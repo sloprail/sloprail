@@ -1374,6 +1374,16 @@ func guardKey(payload changeset.Payload) string {
 	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint)
 }
 
+// failedByJudge says a judge check is among the failed steps of a stored verdict.
+func failedByJudge(steps []stepRow) bool {
+	for _, st := range steps {
+		if st.Status == checkstore.StatusFail && strings.Contains(st.Kind, ":judge:") {
+			return true
+		}
+	}
+	return false
+}
+
 // stepRow is one step of a guard's stored verdict.
 type stepRow struct {
 	Subject string `json:"subject"`
@@ -1434,10 +1444,11 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if err != nil {
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
-	if !ev.verify && have && cached.Status == checkstore.StatusFail {
-		// Only a pass is a hit. A stored refusal is kept so a reader (verify) can say why it is red,
-		// but the content is judged again by every run: what refused it may be gone (a citation
-		// was added, a quote now resolves), and none of that is in the key.
+	if !ev.verify && have && cached.Status == checkstore.StatusFail && !failedByJudge(storedSteps(cached.Metadata)) {
+		// A refusal by a judge is replayed: asking again would pay for the same judge. One by a
+		// citation requirement or a script is cheap and may have read the citations, which are not
+		// in the key (one was added, a quote now resolves): those steps run again, and the judge,
+		// which never ran for it, only if they pass.
 		have = false
 	}
 	reused := ""
