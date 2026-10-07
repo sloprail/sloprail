@@ -193,7 +193,8 @@ jobs:
     # a disjoint slice of ./tests/... (still -p 1, so disk stays low) in parallel.
     # The shard names below MUST match the Makefile's test-e2e-shard cases, whose
     # union is exactly `go list ./tests/...` — a slice named here but not there
-    # (or vice versa) drops packages from CI silently.
+    # (or vice versa) drops packages from CI silently. The examples* shards stay
+    # listed but skip their steps: examples move to sloprail-community, which runs them.
     strategy:
       fail-fast: false
       matrix:
@@ -203,9 +204,9 @@ jobs:
     # shard genuinely hung rather than the runner being slow.
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && !startsWith(matrix.shard, 'examples')
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && !startsWith(matrix.shard, 'examples')
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -215,7 +216,7 @@ jobs:
       # tests/e2e/harness/{MOCK,CODEX_MOCK,CURSOR_MOCK}_VERSION — the same
       # `make mock` a contributor runs, built from source (harness-mocks is
       # public), so CI and local agree and a mock bump is a reviewed change.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && !startsWith(matrix.shard, 'examples')
         name: install the mocks
         run: make mock
 
@@ -223,7 +224,7 @@ jobs:
       # package reports ok — 56 packages "passing" in 38 seconds against ~30
       # minutes locally. A green run that tested nothing is worse than a red one
       # because it is trusted, so the absence is made loud rather than silent.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && !startsWith(matrix.shard, 'examples')
         name: e2e
         run: |
           test -x .bin/a10n-claude-mock || {
@@ -273,7 +274,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        codex-shard: [session, session2, pre_tool, examples, examples2, examples3, examples4, examples5, examples6, rest, rest2, rest3, rest4]
+        codex-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
       - if: needs.changes.outputs.code-changed == 'true'
