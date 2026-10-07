@@ -8,8 +8,10 @@ import (
 )
 
 // A judge that reads the project the way a real one does: it passes only when the
-// project it was given (sr-agent's --add-dir, which reaches the harness as an argument)
-// holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
+// project it was given holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
+// The tree is the one the prompt names ("The project being judged is at <dir>."), which is how
+// every harness's judge learns it: Claude is also handed it as an --add-dir, but a Codex judge
+// reads the project by absolute path and is handed no such argument.
 const requiredFileJudge = `#!/bin/sh
 out=""
 ok=no
@@ -17,9 +19,10 @@ for arg in "$@"; do
   case "$arg" in
     *"Write your answer to the file "*)
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      tree="$(printf '%s' "$arg" | sed -n 's/.*The project being judged is at \(.*\)\. Paths in the material.*/\1/p' | head -1)"
+      if [ -n "$tree" ] && [ -f "$tree/REQUIRED.md" ]; then ok=yes; fi
       ;;
   esac
-  if [ -f "$arg/REQUIRED.md" ]; then ok=yes; fi
 done
 [ -n "$out" ] || exit 0
 if [ "$ok" = yes ]; then
@@ -33,14 +36,14 @@ exit 0
 func requiredProject(t *testing.T) (*Env, string, string) {
 	t.Helper()
 	e, proj := judgeProject(t, verdictPass)
-	e.InstallShim("claude", requiredFileJudge)
+	e.InstallJudgeScript(requiredFileJudge)
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 
 // judgeInTree is the turn an agent takes to have the judges asked about the branch a worktree
 // holds: `sr-checks run` from that worktree, over the branch's own commits.
 func judgeInTree(wt, base string) harness.Turn {
-	return Bash("j-"+filepath.Base(base), "cd "+wt+" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
+	return Bash("j-"+filepath.Base(base), "cd "+wt+" && "+harness.ShellEnv()+"sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
 }
 
 // commitOnX: from the coordinator's own checkout, make a commit on a new branch, then go
