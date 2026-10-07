@@ -46,8 +46,23 @@ func TestT002_07_AnIsolatedSubagentOwnsItsTreeAndIsGated(t *testing.T) {
 	))
 
 	res := e.Run(proj, "s-002-07", "delegate into isolation", Turns("root done",
-		Dispatch("d1", "write the doc", sub, "worktree"),
+		Dispatch("d1", "write the doc", sub, harness.OwnTree(t)),
 	))
+
+	// A harness with no worktree for a sub-agent runs it in the root's tree, so the
+	// outcome is T002_06's: not gated itself, its work refused at the root's Stop.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e.NoSubagentStopBlock(proj, "s-002-07") {
+			t.Fatalf("a sub-agent without a tree of its own was refused for uncommitted work:\n%s", res.Output)
+		}
+		if !strings.Contains(e.Git(proj, "status", "--porcelain"), "docs/isolated.md") {
+			t.Fatal("the sub-agent's file is not in the shared tree, so this proved nothing")
+		}
+		if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-07", "Stop")); len(errs) == 0 {
+			t.Fatal("the root, which owns the only tree, was not refused for the sub-agent's uncommitted work")
+		}
+		return
+	}
 
 	// The refusal reaches the sub-agent (the mock prints it as it re-runs it), and
 	// names the file in the tree it was bound to.

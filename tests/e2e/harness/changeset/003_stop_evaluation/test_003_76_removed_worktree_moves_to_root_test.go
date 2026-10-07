@@ -20,8 +20,17 @@ func TestT003_76_ARemovedWorktreeWhoseBranchExistsMovesItsRangeToTheRoot(t *test
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	wt, _ := subagentFolder(t, e, proj, sess)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	hasWT := harness.HasCap(t, harness.CapWorktrees)
+	var wt string
+	if hasWT {
+		wt, _ = subagentFolder(t, e, proj, sess)
+	} else {
+		// No worktree of its own: the range was the root's from the start, so a removal report
+		// for a path the session never registered moves nothing and the root still refuses sub-a.
+		noSubagentFolder(t, e, proj, sess)
+		wt = filepath.Join(t.TempDir(), "never-registered")
+	}
 
 	root, err := filepath.EvalSymlinks(proj)
 	if err != nil {
@@ -44,11 +53,15 @@ func TestT003_76_ARemovedWorktreeWhoseBranchExistsMovesItsRangeToTheRoot(t *test
 		}
 		return out
 	}
-	if got := tracked()["sub-a"]; got == "" || got == root {
+	if got := tracked()["sub-a"]; hasWT && (got == "" || got == root) {
 		t.Fatalf("premise: sub-a is tracked in the sub-agent's worktree, got folder %q", got)
+	} else if !hasWT && got != root {
+		t.Fatalf("premise: sub-a, made in the root's tree, is tracked in the root's folder %s, got %q", root, got)
 	}
 
-	e.Git(proj, "worktree", "remove", "--force", wt)
+	if hasWT {
+		e.Git(proj, "worktree", "remove", "--force", wt)
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"session_id": sess, "transcript_path": e.TranscriptPath(proj, sess), "cwd": proj,
 		"hook_event_name": "WorktreeRemove", "worktree_path": wt,
