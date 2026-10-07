@@ -43,6 +43,10 @@ type cursorLine struct {
 	// SloprailSidechain marks a line of a conversation not proven to be the session's own
 	// root (opener.go markSidechain): its user lines are not the user's words.
 	SloprailSidechain bool `json:"sloprail_sidechain"`
+
+	// SloprailMeta marks a user line that is a followup_message sloprail's own stop hook
+	// emitted (opener.go markInjected): the harness writing, not the person (isMeta).
+	SloprailMeta bool `json:"sloprail_meta"`
 }
 
 // ErrNotARecord: the line is JSON but neither a conversation message nor a
@@ -65,7 +69,7 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 		return harness.Record{}, err
 	}
 	sum := sha256.Sum256(line)
-	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: withRole(canonicalMessage(l.Message), l.Role), Timestamp: l.Timestamp, Line: l.SloprailLine, IsSidechain: l.SloprailSidechain}
+	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: withRole(canonicalMessage(l.Message), l.Role), Timestamp: l.Timestamp, Line: l.SloprailLine, IsSidechain: l.SloprailSidechain, IsMeta: l.SloprailMeta}
 	switch {
 	case l.Role == "user":
 		r.Type = string(harness.EntryUser)
