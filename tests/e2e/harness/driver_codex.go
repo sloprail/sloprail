@@ -477,6 +477,26 @@ func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string
 	e.t.Skipf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
 }
 
+// OriginRecord is where a rollout begins: the thread id its session_meta opens on. A fork
+// is a rollout of its own (its own id), and a sub-agent's names the root only in session_id.
+func (codexDriver) OriginRecord(record string) string {
+	first, _, _ := strings.Cut(record, "\n")
+	var rec struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID        string `json:"id"`
+			SessionID string `json:"session_id"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(first), &rec) != nil || rec.Type != "session_meta" {
+		return ""
+	}
+	if rec.Payload.ID != "" {
+		return rec.Payload.ID
+	}
+	return rec.Payload.SessionID
+}
+
 var codexRefusal = regexp.MustCompile(`(?s)Command blocked by PreToolUse hook: (.*?)\. Command: `)
 
 // WrittenBytes: an apply_patch "Add File" is a list of "+<line>" rows, so a file it
