@@ -116,7 +116,7 @@ plugin_version() {
 run_auto_install() {
   tag="${1:-v$(plugin_version)}"
   install_log="$(mktemp)"
-  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" </dev/null >"$install_log" 2>&1; then
+  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" --binaries-only </dev/null >"$install_log" 2>&1; then
     sr_session_bin="$(find_sr_session)" || sr_session_bin=""
   fi
   if [ -n "$sr_session_bin" ]; then
