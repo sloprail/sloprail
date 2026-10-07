@@ -1,4 +1,0 @@
-# Written by the agent when it commits to a target. The target itself lives in
-# verify.sh, not here — one place for the condition.
-enabled: true
-script: verify.sh

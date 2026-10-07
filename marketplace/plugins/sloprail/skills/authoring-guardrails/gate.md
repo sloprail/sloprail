@@ -122,8 +122,8 @@ checks:
   script; the judge belongs to the file-guard of the same name, which judges the
   committed file (`sr-checks run`). The exception is a gate whose judge is not about a file
   write: a `Stop` gate or a `PreCommandInvoke` gate may keep its judge
-  (`examples/action-proof` `screenshot-proves-fields`, `examples/no-unasked-commit`
-  `require-live-ask-for-commit`).
+  ([`action-proof`](https://github.com/sloprail/sloprail-community/tree/main/examples/action-proof) `screenshot-proves-fields`, [`no-unasked-commit`](https://github.com/sloprail/sloprail-community/tree/main/examples/no-unasked-commit)
+  `require-live-ask-for-commit`, both in sloprail-community).
 - **Grounding.** `require: [{citation: …}]` works on a `PreFileWrite` or
   `PreFileDelete` gate exactly as on any gate ([grounding.md](grounding.md)); when
   an `sr-file` line could not be resolved, the refusal quotes what `sr-file` said.

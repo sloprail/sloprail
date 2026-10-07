@@ -337,10 +337,11 @@ REST_PKGS := \
 # expanded, so CI runs it as a matrix: several jobs, each -p 1 (disk stays low),
 # each a disjoint slice of ./tests/... . SHARD names the slice; the union of the
 # slices below is exactly `go list ./tests/...`, so nothing is dropped.
-# examples..examples6 split ./tests/e2e/harness/examples/... by scripts/e2e-shard.sh,
-# which DISCOVERS the packages with `go list` (and the tests of the few packages
-# it slices with -run), so nothing new is ever dropped, and balances them by
-# greedy bin packing. Keep this list and the workflow matrix in lockstep; the
+# rest..rest4 split REST_PKGS by scripts/e2e-shard.sh, which DISCOVERS the
+# packages with `go list` (and the tests of the few packages it slices with
+# -run), so nothing new is ever dropped, and balances them by greedy bin packing.
+# The examples' e2e live in sloprail-community and run in its CI, inside a
+# checkout of sloprail at the version it pins. Keep this list and the workflow matrix in lockstep; the
 # guard in tests/repo fails when a package or test is in no shard, or when they
 # differ.
 #
@@ -354,18 +355,12 @@ test-e2e-shard: mock
 	              ./tests/e2e/harness/session/029_trajectory_cite/... \
 	              ./tests/e2e/harness/session/031_trajectory_normalize/... ;; \
 	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/harness/pre_tool/... ;; \
-	  examples) scripts/e2e-shard.sh 1 6 run ./tests/e2e/harness/examples/... ;; \
-	  examples2) scripts/e2e-shard.sh 2 6 run ./tests/e2e/harness/examples/... ;; \
-	  examples3) scripts/e2e-shard.sh 3 6 run ./tests/e2e/harness/examples/... ;; \
-	  examples4) scripts/e2e-shard.sh 4 6 run ./tests/e2e/harness/examples/... ;; \
-	  examples5) scripts/e2e-shard.sh 5 6 run ./tests/e2e/harness/examples/... ;; \
-	  examples6) scripts/e2e-shard.sh 6 6 run ./tests/e2e/harness/examples/... ;; \
 	  rest)     scripts/e2e-shard.sh 1 4 run $(REST_PKGS) ;; \
 	  rest2)    scripts/e2e-shard.sh 2 4 run $(REST_PKGS) ;; \
 	  rest3)    scripts/e2e-shard.sh 3 4 run $(REST_PKGS) ;; \
 	  rest4)    scripts/e2e-shard.sh 4 4 run $(REST_PKGS) ;; \
 	  plugins)  $(MAKE) test-plugins-e2e ;; \
-	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|examples2|examples3|examples4|examples5|examples6|rest|rest2|rest3|rest4|plugins)" >&2; exit 2 ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|rest|rest2|rest3|rest4|plugins)" >&2; exit 2 ;; \
 	esac
 
 # Plugin-local e2e modules. Each marketplace plugin that ships its own tests/ Go

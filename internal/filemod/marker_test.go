@@ -432,7 +432,7 @@ func TestScan_QuotedFQNMayContainTheCommentLeaders(t *testing.T) {
 // --- frontmatter -------------------------------------------------------------
 
 func TestScan_MarkerInMarkdownFrontmatter(t *testing.T) {
-	// The concrete case from examples/no-unasked-deletion. A markdown file
+	// The concrete case from sloprail-community's examples/no-unasked-deletion. A markdown file
 	// carries the marker as a YAML comment between the `---` fences. A YAML
 	// comment parses to nothing (comment-only frontmatter is a valid, EMPTY
 	// document), so the marker MUST be read out of the raw text — which the

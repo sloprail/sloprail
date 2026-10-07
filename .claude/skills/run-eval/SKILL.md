@@ -14,9 +14,11 @@ runs the second proof.
 
 `sr-eval` is fixture-directory-agnostic — `--fixture <dir>` works against any
 directory shaped right, not only ones under `examples/`. It happens to be
-used almost entirely for `examples/*/eval/<case>/` fixtures today (see
-[document-example](../document-example/SKILL.md) for how a fixture relates to
-its shipped example), which is the one `sr-eval`-specific feature
+used almost entirely for `examples/*/eval/<case>/` fixtures today. Those
+examples live in [sloprail-community](https://github.com/sloprail/sloprail-community)
+(every `examples/` path in this skill is relative to that repo), whose
+[document-example](https://github.com/sloprail/sloprail-community/blob/main/.claude/skills/document-example/SKILL.md)
+skill covers how a fixture relates to its shipped example. It is the one `sr-eval`-specific feature
 (`exampleSloprail`) that assumes that layout — everything else here applies
 to a fixture anywhere.
 

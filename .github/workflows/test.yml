@@ -232,7 +232,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [session, session2, pre_tool, examples, examples2, examples3, examples4, examples5, examples6, rest, rest2, rest3, rest4, plugins]
+        shard: [session, session2, pre_tool, rest, rest2, rest3, rest4, plugins]
     # 45, against the suite's own 30m: the gap absorbs the checkout, the module
     # download and the per-package binary builds, so a job killed here means the
     # shard genuinely hung rather than the runner being slow.

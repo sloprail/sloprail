@@ -4,7 +4,7 @@
 // self-contained unit: its guardrails and the e2e that prove them ship together.
 //
 // It imports the SHARED harness (github.com/sloprail/sloprail/tests/e2e/harness) —
-// the same one tests/e2e/harness/session/* and tests/e2e/harness/examples/* drive the a10n-claude-
+// the same one tests/e2e/harness/session/* drives the a10n-claude-
 // mock through — via a `replace` pointing at the main repo root. The path is
 // computed from this tests/ directory up to the repo root that holds the main
 // go.mod: marketplace/plugins/sloprail-tasks/tests -> ../../../.. is the root.
