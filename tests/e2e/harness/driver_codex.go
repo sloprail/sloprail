@@ -146,6 +146,10 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 		if a.Background {
 			return nil, c.unsupported(a, "a background command's receipt names no task")
 		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && path != "" && len(a.Input) == 1 {
+			// Codex reads a file through its shell: the Read of a whole file is `cat` of it.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + shQuote(path)}))}}, nil
+		}
 		return nil, c.unsupported(a, "Codex has only the shell and apply_patch: no "+a.Tool+" tool")
 	case ActCompact:
 		if a.UnwrittenParent {
