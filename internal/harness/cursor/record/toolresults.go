@@ -70,6 +70,12 @@ const (
 	// writes it into the transcript as a user record, which is then harness-injected,
 	// not the person's words.
 	KindFollowup = "followup"
+	// KindCompact marks that the conversation was compacted (preCompact fired). Cursor
+	// then writes the prompt into the transcript again, mid-turn, as a user record
+	// byte-identical to the person's (recorded: harness-mocks cursor-mock runs/
+	// compaction-transcript-continuity, where a <dynamic_tools> user record is also
+	// written there): the harness writing, not the person.
+	KindCompact = "compact"
 )
 
 // StoredLine is one line of the file.
@@ -323,6 +329,9 @@ type store struct {
 
 	// followups: the texts sloprail's stop hook emitted as followup_message.
 	followups map[string]bool
+
+	// compacted: a KindCompact line was seen.
+	compacted bool
 }
 
 // loadStore streams the file, keeping per line only where it is (not its text: outputs
@@ -388,6 +397,8 @@ func loadStore(conversationID string) *store {
 					}
 				case KindRoot:
 					st.root = true
+				case KindCompact:
+					st.compacted = true
 				case KindFollowup:
 					if st.followups == nil {
 						st.followups = map[string]bool{}

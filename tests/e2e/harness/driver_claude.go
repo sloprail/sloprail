@@ -24,7 +24,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart}
+		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapSessionArchive}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -307,6 +307,9 @@ func (claudeDriver) AgentShim(e *Env, projDir string) (string, string) {
 	return "claude", script
 }
 
+// LargeJudgeModelArgs: size-lg is Claude Code's `opus` alias.
+func (claudeDriver) LargeJudgeModelArgs() (string, string) { return "--model", "opus" }
+
 // JudgeShim is the stand-in for the `claude` the judge (sr-agent) runs by name.
 func (claudeDriver) JudgeShim(s JudgeShim) (string, string) {
 	verdict, argvFile, promptPath, logFile, delaySeconds := s.Verdict, s.ArgvFile, s.PromptFile, s.LogFile, s.DelaySeconds
@@ -394,6 +397,15 @@ JUDGE_VERDICT_EOF
 fi
 exit 0
 `
+	case JudgeShimScript:
+		script = s.Body
+	case JudgeShimUsageLimit:
+		// claude reports a usage limit on stdout, status 1.
+		script = `#!/bin/sh
+echo call >>"$LEDGER"
+echo "Claude AI usage limit reached|1760000000"
+exit 1
+`
 	case JudgeShimSlow:
 		script = `#!/bin/sh
 out=""
@@ -422,6 +434,18 @@ exit 0
 }
 
 // TranscriptPath is where claude keeps a session's transcript: <config>/projects/<encoded project dir>/<session>.jsonl.
+// RecordLayout: the mock's preamble lines, then the SessionStart attachments, then the prompt.
+func (claudeDriver) RecordLayout() (int, int) { return MockPreambleLines, SessionStartAttachments }
+
+// NextPromptLine: the resume's SessionStart attachments are written first, the prompt after.
+func (claudeDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + SessionStartAttachments + 1
+}
+
+func (claudeDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	e.seedTranscriptFile(projDir, sessionID, `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}`)
+}
+
 func (claudeDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
@@ -779,3 +803,9 @@ func (claudeDriver) ConfigEnv(e *Env) []string { return []string{"CLAUDE_CONFIG_
 
 // Observe: Claude sessions are named by the caller (--session-id), so there is nothing to learn.
 func (claudeDriver) Observe(*Env, Launch, string) {}
+
+// JudgeHooksOff: the judge's claude is launched with disableAllHooks in its settings, the only
+// switch that stops the project's and plugins' hooks (empty hooks/enabledPlugins objects merge).
+func (claudeDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, `"disableAllHooks":true`)
+}

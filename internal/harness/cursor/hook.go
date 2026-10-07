@@ -34,6 +34,7 @@ const (
 	SubagentStart        Event = "subagentStart"
 	SubagentStop         Event = "subagentStop"
 	Stop                 Event = "stop"
+	PreCompact           Event = "preCompact"
 )
 
 // HookPoint is the sr-session subcommand an event is handled by ("start",
@@ -55,6 +56,8 @@ func (e Event) HookPoint() string {
 		return "subagent-start"
 	case SubagentStop:
 		return "subagent-stop"
+	case PreCompact:
+		return "post-tool"
 	}
 	return ""
 }

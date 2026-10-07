@@ -484,6 +484,30 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
+// InstallJudgeScript puts a test's own stand-in for the judge's agent binary (body, a
+// script) where the judge resolves it: under the name the current harness's binary has.
+func (e *Env) InstallJudgeScript(body string) {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimScript, Body: body})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge shim: %v", err)
+	}
+}
+
+// InstallJudgeUsageLimit installs a judge that appends a line to $LEDGER per call and dies
+// the way the current harness does at a usage limit.
+func (e *Env) InstallJudgeUsageLimit() {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimUsageLimit})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write usage-limit judge shim: %v", err)
+	}
+}
+
+// JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
+// judge's agent launched so that the project's and plugins' hooks do not run in it.
+func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
@@ -515,6 +539,10 @@ func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
 		e.t.Fatalf("harness: write recording judge claude shim: %v", err)
 	}
 }
+
+// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+// harness's argv with, in the recording of InstallJudgeClaudeRecordingArgv.
+func (e *Env) LargeJudgeModelArgs() (flag, value string) { return e.driver.LargeJudgeModelArgs() }
 
 // InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
 // the judge was asked, so a test can assert what the template actually rendered.
@@ -1865,7 +1893,19 @@ const SessionStartAttachments = 2
 // citation's own output — read it from the file the mock wrote instead; this is the
 // up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	return MockPreambleLines + SessionStartAttachments + 1
+	pre, start := e.driver.RecordLayout()
+	return pre + start + 1
+}
+
+// NextPromptLine is the 1-based physical line the prompt of the next Run of sessionID
+// (a resume) will sit on, given the transcript as it stands.
+func (e *Env) NextPromptLine(proj, sessionID string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(e.TranscriptPath(proj, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: read transcript for the next prompt's line: %v", err)
+	}
+	return e.driver.NextPromptLine(string(body))
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation

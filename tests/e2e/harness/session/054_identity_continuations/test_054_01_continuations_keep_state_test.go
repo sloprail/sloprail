@@ -232,7 +232,15 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	})
 
 	if _, err := os.Stat(e.TranscriptPath(sub, "moved-04")); err == nil {
-		t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+		if harness.HasCap(t, harness.CapResumeFromOtherDirectory) {
+			t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+		}
+		// This harness names a conversation by an id of its own, whichever directory a turn
+		// runs in: resumed from below, the session still resolves to the one it began as.
+		if got, want := e.SessionIdentity(sub, "moved-04"), e.SessionIdentity(proj, "moved-04"); got != want || want == "" {
+			t.Errorf("resumed from below, the session resolves to %q, want %q", got, want)
+		}
+		return
 	}
 	// Asked with the path the harness reports from below — which does not
 	// exist — the engine finds the record where the session began.
