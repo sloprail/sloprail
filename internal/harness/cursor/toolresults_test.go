@@ -128,9 +128,11 @@ func TestFileToolResultsMatchByFileEvenThoughAnEditIsAWriteInTheHook(t *testing.
 			}
 		}
 	}
-	// Write and the StrReplace (the hook saw a Write) have results; the Read has none: the hook
-	// that reports a Read's output ran for it too, but file-tools.payloads.jsonl keeps only
-	// the Write/edit post payloads, and an unanswered call just has no result line.
+	// The Write and the StrReplace (the hook saw a Write) have their outcomes. The Read's
+	// result is the file's content from beforeReadFile, which fired twice in this run (the
+	// edit tool reads the file too) and is one result.
+	assert.Contains(t, strings.Join(results, "\n"), "cursor-L3-0 hi\n")
+	assert.Len(t, results, 3)
 	assert.Contains(t, strings.Join(results, "\n"), `cursor-L2-1 {"file_path":"<RUN>/note.txt","success":true}`)
 	assert.Contains(t, strings.Join(results, "\n"), `cursor-L4-0 {"file_path":"<RUN>/note.txt","success":true}`, "the StrReplace is the canonical Edit, answered by the hook's Write")
 }

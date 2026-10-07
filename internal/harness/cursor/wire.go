@@ -58,6 +58,13 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 		in.Result = &harness.ToolResult{Output: toolOutputText(p.ToolName, p.ToolOutput)}
 	case PostToolUseFailure:
 		in.Result = &harness.ToolResult{Output: p.ErrorMessage, IsError: true}
+	case BeforeReadFile:
+		// A Read's postToolUse output is only {file_path, content_length}; the bytes are in
+		// this hook. It is reported as the Read's result and RecordToolResult tells it apart
+		// by the event.
+		in.ToolName = harness.ToolRead
+		in.ToolInput, _ = json.Marshal(map[string]string{"file_path": p.FilePath})
+		in.Result = &harness.ToolResult{Output: p.Content}
 	}
 	return in
 }
@@ -87,12 +94,20 @@ func (Harness) RecordToolResult(in harness.HookInput) error {
 		return nil
 	}
 	return record.AppendToolResult(in.SessionID, record.StoredResult{
+		Kind:      kindOf(in.Event),
 		ToolUseID: in.ToolUseID,
 		Tool:      in.ToolName,
 		Input:     in.ToolInput,
 		Output:    in.Result.Output,
 		IsError:   in.Result.IsError,
 	})
+}
+
+func kindOf(event string) string {
+	if event == string(BeforeReadFile) {
+		return record.KindContent
+	}
+	return ""
 }
 
 // RenderHook implements harness.HookWire: Cursor's hook output.

@@ -45,6 +45,11 @@ type StoredResult struct {
 	// Input.
 	ToolUseID string `json:"tool_use_id"`
 
+	// Kind is "" for a tool's outcome and KindContent for the bytes of a file a Read is
+	// about to return (beforeReadFile): kept apart because the Read's own outcome carries
+	// only the file's length, and joined to it when the record is read (loadResults).
+	Kind string `json:"kind,omitempty"`
+
 	// Tool and Input are the canonical tool name and arguments.
 	Tool  string          `json:"tool"`
 	Input json.RawMessage `json:"input,omitempty"`
@@ -56,6 +61,9 @@ type StoredResult struct {
 	// At is when the hook ran, RFC 3339.
 	At string `json:"at"`
 }
+
+// KindContent marks a StoredResult that is a file's content, not an outcome.
+const KindContent = "content"
 
 // MaxOutputBytes caps one stored output. A tool_result is one line of the stream and a
 // line is bounded (internal/transcript.maxRecordBytes, 16 MiB); a Cursor Read or Shell
@@ -150,19 +158,42 @@ func loadResults(conversationID string) []*pendingResult {
 	defer f.Close()
 	var out []*pendingResult
 	seen := map[string]bool{}
+	// open is, per file, the Read result made from beforeReadFile's bytes that no Read
+	// postToolUse has claimed yet. The hook fires just before the Read's own
+	// postToolUse (which carries only the length), so that post is the same call and
+	// adds nothing; a second beforeReadFile for the file with none between is the same
+	// read seen twice (the agent's edit tool reads the file too, recorded: runs/file-tools)
+	// and replaces it. A cursor-agent that fires no postToolUse for a Read (that
+	// recording) still has the content as the Read's result.
+	open := map[string]*pendingResult{}
 	br := bufio.NewReader(f)
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
 			var r StoredResult
-			if json.Unmarshal(line, &r) == nil && r.Tool != "" && !(r.ToolUseID != "" && seen[r.ToolUseID]) {
-				seen[r.ToolUseID] = true
-				p := &pendingResult{StoredResult: r}
+			if json.Unmarshal(line, &r) == nil && r.Tool != "" {
 				var in map[string]json.RawMessage
-				if json.Unmarshal(r.Input, &in) == nil {
-					p.arg = primaryArg(r.Tool, in)
+				_ = json.Unmarshal(r.Input, &in)
+				arg := primaryArg(r.Tool, in)
+				switch {
+				case r.Kind == KindContent:
+					if p := open[arg]; p != nil {
+						p.Output = r.Output
+					} else {
+						p := &pendingResult{StoredResult: r, arg: arg}
+						out = append(out, p)
+						open[arg] = p
+					}
+				case r.ToolUseID != "" && seen[r.ToolUseID]:
+					// the same hook registered twice
+				case r.Tool == "Read" && arg != "" && !r.IsError && open[arg] != nil:
+					seen[r.ToolUseID] = r.ToolUseID != ""
+					open[arg].ToolUseID = r.ToolUseID
+					delete(open, arg) // claimed: its content is this Read's result
+				default:
+					seen[r.ToolUseID] = r.ToolUseID != ""
+					out = append(out, &pendingResult{StoredResult: r, arg: arg})
 				}
-				out = append(out, p)
 			}
 		}
 		if err != nil {
