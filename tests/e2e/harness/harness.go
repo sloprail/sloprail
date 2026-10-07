@@ -2136,12 +2136,22 @@ type originReader interface {
 	OriginRecord(record string) string
 }
 
+// originOfSession is what a Driver implements when its transcript's records carry no ids to
+// begin on: the conversation is named by the id the harness gave it (Cursor's chat id, the
+// name of its transcript file), which no later resume changes.
+type originOfSession interface {
+	OriginOfSession(e *Env, sessionID string) string
+}
+
 // OriginRecord is the uuid of the first record in a session's transcript with no
 // parent — where that FILE begins, read straight off the file. Not the identity
 // walk: a test uses it to name what the walk should land on, and the walk is
 // asked of the engine (SessionIdentity).
 func (e *Env) OriginRecord(projDir, sessionID string) string {
 	e.t.Helper()
+	if o, ok := e.driver.(originOfSession); ok {
+		return o.OriginOfSession(e, sessionID)
+	}
 	if o, ok := e.driver.(originReader); ok {
 		return o.OriginRecord(e.transcript(projDir, sessionID))
 	}
@@ -2426,6 +2436,21 @@ func (e *Env) RunForked(projDir, fromSessionID, newSessionID, prompt string, s S
 	s = e.withPreStopRun(projDir, newSessionID, s)
 	res := e.drive(projDir, projDir, prompt, s, SessionFork, newSessionID, fromSessionID)
 	return res
+}
+
+// RunContinued drives a scenario as the next cycle of fromSessionID's conversation, the way
+// the selected harness continues one: as a fork under newSessionID where sessions can be
+// forked (CapForkSessions), else as a resume of fromSessionID itself, the only continuation
+// such a harness has (Cursor's chat is resumed, never forked). It returns the session id the
+// cycle ran as, which is what a test asks about afterwards.
+func (e *Env) RunContinued(projDir, fromSessionID, newSessionID, prompt string, s Scenario) (sessionID string) {
+	e.t.Helper()
+	if HasCap(e.t, CapForkSessions) {
+		e.RunForked(projDir, fromSessionID, newSessionID, prompt, s)
+		return newSessionID
+	}
+	e.Run(projDir, fromSessionID, prompt, s)
+	return fromSessionID
 }
 
 // DeleteTranscript removes a session's transcript, the way Claude Code's own
