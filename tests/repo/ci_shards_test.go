@@ -53,6 +53,24 @@ func TestWorkflowMatrixMatchesMakefileShards(t *testing.T) {
 	}
 }
 
+// The allowed-to-fail Codex job runs shards of the Makefile, never one it lacks.
+func TestCodexMatrixIsASubsetOfMakefileShards(t *testing.T) {
+	root := repoRoot(t)
+	for _, p := range codexMatrixProblems(readRepoFile(t, root, "Makefile"), readRepoFile(t, root, ".github/workflows/test.yml")) {
+		t.Error(p)
+	}
+}
+
+func TestGuardFiresOnACodexShardTheMakefileLacks(t *testing.T) {
+	makefile := "test-e2e-shard: mock\n\t@case \"$(SHARD)\" in \\\n\t  a) x ;; \\\n\t  *) exit 2 ;; \\\n\tesac\n"
+	if got := codexMatrixProblems(makefile, "codex-shard: [a]\n"); len(got) != 0 {
+		t.Errorf("a subset was reported: %v", got)
+	}
+	if got := codexMatrixProblems(makefile, "codex-shard: [a, z]\n"); len(got) == 0 {
+		t.Error("a Codex shard missing from the Makefile was not reported")
+	}
+}
+
 // --- negative tests: the guard fires ---
 
 func TestGuardFiresOnAnUnshardedPackage(t *testing.T) {
@@ -374,6 +392,34 @@ func matrixProblems(makefile, workflow string) []string {
 	}
 	if !strings.Contains(workflow, "name: e2e (all)") {
 		problems = append(problems, "the workflow has no aggregate `e2e (all)` job")
+	}
+	return problems
+}
+
+// codexMatrixProblems reports the shards of the workflow's `codex-shard: [...]` matrix
+// that the Makefile does not define.
+func codexMatrixProblems(makefile, workflow string) []string {
+	m := regexp.MustCompile(`codex-shard:\s*\[([^\]]*)\]`).FindStringSubmatch(workflow)
+	if m == nil {
+		return nil // no Codex job: nothing to keep in step
+	}
+	start := strings.Index(makefile, "test-e2e-shard:")
+	if start < 0 {
+		return []string{"test-e2e-shard not found in the Makefile"}
+	}
+	end := strings.Index(makefile[start:], "esac")
+	if end < 0 {
+		return []string{"test-e2e-shard has no esac in the Makefile"}
+	}
+	have := map[string]bool{}
+	for _, c := range regexp.MustCompile(`(?m)^\t  ([a-z0-9_]+)\)`).FindAllStringSubmatch(makefile[start:start+end], -1) {
+		have[c[1]] = true
+	}
+	var problems []string
+	for _, sh := range strings.Split(m[1], ",") {
+		if sh = strings.TrimSpace(sh); !have[sh] {
+			problems = append(problems, "the Codex job runs shard "+sh+" which the Makefile does not define")
+		}
 	}
 	return problems
 }

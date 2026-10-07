@@ -38,7 +38,7 @@ func (s Scenario) ThenCommit(msg string, trailers ...string) Scenario {
 	h := sha1.New()
 	h.Write([]byte(msg + "\x00" + strings.Join(trailers, "\x00")))
 	for _, turn := range s.turns {
-		h.Write([]byte(turn.jsonl))
+		h.Write([]byte(turn.act.fingerprint()))
 	}
 	sum := h.Sum(nil)
 	s.turns = append(append([]Turn(nil), s.turns...), Commit("commit-"+hex.EncodeToString(sum[:4]), msg, trailers...))

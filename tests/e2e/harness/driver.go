@@ -80,8 +80,33 @@ type Driver interface {
 	// Caps lists the capabilities (Cap*) this harness has.
 	Caps() []string
 
-	// RenderScript renders a scenario as the script the launched agent runs.
-	RenderScript(s Scenario) string
+	// FindMock locates the harness's mock agent binary for the repo at repoRoot, or
+	// "" with what to run to install it.
+	FindMock(repoRoot string) (path, installHint string)
+	// StopPayload is the payload the harness hands the Stop hook at the end of a
+	// turn; active is stop_hook_active, true for the retry after a refusal.
+	StopPayload(e *Env, projDir, sessionID string, active bool) string
+	// ShellEnv is the environment assignments (each followed by a space, or "") a
+	// scenario's shell command puts before sr-checks to be seen as run by the agent:
+	// what the harness would have exported to it, where the mock does not.
+	ShellEnv() string
+	// SessionExport is the shell (ending "; ", or "") exporting the session's id to
+	// the commands that follow, as a real agent's shell has it.
+	SessionExport(sessionID string) string
+	// SubagentSessionExport is SessionExport for a sub-agent's scenario, whose
+	// session is not known when it is written: it reads it from the run's own env.
+	SubagentSessionExport() string
+
+	// Observe is told what a run printed, once it has ended, for a harness that names
+	// the session itself (the caller's session id is then an alias of the harness's).
+	Observe(e *Env, l Launch, output string)
+	// ConfigEnv is what points a process at the isolated config dir the mock keeps
+	// its records in, for a call made outside any session.
+	ConfigEnv(e *Env) []string
+
+	// RenderScript renders a scenario as the script the launched agent runs; a step
+	// this harness cannot take is an *UnsupportedError.
+	RenderScript(s Scenario) (string, error)
 	// Command builds the command that runs the agent once: argv and environment.
 	Command(e *Env, l Launch) *exec.Cmd
 	// RealCommand builds the command that drives the operator's real, billed agent.
@@ -135,7 +160,7 @@ const harnessEnvVar = "SR_HARNESS"
 var knownHarnesses = []string{"claude", "codex", "cursor"}
 
 func drivers() map[string]Driver {
-	return map[string]Driver{"claude": claudeDriver{}}
+	return map[string]Driver{"claude": claudeDriver{}, "codex": codexDriver{}}
 }
 
 var (

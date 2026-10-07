@@ -42,14 +42,18 @@ func (claudeDriver) Caps() []string {
 // silently, with no error, and with the test observing an empty second cycle
 // that it reads as "the hook did not run". The id is the test's own, so
 // distinct scenarios cannot collide unless they deliberately reuse it.
-func (claudeDriver) RenderScript(s Scenario) string {
+func (claudeDriver) RenderScript(s Scenario) (string, error) {
 	var b strings.Builder
 	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
 	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
 
 	for i, t := range s.turns {
-		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
-		line := injectMarker(t.jsonl, marker)
+		jsonl, err := renderClaude(t.act)
+		if err != nil {
+			return "", err
+		}
+		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(jsonl))
+		line := injectMarker(jsonl, marker)
 		if t.launchedOutput {
 			// A background command's receipt names its output file: "Output is
 			// being written to: <file>. You will be notified …". The latest one
@@ -81,7 +85,7 @@ fi
 `, marker, shQuote(line))
 	}
 	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(result(s.result)))
-	return b.String()
+	return b.String(), nil
 }
 
 // Command builds the claude-mock invocation for one run: the --session-id /
@@ -210,6 +214,9 @@ func (claudeDriver) RealCommand(e *Env, projDir, prompt string) (*exec.Cmd, erro
 func (c claudeDriver) InstallPlugins(e *Env, dir string) {
 	e.t.Helper()
 
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .claude: %v", err)
+	}
 	enabled := map[string]any{pluginKey: true}
 	marketplaces := map[string]any{
 		marketplaceName: map[string]any{
@@ -716,3 +723,50 @@ func (claudeDriver) AnySubagentBlockingErrors(records []string) []string {
 	}
 	return out
 }
+
+// FindMock locates the a10n-claude-mock binary the suite drives, or "":
+// $A10N_CLAUDE_MOCK (a mock build of your own), then the repo's .bin/ where
+// `make mock` installs the pinned version, then PATH.
+func (claudeDriver) FindMock(repoRoot string) (string, string) {
+	hint := "run `make mock` to install the pinned version (tests/e2e/harness/MOCK_VERSION) into .bin/"
+	if p := os.Getenv("A10N_CLAUDE_MOCK"); p != "" {
+		return p, hint
+	}
+	if p := filepath.Join(repoRoot, ".bin", "a10n-claude-mock"); fileExists(p) {
+		return p, hint
+	}
+	if p, err := exec.LookPath("a10n-claude-mock"); err == nil {
+		return p, hint
+	}
+	return "", hint
+}
+
+// StopPayload is Claude Code's Stop hook payload.
+func (claudeDriver) StopPayload(e *Env, projDir, sessionID string, active bool) string {
+	payload, _ := json.Marshal(map[string]any{
+		"session_id": sessionID, "transcript_path": e.TranscriptPath(projDir, sessionID),
+		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
+	})
+	return string(payload)
+}
+
+// ShellEnv names the harness the way the mock's own Bash does.
+func (claudeDriver) ShellEnv() string {
+	return "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CODE_EXECPATH= "
+}
+
+// SessionExport exports CLAUDE_CODE_SESSION_ID.
+func (claudeDriver) SessionExport(sessionID string) string {
+	return "export CLAUDE_CODE_SESSION_ID=" + shQuote(sessionID) + "; "
+}
+
+// SubagentSessionExport exports the session the run was started under, unless the shell has one.
+func (claudeDriver) SubagentSessionExport() string {
+	return `export CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-$SR_E2E_SESSION_ID}"; `
+}
+
+// ConfigEnv points a process at the isolated config dir the mock keeps its records in.
+func (claudeDriver) ConfigEnv(e *Env) []string { return []string{"CLAUDE_CONFIG_DIR=" + e.configDir} }
+
+// Observe: Claude sessions are named by the caller (--session-id), so there is nothing to learn.
+func (claudeDriver) Observe(*Env, Launch, string) {}

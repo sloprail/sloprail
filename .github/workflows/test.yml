@@ -258,6 +258,49 @@ jobs:
           echo "an e2e shard did not succeed"
           exit 1
 
+  # The same e2e shards against OpenAI Codex (SR_HARNESS=codex, a10n-codex-mock),
+  # to watch the pass count move as Codex support lands. Allowed to fail, and NOT
+  # part of `e2e (all)`: nothing requires it. Steps a Codex run cannot take (no
+  # skill tool, no worktree isolation, ...) skip, naming the step; the rest pass
+  # or fail on what Codex support does today. `plugins` is left out: those modules
+  # drive the Claude mock. The shards must stay a subset of the Makefile's (the
+  # guard in tests/repo checks it).
+  e2e-codex:
+    name: e2e codex (${{ matrix.codex-shard }})
+    needs: changes
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        codex-shard: [session, session2, pre_tool, examples, examples2, examples3, examples4, examples5, examples6, rest, rest2, rest3, rest4]
+    timeout-minutes: 45
+    steps:
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/checkout@v4
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install the mocks
+        run: make mock
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: e2e (codex)
+        shell: bash
+        env:
+          SR_HARNESS: codex
+          GOFLAGS: -v
+        run: |
+          test -x .bin/a10n-codex-mock || { echo "a10n-codex-mock is not in .bin/"; exit 1; }
+          set +e
+          make test-e2e-shard SHARD=${{ matrix.codex-shard }} 2>&1 | tee codex-e2e.log
+          status=${PIPESTATUS[0]}
+          pass=$(grep -c '^--- PASS' codex-e2e.log); fail=$(grep -c '^--- FAIL' codex-e2e.log); skip=$(grep -c '^--- SKIP' codex-e2e.log)
+          echo "codex ${{ matrix.codex-shard }}: pass=$pass fail=$fail skip=$skip" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $status
+
   # install-sh proves the stranger install path works, on every push — not only
   # on a tagged release. It builds real release archives (make release, the
   # same target .github/workflows/release.yml uses) and runs install.sh against
