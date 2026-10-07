@@ -159,43 +159,8 @@ func TestT030_04_AcceptsProjectRootOrDotDir(t *testing.T) {
 	}
 }
 
-// T030_05: every shipped new-format example loads clean through the binary. This
-// is the reconciliation proof at the CLI level — pointing the real command at a
-// real example's `.sloprail` exits 0, confirming the example grammar matches the
-// spec-faithful scopes the loader enforces.
-func TestT030_05_ShippedExamplesLoadCleanThroughTheBinary(t *testing.T) {
-	e := New(t)
-	repo := repoRootForExamples(t)
-
-	// A representative spread across natures and both aliases: a gate with a
-	// PreFileWrite alias (required-context-precondition), a context with a
-	// PostFileWrite alias (eval-loop-maxing), a PostTagWrite context
-	// (research-rigor), a structure gate (completeness-artifact-on-trigger), and a
-	// gate+context+file-guard composite where a Stop gate reads a context's payload
-	// (deterministic-refactoring-mode).
-	for _, example := range []string{
-		"required-context-precondition",
-		"eval-loop-maxing",
-		"research-rigor",
-		"completeness-artifact-on-trigger",
-		"interlinking",
-		"marker-anchored-structure",
-		"deterministic-refactoring-mode",
-	} {
-		example := example
-		t.Run(example, func(t *testing.T) {
-			dir := filepath.Join(repo, "examples", example)
-			res := e.CLIDirect(dir, "sr-file", "declarations", dir)
-			if res.Code != 0 {
-				t.Fatalf("example %q must load clean through the binary, got exit %d:\n%s", example, res.Code, res.Output)
-			}
-		})
-	}
-}
-
 // T030_06: every shipped PLUGIN's `.sloprail` tree loads clean through the binary
-// under PLUGIN rules (`--plugin <name>`) — not project rules. The examples above
-// live under examples/ and load as a PROJECT's own declarations; a use-case
+// under PLUGIN rules (`--plugin <name>`) — not project rules. A use-case
 // plugin ships its guardrails under marketplace/plugins/<name>/.sloprail and is
 // discovered by a consumer as a plugin, so its declarations must load the way a
 // plugin's do: a structure.yaml here is expected to declare `scope` (a project's

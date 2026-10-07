@@ -1,7 +1,0 @@
-# Separate from goal-tracking: this tracks every eval run being documented, not
-# any one target. Re-enters per eval; exit checks completeness across all runs.
-on:
-  - event: PreCommandInvoke
-    match: any(event.invocations, .bin == "eval")
-enter: ./enter.sh
-exit: ./exit.sh

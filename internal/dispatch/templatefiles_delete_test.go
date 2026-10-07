@@ -17,7 +17,7 @@ import (
 // `deletions: include` or `only` must render against a delete.
 func TestRealExampleTemplatesRenderOnADelete(t *testing.T) {
 	root := repoTemplatesRoot(t)
-	templates := append(findTemplates(t, root), findTemplates(t, filepath.Join(root, "..", "marketplace", "plugins"))...)
+	templates := findTemplates(t, filepath.Join(root, "marketplace", "plugins"))
 
 	includesDeletions := regexp.MustCompile(`(?m)^deletions:\s*(include|only)\b`)
 	n := 0

@@ -12,7 +12,6 @@ allow:
   - glob: "bin/**"
   - glob: ".bin/**"
   - glob: "docs/**"
-  - glob: "examples/**"
   - glob: "internal/**"
   - glob: "marketplace/**"
   - glob: "scripts/**"

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// Every hook script this repo ships — its own .sloprail, every example, every
+// Every hook script this repo ships — its own .sloprail, every
 // marketplace plugin — must pass authoring-slop's own grep. authoring-slop has a
 // PreFileWrite gate half: a shipped script its grep refuses can never be edited again in a
 // project that has the plugin (the edit is refused), which is how 16 scripts
@@ -119,14 +119,6 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/prepare-judgment-gates.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/gates-hold.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gate-is-grounded/resolve-gate-context.sh", "PostFileUpdate", refuses, nil},
-		// A git repository where committed code pins the file: an unread file
-		// nothing pins is waived (nothing is at stake), so the fixture must pin it.
-		{"examples/business-invariants/.sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh", "PostFileUpdate", applies, pinnedTaskRepo},
-		{"examples/eval-loop-maxing/.sloprail/context/goal-tracking/enter.sh", "PostFileUpdate", activate, nil},
-		{"examples/eval-loop-maxing/eval/converging-goal/overlay/.sloprail/context/goal-tracking/enter.sh", "PostFileUpdate", activate, nil},
-		{"examples/keyword-coverage-registry/.sloprail/file-guard/scanner-keywords-hold/drops-keywords.sh", "PostFileUpdate", applies, nil},
-		{"examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/removes-content.sh", "PostFileUpdate", applies, nil},
-		{"examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/skip-pure-addition.sh", "PostFileUpdate", judges, nil},
 	} {
 		t.Run(tc.script, func(t *testing.T) {
 			dir := filepath.Join(root, filepath.Dir(tc.script))
@@ -172,34 +164,4 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 			}
 		})
 	}
-}
-
-// pinnedTaskRepo is a git repository whose committed code carries an
-// sr:invariant marker pinning memories/tasks/a/b/TASK.md L1 — the path T026_08's
-// payload names — so a rule that asks "does anything pin this path?" finds it
-// pinned.
-func pinnedTaskRepo(t *testing.T) string {
-	t.Helper()
-	repo := t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		out, err := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-	}
-	git("init", "-q")
-	if err := os.MkdirAll(filepath.Join(repo, "memories/tasks/a/b"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "memories/tasks/a/b/TASK.md"), []byte("old line\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	code := "package x\n\n// sr:invariant " + repo + "@0123456789abcdef0123456789abcdef01234567:memories/tasks/a/b/TASK.md#L1-1\nfunc f() {}\n"
-	if err := os.WriteFile(filepath.Join(repo, "x.go"), []byte(code), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "-A")
-	git("commit", "-qm", "pinned")
-	return repo
 }

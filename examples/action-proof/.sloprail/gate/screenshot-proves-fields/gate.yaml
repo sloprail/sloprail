@@ -1,7 +1,0 @@
-# On Stop: a turn that filled a form or downloaded an invoice must carry a
-# screenshot proving it. `prepare` pulls the tool output; the judge rules on it.
-on:
-  - event: Stop
-checks:
-  - prepare: ./find-action-and-proof.sh
-    judge: ./screenshot-shows-all-fields.md.j2
