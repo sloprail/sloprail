@@ -540,6 +540,21 @@ func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
 	}
 }
 
+// MediumJudgeModelArgs is the flag and value a judge on the default size-md reaches the
+// harness's argv with.
+func (e *Env) MediumJudgeModelArgs() (flag, value string) { return e.driver.MediumJudgeModelArgs() }
+
+// JudgeAccess is what the judge recorded by InstallJudgeClaudeRecordingArgv was granted. A
+// run that recorded nothing fails the test: the judge was never invoked.
+func (e *Env) JudgeAccess(argvFile string) JudgeAccess {
+	e.t.Helper()
+	a, err := e.driver.JudgeAccess(argvFile)
+	if err != nil {
+		e.t.Fatalf("the recording shim captured no judge launch (was the judge invoked?): %v", err)
+	}
+	return a
+}
+
 // LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
 // harness's argv with, in the recording of InstallJudgeClaudeRecordingArgv.
 func (e *Env) LargeJudgeModelArgs() (flag, value string) { return e.driver.LargeJudgeModelArgs() }

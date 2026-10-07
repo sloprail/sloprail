@@ -377,6 +377,7 @@ func TestCursorRules_ToolMapping(t *testing.T) {
 
 	_, _, err = cursorRules(accessGrant{Tools: []string{"Bash"}, DenyTools: []string{"Bash(rm:*)"}})
 	assert.ErrorIs(t, err, ErrModeUnsupported, "a shell deny beside a shell grant was not enforced by cursor-agent (measured)")
+	assert.ErrorIs(t, err, harness.ErrToolUnsupported, "the engine reports a grant the harness cannot express by this error")
 }
 
 func TestCursorRules_ScopedBashIsRefused(t *testing.T) {
