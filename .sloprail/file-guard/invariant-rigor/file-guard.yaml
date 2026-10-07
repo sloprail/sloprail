@@ -1,11 +1,11 @@
 # The tests of an invariant, together, rigorously prove it [judge]. One subject per
-# invariant touched (its spec file, a test proving it, or code upholding it changed;
-# subjects.sh), so a change to one invariant leaves another's verdict alone. The judge
+# invariant touched (its spec file, or a test proving it, changed; subjects.sh), so a change
+# to one invariant leaves another's verdict alone. Code upholding it is invariant-upheld's. The judge
 # sees the statement and EVERY test that proves it; prepare.sh builds that context.
 match: >-
-  path startsWith "spec/invariants/"
-  or any(markers, .kind == "invariant" or .kind == "proves")
-  or any(oldMarkers, .kind == "invariant" or .kind == "proves")
+  path matches "^spec/[a-z0-9-]+/invariants/[a-z0-9-]+[.]yaml$"
+  or any(markers, .kind == "proves")
+  or any(oldMarkers, .kind == "proves")
 subjects: ./subjects.sh
 checks:
   - prepare: ./prepare.sh

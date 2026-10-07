@@ -1,30 +1,31 @@
 #!/usr/bin/env bash
 # The spec catalogs, read from the committed tree. Source after changeset.sh.
 #
-#   spec/invariants/<id>.yaml     statement                      (features: the user's words)
-#   spec/capabilities/<id>.yaml   statement · providers.<harness>: {docs: [...], runs: [...]} | false
+#   spec/<domain>/invariants/<id>.yaml   predicate · why · needs   (a10n format, see spec/README.md)
 #
-# The file name is the id. Harnesses are the top-level <harness>-mock/ dirs.
+# An invariant's id is "<domain>/<id>": its domain folder and its file name.
 #
 # Markers (one token after the kind, per the engine's marker grammar):
-#   // sr:invariant <id>              code that upholds an invariant
-#   // sr:proves <id>                 a test proving an invariant
-#   // sr:capability <id>             a capability's one implementation, in internal/
-#   // sr:provides <id>/<harness>     that harness's adapter for it
-#   // sr:proves <id>/<harness>       a test proving it for that harness
+#   // sr:invariant <domain>/<id>     code that upholds an invariant
+#   // sr:proves <domain>/<id>        a test proving an invariant
 
 # load_spec KIND — sets SPEC to a JSON array of {id, path, doc} for every
-# spec/KIND/*.yaml. Unparseable YAML is refused, never skipped.
+# spec/<domain>/KIND/*.yaml, id "<domain>/<name>". Unparseable YAML is refused, never skipped.
 load_spec() {
-  local kind="$1" out
+  local kind="$1" f id out
   SPEC="[]"
-  ls "$SR_TREE/spec/$kind"/*.yaml >/dev/null 2>&1 || return 0
-  # one yq over every file: it names each document by its file
-  out="$(yq -o=json -I=0 '{"id": (filename | split("/") | .[-1] | sub("\\.yaml$"; "")), "path": ("spec/'"$kind"'/" + (filename | split("/") | .[-1])), "doc": .}' \
-    "$SR_TREE/spec/$kind"/*.yaml 2>&1)" || refuse "a file under spec/$kind is not valid YAML: $out"
-  SPEC="$(jq -sc . <<<"$out")"
+  ls "$SR_TREE"/spec/*/"$kind"/*.yaml >/dev/null 2>&1 || return 0
+  # sr-file field: the engine's own YAML reader (a case's PATH has the sloprail binaries, not yq).
+  out="$(for f in "$SR_TREE"/spec/*/"$kind"/*.yaml; do
+    id="${f#"$SR_TREE"/spec/}"; id="${id%%/*}/$(basename "$f" .yaml)"
+    p="$(sr-file field "$f" predicate 2>&1)" || { printf 'ERR\t%s\t%s\n' "${f#"$SR_TREE"/}" "$p"; continue; }
+    jq -n -c --arg id "$id" --arg path "${f#"$SR_TREE"/}" --arg p "$p" '{id: $id, path: $path, doc: {predicate: $p}}'
+  done)"
+  bad="$(printf '%s\n' "$out" | grep '^ERR' || true)"
+  [ -z "$bad" ] || refuse "a file under spec/*/$kind is not valid YAML: $bad"
+  SPEC="$(printf '%s\n' "$out" | jq -sc .)"
 }
 
-# harnesses — the harness mocks in the committed tree, one name per line.
-harnesses() { (cd "$SR_TREE" && for d in *-mock; do [ -d "$d" ] && echo "${d%-mock}"; done); }
+# is_test PATH — a test: a Go test file, anything under tests/, or an sr-test case of a rule.
+is_test() { case "$1" in *_test.go | tests/* | .sloprail/*/tests/* | */.sloprail/*/tests/*) return 0 ;; esac; return 1; }
 

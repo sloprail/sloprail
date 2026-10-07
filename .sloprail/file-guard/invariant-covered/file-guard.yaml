@@ -1,8 +1,8 @@
-# Every feature invariant is implemented and proven [deterministic], over the
-# whole committed tree: deleting a proving test, or adding an invariant, breaks
-# coverage in files the change may not touch.
+# Every invariant a change touches is implemented and proven [deterministic]; the
+# markers are read over the whole committed tree, so deleting a proving test (its marker leaves) breaks
+# coverage of the invariant it named.
 match: >-
-  path startsWith "spec/invariants/"
+  path matches "^spec/[a-z0-9-]+/invariants/[a-z0-9-]+[.]yaml$"
   or any(markers, .kind == "invariant" or .kind == "proves")
   or any(oldMarkers, .kind == "invariant" or .kind == "proves")
 deletions: include
