@@ -60,6 +60,7 @@ about to happen.
 
   sr-session start          a session is beginning
   sr-session pre-tool       a tool is about to run — the refusable moment
+  sr-session post-tool      a tool has run (its output is kept where the harness's record lacks it)
   sr-session stop           a turn has ended
   sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)
   sr-session subagent-stop  a subagent's turn has ended
@@ -85,7 +86,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		SilenceErrors: true,
 	}
 	root.AddCommand(
-		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
+		newSessionStartCmd(), newSessionPreToolCmd(), newSessionPostToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStartCmd(), newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(), newSessionRefsCmd(), newSessionAgentsCmd(), newSessionWorktreeRemoveCmd(),
 		newSessionTrajectoryCmd(), newCodexTrustCmd(), newEmitContextCmd(),

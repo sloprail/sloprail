@@ -1,0 +1,7 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp/>\n<user_query>\nDo these as separate shell tool calls, one command per call, in order, whatever happens: 1) grep zzz /dev/null 2) sh -c 'echo SOME-OUTPUT; exit 1' 3) sh -c 'echo MORE-OUTPUT; echo ERR-OUTPUT >&2; exit 2' 4) echo FINE. Then reply only DONE.\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Running the four commands as separate shell calls, in order."},{"type":"tool_use","name":"Shell","input":{"command":"grep zzz /dev/null","description":"grep zzz in /dev/null"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Shell","input":{"command":"sh -c 'echo SOME-OUTPUT; exit 1'","description":"echo SOME-OUTPUT then exit 1"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Shell","input":{"command":"sh -c 'echo MORE-OUTPUT; echo ERR-OUTPUT >&2; exit 2'","description":"echo stdout/stderr then exit 2"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Shell","input":{"command":"echo FINE","description":"echo FINE"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"DONE"}]}}
+{"type":"turn_ended","status":"success"}
