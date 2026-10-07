@@ -2,16 +2,33 @@
 set -euo pipefail
 
 git init -q -b main .
-mkdir -p .sloprail
+mkdir -p .sloprail tests/e2e/a tests/e2e/b tests/e2e/big tests/e2e/many
 printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
+# a: 2 tests; b: 1 test; big: 12 tests named TestBigNN; many: 11 tests named TestManyNN
+gen() { f=$1; shift; { echo 'package x'; for n in "$@"; do printf 'func %s(t *testing.T) {}\n' "$n"; done; } > "$f"; }
+gen tests/e2e/a/a_test.go TestA1 TestA2
+gen tests/e2e/b/b_test.go TestB1
+gen tests/e2e/big/big_test.go $(printf 'TestBig%02d ' $(seq 1 12))
+gen tests/e2e/many/many_test.go $(printf 'TestMany%02d ' $(seq 1 11))
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "run the e2e tests")
 G='.events[]|select(.kind=="GateChecked" and .rule=="no-local-e2e-suite")'
-# refused: (a) `...`, (b) more than 2 packages, (c) no -run, make targets, and the wrapped forms
-for id in c1 c2 c3 c4 c5 c6 c7 c8; do
-  echo "$RESULT" | jq -e --arg id "$id" "[$G | select(.tool_use_id==\$id)] | length==1 and .[0].outcome==\"refused\" and (.[0].reason|contains(\"Push the branch and let CI run it\"))" >/dev/null
-done
-# permitted: a named test, 2 packages with -run, unit packages, env-wrapped -test.run
-for id in p1 p2 p3 p4; do
-  echo "$RESULT" | jq -e --arg id "$id" "[$G | select(.tool_use_id==\$id)] | map(select(.outcome==\"permitted\")) | length==1" >/dev/null
-done
+refused() { echo "$RESULT" | jq -e --arg id "$1" --arg t "$2" "[$G | select(.tool_use_id==\$id)] | length==1 and .[0].outcome==\"refused\" and (.[0].reason|contains(\$t))" >/dev/null || { echo "FAIL refused $1: $(echo "$RESULT" | jq -c "[$G | select(.tool_use_id==\"$1\")]")" >&2; return 1; }; }
+permitted() { echo "$RESULT" | jq -e --arg id "$1" "[$G | select(.tool_use_id==\$id)] | map(select(.outcome==\"permitted\")) | length==1" >/dev/null || { echo "FAIL permitted $1: $(echo "$RESULT" | jq -c "[$G | select(.tool_use_id==\"$1\")]")" >&2; return 1; }; }
+# too many tests: a `...` over everything (15), no -run over a 12-test package, a -run matching 11
+refused c1 "would run 26 e2e tests"
+refused c2 "would run 12 e2e tests"
+refused c3 "would run 11 e2e tests"
+refused c4 "would run 12 e2e tests"
+# make targets, and the wrapped forms
+refused c5 "Don't run the e2e suite locally"
+refused c6 "Don't run the e2e suite locally"
+refused c7 "would run 12 e2e tests"
+refused c8 "would run 26 e2e tests"
+# a count nobody can know: a variable in -run, a missing path, -list, a bad regex
+refused u1 "Rewrite it into a resolvable form"
+refused u2 "tests/e2e/nope does not exist"
+refused u3 "Rewrite it into a resolvable form"
+refused u4 "is not a valid pattern"
+# permitted: 3 tests across 2 packages, one named test, unit packages, wrapped -test.run
+for id in p1 p2 p3 p4 p5; do permitted $id; done
