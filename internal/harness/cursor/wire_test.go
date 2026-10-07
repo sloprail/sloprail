@@ -157,6 +157,16 @@ func TestDetectAndChildEnv(t *testing.T) {
 	assert.True(t, h.Detect([]string{"PATH=/bin", "CURSOR_AGENT=1"}))
 	assert.True(t, h.Detect([]string{PluginRootEnv + "=/p"}))
 	assert.False(t, h.Detect([]string{"CURSOR_VERSION=1", "CURSOR_PROJECT_DIR=/p"}), "an editor terminal is not cursor-agent")
+	// A Claude Code session started in Cursor's integrated terminal: the IDE's variables
+	// (TERM_PROGRAM=cursor, CURSOR_TRACE_ID, VSCODE_*) are present and none of them selects Cursor.
+	ide := []string{"PATH=/bin", "TERM_PROGRAM=cursor", "CURSOR_TRACE_ID=t", "VSCODE_IPC_HOOK_CLI=/s", "CURSOR_VERSION=1", "CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli"}
+	assert.False(t, h.Detect(ide))
+	assert.False(t, h.Detect(ide[:len(ide)-2]), "IDE variables alone are not the agent's")
+	assert.False(t, h.Detect(append([]string{"CURSOR_AGENT=1"}, ide...)), "a Claude session inside an agent's shell is still Claude's")
+	assert.Equal(t, "claudecode", func() string {
+		harness.Register(stubClaude{})
+		return harness.Select(ide).Name()
+	}())
 	assert.ElementsMatch(t, []string{"CURSOR_CONVERSATION_ID", "CURSOR_REQUEST_ID", "CURSOR_TRANSCRIPT_PATH"}, New().(harness.ChildEnvBlocklist).ChildEnvBlocklist())
 }
 
@@ -164,3 +174,8 @@ func TestCursorSelectedByNameAndRegisteredByImport(t *testing.T) {
 	assert.Equal(t, "cursor", harness.Select([]string{harness.SelectEnv + "=cursor"}).Name())
 	assert.Equal(t, "cursor", harness.Select([]string{"CURSOR_AGENT=1"}).Name())
 }
+
+// stubClaude stands in for the Claude Code harness (this package may not import it).
+type stubClaude struct{ harness.Harness }
+
+func (stubClaude) Name() string { return harness.Default }

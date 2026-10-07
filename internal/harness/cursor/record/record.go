@@ -44,16 +44,16 @@ var ErrNotARecord = errors.New("cursor transcript: not a conversation record")
 // readers that skip uuid-less records) and no record names a parent. The
 // conversation's identity is NOT derived from these: it is the id in the file's path
 // (ConversationID), so two conversations with the same first prompt do not collide. The
-// Message block shapes are Cursor's own (tool_use input keys `path`/`contents`,
-// tool names Shell/Write/StrReplace), left undecoded; mapping them onto a canonical
-// tool vocabulary is the neutral seam's job, not this parser's.
+// Message's tool_use blocks are put in the canonical tool vocabulary
+// (harness/tools.go) by canonicalMessage, so the readers (trajectory, cite, skills)
+// see Bash/Write/Edit/Read and file_path/content whatever the harness.
 func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 	var l cursorLine
 	if err := json.Unmarshal(line, &l); err != nil {
 		return harness.Record{}, err
 	}
 	sum := sha256.Sum256(line)
-	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: l.Message}
+	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message)}
 	switch {
 	case l.Role == "user":
 		r.Type = string(harness.EntryUser)

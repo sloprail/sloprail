@@ -104,13 +104,22 @@ func (Harness) LocateTranscript(in harness.HookInput) string {
 // purpose, since an editor terminal can carry them with no cursor-agent running; the
 // plugin's hook wrapper names the harness outright (harness.SelectEnv) instead.
 func (Harness) Detect(environ []string) bool {
+	found := false
 	for _, kv := range environ {
 		key, val, _ := strings.Cut(kv, "=")
-		if val != "" && (key == "CURSOR_AGENT" || key == "CURSOR_INVOKED_AS" || key == PluginRootEnv) {
-			return true
+		if val == "" {
+			continue
+		}
+		switch key {
+		case "CURSOR_AGENT", "CURSOR_INVOKED_AS", PluginRootEnv:
+			found = true
+		case "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID":
+			// A Claude Code session is Claude's, wherever it was started (inside a
+			// Cursor agent's shell the agent's variables are inherited too).
+			return false
 		}
 	}
-	return false
+	return found
 }
 
 // ChildEnvBlocklist implements harness.ChildEnvBlocklist: the enclosing agent's
