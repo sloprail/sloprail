@@ -76,8 +76,16 @@ func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testi
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	wt, _ := subagentFolder(t, e, proj, sess)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	var wt string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt, _ = subagentFolder(t, e, proj, sess)
+	} else {
+		// A sub-agent in the root's tree has no folder of its own: its range is already the
+		// root's, and a removal report for a path the session never registered changes nothing.
+		noSubagentFolder(t, e, proj, sess)
+		wt = filepath.Join(t.TempDir(), "never-registered")
+	}
 
 	hook := func(payload map[string]any) harness.Result {
 		b, _ := json.Marshal(payload)
@@ -92,7 +100,11 @@ func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testi
 			t.Fatalf("the hook blocked a removal it could not act on (payload %v): exit %d\n%s", bad, r.Code, r.Output)
 		}
 	}
-	if rs := sessionRanges(t, e, proj, sess); !trackedIn(rs, wt, "sub-a") {
+	home := wt // where sub-a is answered for before the removal is reported
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		home = proj
+	}
+	if rs := sessionRanges(t, e, proj, sess); !trackedIn(rs, home, "sub-a") {
 		t.Fatalf("a payload for another session changed the folder's range: %+v", rs)
 	}
 	r := hook(map[string]any{
@@ -108,8 +120,11 @@ func TestT003_72_TheWorktreeRemoveHookKeepsTheFoldersWorkAndNeverBlocks(t *testi
 	if !trackedIn(rs, proj, "sub-a") {
 		t.Fatalf("the removed worktree's range did not move to the root folder: %+v", rs)
 	}
-	if trackedIn(rs, wt, "sub-a") {
+	if harness.HasCap(t, harness.CapWorktrees) && trackedIn(rs, wt, "sub-a") {
 		t.Fatalf("the removed worktree's range is still tracked in the removed folder: %+v", rs)
+	}
+	if got := trackedHomes(rs, "sub-a"); len(got) != 1 {
+		t.Fatalf("sub-a is not answered for in exactly one folder: %v", got)
 	}
 	// The root's next Stop verifies it there: the work is kept, and judged.
 	if r := e.StopNow(proj, sess, false); !harness.Blocked(r) || !strings.Contains(r.Output, "sub-a") {
@@ -172,10 +187,16 @@ func TestT003_72_ARemovedSubagentFolderWithoutTheHookIsFoundByStatAndFixingItPas
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	wt, _ := subagentFolder(t, e, proj, sess)
-
-	e.Git(proj, "worktree", "remove", "--force", wt)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	var wt string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt, _ = subagentFolder(t, e, proj, sess)
+		e.Git(proj, "worktree", "remove", "--force", wt)
+	} else {
+		// No worktree of its own: there is no folder to find gone, the range is the root's
+		// from the start and the root's Stop verifies it there.
+		noSubagentFolder(t, e, proj, sess)
+	}
 	r := e.StopNow(proj, sess, false)
 	if !harness.Blocked(r) || !strings.Contains(r.Output, "sub-a") || !strings.Contains(r.Output, "docs/a.md") {
 		t.Fatalf("a removed sub-agent folder's range was not kept and verified at the root:\n%s", r.Output)
@@ -184,7 +205,7 @@ func TestT003_72_ARemovedSubagentFolderWithoutTheHookIsFoundByStatAndFixingItPas
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rs := sessionRanges(t, e, proj, sess); !trackedIn(rs, root, "sub-a") || trackedIn(rs, wt, "sub-a") {
+	if rs := sessionRanges(t, e, proj, sess); !trackedIn(rs, root, "sub-a") || (wt != "" && trackedIn(rs, wt, "sub-a")) {
 		t.Fatalf("the range did not move from the removed folder %s to the root: %+v", wt, rs)
 	}
 
