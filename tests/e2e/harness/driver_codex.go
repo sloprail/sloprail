@@ -386,6 +386,12 @@ func (codexDriver) StopPayload(e *Env, projDir, sessionID string, active bool) s
 	return string(payload)
 }
 
+// IdentityPayload is the session id and the working directory.
+func (codexDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	payload, _ := json.Marshal(map[string]any{"session_id": e.harnessID(sessionID), "cwd": projDir})
+	return string(payload)
+}
+
 func (codexDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"decision":"block"`)
 }
