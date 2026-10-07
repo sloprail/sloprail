@@ -131,10 +131,17 @@ func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
 	e, proj, ledger := project(t)
 
+	// A harness whose compaction names no parent (Codex's is a record of the same rollout, Cursor's
+	// leaves no boundary) cannot name an unwritten one: its compaction is the plain one, which
+	// names nothing, and the conversation must keep its state across it the same.
+	boundary := Compact("c1")
+	if harness.HasCap(t, harness.CapCompactionNamesParent) {
+		boundary = CompactNamingUnwrittenParent("c1")
+	}
 	e.Run(proj, "orig-02", "start", Turns("done",
 		Write("w1", "one.md", "first"),
 		harness.Commit("k1", "first"),
-		CompactNamingUnwrittenParent("c1"),
+		boundary,
 	))
 	readsBack(t, ledger, "the fork", func() {
 		e.RunForked(proj, "orig-02", "fork-02", "resume", Turns("done",
