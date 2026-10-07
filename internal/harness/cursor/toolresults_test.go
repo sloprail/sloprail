@@ -233,13 +233,32 @@ func TestIdenticalCommandsWithALostHookGetNoOutputOnTheWrongCall(t *testing.T) {
 	res = merged(t, shellCalls("ls", "ls"))
 	assert.Empty(t, res, "the second call's output is not put on the first")
 
-	// Only the first call's POST was lost: both slots exist, so the second call keeps its own.
+	// Only the first call's POST was lost: the first never finished before the second began,
+	// so start order cannot be proven to be transcript order: neither gets a result.
 	f = newFeeder(t)
 	shellPre(f, "u1", "ls")
 	shellPre(f, "u2", "ls")
 	shellPost(f, "u2", "ls", "SECOND-LS\n")
 	res = merged(t, shellCalls("ls", "ls"))
-	assert.Equal(t, map[string]string{"cursor-L2-0": "SECOND-LS\n"}, res)
+	assert.Empty(t, res)
+}
+
+// Parallel identical commands: both started before either finished, so which transcript
+// call is which start is unknowable and their outputs could swap; neither gets a result.
+func TestParallelIdenticalCommandsGetNoResult(t *testing.T) {
+	f := newFeeder(t)
+	shellPre(f, "u1", "ls")
+	shellPre(f, "u2", "ls")
+	shellPost(f, "u2", "ls", "B\n")
+	shellPost(f, "u1", "ls", "A\n")
+	assert.Empty(t, merged(t, shellCalls("ls", "ls")))
+	// sequential ones still pair
+	f = newFeeder(t)
+	shellPre(f, "u1", "ls")
+	shellPost(f, "u1", "ls", "A\n")
+	shellPre(f, "u2", "ls")
+	shellPost(f, "u2", "ls", "B\n")
+	assert.Equal(t, map[string]string{"cursor-L1-0": "A\n", "cursor-L2-0": "B\n"}, merged(t, shellCalls("ls", "ls")))
 }
 
 func TestARepeatedCallsResultsPairInTheOrderTheyStarted(t *testing.T) {

@@ -105,7 +105,9 @@ func TestAPendingReadExpiresAtTheNextGeneration(t *testing.T) {
 	f.preRead("b", "g2")
 	f.content("g2", "G2-BYTES")
 	f.postRead("b", "g2")
-	assert.Equal(t, map[string]string{"cursor-L2-0": "G2-BYTES"}, reads(t, 2))
+	// The stale Read never finished before the next began, so the two identical Reads
+	// cannot be told apart by start order: no result (and never the stale Read's).
+	assert.Empty(t, reads(t, 2))
 }
 
 func TestAPendingReadExpiresAfterTheWindow(t *testing.T) {
