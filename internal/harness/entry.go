@@ -1,16 +1,4 @@
-// Package transcript reads a harness's record of a session into the one shape
-// every rule is written against.
-//
-// A harness records a great deal more than a rule ever asks about — routing,
-// versions, request ids, its own bookkeeping. Carrying that through would make
-// this shape a mirror of Claude Code's, which is the opposite of the point:
-// every field kept here is a field each new harness must be normalised into.
-//
-// The shape is taken from what Claude Code already writes, because a format
-// that has carried real sessions is a better starting point than one reasoned
-// out cold. It is ours from then on, and Claude Code is simply the harness
-// needing no translation today.
-package transcript
+package harness
 
 import "encoding/json"
 

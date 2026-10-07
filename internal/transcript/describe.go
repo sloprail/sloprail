@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Facts ABOUT a trajectory, not what is in it. `normalize` answers "what
@@ -123,7 +125,7 @@ func IsSubagentTranscript(path string) bool {
 		return true
 	}
 	sidechain := false
-	_ = scanFile(path, func(rec claudeRecord) bool {
+	_ = scanFile(path, func(rec harness.Record) bool {
 		if rec.UUID == "" {
 			return true
 		}
@@ -434,11 +436,11 @@ func walkSubagentDir(dir string, visit func(path string) bool) bool {
 // concern.
 func transcriptHasToolUse(path, toolUseID string) bool {
 	found := false
-	_ = scanFile(path, func(rec claudeRecord) bool {
+	_ = scanFile(path, func(rec harness.Record) bool {
 		if rec.UUID == "" {
 			return true
 		}
-		for _, id := range toolUseIDs(rec.entry()) {
+		for _, id := range toolUseIDs(rec.Entry()) {
 			if id == toolUseID {
 				found = true
 				return false

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // TestSurveyStableSessionID resolves the identity of every transcript under a
@@ -99,7 +101,7 @@ func surveyIsTranscript(path string) bool {
 
 func containsAnyRecordUUID(path string) bool {
 	found := false
-	_ = scanFile(path, func(rec claudeRecord) bool {
+	_ = scanFile(path, func(rec harness.Record) bool {
 		found = rec.UUID != ""
 		return !found
 	})

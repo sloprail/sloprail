@@ -1,15 +1,18 @@
 // Package claudecode is the Claude Code implementation of internal/harness: every
 // path, file schema, hook wire format and environment variable that is specific to
 // Claude Code lives here and nowhere else in sloprail's production code (the
-// transcript reader in internal/transcript is the one piece still to move; see the
-// refactor's follow-ups). A second harness is a sibling package, not a widening of
+// tool-call and citation readers in internal/transcript still name Claude's
+// record shapes; see the refactor's follow-ups). A second harness is a sibling package, not a widening of
 // these types.
 //
 // Importing this package registers it as the process's harness (internal/harness
 // Register), which is how a service's main package chooses it.
 package claudecode
 
-import "github.com/sloprail/sloprail/internal/harness"
+import (
+	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/harness/claudecode/record"
+)
 
 // Harness is the Claude Code implementation of harness.Harness.
 type Harness struct{}
@@ -42,3 +45,7 @@ func (Harness) SessionEnv(environ []string) []string { return Session(environ) }
 
 // HermeticEnv implements harness.Harness.
 func (Harness) HermeticEnv(environ []string) []string { return Hermetic(environ) }
+
+// Transcripts implements harness.Harness: how Claude Code's session files are
+// parsed and located.
+func (Harness) Transcripts() harness.Transcripts { return record.Transcripts{} }

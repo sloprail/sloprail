@@ -57,14 +57,14 @@ func ReadLines(path string) ([]LinedEntry, error) {
 	line := 0
 	for sc.Scan() {
 		line++
-		var rec claudeRecord
-		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+		rec, perr := parseLine(sc.Bytes())
+		if perr != nil {
 			continue // an unparseable line is the format having moved; still counted
 		}
 		if rec.UUID == "" {
 			continue
 		}
-		entries = append(entries, LinedEntry{Entry: rec.entry(), Line: line})
+		entries = append(entries, LinedEntry{Entry: rec.Entry(), Line: line})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("transcript: read %s: %w", path, err)
