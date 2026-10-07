@@ -124,6 +124,10 @@ func TestParseHook_EmptyOrUnreadableIsAZeroInput(t *testing.T) {
 	assert.Equal(t, harness.HookInput{}, New().ParseHook(strings.NewReader("{")))
 }
 
+func TestProjectSkillDirs_CodexReadsAgentsSkills(t *testing.T) {
+	assert.Equal(t, []string{".agents/skills"}, harness.ProjectSkillDirs(New()))
+}
+
 func TestRenderHook_IsTheContractCodexDocuments(t *testing.T) {
 	render := func(r harness.HookResponse) string {
 		var b bytes.Buffer

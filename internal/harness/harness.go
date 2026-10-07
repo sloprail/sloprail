@@ -75,6 +75,27 @@ type ChildEnvBlocklist interface {
 	ChildEnvBlocklist() []string
 }
 
+// SkillDirs is what a Harness MAY implement to name where a project keeps its own
+// skills, relative to the project root. A harness that does not is taken to use
+// DefaultSkillDir.
+type SkillDirs interface {
+	ProjectSkillDirs() []string
+}
+
+// DefaultSkillDir is where a project's own skills live for a harness that names none
+// (Claude Code's layout).
+const DefaultSkillDir = ".claude/skills"
+
+// ProjectSkillDirs is h's project-relative skill directories.
+func ProjectSkillDirs(h Harness) []string {
+	if s, ok := h.(SkillDirs); ok {
+		if dirs := s.ProjectSkillDirs(); len(dirs) > 0 {
+			return dirs
+		}
+	}
+	return []string{DefaultSkillDir}
+}
+
 // Default is the harness a process runs under when nothing selects another.
 const Default = "claudecode"
 

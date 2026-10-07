@@ -12,7 +12,10 @@
 //   - no worktree hooks (WorktreeRemove never fires);
 //   - no ask-user-question tool in `codex exec`;
 //   - no skill tool: skills are directories the agent reads (SKILL.md), so there is no
-//     "skill loaded" event;
+//     "skill loaded" event. A skill counts as loaded when the record shows a shell
+//     command reading its SKILL.md (`cat`, `sed`, `head` ..., through the rollout's
+//     exec wrapper, internal/harness/codex/record), the check dispatch already makes for
+//     Claude Code beside its Skill tool;
 //   - no env file a SessionStart hook can export to;
 //   - no process registry (Claude's ~/.claude/sessions/<pid>.json), so a session's
 //     process is never found and never reported gone (unknown, which callers must not
@@ -62,6 +65,10 @@ func (Harness) Detect(environ []string) bool { return Detect(environ) }
 func (Harness) LocateTranscript(in harness.HookInput) string {
 	return record.FindRollout(record.ConfigDir(), in.SessionID)
 }
+
+// ProjectSkillDirs implements harness.SkillDirs: Codex reads a project's skills from
+// .agents/skills (a skill is a directory the agent opens, SKILL.md and all).
+func (Harness) ProjectSkillDirs() []string { return []string{".agents/skills"} }
 
 // ChildEnvBlocklist implements harness.ChildEnvBlocklist: the session variables a
 // judge launched from inside a Codex session must not inherit.
