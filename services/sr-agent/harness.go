@@ -115,6 +115,12 @@ type harnessSpec struct {
 	// seam for saying so per-harness rather than assuming every harness has
 	// Claude Code's permission model.
 	grant func(g accessGrant) []string
+
+	// grantEnv is grant for a harness whose permissions are not command-line flags
+	// but a configuration the process reads: it returns the environment that points
+	// the harness at one made for this run, and a cleanup that removes it. Used by
+	// Cursor (see cursor_grant.go). nil when the harness has none.
+	grantEnv func(g accessGrant) (env []string, cleanup func(), err error)
 }
 
 // claudeCodeSpec is Claude Code.
@@ -372,35 +378,31 @@ var claudeCodeSpec = harnessSpec{
 
 // cursorSpec is Cursor (`cursor-agent -p`).
 //
-// What is established and where. The invocation shape (`cursor-agent -p --model <m>
-// --trust <prompt>`) is the one the harness-mocks recordings were taken with
-// (cursor-mock/snapshots/runs/*/run.yaml: `cursor-agent -p --force --trust --model
-// auto --output-format stream-json`); docs: https://cursor.com/docs/cli/headless and
-// https://cursor.com/docs/cli/reference/parameters. `--trust` is the headless
-// workspace-trust flag. `--force` is deliberately NOT passed: without it a headless
-// run rejects shell commands (recorded: runs/noninteractive-no-force), which is the
-// read-mostly posture a judge wants. File writes still apply without --force (the
-// same recording, against the doc's claim that they are only proposed), which is
-// what lets --verify's answer file be written.
+// Every claim here was measured against the real cursor-agent 2026.10.01 on
+// 2026-10-07 (headless, a scratch directory), beyond the harness-mocks recordings
+// (cursor-mock/snapshots/runs/*/run.yaml); docs: https://cursor.com/docs/cli/headless,
+// https://cursor.com/docs/cli/reference/parameters,
+// https://cursor.com/docs/cli/reference/permissions.
 //
-// What is NOT available, and so is not pretended:
-//
-//   - Permissions. Cursor's allow/deny rules (Read/Write/Shell/WebFetch/Mcp tokens)
-//     live in <project>/.cursor/cli.json and ~/.cursor/cli-config.json
-//     (https://cursor.com/docs/cli/reference/permissions) and no CLI flag passes
-//     them, so grant is nil: sr-agent refuses --add-dir:readonly and
-//     --disallowed-tools under Cursor (harnessGrant) rather than dropping a
-//     promise it cannot keep.
-//   - Hook isolation. Claude Code gets `disableAllHooks` through --settings; Cursor
-//     has no flag or setting that disables the project's, the user's or a plugin's
-//     hooks, so a judge launched under Cursor runs them. baseArgs is only --trust.
-//   - A stdin prompt. The headless doc shows prompts as arguments only, so
-//     stdinPromptAbove is 0 and a prompt beyond ARG_MAX fails rather than being
-//     piped on faith.
-//   - A model catalogue. Only "auto" and "cursor-grok-4.5-high" appear in the
-//     recordings, so the size aliases resolve to those two; offers recognises
-//     Cursor's own name shapes by prefix and lets the CLI be the authority, as
-//     claudeCodeSpec does.
+//   - Invocation: `cursor-agent -p --trust --model <m> [-- <prompt>]`. `--trust` is the
+//     headless workspace-trust flag. `--force` is deliberately NOT passed: without it
+//     a headless run rejects shell commands (also recorded: runs/noninteractive-no-force),
+//     while file writes still apply, which is what lets --verify's answer file be written.
+//   - Prompt: with no prompt argument cursor-agent -p reads it from STDIN (a 600 KB
+//     prompt on stdin answered; the same as an argument failed to start), and `--`
+//     before a positional prompt is accepted. So stdinPromptAbove is the same bound as
+//     claude's.
+//   - Permissions: no flag, but a private CURSOR_CONFIG_DIR with a cli-config.json is
+//     honoured headless; see cursor_grant.go for what that does and does not express.
+//   - Hooks are NOT disabled: no flag or setting turns off project, user or plugin
+//     hooks (the user's are read from the real home, which also holds the login). A
+//     judge launched here carries SLOPRAIL_LAUNCHED_BY, which the engine's own hook
+//     answers by not gating; any other hook the project has fires.
+//   - Models: `cursor-agent --list-models`. The aliases map to rungs of one vendor
+//     family where there is one: Gemini Flash for the small sizes, Claude Sonnet 5.5
+//     for the middle, Claude Opus 5.5 above. Claude's Fable (the top rung under
+//     claude-code) is not used: Cursor lists it "NO ZDR" (no zero data retention),
+//     which a judge reading a user's project should not opt into silently.
 var cursorSpec = harnessSpec{
 	name:   Cursor,
 	binary: "cursor-agent",
@@ -413,26 +415,31 @@ var cursorSpec = harnessSpec{
 		return getenv("CURSOR_AGENT") != "" || getenv("CURSOR_INVOKED_AS") != ""
 	},
 	sizes: map[SizeAlias]string{
-		SizeXS:  "auto",
-		SizeSM:  "auto",
-		SizeMD:  "auto",
-		SizeLG:  "cursor-grok-4.5-high",
-		SizeXL:  "cursor-grok-4.5-high",
-		SizeXXL: "cursor-grok-4.5-high",
+		SizeXS:  "gemini-3.8-flash-low",
+		SizeSM:  "gemini-3.8-flash-high",
+		SizeMD:  "claude-sonnet-5-5-medium",
+		SizeLG:  "claude-opus-5-5-medium",
+		SizeXL:  "claude-opus-5-5-high",
+		SizeXXL: "claude-opus-5-5-max",
 	},
+	// A concrete name is Cursor's when it looks like one of the catalogue's families.
+	// A prefix test, not the catalogue, for the reason claudeCodeSpec gives: the CLI
+	// is the authority on what exists.
 	offers: func(model string) bool {
 		if model == "auto" {
 			return true
 		}
-		for _, prefix := range []string{"cursor-", "composer-", "gpt-", "sonnet-", "opus-", "gemini-", "grok-"} {
+		for _, prefix := range []string{"cursor-", "composer-", "gpt-", "claude-", "gemini-", "grok-", "muse-"} {
 			if strings.HasPrefix(model, prefix) {
 				return true
 			}
 		}
 		return false
 	},
-	argsFlag: "--cursor-args",
-	baseArgs: []string{"--trust"},
+	argsFlag:         "--cursor-args",
+	baseArgs:         []string{"--trust"},
+	stdinPromptAbove: 64 << 10,
+	grantEnv:         cursorGrantEnv,
 }
 
 // isClaudeFamilyAlias reports whether a name is one of claude's own bare family

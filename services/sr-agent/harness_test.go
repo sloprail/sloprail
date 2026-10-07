@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -339,8 +340,51 @@ func TestCursorSpec_Invocation(t *testing.T) {
 	assert.Equal(t, []string{"-p", "--model", "auto", "--trust", "--", "hello"}, inv.Args)
 	assert.True(t, cursorSpec.offers("auto"))
 	assert.True(t, cursorSpec.offers("cursor-grok-4.5-high"))
-	assert.False(t, cursorSpec.offers("claude-sonnet-4-5"))
+	assert.True(t, cursorSpec.offers("claude-sonnet-5-5-medium"))
+	assert.False(t, cursorSpec.offers("haiku"), "a Claude Code family alias is not a Cursor model")
 
-	_, err := harnessGrant(cursorSpec, accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}}})
-	assert.ErrorIs(t, err, ErrModeUnsupported, "Cursor cannot express a readonly dir by flag, so it is refused")
+	big := strings.Repeat("x", cursorSpec.stdinPromptAbove+1)
+	inv = BuildInvocation(cursorSpec, "auto", nil, big, func(string) string { return "" })
+	assert.Equal(t, big, inv.Stdin, "a large prompt goes on stdin (measured: cursor-agent -p reads it there)")
+	assert.NotContains(t, inv.Args, big)
+
+	// A readonly dir is a deny in the run's private config, not a refusal.
+	g := accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}, {Path: "/w", Mode: dirWritable}}}
+	args, err := harnessGrant(cursorSpec, g)
+	require.NoError(t, err)
+	assert.Empty(t, args)
+	env, cleanup, err := harnessGrantEnv(cursorSpec, g)
+	require.NoError(t, err)
+	defer cleanup()
+	require.Len(t, env, 2)
+	assert.Equal(t, `SLOPRAIL_JUDGE_GRANT={"writable":["/w"],"readonly":["/p"]}`, env[1])
+	dir := strings.TrimPrefix(env[0], "CURSOR_CONFIG_DIR=")
+	raw, err := os.ReadFile(filepath.Join(dir, "cli-config.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"permissions":{"allow":[],"deny":["Write(/p/**)"]}}`, string(raw))
+	cleanup()
+	_, statErr := os.Stat(dir)
+	assert.True(t, os.IsNotExist(statErr), "the private config dir is removed")
+}
+
+func TestCursorRules_ToolMapping(t *testing.T) {
+	allow, deny, err := cursorRules(accessGrant{Tools: []string{"Read", "WebFetch", "Bash(curl:*)", "Edit(//abs/x/**)"}, DenyTools: []string{"Write(//abs/y/**)"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Read(**)", "WebFetch(*)", "Shell(curl)", "Write(/abs/x/**)"}, allow)
+	assert.Equal(t, []string{"Write(/abs/y/**)"}, deny)
+
+	_, _, err = cursorRules(accessGrant{Tools: []string{"Bash"}, DenyTools: []string{"Bash(rm:*)"}})
+	assert.ErrorIs(t, err, ErrModeUnsupported, "a shell deny beside a shell grant was not enforced by cursor-agent (measured)")
+}
+
+func TestCursorSizesAreCatalogueModels(t *testing.T) {
+	for alias, model := range cursorSpec.sizes {
+		assert.True(t, cursorSpec.offers(model), "%s -> %s", alias, model)
+	}
+	assert.NotContains(t, cursorSpec.sizes[SizeXXL], "fable", "Fable is listed NO ZDR in cursor-agent --list-models")
+}
+
+func TestSanitizeChildEnvStripsCursorSessionIdentity(t *testing.T) {
+	out := sanitizeChildEnv([]string{"CURSOR_CONVERSATION_ID=c", "CURSOR_REQUEST_ID=r", "CURSOR_TRANSCRIPT_PATH=/t", "CURSOR_AGENT=1", "CURSOR_API_KEY=k"})
+	assert.Equal(t, []string{"CURSOR_AGENT=1", "CURSOR_API_KEY=k"}, out)
 }
