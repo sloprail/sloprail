@@ -1,0 +1,206 @@
+package harness
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// Capabilities a Driver may declare. A test that needs one the selected harness
+// lacks calls RequireCap and skips, naming it.
+const (
+	CapSubagents         = "subagents"
+	CapWorktrees         = "worktrees"
+	CapPlugins           = "plugins"
+	CapSkills            = "skills"
+	CapAskUserQuestion   = "ask-user-question"
+	CapStopHooks         = "stop-hooks"
+	CapForkResumeCompact = "fork-resume-compact"
+	CapBackgroundTasks   = "background-tasks"
+	CapTranscript        = "transcript"
+)
+
+// SessionMode is how a launch relates to the session id it names.
+type SessionMode int
+
+const (
+	// SessionNew starts a session under SessionID.
+	SessionNew SessionMode = iota
+	// SessionResume continues the existing session SessionID, appending the prompt.
+	SessionResume
+	// SessionFork starts SessionID as a fork of FromSessionID.
+	SessionFork
+)
+
+// Launch is everything a Driver needs to build the command that runs the agent
+// once: what to run (ScriptPath), where (ProjDir holds the transcript's project,
+// WorkDir is the directory the session reports) and under which session.
+type Launch struct {
+	ProjDir       string
+	WorkDir       string
+	ScriptPath    string
+	Prompt        string
+	Mode          SessionMode
+	SessionID     string
+	FromSessionID string
+}
+
+// JudgeShimKind selects which stand-in for the judge's agent binary to install.
+type JudgeShimKind int
+
+const (
+	JudgeShimPlain     JudgeShimKind = iota // writes Verdict where the prompt says
+	JudgeShimRecording                      // plain, plus the argv recorded to ArgvFile
+	JudgeShimCapturing                      // plain, plus the prompt captured under PromptFile
+	JudgeShimSlow                           // delays, decides by the prompt, logs to LogFile
+)
+
+// JudgeShim parameterises Driver.JudgeShim.
+type JudgeShim struct {
+	Kind         JudgeShimKind
+	Verdict      string
+	ArgvFile     string // JudgeShimRecording
+	PromptFile   string // JudgeShimCapturing: absolute path
+	LogFile      string // JudgeShimSlow
+	DelaySeconds int    // JudgeShimSlow
+}
+
+// Driver is everything in the e2e harness that is specific to one agent
+// harness (Claude Code today): how the scripted agent is launched and what it
+// is told to do, how a plugin is installed, where its record lives and how that
+// record and the run's stream are read. Env and Result delegate to it, so a test
+// is written once against Env and runs against whichever harness SR_HARNESS names.
+type Driver interface {
+	// Name is the value of SR_HARNESS that selects this driver.
+	Name() string
+	// Caps lists the capabilities (Cap*) this harness has.
+	Caps() []string
+
+	// RenderScript renders a scenario as the script the launched agent runs.
+	RenderScript(s Scenario) string
+	// Command builds the command that runs the agent once: argv and environment.
+	Command(e *Env, l Launch) *exec.Cmd
+	// RealCommand builds the command that drives the operator's real, billed agent.
+	RealCommand(e *Env, projDir, prompt string) (*exec.Cmd, error)
+
+	// InstallPlugins writes the project's plugin wiring: the plugin under test
+	// plus the Env's extra plugins, enabled the way a user would.
+	InstallPlugins(e *Env, dir string)
+	// HookEnv is the environment a hook, or a call made from inside a session, runs with.
+	HookEnv(e *Env, sessionID string) []string
+
+	// AgentShim is the executable (file name, body) a hook-launched agent resolves
+	// to, running the scenario written beside projDir by InnerScenario.
+	AgentShim(e *Env, projDir string) (name, body string)
+	// JudgeShim is the executable (file name, body) standing in for the judge's
+	// agent binary.
+	JudgeShim(s JudgeShim) (name, body string)
+
+	// TranscriptPath is where the harness keeps a session's root transcript.
+	TranscriptPath(e *Env, projDir, sessionID string) string
+	// SubagentRecordPaths lists the sub-agent transcripts of a session, sorted.
+	SubagentRecordPaths(e *Env, projDir, sessionID string) []string
+	// ForkTranscript writes the transcript a re-forked session opens on.
+	ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string)
+
+	// Refusals are the PreToolUse refusal reasons in a run's output stream.
+	Refusals(output string) []string
+	// ToolResults are the tool_result texts in a run's output stream.
+	ToolResults(output string) []string
+	// StopBlocked reports whether a Stop hook's output refuses the turn.
+	StopBlocked(output string) bool
+	// BlockingErrors are the blocking hook errors in a transcript, optionally
+	// narrowed to one lifecycle event and optionally without repeats.
+	BlockingErrors(record, hookEvent string, dedupe bool) []string
+	// StopContinuations are the reasons of Stop refusals the agent went on past.
+	StopContinuations(record string) []string
+	// SubagentBlockingErrors are the SubagentStop refusals the sub-agents were
+	// actually told, read from the contents of their own transcripts.
+	SubagentBlockingErrors(records []string) []string
+	// AnySubagentBlockingErrors are the SubagentStop refusals recorded, told or not.
+	AnySubagentBlockingErrors(records []string) []string
+	// SubagentFeedbackCount counts the refusal-feedback turns in sub-agent transcripts.
+	SubagentFeedbackCount(records []string) int
+}
+
+// harnessEnvVar selects the Driver.
+const harnessEnvVar = "SR_HARNESS"
+
+// knownHarnesses are the names SR_HARNESS may carry; only the ones with a
+// driver in drivers() can run.
+var knownHarnesses = []string{"claude", "codex", "cursor"}
+
+func drivers() map[string]Driver {
+	return map[string]Driver{"claude": claudeDriver{}}
+}
+
+var (
+	selectOnce   sync.Once
+	selected     Driver
+	selectionErr error
+)
+
+// selectDriver is the one place SR_HARNESS is read: unset means claude. A name
+// with no driver is an error, never a fall-back to claude.
+func selectDriver() (Driver, error) {
+	selectOnce.Do(func() {
+		name := strings.TrimSpace(os.Getenv(harnessEnvVar))
+		if name == "" {
+			name = "claude"
+		}
+		if d, ok := drivers()[name]; ok {
+			selected = d
+			return
+		}
+		for _, k := range knownHarnesses {
+			if k == name {
+				selectionErr = fmt.Errorf("harness: %s=%s has no e2e driver yet (implemented: %s)", harnessEnvVar, name, implemented())
+				return
+			}
+		}
+		selectionErr = fmt.Errorf("harness: unknown %s=%q (known: %s; implemented: %s)", harnessEnvVar, name, strings.Join(knownHarnesses, ", "), implemented())
+	})
+	return selected, selectionErr
+}
+
+func implemented() string {
+	var names []string
+	for n := range drivers() {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// mustDriver is the selected Driver for code with no *testing.T at hand. New has
+// already failed the test on a bad selection, so reaching the panic means a
+// helper ran without an Env.
+func mustDriver() Driver {
+	d, err := selectDriver()
+	if err != nil {
+		panic(err.Error())
+	}
+	return d
+}
+
+// RequireCap skips the test unless the selected harness has every capability named.
+func RequireCap(t testing.TB, caps ...string) {
+	t.Helper()
+	d, err := selectDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, c := range d.Caps() {
+		have[c] = true
+	}
+	for _, c := range caps {
+		if !have[c] {
+			t.Skipf("harness %s lacks capability %q", d.Name(), c)
+		}
+	}
+}

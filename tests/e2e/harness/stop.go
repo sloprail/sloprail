@@ -2,7 +2,6 @@ package harness
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -26,11 +25,7 @@ var NoSessionEnv = []string{"CLAUDE_CODE_SESSION_ID=", "CLAUDECODE="}
 // where the hook payload, not the environment, names it. One definition, for SessionEnv
 // and StopNow alike: they differ in the session id and nothing else.
 func (e *Env) hookEnv(sessionID string) []string {
-	return []string{
-		"CLAUDE_CODE_SESSION_ID=" + sessionID, "CLAUDE_CONFIG_DIR=" + e.ConfigDir(),
-		"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_EXECPATH=",
-		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-	}
+	return e.driver.HookEnv(e, sessionID)
 }
 
 // SessionEnv is the environment for a call made from inside a session the mock
@@ -67,7 +62,7 @@ func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
 
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the
 // harness honours.
-func Blocked(r Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }
+func Blocked(r Result) bool { return mustDriver().StopBlocked(r.Output) }
 
 // SubagentStopBlocked reports whether a sub-agent of the session was refused at its Stop with a
 // reason containing text ("" for any refusal). It reads the sub-agents' own transcripts, where
@@ -89,27 +84,7 @@ func (e *Env) SubagentStopBlocked(projDir, sessionID, text string) bool {
 // de-duplication SubagentBlockingErrors does (a refusal repeated with the same words counts again).
 func (e *Env) SubagentStopFeedbackCount(projDir, sessionID string) int {
 	e.t.Helper()
-	n := 0
-	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
-		b, err := os.ReadFile(sub)
-		if err != nil {
-			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			var rec struct {
-				Type    string `json:"type"`
-				Message struct {
-					Content json.RawMessage `json:"content"`
-				} `json:"message"`
-			}
-			var text string
-			if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" &&
-				json.Unmarshal(rec.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:\n") {
-				n++
-			}
-		}
-	}
-	return n
+	return e.driver.SubagentFeedbackCount(e.subagentRecords(projDir, sessionID))
 }
 
 // NoSubagentStopBlock reports that no sub-agent of the session was refused at its Stop: the strict
