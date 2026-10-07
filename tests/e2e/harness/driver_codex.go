@@ -37,7 +37,7 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -281,6 +281,12 @@ func codexHostEnv() []string {
 
 var codexThread = regexp.MustCompile(`"thread_id":"([^"]+)"`)
 
+// JudgeHooksOff: the judge's codex is launched with the hooks feature disabled
+// (`--disable hooks`, one argument per line in the recorded argv).
+func (codexDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, "--disable\nhooks\n")
+}
+
 // Observe records the thread a run started: the id Codex gave the session.
 func (codexDriver) Observe(e *Env, l Launch, output string) {
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
@@ -463,6 +469,10 @@ func rolloutPath(e *Env, threadID string) string {
 
 // TranscriptPath is the session's rollout; before the session has run there is none, and
 // the path where it would be named after the session.
+func (codexDriver) SeedRecord() string {
+	return `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}`
+}
+
 func (codexDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	if p := rolloutPath(e, e.harnessID(sessionID)); p != "" {
 		return p

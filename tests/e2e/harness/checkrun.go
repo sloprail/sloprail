@@ -310,7 +310,7 @@ func (e *Env) ensureTranscript(projDir, sessionID string) {
 	if err := os.MkdirAll(filepath.Dir(tp), 0o755); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
-	rec := `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}` + "\n"
+	rec := e.driver.SeedRecord() + "\n"
 	if err := os.WriteFile(tp, []byte(rec), 0o644); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
