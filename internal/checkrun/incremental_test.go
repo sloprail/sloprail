@@ -17,7 +17,7 @@ func (f *evalFixture) baseAt(t *testing.T) string {
 }
 
 // The effective base is the head of the latest complete PASSING run: a fail never advances
-// it, a pass does, and a stored fail is replayed (no re-roll) until its input changes.
+// it, a pass does, and a stored fail is judged again by the next run (only a pass is a hit).
 func TestIncremental_EffectiveBaseAdvancesOnlyOnPass(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	assert.Equal(t, f.base, f.baseAt(t), "no run yet: the requested base")
@@ -30,13 +30,13 @@ func TestIncremental_EffectiveBaseAdvancesOnlyOnPass(t *testing.T) {
 	assert.Equal(t, f.base, f.baseAt(t), "a FAIL never advances the base")
 
 	_, refused = f.evaluate(t, f.results)
-	require.True(t, refused, "the stored fail is replayed")
-	assert.Equal(t, 1, f.runs(t), "no re-roll")
+	require.True(t, refused, "still refused")
+	assert.Equal(t, 2, f.runs(t), "only a pass is a hit")
 
 	fixed := f.commitDoc(t, "docs/a.md", "clean now")
 	_, refused = f.evaluate(t, f.results)
 	require.False(t, refused)
-	require.Equal(t, 2, f.runs(t))
+	require.Equal(t, 3, f.runs(t))
 	assert.Equal(t, fixed, f.baseAt(t), "a pass advances the base to its head")
 
 	// Only what changed since is examined: a new file is judged alone, the old one is not
@@ -44,7 +44,7 @@ func TestIncremental_EffectiveBaseAdvancesOnlyOnPass(t *testing.T) {
 	f.commitDoc(t, "docs/b.md", "clean b")
 	_, refused = f.evaluate(t, f.results)
 	require.False(t, refused)
-	assert.Equal(t, 3, f.runs(t))
+	assert.Equal(t, 4, f.runs(t))
 	_, outcomes := f.evaluateOver(t, f.base, "HEAD", true, false)
 	for _, o := range outcomes {
 		assert.NotContains(t, o.Reason, "docs/a.md")
