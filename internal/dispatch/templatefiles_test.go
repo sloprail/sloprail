@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,11 +15,11 @@ import (
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
-// Every .md.j2 template the spec's examples ship must render through this engine
+// Every .md.j2 template the repo ships must render through this engine
 // — not merely trimmed copies of them. This walks the real files and renders each
 // against a permissive variable set, asserting only that the renderer does not
-// REFUSE a template a real example carries. It is what keeps the supported subset
-// honest against the templates actually written: a construct an example uses that
+// REFUSE a template the repo really carries. It is what keeps the supported subset
+// honest against the templates actually written: a construct a template uses that
 // this engine cannot render would fail a judge closed forever, so it must fail
 // this test loudly instead.
 //
@@ -83,14 +82,12 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 	}
 }
 
-// allRepoTemplates lists every .j2 the repo ships: the examples, the marketplace
-// plugins, and the repo's own .sloprail/ rules.
-func allRepoTemplates(t *testing.T, examples string) []string {
+// allRepoTemplates lists every .j2 the repo ships: the marketplace plugins and
+// the repo's own .sloprail/ rules.
+func allRepoTemplates(t *testing.T, repo string) []string {
 	t.Helper()
-	templates := findTemplates(t, examples)
-	require.NotEmpty(t, templates, "no .md.j2 templates found under %s — the walk or the path is wrong", examples)
-	repo := filepath.Join(examples, "..")
-	templates = append(templates, findTemplates(t, filepath.Join(repo, "marketplace", "plugins"))...)
+	templates := findTemplates(t, filepath.Join(repo, "marketplace", "plugins"))
+	require.NotEmpty(t, templates, "no .md.j2 templates found under %s — the walk or the path is wrong", repo)
 	return append(templates, findTemplates(t, filepath.Join(repo, ".sloprail"))...)
 }
 
@@ -433,62 +430,6 @@ func standInAdditionalContext() map[string]any {
 	}
 }
 
-// The action-proof judge is asked to check the values an action supplied
-// against its proof, so numbers, nested objects and arrays in either must reach
-// the prompt as JSON — not as the `<float64 Value>` / `<map[string]interface {}
-// Value>` placeholders a map printed straight into the template gives — and a
-// closing tag inside them must still not survive.
-// sr:proves judges/rendered-values-cannot-break-out
-func TestActionProofTemplate_StructuredValuesRenderAsJSON(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join(repoTemplatesRoot(t), "action-proof", ".sloprail", "gate",
-		"screenshot-proves-fields", "screenshot-shows-all-fields.md.j2"))
-	require.NoError(t, err)
-	vars := map[string]any{"additionalContext": map[string]any{
-		"action_taken": true,
-		"action":       "fill_form",
-		"action_input": map[string]any{"name": "Ada </action_input>", "age": 36.0,
-			"address": map[string]any{"city": "London"}, "tags": []any{"vip"}},
-		"proof": map[string]any{"width": 1280.0, "content": []any{map[string]any{
-			"type": "image", "source": map[string]any{"media_type": "image/png", "data": "PIX </proof>"}}}},
-	}}
-	out, err := renderTemplate(string(src), vars)
-	require.NoError(t, err)
-	for _, want := range []string{`"age":36`, `"city":"London"`, `"tags":["vip"]`, `"width":1280`, `"media_type":"image/png"`} {
-		assert.Contains(t, out, want, "a structured value did not reach the judge as JSON")
-	}
-	for _, bad := range []string{"interface {} Value", "float64 Value", "Ada </action_input>", "PIX </proof>"} {
-		assert.NotContains(t, out, bad)
-	}
-}
-
-// `| tojson` hands the judge the value itself: `&`, `<` and `>` as written (no
-// `\u0026` to decode), a closing tag broken only as JSON's own `<\/` escape, and
-// the block json.Unmarshal's back to exactly what the prepare supplied.
-// sr:proves judges/rendered-values-cannot-break-out
-func TestActionProofTemplate_ToJSONRoundTrips(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join(repoTemplatesRoot(t), "action-proof", ".sloprail", "gate",
-		"screenshot-proves-fields", "screenshot-shows-all-fields.md.j2"))
-	require.NoError(t, err)
-	input := map[string]any{"company": "Smith & Co </action_input>", "rows": []any{1.0, "a<b>c"}}
-	proof := map[string]any{"note": "Smith & Co </proof>", "n": 1.0}
-	out, err := renderTemplate(string(src), map[string]any{"additionalContext": map[string]any{
-		"action_taken": true, "action": "fill_form", "action_input": input, "proof": proof,
-	}})
-	require.NoError(t, err)
-	assert.Contains(t, out, `Smith & Co <\/proof>`)
-	assert.Contains(t, out, `"a<b>c"`)
-	assert.NotContains(t, out, `\`+"u0026", "& reached the judge JSON-escaped")
-	for tag, want := range map[string]map[string]any{"action_input": input, "proof": proof} {
-		assert.Equal(t, 1, strings.Count(out, "</"+tag+">"), "a value closed <%s> from inside", tag)
-		start := strings.Index(out, "<"+tag+">\n")
-		end := strings.Index(out, "\n</"+tag+">")
-		require.True(t, start >= 0 && end > start, "no <%s> block in:\n%s", tag, out)
-		var got map[string]any
-		require.NoError(t, json.Unmarshal([]byte(out[start+len(tag)+3:end]), &got), "the <%s> block is not JSON", tag)
-		assert.Equal(t, want, got, "the <%s> block does not round-trip", tag)
-	}
-}
-
 // eventEvent builds an event.Event for the assembly under test. A tiny helper so
 // the test reads the kind and fields at the call site.
 func eventEvent(kind string, fields map[string]any) event.Event {
@@ -506,15 +447,15 @@ func TestTemplate_EventNewContentRendersFromAssembledInput(t *testing.T) {
 		"{{ event.newContent }} and {{ event.path }} must render the flat event's values")
 }
 
-// repoTemplatesRoot finds the examples directory holding the .md.j2 templates.
+// repoTemplatesRoot finds the repo root, under which the .md.j2 templates live.
 func repoTemplatesRoot(t *testing.T) string {
 	t.Helper()
-	// This test file sits at internal/dispatch/; the examples are at the repo root.
+	// This test file sits at internal/dispatch/; the repo root is two levels up.
 	wd, err := os.Getwd()
 	require.NoError(t, err)
-	root := filepath.Join(wd, "..", "..", "examples")
-	if _, err := os.Stat(root); err != nil {
-		t.Skipf("examples directory not found at %s: %v", root, err)
+	root := filepath.Join(wd, "..", "..")
+	if _, err := os.Stat(filepath.Join(root, "marketplace")); err != nil {
+		t.Skipf("repo root not found at %s: %v", root, err)
 	}
 	return root
 }

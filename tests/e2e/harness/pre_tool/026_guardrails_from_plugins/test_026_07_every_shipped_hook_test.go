@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// Every hook script this repo ships — its own .sloprail, every example, every
+// Every hook script this repo ships — its own .sloprail, every
 // marketplace plugin — must pass authoring-slop's own grep. authoring-slop has a
 // PreFileWrite gate half: a shipped script its grep refuses can never be edited again in a
 // project that has the plugin (the edit is refused), which is how 16 scripts
@@ -65,12 +65,23 @@ func TestT026_07_EveryShippedHookPassesTheGrep(t *testing.T) {
 	if len(scripts) < 50 {
 		t.Fatalf("found only %d shipped hook scripts — the walk is not reaching them", len(scripts))
 	}
+	// Plus the fixture plugin's scripts (fixture_hooks_test.go), read from a temp
+	// tree and checked under their `.sloprail/...` rel paths.
+	fixtures := writeFixtureHooks(t)
+	for rel := range fixtureHooks {
+		scripts = append(scripts, "fixture:"+rel)
+	}
 	for _, rel := range scripts {
 		t.Run(rel, func(t *testing.T) {
-			body, err := os.ReadFile(filepath.Join(root, rel))
+			src, path := root, rel
+			if strings.HasPrefix(rel, "fixture:") {
+				src, path = fixtures, strings.TrimPrefix(rel, "fixture:")
+			}
+			body, err := os.ReadFile(filepath.Join(src, path))
 			if err != nil {
 				t.Fatal(err)
 			}
+			rel := path
 			payload, _ := json.Marshal(map[string]any{"event": map[string]any{
 				"kind": "PreFileUpdate", "path": rel, "newContent": string(body), "resultKnown": true,
 			}})
@@ -119,17 +130,21 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/prepare-judgment-gates.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/gates-hold.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gate-is-grounded/resolve-gate-context.sh", "PostFileUpdate", refuses, nil},
+		// The fixture plugin's scripts (fixture_hooks_test.go), under a temp tree.
 		// A git repository where committed code pins the file: an unread file
-		// nothing pins is waived (nothing is at stake), so the fixture must pin it.
-		{"examples/business-invariants/.sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh", "PostFileUpdate", applies, pinnedTaskRepo},
-		{"examples/eval-loop-maxing/.sloprail/context/goal-tracking/enter.sh", "PostFileUpdate", activate, nil},
-		{"examples/eval-loop-maxing/eval/converging-goal/overlay/.sloprail/context/goal-tracking/enter.sh", "PostFileUpdate", activate, nil},
-		{"examples/keyword-coverage-registry/.sloprail/file-guard/scanner-keywords-hold/drops-keywords.sh", "PostFileUpdate", applies, nil},
-		{"examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/removes-content.sh", "PostFileUpdate", applies, nil},
-		{"examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/skip-pure-addition.sh", "PostFileUpdate", judges, nil},
+		// nothing pins is waived (nothing is at stake), so that fixture must pin it.
+		{"fixture:.sloprail/file-guard/when-pinned/pinned.sh", "PostFileUpdate", applies, pinnedTaskRepo},
+		{"fixture:.sloprail/file-guard/when-drops/drops.sh", "PostFileUpdate", applies, nil},
+		{"fixture:.sloprail/file-guard/prepare-judges/prepare.sh", "PostFileUpdate", judges, nil},
+		{"fixture:.sloprail/context/goal/enter.sh", "PostFileUpdate", activate, nil},
 	} {
 		t.Run(tc.script, func(t *testing.T) {
-			dir := filepath.Join(root, filepath.Dir(tc.script))
+			base := root
+			if rel, ok := strings.CutPrefix(tc.script, "fixture:"); ok {
+				tc.script = filepath.Join(writeFixtureHooks(t), rel)
+				base = ""
+			}
+			dir := filepath.Join(base, filepath.Dir(tc.script))
 			payload, _ := json.Marshal(map[string]any{
 				"event": map[string]any{
 					"kind": tc.kind, "path": "memories/tasks/a/b/TASK.md",

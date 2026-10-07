@@ -36,7 +36,7 @@ type Marker struct {
 	// transcript_path, just add the new section"` records a phrase a person
 	// actually said, which a later check grounds against the trajectory. A bare
 	// `(\S+)` truncates that at the first space; the quoted form carries it
-	// whole. See examples/no-unasked-deletion and TestScan_QuotedFQN*.
+	// whole. See sloprail-community's examples/no-unasked-deletion and TestScan_QuotedFQN*.
 	//
 	// The quoted form's grammar is deliberately small, so what the writer emits
 	// and what this reads back cannot drift on a corner:
@@ -152,7 +152,7 @@ var markerPattern = regexp.MustCompile(`^\s*(?://|#|--)\s*sr:(\S+)\s+(?:"([^"]*)
 // marker written as `# sr:asked "<quote>"` is invisible to any YAML parser and
 // must be read out of the text, which is exactly what this does. It is how a
 // markdown file carries a marker without having to invent a real frontmatter
-// field to hang it on. See examples/no-unasked-deletion and
+// field to hang it on. See sloprail-community's examples/no-unasked-deletion and
 // TestScan_MarkerInMarkdownFrontmatter.
 func Scan(text string) []Marker {
 	markers := []Marker{}

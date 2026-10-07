@@ -218,7 +218,7 @@ require:
 ```bash
 # removes-content.sh, a gate's `when` (a file-guard's decides for .subject.files, one
 # file, and reads the rest of .changeset only as context; see
-# examples/no-unasked-deletion): exit 0 when a line present before is gone after.
+# sloprail-community's examples/no-unasked-deletion): exit 0 when a line present before is gone after.
 input="$(cat)"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
 new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"

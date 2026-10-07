@@ -259,7 +259,7 @@ func (r Runner) EnterContext(req ContextEnterRequest) (payload map[string]any, a
 //
 // A clean exit (zero) means the context is DONE — deactivate. A NON-ZERO exit
 // means NOT done — stay active for another cycle. This is exactly what the
-// shipped example (examples/eval-loop-maxing goal-tracking/exit.sh) does:
+// shipped example (sloprail-community's examples/eval-loop-maxing goal-tracking/exit.sh) does:
 //
 //	if [ "$status" = "pass" ]; then exit 0   # target met — deactivate
 //	fi;                                exit 1   # not met — stay active

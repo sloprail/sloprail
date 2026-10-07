@@ -12,7 +12,6 @@ allow:
   - glob: "bin/**"
   - glob: ".bin/**"
   - glob: "docs/**"
-  - glob: "examples/**"
   - glob: "internal/**"
   - glob: "marketplace/**"
   - glob: "scripts/**"
@@ -25,3 +24,5 @@ allow:
   - glob: "tests/e2e/harness/*"
   - glob: "tests/e2e/harness/session/changesetkit/*"
   - regex: '^tests/e2e/(cli|harness)/[a-z_]+/[0-9]{3}_[a-z0-9_]+/[^/]+$'
+  # example content a test loads (a moved example's .sloprail, scripts, templates), kept verbatim
+  - regex: '^tests/e2e/(cli|harness)/[a-z_]+/[0-9]{3}_[a-z0-9_]+/testdata/.+$'
