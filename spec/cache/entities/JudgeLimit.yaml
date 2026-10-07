@@ -1,6 +1,0 @@
-doc: "The machine-wide bound on judges running at once."
-fields:
-  - name: slots
-    type: int32
-    doc: "How many judges may run at once across all runs."
-    constraint_expr: "default 8, positive integer from the environment"

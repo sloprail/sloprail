@@ -1,7 +1,5 @@
 predicate: >-
-  Every {@ent:fileguard:Subject} of a changeset has a unique non-empty
-  {@fld:fileguard:Subject.id}, names only files of
-  {@fld:fileguard:Changeset.files} or carries a
-  {@fld:fileguard:Subject.fingerprint}, and a subjects script that names
-  none or breaks this refuses.
+  A {@ent:fileguard:FileGuard} whose subjects script prints something that
+  does not describe valid {@ent:fileguard:Subject} entries of its
+  {@ent:fileguard:Changeset} refuses, and is never read as a pass.
 why: A malformed subject list reads as a pass or keys a verdict by nothing.

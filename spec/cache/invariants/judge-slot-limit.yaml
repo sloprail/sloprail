@@ -1,5 +1,0 @@
-predicate: >-
-  At most {@fld:cache:JudgeLimit.slots} judges run at once across all runs
-  on a machine, a run waits for a free one rather than failing, and two runs
-  about to judge the same {@ent:cache:StoredVerdict} key judge it once.
-why: Parallel runs overload the model or pay for one judgement twice.
