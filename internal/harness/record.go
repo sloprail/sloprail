@@ -141,6 +141,14 @@ type Transcripts interface {
 	ProjectDir(configDir, dir string) string
 }
 
+// RecordLister is implemented by a Transcripts whose project directory (ProjectDir) is not
+// one flat directory of session files: Codex keeps every session in a date-sharded tree, so
+// the conversation's other transcripts are found by walking it. ListRecords is every session
+// file under projectDir, in no particular order.
+type RecordLister interface {
+	ListRecords(projectDir string) []string
+}
+
 // RecordOpener is what a Transcripts MAY implement when the record the engine should
 // read is the harness's session file PLUS what sloprail itself kept beside it: Cursor's
 // transcript holds no tool_result at all, so sloprail records each tool's output from
