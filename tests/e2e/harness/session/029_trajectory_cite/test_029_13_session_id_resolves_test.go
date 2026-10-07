@@ -45,8 +45,8 @@ func TestT029_13_PayloadSessionIDResolvesTheRoot(t *testing.T) {
 	// agent fields. record() joins <config>/projects/<encoded-cwd>/<session-id>.jsonl,
 	// so CLAUDE_CONFIG_DIR must point at the config dir the mock wrote to (runBin
 	// otherwise defaults it to the sandbox HOME's own .claude).
-	payload := `{"session_id":"` + sessionID + `","cwd":"` + proj + `"}`
-	env := []string{"CLAUDE_CONFIG_DIR=" + e.ConfigDir()}
+	payload := e.IdentityPayload(proj, sessionID)
+	env := e.SessionEnv("")
 	res := e.CLIDirectStdinEnv(proj, payload, env, "sr-session", "trajectory", "cite", "ORPHANED helper")
 	if res.Code != 0 {
 		t.Fatalf("cite from a session-id payload exited %d, want 0 (it resolves the root):\n%s", res.Code, res.Output)

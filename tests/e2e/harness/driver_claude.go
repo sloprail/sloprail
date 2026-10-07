@@ -24,7 +24,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -274,6 +274,11 @@ func (claudeDriver) HookEnv(e *Env, sessionID string) []string {
 		"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_EXECPATH=",
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
+}
+
+// IdentityPayload is the session id and the working directory.
+func (claudeDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	return `{"session_id":"` + sessionID + `","cwd":"` + projDir + `"}`
 }
 
 // StopBlocked reports whether a Stop's output refuses the turn: the blocking form the
