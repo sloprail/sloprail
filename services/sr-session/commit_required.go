@@ -344,7 +344,7 @@ func ownsTree(p HookPayload) bool {
 	if !p.IsSubagent() {
 		return true
 	}
-	rootRecord, err := p.sessionRecord()
+	rootRecord, err := p.SessionRecord()
 	if err != nil || rootRecord == "" {
 		return true
 	}

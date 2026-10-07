@@ -1,6 +1,7 @@
-package harness
+package claudecode
 
 import (
+	"github.com/sloprail/sloprail/internal/harness"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -713,7 +714,7 @@ func itoa(n int) string { return strconv.Itoa(n) }
 func TestProcessGone(t *testing.T) {
 	home := t.TempDir()
 	pid := os.Getpid()
-	proc := Process{PID: pid, ProcStart: "s1"}
+	proc := harness.Process{PID: pid, ProcStart: "s1"}
 
 	if gone, known := ProcessGone(home, proc); gone || known {
 		t.Fatalf("no sessions directory is unknown, not gone: %v %v", gone, known)
@@ -722,21 +723,21 @@ func TestProcessGone(t *testing.T) {
 	if gone, known := ProcessGone(home, proc); gone || !known {
 		t.Fatalf("a live process with its file is not gone: %v %v", gone, known)
 	}
-	if gone, known := ProcessGone(home, Process{PID: pid, ProcStart: "other"}); !gone || !known {
+	if gone, known := ProcessGone(home, harness.Process{PID: pid, ProcStart: "other"}); !gone || !known {
 		t.Fatalf("a pid reused by another start is gone: %v %v", gone, known)
 	}
-	if gone, known := ProcessGone(home, Process{PID: 999999, ProcStart: "s1"}); !gone || !known {
+	if gone, known := ProcessGone(home, harness.Process{PID: 999999, ProcStart: "s1"}); !gone || !known {
 		t.Fatalf("a process with no file is gone: %v %v", gone, known)
 	}
 	writeSession(t, home, "999998", `{"pid":999998,"sessionId":"a","procStart":"s1"}`)
-	if gone, known := ProcessGone(home, Process{PID: 999998, ProcStart: "s1"}); !gone || !known {
+	if gone, known := ProcessGone(home, harness.Process{PID: 999998, ProcStart: "s1"}); !gone || !known {
 		t.Fatalf("a file whose pid is dead is gone: %v %v", gone, known)
 	}
 	writeSession(t, home, itoa(pid), `not json`)
 	if gone, known := ProcessGone(home, proc); !gone || !known {
 		t.Fatalf("a file that cannot be read fails toward judging: %v %v", gone, known)
 	}
-	if gone, known := ProcessGone(home, Process{}); gone || known {
+	if gone, known := ProcessGone(home, harness.Process{}); gone || known {
 		t.Fatalf("no process recorded is unknown: %v %v", gone, known)
 	}
 }

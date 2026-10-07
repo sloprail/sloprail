@@ -109,7 +109,7 @@ func skillCandidatePaths(workspace, name, rel string) []string {
 	if err != nil {
 		return paths
 	}
-	res, err := harness.Resolve(workspace, home)
+	res, err := harness.Current().ResolvePlugins(workspace, home)
 	if err != nil {
 		return paths
 	}

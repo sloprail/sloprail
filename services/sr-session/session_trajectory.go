@@ -97,7 +97,7 @@ accept --path to read another — the parent or a sibling that describe named.`,
 // Claude Code exports CLAUDE_CODE_SESSION_ID naming the current session, and the
 // transcript lives at a path derived deterministically from it —
 // <config>/projects/<encoded-cwd>/<session-id>.jsonl, the same layout
-// HookPayload.record() reconstructs from a payload's session_id. transcript.CurrentSessionPath
+// HookPayload.Record() reconstructs from a payload's session_id. transcript.CurrentSessionPath
 // builds exactly that path and verifies it is the session's own file before
 // returning it.
 //
@@ -129,7 +129,7 @@ func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 		return flag, HookPayload{}, nil
 	}
 	p := readPayloadIfWaiting(cmd)
-	path, err := p.record()
+	path, err := p.Record()
 	if err != nil {
 		return "", p, err
 	}

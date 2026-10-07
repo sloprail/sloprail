@@ -75,7 +75,7 @@ func openEngineState(p HookPayload) (sessionstate.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, err := sessionDBPath(p.stateCwd(), id)
+	path, err := sessionDBPath(p.StateCwd(), id)
 	if err != nil {
 		return nil, err
 	}

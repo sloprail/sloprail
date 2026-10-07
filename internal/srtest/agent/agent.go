@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sloprail/sloprail/internal/ambientenv"
 	"github.com/sloprail/sloprail/internal/harnessmock"
 )
 
@@ -175,7 +175,7 @@ func Run(o Options) (*Result, error) {
 	cmd.Dir = cwd
 	cmd.Stdout = stream
 	cmd.Stderr = stream
-	cmd.Env = append(ambientenv.Session(os.Environ()),
+	cmd.Env = append(harness.Current().SessionEnv(os.Environ()),
 		"SR_TEST_PLUGINS_DIR="+pluginsDir, // <dir>/<plugin> is each installed plugin's root, whichever way it was installed
 		"CLAUDE_CONFIG_DIR="+cfg,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+plugins,

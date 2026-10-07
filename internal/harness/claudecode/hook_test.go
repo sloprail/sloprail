@@ -1,6 +1,8 @@
-package main
+package claudecode
 
 import (
+	"fmt"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +17,7 @@ func TestPayloadTranscript_PathOnThePayloadWins(t *testing.T) {
 	// The harness handing the path over beats any assumption about where it
 	// puts things, so it is used verbatim even when an id is also present.
 	p := HookPayload{TranscriptPath: "/given/path.jsonl", SessionID: "sid", Cwd: "/proj"}
-	got, err := p.record()
+	got, err := p.Record()
 	require.NoError(t, err)
 	assert.Equal(t, "/given/path.jsonl", got)
 }
@@ -31,7 +33,7 @@ func TestPayloadTranscript_ReconstructedFromTheSessionID(t *testing.T) {
 
 	p := HookPayload{SessionID: "sess-1", Cwd: "/proj"}
 	want := filepath.Join(transcript.ProjectDir(cfg, "/proj"), "sess-1.jsonl")
-	got, err := p.record()
+	got, err := p.Record()
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -39,7 +41,7 @@ func TestPayloadTranscript_ReconstructedFromTheSessionID(t *testing.T) {
 func TestPayloadTranscript_NothingToGoOnIsEmpty(t *testing.T) {
 	// No path and no id is genuinely no record, and the caller says so rather
 	// than reading a file it invented.
-	got, err := HookPayload{Cwd: "/proj"}.record()
+	got, err := HookPayload{Cwd: "/proj"}.Record()
 	require.NoError(t, err, "naming nothing is the caller's own omission, not a refusal")
 	assert.Empty(t, got)
 }
@@ -67,9 +69,9 @@ func TestPayloadTranscript_ASessionIDWithASeparatorIsRefused(t *testing.T) {
 
 	p := HookPayload{SessionID: "../-some-other-project/secret", Cwd: "/proj"}
 
-	_, err := p.record()
+	_, err := p.Record()
 	require.Error(t, err)
-	assert.ErrorIs(t, err, errNotASessionID)
+	assert.ErrorIs(t, err, ErrNotASessionID)
 
 	// And the identity walk that reads it refuses too, rather than handing back
 	// the other conversation's id.
@@ -83,8 +85,8 @@ func TestPayloadTranscript_ABackslashIsRefusedToo(t *testing.T) {
 	// Windows separates on both slashes, and a check on filepath.Separator alone
 	// would let one of them through on every other platform.
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	_, err := HookPayload{SessionID: `..\other\secret`, Cwd: "/proj"}.record()
-	assert.ErrorIs(t, err, errNotASessionID)
+	_, err := HookPayload{SessionID: `..\other\secret`, Cwd: "/proj"}.Record()
+	assert.ErrorIs(t, err, ErrNotASessionID)
 }
 
 // "." and ".." carry no separator, so they are not refused as names — and they
@@ -103,7 +105,7 @@ func TestPayloadTranscript_DotIDsNameAFileInsideTheProjectDir(t *testing.T) {
 	for id, want := range map[string]string{".": "..jsonl", "..": "...jsonl"} {
 		// No file is there, so the guess resolves to nothing — but what
 		// matters is WHERE it pointed.
-		got, err := HookPayload{SessionID: id, Cwd: cwd}.record()
+		got, err := HookPayload{SessionID: id, Cwd: cwd}.Record()
 		require.NoError(t, err, "no separator, so not refused as a name")
 		assert.Equal(t, filepath.Join(dir, want), got,
 			"session id %q must stay inside the project directory", id)
@@ -130,7 +132,7 @@ func TestPayloadTranscript_AGuessLandingOnAnotherConversationIsRefused(t *testin
 
 	p := HookPayload{SessionID: "guessed", Cwd: "/proj"}
 
-	_, err := p.record()
+	_, err := p.Record()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, transcript.ErrWrongSession)
 
@@ -154,7 +156,7 @@ func TestPayloadTranscript_AGuessLandingOnItsOwnRecordResolves(t *testing.T) {
 		[]byte(`{"type":"user","uuid":"MY-ORIGIN","parentUuid":null,"sessionId":"mine"}`+"\n"), 0o644))
 
 	p := HookPayload{SessionID: "mine", Cwd: "/proj"}
-	got, err := p.record()
+	got, err := p.Record()
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 
@@ -186,7 +188,7 @@ func TestPayloadTranscript_AGuessLandingOnAForkedRecordResolves(t *testing.T) {
 
 	p := HookPayload{SessionID: "forked", Cwd: "/proj"}
 
-	got, err := p.record()
+	got, err := p.Record()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(dir, "forked.jsonl"), got)
 
@@ -229,7 +231,7 @@ func TestPayloadTranscript_AGivenPathIsNeverCrossChecked(t *testing.T) {
 		[]byte(`{"type":"user","uuid":"ORIGIN","parentUuid":null,"sessionId":"a-different-name"}`+"\n"), 0o644))
 
 	p := HookPayload{TranscriptPath: given, SessionID: "a-different-name", Cwd: "/proj"}
-	got, err := p.record()
+	got, err := p.Record()
 	require.NoError(t, err)
 	assert.Equal(t, given, got)
 }
@@ -238,7 +240,7 @@ func TestPayloadTranscript_NoRecordIsItsOwnAnswer(t *testing.T) {
 	// Distinct from a refusal. Nothing was named, which is the caller's own
 	// omission and not a session being pointed somewhere it must not read — and
 	// both callers phrase it differently because of that.
-	got, err := HookPayload{Cwd: "/proj"}.record()
+	got, err := HookPayload{Cwd: "/proj"}.Record()
 	require.NoError(t, err, "naming nothing is not a refusal")
 	assert.Empty(t, got)
 }
@@ -254,7 +256,7 @@ func TestPayloadTranscript_AGuessAtAFileNotWrittenYetStillResolves(t *testing.T)
 
 	p := HookPayload{SessionID: "not-yet", Cwd: "/proj"}
 	want := filepath.Join(transcript.ProjectDir(cfg, "/proj"), "not-yet.jsonl")
-	got, err := p.record()
+	got, err := p.Record()
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -295,7 +297,7 @@ func TestPayloadTranscript_RefusesAGuessFromACollidingSiblingCheckout(t *testing
 		transcript.ProjectDir(cfg, sub), transcript.ProjectDir(cfg, sibling),
 		"the collision this test is about must actually collide")
 
-	got, err := HookPayload{SessionID: "s-1", Cwd: sub}.record()
+	got, err := HookPayload{SessionID: "s-1", Cwd: sub}.Record()
 
 	assert.ErrorIs(t, err, transcript.ErrWrongTree,
 		"the sibling's transcript belongs to another tree and must be refused")
@@ -317,7 +319,7 @@ func TestPayloadTranscript_AcceptsAGuessFromTheSameTree(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	seedTree(t, cfg, cwd, "s-1", "OWN-ORIGIN")
 
-	got, err := HookPayload{SessionID: "s-1", Cwd: cwd}.record()
+	got, err := HookPayload{SessionID: "s-1", Cwd: cwd}.Record()
 
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(transcript.ProjectDir(cfg, cwd), "s-1.jsonl"), got)
@@ -374,13 +376,13 @@ func TestRecord_AnIsolatedSubagentIsNeverAskedAboutItsTree(t *testing.T) {
 	// here would refuse on exactly that disagreement.
 	//
 	// Reported directly: returned verbatim, no tree check.
-	got, err := HookPayload{AgentTranscriptPath: agentPath, Cwd: parentTree}.record()
+	got, err := HookPayload{AgentTranscriptPath: agentPath, Cwd: parentTree}.Record()
 	require.NoError(t, err, "a sub-agent's own reported record must never be refused over its tree")
 	assert.Equal(t, agentPath, got)
 
 	// Reconstructed from the agent id against the parent's reported path: also
 	// no tree check.
-	got, err = HookPayload{TranscriptPath: parentPath, AgentID: "a1", Cwd: parentTree}.record()
+	got, err = HookPayload{TranscriptPath: parentPath, AgentID: "a1", Cwd: parentTree}.Record()
 	require.NoError(t, err, "a reconstructed sub-agent path must never be refused over its tree")
 	assert.Equal(t, agentPath, got)
 
@@ -418,6 +420,20 @@ func TestRecord_TheTreeCheckStillGuardsAGuessedRootPath(t *testing.T) {
 		[]byte(`{"type":"user","uuid":"SIBLING-ORIGIN","parentUuid":null,"sessionId":"s-1","cwd":"`+
 			sibling+`"}`+"\n"), 0o644))
 
-	_, err := HookPayload{SessionID: "s-1", Cwd: sub}.record()
+	_, err := HookPayload{SessionID: "s-1", Cwd: sub}.Record()
 	assert.ErrorIs(t, err, transcript.ErrWrongTree)
+}
+
+// stableID is the identity a hook's payload resolves to: its record's origin
+// session id (what sr-session keys its state on, via the same two calls).
+func stableID(p HookPayload) (string, error) {
+	path, err := p.Record()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", fmt.Errorf("no transcript path on the hook payload")
+	}
+	id, err := sessionpath.StableIdentity(path, p.Cwd)
+	return id.ID, err
 }

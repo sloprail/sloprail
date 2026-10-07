@@ -69,7 +69,7 @@ func DeclarationStore(w io.Writer, cwd string) (*declaration.Store, []harness.Un
 		fmt.Fprintf(w, "sloprail: plugin-shipped new-format declarations not loaded (no home directory to locate the plugin cache): %v\n", err)
 		return declaration.New(DotDir(cwd)), nil
 	}
-	res, err := harness.Resolve(ProjectDir(cwd), home)
+	res, err := harness.Current().ResolvePlugins(ProjectDir(cwd), home)
 	if err != nil {
 		fmt.Fprintf(w, "sloprail: plugin-shipped new-format declarations not loaded (the project's plugin settings could not be read): %v\n", err)
 		return declaration.New(DotDir(cwd)), nil

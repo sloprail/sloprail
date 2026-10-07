@@ -41,7 +41,7 @@ var (
 // agentSignalFor builds the registry's signal for a hook payload of a sub-agent.
 func agentSignalFor(rsID string, p HookPayload, now time.Time) sessionstate.AgentSignal {
 	sig := sessionstate.AgentSignal{SessionID: rsID, AgentID: p.AgentID, TranscriptPath: agentRecordPath(p), At: now}
-	if proc, ok := harness.ProcessOfSession(agentHome(), p.SessionID); ok {
+	if proc, ok := harness.Current().ProcessOfSession(agentHome(), p.SessionID); ok {
 		sig.OwnerPID, sig.OwnerProcStart = proc.PID, proc.ProcStart
 	}
 	return sig
@@ -169,7 +169,7 @@ func settleAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string,
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 	home := agentHome()
-	current, haveCurrent := harness.ProcessOfSession(home, p.SessionID)
+	current, haveCurrent := harness.Current().ProcessOfSession(home, p.SessionID)
 
 	if p.TranscriptPath != "" {
 		// Only what the record gained since the last Stop is read: a record of a long session is
@@ -220,7 +220,7 @@ func settleAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string,
 		}
 		stale := false
 		if a.OwnerPID != 0 && (!haveCurrent || current.PID != a.OwnerPID || current.ProcStart != a.OwnerProcStart) {
-			if gone, known := harness.ProcessGone(home, harness.Process{PID: a.OwnerPID, ProcStart: a.OwnerProcStart}); known && gone {
+			if gone, known := harness.Current().ProcessGone(home, harness.Process{PID: a.OwnerPID, ProcStart: a.OwnerProcStart}); known && gone {
 				stale = true
 			}
 		}

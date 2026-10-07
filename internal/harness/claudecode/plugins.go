@@ -1,4 +1,4 @@
-// Package harness resolves which plugins a PROJECT has installed, by reading
+// This file resolves which plugins a PROJECT has installed, by reading
 // the harness's own configuration.
 //
 // # Why this package exists, and why it is allowed to be harness-specific
@@ -52,11 +52,13 @@
 // A schema move therefore turns into "enabled plugin X could not be located",
 // which is a sentence a user can act on, rather than into silence, which is not.
 // See Unresolved for why this is a report rather than a refusal.
-package harness
+
+package claudecode
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
 	"os"
 	"path/filepath"
 	"sort"
@@ -119,36 +121,20 @@ type marketplace struct {
 	} `json:"source"`
 }
 
-// Plugin identifies one installed plugin, split from its `<plugin>@<marketplace>`
-// settings key.
-type Plugin struct {
-	// Name is the plugin's own name — the half a guardrail is attributed to,
-	// since a user who installed `sloprail` thinks of it as `sloprail` and not
-	// as `sloprail@sloprail-marketplace`.
-	Name string
-
-	// Marketplace is where it came from, kept because it is half of the cache
-	// path and because two marketplaces may ship a plugin of the same name.
-	Marketplace string
-}
-
-// Key renders the plugin the way a settings file names it.
-func (p Plugin) Key() string { return p.Name + "@" + p.Marketplace }
-
 // parseKey splits a `<plugin>@<marketplace>` settings key.
 //
 // A key without an `@` is not a plugin reference this package can act on. It is
 // returned as unparseable rather than guessed at, because guessing would mean
 // inventing a marketplace name and then failing to find a directory under it —
 // reporting a confusing path instead of the real fault, which is the key.
-func parseKey(key string) (Plugin, bool) {
+func parseKey(key string) (harness.Plugin, bool) {
 	at := strings.LastIndex(key, "@")
 	if at <= 0 || at == len(key)-1 {
-		return Plugin{}, false
+		return harness.Plugin{}, false
 	}
-	p := Plugin{Name: key[:at], Marketplace: key[at+1:]}
+	p := harness.Plugin{Name: key[:at], Marketplace: key[at+1:]}
 	if !isPathSafe(p.Name) || !isPathSafe(p.Marketplace) {
-		return Plugin{}, false
+		return harness.Plugin{}, false
 	}
 	return p, true
 }
@@ -205,105 +191,6 @@ func isPathSafe(name string) bool {
 	return !strings.ContainsRune(name, 0)
 }
 
-// Unresolved is an enabled plugin whose files could not be found.
-//
-// # Why this type exists at all
-//
-// This is the whole safety argument for reading a harness's configuration from
-// inside the engine. Every assumption in this file can go stale: the cache can
-// move, the manifest schema can go to version 3, a version directory can be
-// pruned by a cleanup. What must never happen is that a stale assumption reads
-// as "this project has no plugins", because that is indistinguishable from a
-// project that really has none — and the guardrails simply stop firing while
-// everything continues to look correct.
-//
-// So the two are made distinguishable at the source. A settings file naming an
-// enabled plugin is the project SAYING it installed something. If the files
-// backing that statement cannot be found, sloprail has failed to resolve a
-// plugin the project believes it has, and says so by name.
-//
-// # Why it warns rather than refuses
-//
-// It is reported loudly at every hook point and it does not, by itself, block
-// the action. The reasoning is about who is at fault and what a refusal would
-// achieve.
-//
-// A plugin that cannot be located is not a guardrail that failed to load —
-// sloprail does not know whether it shipped any guardrails at all, and most
-// plugins are skills and hooks and ship none. Refusing every action in a project
-// because one unrelated plugin's directory is missing would block work over a
-// rule that may not exist, and the user's only remedy would be to uninstall a
-// plugin they wanted. That trades a silent failure for a loud one that is
-// usually wrong, and users route around tools that block them for reasons that
-// turn out not to apply.
-//
-// The distinction being preserved is: a guardrail that EXISTS and cannot be
-// checked must refuse, because reading it as approval is a lie about a rule the
-// project relies on — that is refuseForBroken, and it is unchanged. A plugin
-// that cannot be FOUND is a report, because nothing is yet known to have been
-// relied upon. What makes the report sufficient is that it is not silent: it
-// names the plugin, the key, and every path that was tried, at every hook point,
-// so a user whose guardrails vanished sees why on the next tool call rather than
-// never.
-type Unresolved struct {
-	// Plugin is the plugin that could not be located; Key is how the settings
-	// file named it, kept verbatim so a user can search for the exact string
-	// even when it did not parse.
-	Plugin Plugin
-	Key    string
-
-	// Tried is every path that was checked, in order. This is what turns the
-	// report into a diagnosis: a user seeing the cache path they expected, with
-	// a version directory that is not there, knows immediately that the plugin
-	// needs reinstalling — and a MAINTAINER seeing a cache root that does not
-	// exist at all knows the layout assumption in this file has moved.
-	Tried []string
-
-	// Reason says what went wrong in one clause, for the front of the message.
-	Reason string
-}
-
-// Message renders an unresolved plugin for a person. One wording, here, because
-// every hook point reports this and separate copies would drift.
-//
-// It names the harness explicitly. When this fires because a schema moved, the
-// reader's next question is "which part of sloprail is out of date", and the
-// answer is this file — so the message points at the layer rather than leaving
-// the user to conclude their own project is misconfigured.
-func (u Unresolved) Message() string {
-	tried := "nothing was tried"
-	if len(u.Tried) > 0 {
-		tried = strings.Join(u.Tried, ", ")
-	}
-	return fmt.Sprintf(
-		"enabled plugin %q could not be located, so any guardrails it ships are NOT enforcing: %s. "+
-			"Looked in: %s. "+
-			"Reinstall the plugin, or remove it from enabledPlugins if it is gone; "+
-			"if the plugin is installed and this persists, sloprail's Claude Code layout assumptions are out of date.",
-		u.Key, u.Reason, tried)
-}
-
-// Resolution is everything one discovery pass learned: where the enabled
-// plugins are, and which ones could not be found.
-type Resolution struct {
-	// Roots are the installation directories of the plugins that resolved, in
-	// a stable order. These are what the guardrail store reads.
-	Roots []Root
-
-	// Unresolved are the enabled plugins whose directories were not found. Never
-	// empty-by-omission: a plugin either lands here or in Roots.
-	Unresolved []Unresolved
-}
-
-// Root is one resolved plugin installation.
-type Root struct {
-	Plugin Plugin
-
-	// Dir is the directory the plugin's files are in — the one holding its
-	// guardrails/, hooks/ and skills/.
-	Dir string
-}
-
 // Resolve reads a project's enabled plugins and locates each one.
 //
 // projectDir is the project root — the directory holding `.claude/`. home is
@@ -315,13 +202,13 @@ type Root struct {
 // an error: it is the ordinary state of most projects, and returns an empty
 // Resolution. What is never done is returning empty because something could not
 // be PARSED — see below.
-func Resolve(projectDir, home string) (Resolution, error) {
+func Resolve(projectDir, home string) (harness.Resolution, error) {
 	enabled, marketplaces, err := resolveEnabled(projectDir)
 	if err != nil {
-		return Resolution{}, err
+		return harness.Resolution{}, err
 	}
 
-	var res Resolution
+	var res harness.Resolution
 	for _, key := range enabled {
 		plugin, ok := parseKey(key)
 		if !ok {
@@ -329,7 +216,7 @@ func Resolve(projectDir, home string) (Resolution, error) {
 			// are not usable as path components — see isPathSafe. Reported
 			// rather than skipped, for the reason every unresolvable plugin is:
 			// the project enabled something, and sloprail is not loading it.
-			res.Unresolved = append(res.Unresolved, Unresolved{
+			res.Unresolved = append(res.Unresolved, harness.Unresolved{
 				Key: key,
 				Reason: "the settings key is not in `<plugin>@<marketplace>` form, " +
 					"or one of its halves is not a usable directory name",
@@ -339,12 +226,12 @@ func Resolve(projectDir, home string) (Resolution, error) {
 
 		dir, tried, err := locate(plugin, marketplaces, home, projectDir)
 		if err != nil {
-			res.Unresolved = append(res.Unresolved, Unresolved{
+			res.Unresolved = append(res.Unresolved, harness.Unresolved{
 				Plugin: plugin, Key: key, Tried: tried, Reason: err.Error(),
 			})
 			continue
 		}
-		res.Roots = append(res.Roots, Root{Plugin: plugin, Dir: dir})
+		res.Roots = append(res.Roots, harness.Root{Plugin: plugin, Dir: dir})
 	}
 
 	// Sorted by the settings key, which is stable across runs and independent of
@@ -445,7 +332,7 @@ func resolveEnabled(projectDir string) ([]string, map[string]marketplace, error)
 //
 // The order below is the order Claude Code itself resolves in, and each step is
 // answerable.
-func locate(p Plugin, marketplaces map[string]marketplace, home, projectDir string) (string, []string, error) {
+func locate(p harness.Plugin, marketplaces map[string]marketplace, home, projectDir string) (string, []string, error) {
 	var tried []string
 
 	// 1. A marketplace sourced from a local DIRECTORY is loaded from that
@@ -585,7 +472,7 @@ const installedPluginsSchema = 2
 // the overwhelmingly common case. The schema assumption therefore degrades to a
 // wrong-version risk for multi-version plugins rather than to total blindness,
 // and total blindness is the failure that mattered.
-func liveVersion(p Plugin, pluginCache, home string) (string, error) {
+func liveVersion(p harness.Plugin, pluginCache, home string) (string, error) {
 	versions, err := versionDirs(pluginCache)
 	if err != nil {
 		return "", err
@@ -622,7 +509,7 @@ func liveVersion(p Plugin, pluginCache, home string) (string, error) {
 // over the directory listing, and a caller that cannot read it has a worse
 // answer rather than no answer. That is the property that keeps a schema move
 // from being fatal.
-func recordedVersion(p Plugin, home string) (string, bool) {
+func recordedVersion(p harness.Plugin, home string) (string, bool) {
 	data, err := os.ReadFile(filepath.Join(home, ".claude", "plugins", "installed_plugins.json"))
 	if err != nil {
 		return "", false
@@ -713,14 +600,6 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// Process is a live Claude Code process as ~/.claude/sessions/<pid>.json records it: its pid and
-// the opaque start marker the harness wrote beside it, which tells a pid reused by another
-// process from the one that was recorded.
-type Process struct {
-	PID       int
-	ProcStart string
-}
-
 // sessionsDir is where the harness keeps one file per live process.
 func sessionsDir(home string) string { return filepath.Join(home, ".claude", "sessions") }
 
@@ -734,13 +613,13 @@ func (f sessionFile) procStart() string { return strings.Trim(string(f.ProcStart
 
 // ProcessOfSession finds the live process running the harness session id, or false when none is
 // recorded (or the directory cannot be read).
-func ProcessOfSession(home, sessionID string) (Process, bool) {
+func ProcessOfSession(home, sessionID string) (harness.Process, bool) {
 	if sessionID == "" {
-		return Process{}, false
+		return harness.Process{}, false
 	}
 	entries, err := os.ReadDir(sessionsDir(home))
 	if err != nil {
-		return Process{}, false
+		return harness.Process{}, false
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -754,16 +633,16 @@ func ProcessOfSession(home, sessionID string) (Process, bool) {
 		if json.Unmarshal(data, &f) != nil || f.SessionID != sessionID || f.PID == 0 {
 			continue
 		}
-		return Process{PID: f.PID, ProcStart: f.procStart()}, true
+		return harness.Process{PID: f.PID, ProcStart: f.procStart()}, true
 	}
-	return Process{}, false
+	return harness.Process{}, false
 }
 
 // ProcessGone reports whether the process is no longer running: its file is not there, names
 // another start, or its pid is dead. known is false when that cannot be told (the harness keeps
 // no sessions directory), and the caller then decides nothing from it. A file that cannot be
 // read or parsed counts as gone: a format that moved fails toward judging, not toward waiting.
-func ProcessGone(home string, p Process) (gone, known bool) {
+func ProcessGone(home string, p harness.Process) (gone, known bool) {
 	if p.PID == 0 {
 		return false, false
 	}
