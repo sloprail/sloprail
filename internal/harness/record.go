@@ -117,3 +117,22 @@ type RecordOpener interface {
 	// whenever OpenRecord's output would (it keys the engine's parsed-record cache).
 	RecordVersion(path string) (size int64, mod time.Time, err error)
 }
+
+// UserAnswerer is what a Transcripts MAY implement when the harness has a tool that
+// asks the user a question and returns the answer as a tool_result (Claude Code's
+// AskUserQuestion). The answer is the user's own words, so the engine cites it as
+// the user's and never counts it as a tool's output. A harness without such a tool
+// does not implement it.
+type UserAnswerer interface {
+	// QuestionTool is the name of the tool that asks the user.
+	QuestionTool() string
+
+	// IsAnswerEnvelope reports whether resultText is that tool's answer envelope,
+	// whether or not any answer can be read out of it.
+	IsAnswerEnvelope(resultText string) bool
+
+	// ExtractAnswers returns only the user's answers out of that tool's result
+	// text (never the questions or the harness's boilerplate); nil when the text is
+	// not an answer envelope.
+	ExtractAnswers(resultText string) []string
+}

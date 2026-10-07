@@ -48,7 +48,7 @@ const (
 // Grounding a written claim in the user's own words means citing the message it
 // came from as `<path>:<line>`, but mid-work an agent has the TEXT it remembers,
 // not a line. Given a substring of a user message — or of an answer the user
-// selected to an AskUserQuestion — this finds the single line that substring sits
+// selected to a question the agent asked — this finds the single line that substring sits
 // on, so the agent gets a citation without a `normalize | jq` dance it would
 // hand-write every time.
 //
@@ -63,7 +63,7 @@ func newSessionTrajectoryCiteCmd() *cobra.Command {
 		Long: `Turn a remembered quote into a resolvable citation.
 
 Given a substring of the user's own words — a plain message, or the answer the
-user selected to an AskUserQuestion — find the single line it sits on in the
+user selected to a question the agent asked — find the single line it sits on in the
 current trajectory and print it as <path>:<line>. The user's words only, by
 default: not the agent's prior output, and not an ordinary tool result that
 merely contains the substring.
@@ -72,7 +72,7 @@ merely contains the substring.
 against, comma-separated:
 
   user          the user's own words (the default): a typed message, or an
-                AskUserQuestion answer. Harness-injected user-role messages
+                answer to a question the agent asked. Harness-injected user-role messages
                 (<system-reminder>, <task-notification>, a slash-command
                 envelope) are excluded, and a tool result's body is not
                 searched. This is what a task's ASK is cited against.
@@ -117,7 +117,7 @@ The trajectory is auto-detected from the environment — the common case takes n
 			"or `user,tool_result` for either. Defaults to user alone, today's behaviour.")
 	cmd.Flags().Bool("include-envelope", false,
 		"On a single match, also print the whole answer envelope at the resolved line "+
-			"(the AskUserQuestion question + its answers), separated from the <path>:<line> "+
+			"(the question + its answers), separated from the <path>:<line> "+
 			"by a blank line. Lets a caller ground a quote AND read the question it answered in "+
 			"ONE call instead of a cite followed by a separate `envelope --line`. Orthogonal to "+
 			"--source-types: it reads the answer envelope at whatever line resolved, so it is "+

@@ -114,7 +114,7 @@ func answerEnvelopesOf(raw json.RawMessage) []string {
 			// answer prefix present means it is the user's prompted answer and the
 			// whole string is worth carrying; absent means it is a tool's output and
 			// is not.
-			if i, _ := answerPrefixAt(envelope); i >= 0 {
+			if isAnswerEnvelope(envelope) {
 				out = append(out, envelope)
 			}
 		}
