@@ -80,7 +80,7 @@ func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
 	}
 	base := e.stopBase(projDir, sessionID)
 	e.preStopRuns++
-	rootRun := "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base " + shQuote(base) + " --head HEAD >/dev/null 2>&1"
+	rootRun := "CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CODE_EXECPATH= sr-checks run --base " + shQuote(base) + " --head HEAD >/dev/null 2>&1"
 	turn := Bash("srprestop-"+strconv.Itoa(e.preStopRuns), "export CLAUDE_CODE_SESSION_ID="+shQuote(sessionID)+"; cd "+shQuote(projDir)+" && "+rootRun+"; "+runTrackedRanges(false))
 	out := s
 	out.turns = append(append([]Turn{}, s.turns...), turn)
@@ -109,7 +109,7 @@ func runTrackedRanges(own bool) string {
 		`[ -n "$f" ] || continue; ` +
 		`[ -d "$f" ] || { echo "harness: skipping $f (the folder is gone)" >&2; continue; }; ` +
 		`(cd "$f" && git rev-parse --verify -q "$h^{commit}" >/dev/null) || h="$sha"; ` +
-		`out=$(cd "$f" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base "$b" --head "$h" 2>&1); st=$?; ` +
+		`out=$(cd "$f" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CODE_EXECPATH= sr-checks run --base "$b" --head "$h" 2>&1); st=$?; ` +
 		`if [ "$st" -ne 0 ] && [ -z "$out" ]; then echo "harness: sr-checks run --base $b --head $h in $f failed ($st) with no output" >&2; rc=1; ` +
 		`elif [ "$st" -ne 0 ] && ! printf '%s' "$out" | grep -q "file-guard"; then echo "harness: sr-checks run --base $b --head $h in $f failed ($st): $out" >&2; rc=1; fi; ` +
 		`done; exit $rc; }`

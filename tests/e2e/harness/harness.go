@@ -2852,10 +2852,11 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 		"PATH="+e.shimDir+string(os.PathListSeparator)+
 			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
-	// HostEnv above already dropped the outer session's CLAUDE_CODE_EXECPATH, which
-	// the mock never sets: left in, sr-agent's resolveBinary would exec the
-	// operator's real claude directly, bypassing the shim dir InstallClaudeShim
-	// puts first on PATH.
+	// HostEnv above already dropped the outer session's CLAUDE_CODE_EXECPATH. The
+	// mock sets its own in every Bash command (as real Claude Code does), so the
+	// harness's sr-checks run prefixes clear it: left in, sr-agent's resolveBinary
+	// would exec the mock (or the operator's real claude) directly, bypassing the
+	// shim dir InstallClaudeShim puts first on PATH.
 	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
 	// last so it wins over any ambient value; omitted entirely when unset, leaving
 	// the mock's own default (8). See the stopBlockCap field's doc.
