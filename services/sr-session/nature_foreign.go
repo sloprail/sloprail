@@ -52,9 +52,9 @@ func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registr
 	if reg == nil {
 		return natureVerdict{}
 	}
-	switch p.ToolName {
-	case "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit":
-	default:
+	// A shell, a write tool, or any tool whose harness states its file effects outright
+	// (Codex's apply_patch names its files in the patch, not in a Write-shaped argument).
+	if p.ToolName != "Bash" && !commandmod.HarnessWriteTools[p.ToolName] && len(p.Files) == 0 {
 		return natureVerdict{}
 	}
 	own := p.Root()

@@ -24,7 +24,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart}
+		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -307,6 +307,9 @@ func (claudeDriver) AgentShim(e *Env, projDir string) (string, string) {
 	return "claude", script
 }
 
+// LargeJudgeModelArgs: size-lg is Claude Code's `opus` alias.
+func (claudeDriver) LargeJudgeModelArgs() (string, string) { return "--model", "opus" }
+
 // JudgeShim is the stand-in for the `claude` the judge (sr-agent) runs by name.
 func (claudeDriver) JudgeShim(s JudgeShim) (string, string) {
 	verdict, argvFile, promptPath, logFile, delaySeconds := s.Verdict, s.ArgvFile, s.PromptFile, s.LogFile, s.DelaySeconds
@@ -393,6 +396,15 @@ if [ -n "$out" ]; then
 JUDGE_VERDICT_EOF
 fi
 exit 0
+`
+	case JudgeShimScript:
+		script = s.Body
+	case JudgeShimUsageLimit:
+		// claude reports a usage limit on stdout, status 1.
+		script = `#!/bin/sh
+echo call >>"$LEDGER"
+echo "Claude AI usage limit reached|1760000000"
+exit 1
 `
 	case JudgeShimSlow:
 		script = `#!/bin/sh

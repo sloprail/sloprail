@@ -23,7 +23,7 @@ cat >/dev/null
 echo ran >> ledger.txt
 SLOPRAIL_LAUNCHED_BY=no-secrets
 export SLOPRAIL_LAUNCHED_BY
-sr-agent --harness {{harness}} --model size-xs "judge" >/dev/null 2>&1
+sr-agent --harness {{harness}} --agent-run --model size-xs "judge" >/dev/null 2>&1
 exit 0
 `
 

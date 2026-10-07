@@ -12,14 +12,6 @@ import (
 // rule with an identical "could not be evaluated"; it asks each judge a second time first; and
 // it stores nothing, so the next run judges afresh.
 
-// usageLimitClaude counts its calls in $LEDGER and dies the way claude does at a usage limit:
-// the message on stdout, status 1.
-const usageLimitClaude = `#!/bin/sh
-echo call >>"$LEDGER"
-echo "Claude AI usage limit reached|1760000000"
-exit 1
-`
-
 // T001_32: three judged rules, one outage: one "judges unavailable" refusal naming the cause,
 // each judge tried twice, and a later run with a working judge passes (nothing was cached).
 // sr:proves judges/failed-judge-refuses-in-fixed-words
@@ -32,7 +24,7 @@ func TestT001_32_AJudgeOutageIsReportedOnceWithItsCause(t *testing.T) {
 	base := e.CommitAll(proj, "the rules")
 	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
 	e.CommitAll(proj, "add a")
-	e.InstallShim("claude", usageLimitClaude)
+	e.InstallJudgeUsageLimit()
 	env := append(e.SessionEnv(sessionID), "LEDGER="+ledger, "SLOPRAIL_JUDGE_RETRY_BACKOFF=0s")
 	run := func() (int, string) {
 		r := quiet(e.CLIDirectEnv(proj, env, "sr-checks", "run", "--base", base, "--head", "HEAD"))

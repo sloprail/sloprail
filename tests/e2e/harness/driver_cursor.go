@@ -43,7 +43,7 @@ func (cursorDriver) Name() string { return "cursor" }
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapScopedToolRules}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -372,15 +372,26 @@ func (cursorDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"followup_message"`)
 }
 
-func (cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
+// AgentShim is the `cursor-agent` a hook-launched agent resolves to: the mock, running the
+// inner scenario with the same plugins a session loads, so the launched agent is guarded by
+// the project's other rules as a real one (which loads the user's plugins) is.
+func (c cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
 		"unset A10N_CURSOR_MOCK_STOP\n" +
 		"exec " + shellQuote(e.mock) + " -p --force --trust --output-format stream-json \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
-		"  --workspace " + shellQuote(projDir) + " \\\n" +
-		"  \"launched agent\" </dev/null\n"
+		"  --workspace " + shellQuote(projDir) + " \\\n"
+	for _, d := range c.pluginDirs(e) {
+		script += "  --plugin-dir " + shellQuote(d) + " \\\n"
+	}
+	script += "  \"launched agent\" </dev/null\n"
 	return "cursor-agent", script
+}
+
+// LargeJudgeModelArgs: size-lg is claude-opus-5-5-medium.
+func (cursorDriver) LargeJudgeModelArgs() (string, string) {
+	return "--model", "claude-opus-5-5-medium"
 }
 
 func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {

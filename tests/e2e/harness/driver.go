@@ -54,6 +54,11 @@ const (
 	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
 	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
 	CapRecordAfterSessionStart = "record-after-session-start"
+
+	// CapScopedToolRules: a judge can be granted a scoped tool rule (Bash(git show:*),
+	// WebFetch(domain:...)) and denied one. Codex has no per-tool permission list, only a
+	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
+	CapScopedToolRules = "scoped-tool-rules"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -85,10 +90,12 @@ type Launch struct {
 type JudgeShimKind int
 
 const (
-	JudgeShimPlain     JudgeShimKind = iota // writes Verdict where the prompt says
-	JudgeShimRecording                      // plain, plus the argv recorded to ArgvFile
-	JudgeShimCapturing                      // plain, plus the prompt captured under PromptFile
-	JudgeShimSlow                           // delays, decides by the prompt, logs to LogFile
+	JudgeShimPlain      JudgeShimKind = iota // writes Verdict where the prompt says
+	JudgeShimRecording                       // plain, plus the argv recorded to ArgvFile
+	JudgeShimCapturing                       // plain, plus the prompt captured under PromptFile
+	JudgeShimSlow                            // delays, decides by the prompt, logs to LogFile
+	JudgeShimScript                          // Body as it is: a test's own stand-in, under the harness's binary name
+	JudgeShimUsageLimit                      // counts its calls in $LEDGER and dies the way the harness does at a usage limit
 )
 
 // JudgeShim parameterises Driver.JudgeShim.
@@ -99,6 +106,7 @@ type JudgeShim struct {
 	PromptFile   string // JudgeShimCapturing: absolute path
 	LogFile      string // JudgeShimSlow
 	DelaySeconds int    // JudgeShimSlow
+	Body         string // JudgeShimScript
 }
 
 // Driver is everything in the e2e harness that is specific to one agent
@@ -156,6 +164,9 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+	// harness's argv with.
+	LargeJudgeModelArgs() (flag, value string)
 
 	// IdentityPayload is a hook payload that names only the session and the project
 	// folder it runs in: no transcript path, so a reader resolves the session's record
@@ -264,6 +275,10 @@ func implemented() string {
 	sort.Strings(names)
 	return strings.Join(names, ", ")
 }
+
+// ShellEnv is the environment assignments (each followed by a space, or "") a command the
+// agent runs in its shell is prefixed with to run as the current harness's session.
+func ShellEnv() string { return mustDriver().ShellEnv() }
 
 // mustDriver is the selected Driver for code with no *testing.T at hand. New has
 // already failed the test on a bad selection, so reaching the panic means a

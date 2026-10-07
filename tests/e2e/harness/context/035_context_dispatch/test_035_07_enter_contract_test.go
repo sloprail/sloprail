@@ -21,10 +21,10 @@ import (
 // And a context's `exit` never refuses the Stop: every session below ends with
 // the context's exit saying "not done" (non-zero), and no Stop is blocked.
 
-// pathContext enters on every Write, handing enter the tool call.
+// pathContext enters on every markdown file write, handing enter the file it targets.
 const pathContext = `on:
-  - event: PreToolUse
-    match: event.tool == "Write"
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 enter: ./enter.sh
 exit: ./exit.sh
 `
@@ -37,7 +37,7 @@ exit: ./exit.sh
 //	decline.md → exit 1
 const enterByPath = `#!/bin/sh
 input="$(cat)"
-path="$(printf '%s' "$input" | jq -r '.event.input.file_path // ""')"
+path="$(printf '%s' "$input" | jq -r '.event.path // ""')"
 case "$path" in
   *payload.md) printf '{"from":"payload.md"}'; exit 0 ;;
   *silent.md)  exit 0 ;;
