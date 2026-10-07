@@ -26,8 +26,7 @@ printf 'package src\n\n// sr:proves demo/a\nfunc TestA(t *testing.T) {}\n' > src
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m base
 BASE=$(git rev-parse HEAD)
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
-export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
-export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
+while IFS= read -r kv; do export "$kv"; done < <(echo "$SETUP" | jq -er ".env[]")
 export JUDGE_LOG="$(mktemp)"
 export SR_CHECKS_JUDGE_MOCKS=$(jq -nc --arg p "$SR_TEST_CASE_DIR/judge-mock.sh" '{"file-guard/invariant-upheld/code-upholds-invariant": $p}')
 

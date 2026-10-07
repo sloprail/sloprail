@@ -20,7 +20,7 @@ import (
 //	                                  sub-agent's, what spawned it, what it spawned)
 //	sr-session trajectory cite        turn a remembered quote into <path>:<line>
 //	                                  (--include-envelope also prints the whole
-//	                                  AskUserQuestion answer envelope at that line)
+//	                                  question-answer envelope at that line)
 //	sr-session trajectory tool-result is a cited LINE a tool_result, and its content
 //	                                  (the line-oriented sibling of cite, for a
 //	                                  delivery observation that names a line already)
@@ -44,7 +44,7 @@ func newSessionTrajectoryCmd() *cobra.Command {
   sr-session trajectory cite        turn a substring of the user's own words into
                                     a resolvable <path>:<line> citation
                                     (--include-envelope also prints the whole
-                                    AskUserQuestion answer envelope at that line)
+                                    question-answer envelope at that line)
   sr-session trajectory tool-result whether a cited --line is a tool_result, and
                                     its content — for a delivery observation that
                                     names a transcript line as proof of work
@@ -102,7 +102,7 @@ accept --path to read another — the parent or a sibling that describe named.`,
 // returning it.
 //
 // Resolving the CURRENT session — which is the ROOT when a sub-agent is not the
-// caller, and which holds the citations cite grounds (an AskUserQuestion answer is
+// caller, and which holds the citations cite grounds (a question the user answered is
 // recorded in the root's transcript) — is sufficient for cite's purpose. It does
 // not attempt to detect a sub-agent from the environment, because nothing in a
 // tool call's environment distinguishes one; that judgement is made from the
@@ -148,10 +148,10 @@ func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 
 // errNoTrajectory is the message a subcommand prints when no trajectory could be
 // resolved by any of the three sources — no --path, no record on the payload, and
-// no current-session transcript derivable from CLAUDE_CODE_SESSION_ID. Shared so
+// no current-session transcript derivable from the harness's session identity. Shared so
 // describe, cite and normalize refuse the same way.
 func errNoTrajectory() error {
-	return fmt.Errorf("sloprail: no trajectory to read — pass --path, invoke this where a transcript is on the hook payload, or run it in a session (with %s set) whose transcript exists", transcript.SessionIDEnv)
+	return fmt.Errorf("sloprail: no trajectory to read — pass --path, invoke this where a transcript is on the hook payload, or run it in a session whose transcript exists")
 }
 
 // searchDirFor is where a trajectory's session keeps its OTHER trajectories — the

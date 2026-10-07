@@ -65,7 +65,7 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 		return harness.Record{}, err
 	}
 	sum := sha256.Sum256(line)
-	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message), Timestamp: l.Timestamp, Line: l.SloprailLine, IsSidechain: l.SloprailSidechain}
+	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: withRole(canonicalMessage(l.Message), l.Role), Timestamp: l.Timestamp, Line: l.SloprailLine, IsSidechain: l.SloprailSidechain}
 	switch {
 	case l.Role == "user":
 		r.Type = string(harness.EntryUser)
