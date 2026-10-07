@@ -445,7 +445,6 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 // as the user's: they resolve in the main conversation, where the user wrote
 // them.
 func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
-	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

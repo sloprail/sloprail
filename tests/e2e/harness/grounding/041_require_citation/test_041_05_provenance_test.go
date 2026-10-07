@@ -194,7 +194,6 @@ func readFile(t *testing.T, path string) string {
 // sr-file failing the same way is left to say its own words.
 // sr:proves citations/user-pool-is-the-root-conversation
 func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
-	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -208,6 +207,11 @@ func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
 	))
 	if e.Exists(proj, "notes.md") || e.Exists(proj, "root-notes.md") {
 		t.Fatalf("a write citing words the user never said landed")
+	}
+	// A harness whose record holds no tool results (a refusal is one) cannot show the
+	// refusals' wording; that nothing landed is shown above.
+	if !harness.HasCap(t, harness.CapRecordHoldsToolResults) {
+		return
 	}
 	// The sub-agent's own call and its result are in its own record, the root's
 	// in the root's.

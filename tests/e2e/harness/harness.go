@@ -2011,6 +2011,14 @@ checks:
   - script: ./probe.sh
 `
 
+// ControlGate is the same control as a gate on every file creation: one check process per
+// creation, at the tool call.
+const ControlGate = `on:
+  - event: PreFileCreate
+checks:
+  - script: ./probe.sh
+`
+
 const ControlScript = `#!/bin/sh
 cat >/dev/null
 echo "before=[$(sr-session state get seen 2>&1)]" >> "$SR_GUARDRAIL_DIR/log"
@@ -2047,7 +2055,10 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 	e.t.Helper()
 
 	proj := e.Project()
-	e.FileGuard(proj, "control", ControlGuard, map[string]string{"probe.sh": ControlScript})
+	// A gate on the file creation, the mechanism the tests that rest on this control use: it
+	// fires at the tool call on every harness, where a file-guard judges only what a session
+	// COMMITS (this control commits nothing, and must not depend on a harness's Stop).
+	e.Gate(proj, "control", ControlGate, map[string]string{"probe.sh": ControlScript})
 
 	// Two DIFFERENT paths, so neither invocation can be exempted by the other.
 	// The control must not be silenced by the very mechanism it exists to make
@@ -2059,7 +2070,7 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 		Write("c2", "two.md", "second"),
 	))
 
-	lines := e.FileGuardLedgerLines(proj, "control", "log")
+	lines := e.GateLedgerLines(proj, "control", "log")
 	if len(lines) != 2 {
 		return false, "the control guardrail's hook did not run twice (got " +
 			strings.Join(lines, " | ") + ") — nothing about session state can be concluded"
@@ -2073,28 +2084,24 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 	return true, ""
 }
 
-// RequireSessionStore skips the calling test, naming what is missing, when the
-// session store cannot be shown to open.
+// RequireSessionStore fails the calling test, naming what is missing, when the session
+// store cannot be shown to open.
 //
-// Skipped rather than failed, and skipped rather than left to pass: a test
-// asserting "the hook did not run again" while the store is unreachable would be
-// green and worthless, which is the precise failure the control exists to
-// prevent.
+// Failed, not skipped and not left to pass: a test asserting "the hook did not run
+// again" while the store is unreachable would be green and worthless, which is the
+// precise failure the control exists to prevent; and a store that does not open on a
+// harness is that harness's defect to fix, not a reason to stop testing it.
 //
-// The two pieces the store needs — a transcript path on the PreToolUse payload
-// and the hook environment `session state` resolves its scope from — landed with
-// impl/hook-env, so this now passes rather than skips. It is kept because it is
-// a real precondition rather than a note about a branch: it fails loudly if
-// either piece regresses, and the tests that depend on it would otherwise go
-// quietly vacuous again.
+// The two pieces the store needs - a transcript path on the PreToolUse payload and the
+// hook environment `session state` resolves its scope from - landed with impl/hook-env,
+// so this passes. It is kept because it is a real precondition: it fails loudly if either
+// piece regresses, and the tests that depend on it would otherwise go quietly vacuous.
 func RequireSessionStore(t *testing.T) {
 	t.Helper()
 	e := New(t)
 	if ok, why := e.SessionStoreOpens(); !ok {
-		t.Skipf("the session store does not open on this branch, so a skip cannot be observed "+
-			"and a passing skip test would be vacuous — this needs a transcript path on the "+
-			"PreToolUse payload and c.Env on the hook process, both of which impl/hook-env "+
-			"provides: %s", why)
+		t.Fatalf("the session store does not open, so a skip cannot be observed and a passing "+
+			"skip test would be vacuous: %s", why)
 	}
 }
 
