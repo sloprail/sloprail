@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/version"
 )
@@ -414,10 +415,16 @@ var childEnvBlocklist = map[string]bool{
 // actively wrong to inherit, which is a much smaller and more stable claim.
 // sr:invariant judges/judge-agent-runs-isolated
 func sanitizeChildEnv(environ []string) []string {
+	extra := map[string]bool{}
+	if b, ok := harness.Current().(harness.ChildEnvBlocklist); ok {
+		for _, k := range b.ChildEnvBlocklist() {
+			extra[k] = true
+		}
+	}
 	out := make([]string, 0, len(environ))
 	for _, kv := range environ {
 		key, _, found := strings.Cut(kv, "=")
-		if found && childEnvBlocklist[key] {
+		if found && (childEnvBlocklist[key] || extra[key]) {
 			continue
 		}
 		out = append(out, kv)

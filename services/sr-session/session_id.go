@@ -77,7 +77,7 @@ func newSessionIDCmd() *cobra.Command {
 // back to the reported id would restore the exact silent orphaning this exists
 // to prevent.
 //
-// The path is taken from p.Record() rather than from the field, so a payload
+// The path is taken from recordOf(p) rather than from the field, so a payload
 // that names the session without naming its file still resolves. That is the
 // SessionStart payload, and it is the one place where failing to resolve costs
 // the session its baseline. Whatever that resolution refuses is refused here
@@ -97,7 +97,7 @@ func stableID(p HookPayload) (string, error) {
 // it is surfaced. The walk itself, and its per-process memory, are
 // sessionpath.StableIdentity — shared with sr-checks.
 func stableIdentity(p HookPayload) (transcript.Identity, error) {
-	path, err := p.Record()
+	path, err := recordOf(p)
 	if err != nil {
 		return transcript.Identity{}, err
 	}
@@ -144,7 +144,7 @@ func noteDegradedIdentity(stdout, stderr io.Writer, p HookPayload, id transcript
 		return
 	}
 	if session := harnessSessionID(p); session != "" {
-		if db, err := sessionDBPath(p.StateCwd(), id.ID); err == nil {
+		if db, err := sessionDBPath(stateCwdOf(p), id.ID); err == nil {
 			marker := filepath.Join(filepath.Dir(db), degradedMarker+session)
 			if mkErr := os.MkdirAll(filepath.Dir(marker), 0o755); mkErr == nil {
 				f, openErr := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)

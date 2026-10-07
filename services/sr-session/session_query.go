@@ -64,7 +64,7 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 
 	p := readPayload(cmd)
-	path, err := p.Record()
+	path, err := recordOf(p)
 	if err != nil {
 		// A session id that is not a name, a guessed file belonging to another
 		// conversation, or one written in another tree. Reported as itself rather
