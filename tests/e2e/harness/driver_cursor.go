@@ -247,6 +247,15 @@ func (cursorDriver) RealCommand(e *Env, projDir, prompt string) (*exec.Cmd, erro
 // .cursor-plugin manifest Cursor reads.
 func (c cursorDriver) InstallPlugins(e *Env, dir string) {
 	e.t.Helper()
+	// The install a user runs also puts the plugin's stop and sessionStart hooks (which a Cursor
+	// plugin never receives) in the project's .cursor/hooks.json: the same command, from the
+	// built binary, pointed at the plugin under test.
+	cmd := exec.Command(e.BinPath("sr-session"), "project-hooks", "install", "--dir", dir,
+		"--plugin-dir", filepath.Join(e.repoRoot, "marketplace", "plugins", pluginName))
+	cmd.Env = append(os.Environ(), "SLOPRAIL_HARNESS=cursor", "HOME="+e.home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		e.t.Fatalf("harness: sr-session project-hooks install: %v: %s", err, out)
+	}
 	local := filepath.Join(e.home, ".cursor", "plugins", "local")
 	if err := os.MkdirAll(local, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir %s: %v", local, err)

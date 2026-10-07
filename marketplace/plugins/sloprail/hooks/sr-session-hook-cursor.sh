@@ -17,4 +17,11 @@ set -eu
 SLOPRAIL_HARNESS=cursor
 export SLOPRAIL_HARNESS
 
+# Cursor tells a hook which plugin it belongs to (CURSOR_PLUGIN_ROOT) only when the hook
+# is the plugin's own. The stop and sessionStart hooks run from the project's
+# .cursor/hooks.json (a plugin's never fire), where it is not set, and the engine finds
+# the plugin's shipped guardrails from it: so a hook run by path names its own plugin.
+CURSOR_PLUGIN_ROOT="${CURSOR_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+export CURSOR_PLUGIN_ROOT
+
 exec sh "$(dirname "$0")/sr-session-hook.sh" "$@"
