@@ -1,0 +1,6 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp/>\n<user_query>\nDo these as separate tool calls, one per call, in order: 1) create the file note.txt containing the word hi, with your file edit/write tool, not the shell 2) read the file note.txt with your Read tool 3) change the word hi in note.txt to bye, with your file edit tool, not the shell. Then reply only DONE.\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Creating `note.txt`, then reading and editing it in separate steps."},{"type":"tool_use","name":"Write","input":{"path":"<RUN>/note.txt","contents":"hi\n"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"<RUN>/note.txt"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"StrReplace","input":{"path":"<RUN>/note.txt","old_string":"hi","new_string":"bye"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"DONE"}]}}
+{"type":"turn_ended","status":"success"}

@@ -303,8 +303,15 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	harnessArgs = append(harnessArgs, grantArgs...)
+	grantEnv, envArgs, cleanupGrant, err := harnessGrantEnv(spec, accessGrant{Dirs: addDirs, Tools: allowedTools, DenyTools: disallowedTools})
+	if err != nil {
+		return err
+	}
+	defer cleanupGrant()
+	harnessArgs = append(harnessArgs, envArgs...)
 
 	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt, os.Getenv)
+	inv.Env = grantEnv
 
 	if dryRun {
 		fmt.Fprintln(cmd.OutOrStdout(), inv.String())
@@ -466,7 +473,7 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 	outTail, errTail := &tailBuffer{max: maxTail}, &tailBuffer{max: maxTail}
 	proc.Stdout = teeTail(cmd.OutOrStdout(), outTail)
 	proc.Stderr = teeTail(cmd.ErrOrStderr(), errTail)
-	proc.Env = sanitizeChildEnv(os.Environ())
+	proc.Env = append(sanitizeChildEnv(os.Environ()), inv.Env...)
 
 	// The model call runs in its own process group, killed with this process on SIGTERM/SIGINT
 	// (an orphaned one would run on, and bill, with nobody to read it). Not when stdin is a

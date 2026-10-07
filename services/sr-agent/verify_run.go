@@ -88,6 +88,12 @@ func runVerified(
 		return err
 	}
 	harnessArgs = append(harnessArgs, grantArgs...)
+	grantEnv, envArgs, cleanupGrant, err := harnessGrantEnv(spec, accessGrant{Dirs: dirs, Tools: allowedTools, DenyTools: disallowedTools})
+	if err != nil {
+		return err
+	}
+	defer cleanupGrant()
+	harnessArgs = append(harnessArgs, envArgs...)
 
 	// The path is appended to the caller's prompt rather than replacing it: the
 	// caller's question is still the question, and this only says where the
@@ -124,6 +130,7 @@ func runVerified(
 		}
 
 		inv := BuildInvocation(spec, model, harnessArgs, ask, os.Getenv)
+		inv.Env = grantEnv
 		said, err := runAgentQuietly(parent, cmd, inv)
 		if err != nil {
 			// The harness itself failed — not a verdict on the answer. Returned
