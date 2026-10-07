@@ -97,8 +97,13 @@ type SubagentFile struct {
 // thread in its first line. A harness whose sub-agent records cannot be tied to their
 // parent from what it writes does not implement it, and has none to find (and declares
 // so with SubagentsUnlinkable).
+//
+// It is also how the link is read the other way: ParentRecord names, for a record at
+// path, the record of the session that spawned it. parent is "" when that record is not
+// on disk; isSubagent is false for a record that is a session's own.
 type SubagentLocator interface {
 	SubagentFiles(transcriptPath string) []SubagentFile
+	ParentRecord(path string) (parent string, isSubagent bool)
 }
 
 // SubagentsUnlinkable is implemented by a Transcripts that declares a sub-agent's
@@ -109,14 +114,6 @@ type SubagentLocator interface {
 // a root cannot enumerate its sub-agents' records.
 type SubagentsUnlinkable interface {
 	SubagentsUnlinkable() bool
-}
-
-// ParentLocator is implemented by a Transcripts whose sub-agent record names the session
-// that dispatched it by a link the file itself holds (Codex: the first line's
-// parent_thread_id), where Claude Code's is derived from a companion's tool-use id. The
-// parent is the dispatching agent's record, "" when path is a root or the link is dead.
-type ParentLocator interface {
-	ParentRecord(transcriptPath string) string
 }
 
 // SessionRecord is one session record of a project: the harness's own id of the

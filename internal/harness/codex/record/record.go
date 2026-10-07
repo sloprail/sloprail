@@ -189,7 +189,11 @@ func harnessPreamble(text string) bool {
 		strings.HasPrefix(t, "<user_instructions>") ||
 		strings.HasPrefix(t, "# AGENTS.md instructions") ||
 		strings.HasPrefix(t, "<turn_aborted>") ||
-		strings.HasPrefix(t, "<hook_prompt") // what a hook fed the agent (recorded: harness-mocks codex-mock runs/stops)
+		// A hook's refusal fed back to the agent, and the account of a sub-agent that
+		// ended: both are user-role items the harness wrote (recorded: harness-mocks
+		// codex-mock subagent-stop-block-loop-cap, subagent-transcripts-v2).
+		strings.HasPrefix(t, "<hook_prompt") ||
+		strings.HasPrefix(t, "<subagent_notification>")
 }
 
 // argumentsOf maps a Codex tool call onto the canonical (name, arguments).
@@ -216,6 +220,11 @@ func argumentsOf(p payload) (name string, args map[string]any) {
 		if json.Unmarshal([]byte(p.Arguments), &a) == nil && a.Cmd != "" {
 			return "Bash", map[string]any{"command": a.Cmd}
 		}
+	case "spawn_agent", "wait_agent":
+		// A sub-agent dispatch (the same alias the hook gives spawn_agent) and the wait
+		// that hands back its reply: what returns is a launch receipt or the
+		// sub-agent's model-written reply, never a tool's output.
+		return harness.ToolAgent, map[string]any{"arguments": p.Arguments}
 	case "apply_patch":
 		if patch := patchOf(p); patch != "" {
 			return "apply_patch", map[string]any{"command": patch}
@@ -256,6 +265,7 @@ func shellLine(argv []string) string {
 
 var (
 	execCommandCall = regexp.MustCompile(`tools\.exec_command\(\{\s*cmd:\s*("(?:[^"\\]|\\.)*")`)
+	agentCall       = regexp.MustCompile(`tools\.multi_agent_v1__(?:spawn|wait)_agent\(`)
 	applyPatchCall  = regexp.MustCompile(`tools\.apply_patch\(\s*("(?:[^"\\]|\\.)*"|[A-Za-z_]\w*)\s*\)`)
 	constString     = regexp.MustCompile(`const\s+(\w+)\s*=\s*("(?:[^"\\]|\\.)*")`)
 )
@@ -278,6 +288,12 @@ func programCall(js string) (string, map[string]any, bool) {
 		if json.Unmarshal([]byte(lit), &patch) == nil && patch != "" {
 			return "apply_patch", map[string]any{"command": patch}, true
 		}
+	}
+	if agentCall.MatchString(js) {
+		// The dispatch of a sub-agent and the wait that hands back its reply, as the exec
+		// tool runs them (recorded: harness-mocks codex-mock subagent-transcripts-v2): a
+		// launch receipt or the sub-agent's model-written reply, never a tool's output.
+		return harness.ToolAgent, map[string]any{"code": js}, true
 	}
 	if m := execCommandCall.FindStringSubmatch(js); m != nil {
 		var cmd string
@@ -372,21 +388,6 @@ func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
 	return out
 }
 
-// ParentRecord implements harness.ParentLocator: the rollout of the thread the sub-agent's
-// session_meta names as its parent (recorded: harness-mocks codex-mock nested-subagents),
-// found beside it in the sessions tree. "" for a root, or when that rollout is not there.
-func (Transcripts) ParentRecord(transcriptPath string) string {
-	parent := rolloutParent(transcriptPath)
-	if parent == "" {
-		return ""
-	}
-	sessions := filepath.Dir(transcriptPath)
-	for i := 0; i < 3; i++ { // sessions/YYYY/MM/DD/<rollout>
-		sessions = filepath.Dir(sessions)
-	}
-	return FindRollout(filepath.Dir(sessions), parent)
-}
-
 // rolloutThreadID is the thread id a rollout's file name ends with.
 func rolloutThreadID(path string) string {
 	base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
@@ -455,6 +456,20 @@ func FindRollout(configDir, sessionID string) string {
 		return ""
 	}
 	return matches[len(matches)-1]
+}
+
+// ParentRecord implements harness.SubagentLocator: the rollout of the thread a
+// sub-agent's session_meta names as its parent, found by id among the rollouts.
+func (Transcripts) ParentRecord(path string) (string, bool) {
+	parent := rolloutParent(path)
+	if parent == "" {
+		return "", false
+	}
+	sessions := filepath.Dir(path)
+	for i := 0; i < 3; i++ { // sessions/YYYY/MM/DD/<rollout>
+		sessions = filepath.Dir(sessions)
+	}
+	return FindRollout(filepath.Dir(sessions), parent), true
 }
 
 // ListRecords implements harness.RecordLister: every rollout of the sessions tree.

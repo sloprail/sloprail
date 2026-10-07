@@ -67,10 +67,10 @@ func TestParentRecordAndSidechain(t *testing.T) {
 	root := write(parent, `{"type":"session_meta","payload":{"id":"`+parent+`","session_id":"`+parent+`","parent_thread_id":null,"thread_source":"user"}}`)
 	sub := write(child, `{"type":"session_meta","payload":{"id":"`+child+`","session_id":"`+parent+`","parent_thread_id":"`+parent+`","thread_source":"subagent"}}`)
 
-	if got := (Transcripts{}).ParentRecord(sub); got != root {
+	if got, isSub := (Transcripts{}).ParentRecord(sub); !isSub || got != root {
 		t.Fatalf("the sub-agent's parent = %q, want the root rollout %q", got, root)
 	}
-	if got := (Transcripts{}).ParentRecord(root); got != "" {
+	if got, isSub := (Transcripts{}).ParentRecord(root); isSub || got != "" {
 		t.Fatalf("a root has no parent, got %q", got)
 	}
 

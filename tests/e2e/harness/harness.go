@@ -934,6 +934,15 @@ func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 	return e.runBin(dir, "", binary, args...)
 }
 
+// SessionCLIEnv is the environment a service binary needs to read the record the harness
+// under test itself wrote (CLIDirectEnv): nil when the host environment already says so.
+func (e *Env) SessionCLIEnv() []string {
+	if d, ok := e.driver.(interface{ CLIEnv(e *Env) []string }); ok {
+		return d.CLIEnv(e)
+	}
+	return nil
+}
+
 // CLIDirectEnv runs one service binary by name with extra environment variables
 // set, and no stdin — for the agent-facing commands that read the environment
 // rather than a hook payload.
@@ -1286,6 +1295,18 @@ func (e *Env) transcriptPath(projDir, sessionID string) string {
 func (e *Env) TranscriptPath(projDir, sessionID string) string {
 	e.t.Helper()
 	return e.transcriptPath(projDir, sessionID)
+}
+
+// SubagentReply is the text the root record at path holds of the reply the sub-agent
+// dispatched by the call whose id starts with callID handed back, as the harness
+// records it.
+func (e *Env) SubagentReply(path, callID string) string {
+	e.t.Helper()
+	reply, err := e.driver.SubagentReply(path, callID)
+	if err != nil {
+		e.t.Fatalf("read the sub-agent's reply from %s: %v", path, err)
+	}
+	return reply
 }
 
 // ConfigDir is the isolated stand-in for ~/.claude the mock wrote this run's

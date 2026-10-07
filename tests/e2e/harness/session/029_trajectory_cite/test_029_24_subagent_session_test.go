@@ -135,6 +135,12 @@ func requireCiteRefused(t *testing.T, e *Env, sub string) {
 	}
 }
 
+// citeFromFixture is citeFrom over a record this test forged in Claude Code's layout
+// (subagentSessionFiles), which is read as that harness's record whichever harness drives the run.
+func citeFromFixture(e *Env, path, sources, quote string) harness.Result {
+	return e.CLIDirectEnv(dirOf(path), []string{"SLOPRAIL_HARNESS=claude"}, "sr-session", "trajectory", "cite", "--path", path, "--source-types", sources, quote)
+}
+
 func citeFrom(e *Env, path, sources, quote string) harness.Result {
 	return e.CLIDirect(dirOf(path), "sr-session", "trajectory", "cite", "--path", path, "--source-types", sources, quote)
 }
@@ -156,7 +162,7 @@ func TestT029_24_SubagentToolOutputResolves(t *testing.T) {
 	}
 	root, sub := subagentSessionFiles(t)
 	for _, from := range []string{root, sub} {
-		res := citeFrom(e, from, "tool_result", "SUBOUT-4417 attempts")
+		res := citeFromFixture(e, from, "tool_result", "SUBOUT-4417 attempts")
 		if res.Code != 0 {
 			t.Fatalf("citing a sub-agent's tool output from %s exited %d, want 0:\n%s", from, res.Code, res.Output)
 		}
@@ -186,12 +192,12 @@ func TestT029_25_UserPoolIsTheRootsFromASubagent(t *testing.T) {
 	}
 	root, sub := subagentSessionFiles(t)
 
-	res := citeFrom(e, sub, "user", "END USER asked")
+	res := citeFromFixture(e, sub, "user", "END USER asked")
 	if res.Code != 0 || strings.TrimSpace(res.Output) != root+":1" {
 		t.Fatalf("the end user's words from a sub-agent's trajectory: exit %d, stdout %q; want 0 and %s:1", res.Code, res.Output, root)
 	}
 	for _, sources := range []string{"user", "user,tool_result"} {
-		res = citeFrom(e, sub, sources, "DISPATCH words")
+		res = citeFromFixture(e, sub, sources, "DISPATCH words")
 		if res.Code != 1 {
 			t.Errorf("--source-types %s: citing the dispatch prompt exited %d, want 1 (not the user's words, not tool output):\n%s", sources, res.Code, res.Output)
 		}
@@ -226,7 +232,7 @@ func TestT029_26_AmbiguousAcrossRecords(t *testing.T) {
 	}, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res := citeFrom(e, root, "tool_result", "SUBOUT-4417")
+	res := citeFromFixture(e, root, "tool_result", "SUBOUT-4417")
 	if res.Code != 2 {
 		t.Fatalf("a quote in two sub-agents' records exited %d, want 2:\n%s", res.Code, res.Output)
 	}
@@ -254,7 +260,7 @@ func TestT029_27_TheCallersOwnOutputFirst(t *testing.T) {
 	}
 	root, sub := subagentSessionFiles(t)
 	for from, want := range map[string]string{root: root + ":3", sub: sub + ":5"} {
-		res := citeFrom(e, from, "tool_result", "SHARED-LINE")
+		res := citeFromFixture(e, from, "tool_result", "SHARED-LINE")
 		if res.Code != 0 {
 			t.Fatalf("from %s: a quote in the caller's own record and a sub-agent's exited %d, want 0:\n%s", from, res.Code, res.Output)
 		}

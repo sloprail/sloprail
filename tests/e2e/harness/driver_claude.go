@@ -717,6 +717,55 @@ func (c claudeDriver) SubagentBlockingErrors(records []string) []string {
 	return out
 }
 
+// SubagentReply is the text of the tool_result answering the Agent call whose id
+// starts with callID, in the record at path: the sub-agent's hand-back as real
+// Claude Code writes it (a list of text blocks), or a plain string.
+func (claudeDriver) SubagentReply(path, callID string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var reply strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, bl := range blocks {
+			if bl.Type != "tool_result" || !strings.HasPrefix(bl.ToolUseID, callID) {
+				continue
+			}
+			var s string
+			if json.Unmarshal(bl.Content, &s) == nil {
+				reply.WriteString(s)
+				continue
+			}
+			var texts []struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(bl.Content, &texts) == nil {
+				for _, tx := range texts {
+					reply.WriteString(tx.Text)
+				}
+			}
+		}
+	}
+	return reply.String(), nil
+}
+
 // SubagentFeedbackCount counts the "Stop hook feedback" turns in the sub-agents' transcripts.
 func (claudeDriver) SubagentFeedbackCount(records []string) int {
 	n := 0

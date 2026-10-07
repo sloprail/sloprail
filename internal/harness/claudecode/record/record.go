@@ -34,6 +34,11 @@ func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
 	return out
 }
 
+// ParentRecord implements harness.SubagentLocator. A Claude Code sub-agent's record names
+// no parent of its own: where it is filed (<session>/subagents/agent-<id>.jsonl, read by
+// internal/transcript's layout rules) and its meta file do, so there is nothing to say here.
+func (Transcripts) ParentRecord(string) (string, bool) { return "", false }
+
 // claudeRecord is one line of Claude Code's JSONL, in the fields we keep.
 //
 // ParentUUID is a pointer because the distinction that matters is null versus
