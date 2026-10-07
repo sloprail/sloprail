@@ -1,0 +1,4 @@
+predicate: >-
+  A turn end that cannot name its {@ent:session:Session}, read its tracked ranges or observe the repository's branches refuses instead of passing, except in a project with no file-guards.
+why: What could not be examined is read as nothing to judge and unjudged commits slip through.
+needs: [stop-block-continuation]

@@ -1,0 +1,5 @@
+predicate: >-
+  A change to a file that lands between turns is charged to the agent as uncited only when work it started may still be running, otherwise it is set aside; the {@ent:citations:Citation} requirement then refuses it and names that work.
+why: >-
+  The agent would be blamed for the user's own edits, or escape blame for its background work's.
+needs: [stop-hook-payload, background-agent]

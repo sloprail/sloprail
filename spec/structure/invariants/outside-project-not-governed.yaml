@@ -1,0 +1,6 @@
+predicate: >-
+  A write to a path outside the project's tree is not decided by the
+  project's {@ent:structure:StructureGate}, while a path inside it is decided
+  however it is spelled.
+why: Scratch files elsewhere would be refused, or an absolute path would dodge the layout.
+needs: [pretooluse-refusal]

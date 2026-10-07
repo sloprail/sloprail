@@ -1,0 +1,8 @@
+predicate: >-
+  A pre-action {@ent:events:FileChange} exists only for a call that writes a
+  file: reading, naming a path without writing, aiming a write at a directory
+  or other non-regular file, and an edit the tool would refuse (absent or
+  ambiguous old text, empty edit list) yield none, and a write is a create
+  when the file does not exist and an update when it does.
+why: A rule on file writes fires on reads or on edits that never happen, or misses real writes.
+needs: [file-tools]

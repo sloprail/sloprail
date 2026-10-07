@@ -1,0 +1,7 @@
+predicate: >-
+  A gate {@ent:matching:Match} that cannot be evaluated refuses the action,
+  naming the gate, and a file-guard Match that cannot be compiled or decided
+  for a file refuses saying the guard could not be evaluated; neither is read
+  as the rule not applying.
+why: A broken match silently lets through the action it was written to stop.
+needs: [pretooluse-refusal]

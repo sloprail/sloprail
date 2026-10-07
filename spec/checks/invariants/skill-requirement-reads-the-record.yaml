@@ -1,0 +1,7 @@
+predicate: >-
+  A {@fld:checks:Requirement.skill} is met only when the session's own
+  record, sub-agents excluded, shows the skill invoked (bare or
+  plugin-qualified) or its SKILL.md read, and each of
+  {@fld:checks:Requirement.files} read too; one refusal names every page
+  still unread, and a record that cannot be read refuses.
+why: An agent claims to have read the skill and writes against it unread, or is told about missing pages one refusal at a time.

@@ -1,0 +1,6 @@
+predicate: >-
+  A refusing {@ent:checks:Check} whose {@fld:checks:Check.reported_error} is
+  true, like one that could not be run, has {@fld:checks:Verdict.no_verdict}
+  true: it is not remembered as the rule's answer about the content, and the
+  next evaluation runs the check again.
+why: A transient failure (a tool missing for a moment) is replayed as a permanent refusal of unchanged content.

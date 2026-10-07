@@ -1,0 +1,19 @@
+doc: An activatable scope with an enter and an exit script whose state other rules read.
+fields:
+  - name: name
+    type: string
+    doc: The context's folder name.
+  - name: active
+    type: bool
+    constraint_expr: false until an enter activates it
+    doc: Whether the scope is currently open.
+  - name: payload
+    type: unknown
+    constraint_expr: empty until an enter prints one
+    doc: What the last clean enter printed.
+  - name: enter
+    type: string
+    doc: The script run on each matching trigger.
+  - name: exit
+    type: string
+    doc: The script run at the end of a turn while the context is active.

@@ -1,0 +1,6 @@
+predicate: >-
+  A script's {@fld:checks:Check.exit_status} alone decides: zero permits and
+  non-zero refuses, and anything printed at zero (an objection, a claimed
+  refusal) neither refuses nor reaches the agent, while no claim of approval
+  survives a non-zero status.
+why: A check that objects but exits zero is silently ignored, or one that claims approval but fails lets the action through.

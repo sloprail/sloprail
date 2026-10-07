@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:cli:CheckRun} whose {@fld:cli:CheckRun.base} or {@fld:cli:CheckRun.head} is missing or does
+  not resolve, or that runs outside a git repository or over an unreadable rule store, fails with an
+  error naming the problem and never reads as an empty range or a pass.
+why: >-
+  A misspelt revision that silently judged nothing would pass every guard.

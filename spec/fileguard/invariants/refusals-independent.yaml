@@ -1,0 +1,4 @@
+predicate: >-
+  One {@ent:fileguard:FileGuard}'s refusal never stops another file-guard
+  from being judged and reported, and every refusing rule is named.
+why: Fixing one rule hides the next, so the agent is refused again and again for what was already knowable.

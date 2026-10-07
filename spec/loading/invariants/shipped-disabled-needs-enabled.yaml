@@ -1,0 +1,5 @@
+predicate: >-
+  A gate with {@fld:loading:Rule.ships_disabled} stays inert until its
+  {@fld:loading:Rule.qualified_name} is listed in
+  {@fld:loading:Config.enabled}.
+why: An opt-in gate would run for every project, or never for one that opted in.

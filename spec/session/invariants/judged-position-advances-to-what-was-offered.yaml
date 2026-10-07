@@ -1,0 +1,3 @@
+predicate: >-
+  A session's {@fld:session:Session.judged_position} advances only to the end of the record as it stood when a query handed it out, and only when the cycle completes unrefused, so turns appended later and the turns of a refused or interrupted cycle are offered again; a first cycle, or one whose position cannot be read, is offered the whole record.
+why: A turn is marked judged without any rule having seen it and its violation is never caught.

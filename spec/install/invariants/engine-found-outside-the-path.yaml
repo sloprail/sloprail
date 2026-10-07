@@ -1,0 +1,7 @@
+predicate: >-
+  The {@ent:install:Plugin} finds an engine in its {@fld:install:Engine.install_dir} or the Go
+  install directory even when that directory is not on the harness's path, and runs the engine
+  with that directory first on its path so its sibling commands resolve by name.
+why: >-
+  A correctly installed engine treated as missing would refuse every write, and judges would fail on a missing sibling command.
+needs: [plugin-hooks]

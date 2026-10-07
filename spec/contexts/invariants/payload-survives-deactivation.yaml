@@ -1,0 +1,4 @@
+predicate: >-
+  A context's last {@fld:contexts:Context.payload} is kept after
+  {@fld:contexts:Context.active} turns false.
+why: Rules could not read what a closed scope last measured.

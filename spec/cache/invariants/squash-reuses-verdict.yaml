@@ -1,0 +1,4 @@
+predicate: >-
+  Verifying reuses a {@ent:cache:StoredVerdict} judged over the same base
+  and head trees even when the commits differ.
+why: Squash-merging a judged branch demands judging it all again.

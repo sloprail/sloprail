@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:loading:Rule} whose declared script cannot be run directly is
+  {@fld:loading:Rule.status} degraded: it stays enforced, is reported, and
+  refuses what it guards until fixed, instead of being dropped.
+why: A chmod mistake would silently switch a guardrail off.

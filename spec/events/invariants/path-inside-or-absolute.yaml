@@ -1,0 +1,7 @@
+predicate: >-
+  A {@fld:events:FileChange.path} naming a file inside the repository is
+  reported repository-relative however it was spelled (absolute, `./a.md`,
+  through a symlinked root), and one naming a file outside the repository,
+  including through a symlink that escapes it, is never reported as
+  repository-relative.
+why: A scope such as a folder prefix is bypassed by a spelling, or admits a file the project does not hold.

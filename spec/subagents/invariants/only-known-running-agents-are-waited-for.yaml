@@ -1,0 +1,4 @@
+predicate: >-
+  Only a {@ent:subagents:SubAgent} known to be running in the background is waited for: one the session does not know, a foreground one, one whose harness process has gone, or any agent when the record of sub-agents cannot be read is judged.
+why: A gap in what sloprail knows lets unjudged commits wait forever.
+needs: [background-agent]

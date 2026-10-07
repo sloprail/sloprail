@@ -1,0 +1,12 @@
+doc: One entry a guardrail remembered, under a key, within a session.
+fields:
+  - name: session
+    type: session.Session
+  - name: guardrail
+    type: string
+    doc: The guardrail that owns the entry.
+  - name: key
+    type: string
+  - name: value
+    type: string
+    doc: The text the guardrail stored, kept as given.

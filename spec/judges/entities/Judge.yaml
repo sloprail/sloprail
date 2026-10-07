@@ -1,0 +1,27 @@
+doc: A check that asks a model whether an action satisfies a rubric.
+fields:
+  - name: template
+    type: string
+    doc: The prompt template the rubric and the material to judge are rendered into.
+  - name: model
+    type: string
+    doc: The model, or ordered preference list of models and size aliases, the judge runs on.
+    constraint_expr: default size-md; a list matching nothing under the running harness is refused
+  - name: timeout
+    type: string
+    doc: How long the judge may take before it is stopped; valid only on a judge.
+    constraint_expr: default 600 seconds; a positive duration
+  - name: pass
+    type: bool
+    doc: The verdict the model's answer carries.
+  - name: reasoning
+    type: string
+    doc: The model's stated reason; shown to the agent when the verdict is false.
+  - name: attempts
+    type: int32
+    doc: How many times the model may be asked before a malformed answer fails the judge.
+    constraint_expr: 1..20; default 2
+  - name: failure_cause
+    type: string
+    doc: Why a judge produced no verdict at all.
+    enum: [usage limit, authentication, version skew, other]

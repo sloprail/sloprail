@@ -1,0 +1,25 @@
+doc: One file a tool call is about to change (pre) or that a turn turned out to have changed (post), as carried by a file event.
+fields:
+  - name: path
+    type: string
+    doc: The file's path.
+    constraint_expr: repository-relative, cleaned and slash-separated; absolute only for a path outside the repository
+  - name: change
+    type: string
+    doc: Whether the file is created, updated or deleted.
+    enum: [create, update, delete]
+  - name: oldContent
+    type: string
+    doc: The file's bytes before the change; the baseline's bytes on a post event.
+  - name: newContent
+    type: string
+    doc: The bytes the change leaves behind.
+  - name: resultKnown
+    type: bool
+    doc: Whether newContent on a pre create or update was worked out.
+  - name: oldContentKnown
+    type: bool
+    doc: Whether oldContent on a pre delete was read.
+  - name: newContentKnown
+    type: bool
+    doc: Whether newContent on a post create or update was read.

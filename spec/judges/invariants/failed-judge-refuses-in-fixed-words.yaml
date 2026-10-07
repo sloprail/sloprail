@@ -1,0 +1,8 @@
+predicate: >-
+  A {@ent:judges:Judge} that crashes, times out past
+  {@fld:judges:Judge.timeout} or cannot start refuses the action in fixed
+  words naming its {@fld:judges:Judge.failure_cause} where known and never
+  quoting what the model's harness printed; a transient crash is retried once
+  and a verdict never is.
+why: A judge outage lets unreviewed actions through, or leaks a harness's secrets and paths into refusals the agent and logs keep.
+needs: [noninteractive-run]

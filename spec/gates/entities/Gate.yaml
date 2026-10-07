@@ -1,0 +1,15 @@
+doc: A rule that judges an action before it runs, or the end of a turn, and refuses it or lets it through.
+fields:
+  - name: name
+    type: string
+    doc: The gate's folder name.
+  - name: plugin
+    type: string
+    doc: The plugin the gate ships from; empty for the project's own gate.
+  - name: loaded
+    type: bool
+    doc: Whether the gate's declaration loaded.
+  - name: status
+    type: string
+    enum: [pass, fail]
+    doc: The gate's most recent verdict in the session.

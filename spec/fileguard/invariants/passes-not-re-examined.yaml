@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:fileguard:FileGuard} starts its {@fld:fileguard:Changeset.base}
+  from where its chain of complete passing evaluations of the same range
+  history ends, so only the change since is judged; a failure or a gap in
+  the chain never advances it.
+why: Passed work is judged again, or failed work is skipped.

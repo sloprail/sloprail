@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:checks:Requirement} is waived by its {@fld:checks:Requirement.when}
+  script only when that script exits 1; exit zero, any other status, or a
+  script that cannot run leaves the requirement applying, and a
+  {@fld:checks:Requirement.hint} printed at zero is appended to the refusal.
+why: A broken when script silently lifts a requirement, or the rule's own advice for meeting it never reaches the agent.

@@ -1,0 +1,6 @@
+predicate: >-
+  A path no plugin's {@fld:structure:StructureGate.scope} owns is decided by
+  the project's {@ent:structure:StructureGate}, and is permitted when the
+  project has none.
+why: A plugin would lock down the whole project, or a project's rules would not apply to its own tree.
+needs: [pretooluse-refusal]

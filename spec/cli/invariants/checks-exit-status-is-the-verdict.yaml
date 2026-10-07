@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:cli:CheckRun} in `run` or `verify` mode has {@fld:cli:CheckRun.exit_status} 0 only when
+  no file-guard refuses the range and none failed to load, and 1 otherwise; in `show` mode it is 0
+  whatever the stored results are.
+why: >-
+  CI and scripts gate on this status; a refusal or an unreadable rule that exits 0 lets bad work through.

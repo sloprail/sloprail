@@ -1,0 +1,6 @@
+predicate: >-
+  `sr <service> ...` behaves as the service's own command run directly: every argument and
+  stdin reach it unchanged, its output comes back unchanged, and the {@fld:cli:Command.exit_status}
+  of `sr` is the service's exact one.
+why: >-
+  The exit status carries a refusal; a proxy that altered it, or the arguments, would make what a person types differ from what the hooks run.

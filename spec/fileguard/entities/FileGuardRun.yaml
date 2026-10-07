@@ -1,0 +1,10 @@
+doc: "One invocation of the commands that judge or verify every file-guard over a range."
+fields:
+  - name: mode
+    type: string
+    doc: "Whether verdicts are produced or only read."
+    enum: [run, verify]
+  - name: exit_code
+    type: int32
+    doc: "Process exit status."
+    enum: [0, 1]

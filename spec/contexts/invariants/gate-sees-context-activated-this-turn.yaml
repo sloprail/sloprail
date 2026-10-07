@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:gates:Gate} that requires a {@ent:contexts:Context} at the end of a
+  turn reads its {@fld:contexts:Context.active} as true when the context was
+  activated during that turn, even if its exit would close it afterwards.
+why: A gate would judge a context that has not entered yet, or already closed.
+needs: [stop-block-continuation]

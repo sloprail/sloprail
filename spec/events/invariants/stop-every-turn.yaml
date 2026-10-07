@@ -1,0 +1,6 @@
+predicate: >-
+  A subjectless Stop {@ent:events:Event} fires at the end of every turn,
+  whether or not anything changed, and a match naming a field of it is refused
+  at load.
+why: An end-of-turn gate silently never runs on a turn that changed nothing.
+needs: [stop-hook-payload]

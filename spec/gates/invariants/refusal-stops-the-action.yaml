@@ -1,0 +1,5 @@
+predicate: >-
+  An action a {@ent:gates:Gate} refuses does not run, and the agent is told
+  the {@fld:gates:Refusal.reason}; an action no gate refuses goes ahead.
+why: A refused action would run anyway, or the agent would not know why it was stopped.
+needs: [pretooluse-refusal]

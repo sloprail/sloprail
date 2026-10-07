@@ -1,0 +1,6 @@
+predicate: >-
+  An {@fld:contexts:Context.exit} that cannot finish, being killed on its
+  timeout, leaves the context active and refuses the end of the turn until it
+  answers.
+why: The mode would stay open while the turn passed.
+needs: [stop-block-continuation]

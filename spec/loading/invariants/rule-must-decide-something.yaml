@@ -1,0 +1,5 @@
+predicate: >-
+  A gate or file-guard that carries neither a requirement nor a check, a gate
+  with no trigger, a file-guard with no match, and a context lacking enter or
+  exit are refused as {@fld:loading:Rule.status} invalid.
+why: A rule would select its subject and decide nothing, reading as satisfied.

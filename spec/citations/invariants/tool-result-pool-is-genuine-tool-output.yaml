@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:citations:Citation} whose {@fld:citations:Citation.sourceTypes} is tool_result quotes only text a tool produced, found in the caller's own record first and then in the root session and its sub-agents, never a sub-agent's or background agent's reply, a result of unknown origin, an agent transcript read back, or a command echoing text the agent wrote.
+why: >-
+  An agent could launder its own words, or another agent's, into proof that a command ran.
+needs: [session-transcript-file, transcript-record-envelope, subagent-transcripts, bash-tool-result]

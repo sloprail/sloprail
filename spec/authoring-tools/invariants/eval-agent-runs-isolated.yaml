@@ -1,0 +1,6 @@
+predicate: >-
+  The agent under an {@ent:authoring-tools:Eval} runs in a {@fld:authoring-tools:Eval.home} of its
+  own that is removed with its workspace, never the operator's real one, with sloprail commands
+  built from this checkout and no identity inherited from an enclosing agent session.
+why: >-
+  An eval that wrote the operator's real configuration, or tested a stale install, would prove nothing and do harm.

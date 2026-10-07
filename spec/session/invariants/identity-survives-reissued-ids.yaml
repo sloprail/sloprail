@@ -1,0 +1,4 @@
+predicate: >-
+  A {@fld:session:Session.identity} stays the same when the harness re-issues its session id after a retry, a compaction or a resume into a new transcript, and differs between unrelated conversations, so recorded state is still found.
+why: State, baseline and refusals are silently abandoned under the old id, or two conversations share state.
+needs: [session-fork, compaction-transcript-continuity]

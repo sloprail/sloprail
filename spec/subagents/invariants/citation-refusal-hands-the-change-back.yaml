@@ -1,0 +1,4 @@
+predicate: >-
+  When a {@ent:subagents:SubAgent}'s change needs the user's own words as a citation, the refusal tells it to hand the change back (a patch outside the repository, reverted on its own branch, reported to its parent), while the main session is told only to cite.
+why: A sub-agent invents a citation or the parent covers it with a blanket trailer that grounds nothing.
+needs: [subagent-lifecycle-hooks]

@@ -1,0 +1,5 @@
+predicate: >-
+  A clean {@fld:contexts:Context.exit} at the end of a turn sets an active
+  context's {@fld:contexts:Context.active} to false, a non-zero exit leaves
+  it active, and an exit never blocks the turn.
+why: Exits would end scopes too early, or hold the agent in a turn that cannot finish.

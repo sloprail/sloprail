@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:citations:Citation} in the user pool is resolved in the root session's conversation alone, so a sub-agent cannot cite its dispatch prompt as the user's words and is refused when the root session cannot be found.
+why: >-
+  Words an agent handed to another agent would be passed off as the person's.
+needs: [subagent-transcripts, session-transcript-file]

@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:subagents:SubAgent} whose session cannot be identified is still judged on its own folder without stored state.
+why: Commits made by a sub-agent pass unexamined for want of an identity.
+needs: [subagent-lifecycle-hooks]

@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:subagents:SubAgent}'s commit ranges are verified at the end of its {@fld:subagents:SubAgent.parent}'s turn, and at the sub-agent's own end only when {@fld:loading:Config.enable_subagent_stop_check} is on.
+why: Half-finished delegated work is refused mid-flight, or never verified at all.
+needs: [subagent-lifecycle-hooks]

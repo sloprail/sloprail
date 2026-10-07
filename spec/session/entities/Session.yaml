@@ -1,0 +1,21 @@
+doc: One conversation an agent has with the user, guarded by sloprail from its start to its end.
+fields:
+  - name: identity
+    type: string
+    doc: The identifier of the conversation's origin, under which its state is kept.
+  - name: baseline
+    type: string
+    doc: The commit a cycle's difference is measured from.
+  - name: start_commit
+    type: string
+    doc: The commit the session first began at; the empty tree when the repository had no commit yet.
+  - name: judged_position
+    type: string
+    doc: The point in the session's record up to which turns have been judged.
+  - name: consecutive_stop_refusals
+    type: int32
+    doc: How many times in a row the current end-of-turn check has been refused.
+    constraint_expr: ">= 0"
+  - name: guardrails_active
+    type: bool
+    doc: Whether guardrails run for the session at all.

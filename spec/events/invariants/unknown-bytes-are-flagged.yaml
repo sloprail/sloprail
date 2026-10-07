@@ -1,0 +1,9 @@
+predicate: >-
+  When the engine could not work out or read the bytes of a
+  {@ent:events:FileChange} (a notebook cell edit, an in-place stream edit, an
+  unreadable, non-regular or oversize file),
+  {@fld:events:FileChange.resultKnown},
+  {@fld:events:FileChange.oldContentKnown} or
+  {@fld:events:FileChange.newContentKnown} is false and the content is empty,
+  so unknown is never presented as an empty file.
+why: A rule cannot tell an emptied file from one it could not see, and passes or refuses the wrong one.

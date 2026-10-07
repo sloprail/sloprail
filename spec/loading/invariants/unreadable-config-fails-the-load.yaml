@@ -1,0 +1,4 @@
+predicate: >-
+  An absent {@ent:loading:Config} means no overrides, but one that exists and
+  cannot be read or parsed makes loading fail rather than ignoring it.
+why: A permissions accident would silently re-enable every rule the project switched off.

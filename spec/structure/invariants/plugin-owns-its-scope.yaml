@@ -1,0 +1,5 @@
+predicate: >-
+  A path under a plugin's {@fld:structure:StructureGate.scope} is decided by
+  that plugin's allow and deny alone; the project's allow does not widen it.
+why: A project's broad allow would undo a plugin's lock on its own folder.
+needs: [pretooluse-refusal]

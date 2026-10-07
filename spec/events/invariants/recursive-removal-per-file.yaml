@@ -1,0 +1,7 @@
+predicate: >-
+  A recursive removal of a directory yields a delete {@ent:events:FileChange}
+  for every file inside it (links are not followed), flagging with
+  {@fld:events:FileChange.oldContentKnown} the files whose bytes were not
+  read; past the engine's file limit no delete is predicted and the removal is
+  seen only after the turn.
+why: Removing a directory hides deletions of guarded files inside it from a rule on deletes.

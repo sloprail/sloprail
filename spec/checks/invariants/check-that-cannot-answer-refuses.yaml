@@ -1,0 +1,7 @@
+predicate: >-
+  A {@ent:checks:Check} that cannot be run (missing, not executable, no
+  shebang, shell syntax in {@fld:checks:Check.script}), is killed by a
+  signal, or outlives {@fld:checks:Check.timeout_seconds} yields a refused
+  {@ent:checks:Verdict} whose {@fld:checks:Verdict.reason} names the script
+  and the cause; the same holds for its {@fld:checks:Check.prepare} step.
+why: A broken, wedged or killed check reads as approval and the action it was meant to stop goes through.

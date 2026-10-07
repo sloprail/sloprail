@@ -1,0 +1,5 @@
+predicate: >-
+  A path inside the {@fld:structure:StructureGate.scope} of more than one
+  plugin is refused as an ownership conflict naming every owner.
+why: Two plugins would silently fight, with whichever loaded last winning.
+needs: [pretooluse-refusal]

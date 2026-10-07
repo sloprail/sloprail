@@ -1,0 +1,11 @@
+doc: What the agent is told when a gate refuses an action or the end of a turn.
+fields:
+  - name: gate
+    type: Gate
+    doc: The gate that refused.
+  - name: reason
+    type: string
+    doc: The words given to the agent.
+  - name: files
+    type: string[]
+    doc: The files the refusal is about; empty for a refusal about the whole call.

@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:subagents:SubAgent} has its own {@fld:subagents:SubAgent.session}: its record, stored state and baseline are never pooled with its parent's or a sibling's, and when it ends, the guardrails bound to what it changed run against that session and a refusal blocks it so it works on and retries; verifying its commit ranges at that point is the separate matter of {@fld:loading:Config.enable_subagent_stop_check}.
+why: Delegated work escapes the guardrails, or a sub-agent's verdicts exempt or refuse its parent.
+needs: [subagent-transcripts, hook-common-payload, subagent-lifecycle-hooks, subagent-stop-block-loop]

@@ -1,0 +1,7 @@
+predicate: >-
+  A {@ent:judges:Judge}'s verdict is {@fld:judges:Judge.pass} true (permit)
+  or false (refuse, with {@fld:judges:Judge.reasoning} as the reason); a
+  false verdict is final and never re-asked, while an answer that is no
+  boolean verdict is asked again up to {@fld:judges:Judge.attempts} times and
+  then refuses having reached no verdict.
+why: A judge is badgered into reversing a correct no, or a garbled answer silently passes an action.

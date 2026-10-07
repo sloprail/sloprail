@@ -1,0 +1,14 @@
+doc: A one-line `sr:<kind> <fqn>` comment in an implementation file that ties the code to a named thing.
+fields:
+  - name: kind
+    type: string
+    doc: The project's own word for what is marked; free-form.
+    constraint_expr: non-empty, alphanumeric plus `:`, `_`, `-`, `.`
+  - name: fqn
+    type: string
+    doc: The name of the thing the marker is for.
+    constraint_expr: non-empty, only characters a URL admits, no whitespace
+  - name: line
+    type: int32
+    doc: The 1-based line the marker is written at.
+    constraint_expr: ">= 1"

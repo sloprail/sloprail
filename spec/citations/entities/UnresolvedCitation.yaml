@@ -1,0 +1,15 @@
+doc: A citation trailer of a commit whose quote did not become a Citation.
+fields:
+  - name: trailer
+    type: string
+    doc: Which citation trailer carried the quote.
+    enum: [Sloprail-Cites-User, Sloprail-Cites-Tool]
+  - name: quote
+    type: string
+    doc: The quote that failed to resolve.
+  - name: commit
+    type: string
+    doc: The commit that carried the trailer.
+  - name: reason
+    type: string
+    doc: Why it did not resolve, for example absent, ambiguous, or in text its pool excludes.

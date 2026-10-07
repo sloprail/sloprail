@@ -1,0 +1,7 @@
+predicate: >-
+  A shell command that writes, appends to, copies, moves or removes files
+  yields one {@ent:events:FileChange} per file it changes, however its path is
+  spelled or the command is wrapped; a command that only reads, names an
+  unchanged file or removes a file that is not there yields none, and a
+  creation is predicted only when the line determines its bytes.
+why: An agent changes a guarded file through the shell and the rule never sees it, or a mere read fires the rule.

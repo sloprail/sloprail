@@ -1,0 +1,17 @@
+doc: One run of an evaluation fixture against a real agent, scored by the fixture's scorer.
+fields:
+  - name: exit_status
+    type: int32
+    doc: The process exit status of `sr eval run`.
+    constraint_expr: 0 (scorer passed), 1 (scorer failed), 2 (the run could not be completed)
+  - name: max_turns
+    type: int32
+    doc: The cap on user turns when the fixture has a simulated user.
+    constraint_expr: 2..10
+  - name: archived
+    type: bool
+    doc: Whether the run was recorded in the local archive.
+    constraint_expr: default true; false with --no-archive
+  - name: home
+    type: string
+    doc: The home the agent under test runs in.

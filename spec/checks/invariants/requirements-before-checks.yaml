@@ -1,0 +1,4 @@
+predicate: >-
+  An unmet {@ent:checks:Requirement} refuses the action, naming what would
+  satisfy it, before any {@ent:checks:Check} of that rule is run.
+why: A rule's expensive checks (model calls included) run, and bill, for actions the rule already knew it must refuse.

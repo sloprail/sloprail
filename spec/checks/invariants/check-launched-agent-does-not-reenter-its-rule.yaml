@@ -1,0 +1,6 @@
+predicate: >-
+  An agent that a {@ent:checks:Check} launches, and anything it spawns, is
+  not held to the rule that launched it, while every other rule still applies
+  to its actions.
+why: A judge's own writes recurse into the rule that launched it without end, or the launched agent escapes all other guardrails.
+needs: [noninteractive-run]

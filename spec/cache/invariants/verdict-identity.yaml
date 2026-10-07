@@ -1,0 +1,9 @@
+predicate: >-
+  A {@ent:cache:StoredVerdict} is keyed by
+  {@fld:cache:StoredVerdict.rule}, {@fld:cache:StoredVerdict.subject},
+  {@fld:cache:StoredVerdict.files_content},
+  {@fld:cache:StoredVerdict.citation_quotes},
+  {@fld:cache:StoredVerdict.subject_fingerprint} and
+  {@fld:cache:StoredVerdict.schema_version} alone, never by
+  the rule's definition, commit ids, session, agent or branch.
+why: Unchanged work is judged again, or changed work reuses a stale verdict.

@@ -1,0 +1,7 @@
+predicate: >-
+  When {@fld:fileguard:CommitRequirement.paths} is non-empty at the end of
+  an agent's turn, the turn is refused naming each path, its status and the
+  rules selecting it, and the work is never committed for the agent; only
+  paths a rule selects count, and only for an agent that owns its tree.
+why: Guarded work ends the turn uncommitted and so never judged, or unrelated scratch files block the agent.
+needs: [stop-block-continuation]
