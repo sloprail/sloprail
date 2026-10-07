@@ -409,14 +409,15 @@ func excludedResultHint(path, quote string, subagent bool) string {
 	if err != nil {
 		return ""
 	}
+	needle := citeNeedle(quote)
 	for _, r := range records {
-		entries, err := ReadLines(r)
+		rec, err := loadRecord(r)
 		if err != nil {
 			continue
 		}
-		calls := recordCalls(entries)
-		for _, e := range entries {
-			if e.Type != EntryUser || len(e.Message) == 0 {
+		calls := rec.recordCalls()
+		for _, e := range rec.entries {
+			if e.Type != EntryUser || len(e.Message) == 0 || !mayContain(e.Message, needle) {
 				continue
 			}
 			var msg userMessage
