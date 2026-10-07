@@ -13,28 +13,118 @@ sloprail runs inside your agent as a **plugin**, and its hooks call a separate
 set of binaries (`sr`, `sr-session`, `sr-file`, `sr-mark`, `sr-agent`, `sr-eval`, `sr-checks`). The
 plugin installs those itself, so installing the plugin is the whole install.
 
+**Install sloprail per project.** Run the commands below from the project's root,
+once for each project you want guarded, with the scope set to that project. The
+rules a project writes live in its `.sloprail/` directory, and the plugin that
+enforces them is declared in the same repository. A project with a `.sloprail/`
+directory is guarded; a project with none is an ordinary project until its first
+rule.
+
 ## Install the plugin
 
 <Tabs>
   <TabItem label="Claude Code">
     ```bash
-    /plugin marketplace add sloprail/sloprail
-    /plugin install sloprail@sloprail-marketplace
+    claude plugin marketplace add sloprail/sloprail --scope project
+    claude plugin install sloprail@sloprail-marketplace --scope project
     ```
 
-    Pick the project scope. The hooks are registered; a project with a
-    `.sloprail/` directory is now guarded, and a project with none is an
-    ordinary project until its first rule.
+    Both commands write the project's `.claude/settings.json`, so the plugin
+    is part of the repository and a teammate who opens it is offered the same
+    install. The marketplace pins each plugin to the latest release tag, so the
+    plugin files (hooks, skills) and the binaries below always come from the
+    same release, never from unreleased work on `main`.
 
-    The marketplace pins each plugin to the latest release tag, so the plugin
-    files (hooks, skills) and the binaries below always come from the same
-    release, never from unreleased work on `main`.
+    **Verify.** Start a session in the project; the first one fetches the
+    binaries and says so. Then `sr-session --version` (see
+    [Verify it worked](#verify-it-worked)) must print a version.
+  </TabItem>
+  <TabItem label="Codex">
+    ```bash
+    codex plugin marketplace add sloprail/sloprail
+    codex plugin add sloprail@sloprail-marketplace
+    ```
+
+    Then enable the plugin for the project in `.codex/config.toml` at the
+    project's root:
+
+    ```toml
+    [plugins."sloprail@sloprail-marketplace"]
+    enabled = true
+    ```
+
+    Registering the marketplace and fetching the plugin are per user: Codex keeps
+    them in `~/.codex/config.toml` and its plugin cache. The project's
+    `.codex/config.toml` decides where the plugin is **on**. `codex plugin add`
+    also enables it for your user; to have it on only in projects that say so, set
+    `enabled = false` for it in `~/.codex/config.toml`. Codex reads a project's
+    `.codex/config.toml` only when the project is **trusted**, so an untrusted
+    project does not load the plugin at all.
+
+    **Hooks must be trusted.** Codex runs a plugin's hooks only after they have
+    been reviewed and trusted, and skips the others without any message: a plugin
+    that is enabled but untrusted guards nothing and shows nothing. Enabling or
+    upgrading the plugin does not trust its hooks, and changing a hook's
+    definition in the plugin's `hooks.json` drops the trust for that hook again.
+    `sr-session codex-trust` asks Codex which of sloprail's hooks it would
+    skip and records trust for them (the same thing Codex's own review dialog
+    does); `install.sh` runs it for you.
+
+    **Verify.** From the project's root:
+
+    ```bash
+    sr-session codex-trust --check
+    ```
+
+    It prints `all N sloprail hooks are trusted`, or names the hooks Codex would
+    skip and exits 1; run `sr-session codex-trust` to trust them.
+  </TabItem>
+  <TabItem label="Cursor">
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh -s -- --harness cursor
+    ```
+
+    This installs the binaries and copies the plugin into
+    `~/.cursor/plugins/local/sloprail`, the directory Cursor loads local plugins
+    from when it starts. **Cursor has no project-scope plugin install**: plugins
+    are per user. The closest thing to a project scope is that sloprail does
+    nothing in a project without a `.sloprail/` directory, and, for a single run,
+    `cursor-agent --plugin-dir <path>` loads a plugin from any directory
+    (`marketplace/plugins/sloprail` in a checkout of
+    [sloprail/sloprail](https://github.com/sloprail/sloprail)).
+
+    **Verify.** The plugin is in place when
+
+    ```bash
+    ls ~/.cursor/plugins/local/sloprail/.cursor-plugin/plugin.json
+    ```
+
+    lists the file. Then start `cursor-agent` in a project that has a rule, write
+    a file the rule forbids, and watch the write be refused: that is the hooks
+    running. (A turn-end gate shows up only in the interactive terminal UI; see
+    below.)
   </TabItem>
 </Tabs>
 
-More harnesses will get their own tab as they go live. The engine's contract —
-hook points in, events out — isn't specific to one, so the rules a project writes
-don't change between them.
+`install.sh` takes `--harness claude|codex|cursor|all` to set up one harness (or
+several, comma-separated), and with no flag sets up each harness it finds on the
+machine. For Claude Code it only prints the project commands above.
+
+## Differences between the harnesses
+
+The rules a project writes don't change between harnesses; these are the places
+the harnesses themselves differ.
+
+| | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| Scope | project (`--scope project`) | enabled per project, installed per user | per user |
+| Hooks | run once the plugin is enabled | run only once **trusted** (`sr-session codex-trust`) | run once the plugin is loaded |
+| Turn-end gates (Stop) | every session | every session | only in the interactive terminal UI, **not** in `cursor-agent -p` |
+| Skills | loaded with the Skill tool | loaded with the Skill tool | there is no Skill tool: a skill counts as loaded when its `SKILL.md` is read |
+
+A rule that gates the end of a turn therefore does not run in
+`cursor-agent -p`, which has no Stop hook; guard that action at the tool call
+(a gate) or at the commit (a file-guard) instead.
 
 ## The binaries
 
