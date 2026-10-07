@@ -36,11 +36,12 @@ type cursorDriver struct{}
 
 func (cursorDriver) Name() string { return "cursor" }
 
-// Caps: no skill tool, no ask-user-question, no worktree isolation, no stop hook in
-// `-p`, no receipt naming a background task (spec/capabilities, providers.cursor of
-// harness-mocks).
+// Caps: no skill tool, no ask-user-question, no worktree isolation, no receipt naming a
+// background task (spec/capabilities, providers.cursor of harness-mocks). The stop hook is
+// there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
+// then ends with the agent's own `sr-checks run`, which the Stop verifies.
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapForkResumeCompact, CapTranscript}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -453,16 +454,17 @@ func (cursorDriver) ToolResults(output string) []string {
 
 // stopFollowup is a message a stop hook's followup_message gave the agent: the mock (with its
 // stop opt-in) records it in the transcript as a user turn, the way the TUI does, and prints
-// nothing on the stream. A prompt is the first user record of a run, which a turn_ended closes;
-// any later user record before that is a follow-up. wentOn: the agent answered it.
+// nothing on the stream. The record cannot tell a follow-up from the prompt of a resumed run (a
+// resume reopens the record, dropping its turn_ended: recorded, runs/session-resume), so the
+// prompts the test launched are read off in order and every other user record is a follow-up.
+// wentOn: the agent answered it.
 type stopFollowup struct {
 	text   string
 	wentOn bool
 }
 
-func cursorFollowups(record string) []stopFollowup {
+func cursorFollowups(record string, prompts []string) []stopFollowup {
 	var out []stopFollowup
-	fresh := true
 	for _, line := range strings.Split(record, "\n") {
 		var r struct {
 			Type    string `json:"type"`
@@ -477,13 +479,7 @@ func cursorFollowups(record string) []stopFollowup {
 			continue
 		}
 		switch {
-		case r.Type == "turn_ended":
-			fresh = true
 		case r.Role == "user":
-			if fresh {
-				fresh = false
-				continue
-			}
 			text := ""
 			if len(r.Message.Content) > 0 {
 				text = r.Message.Content[0].Text
@@ -492,6 +488,10 @@ func cursorFollowups(record string) []stopFollowup {
 				text = text[i+len("<user_query>\n"):]
 			}
 			text = strings.TrimSuffix(text, "\n</user_query>")
+			if len(prompts) > 0 && text == strings.TrimSpace(prompts[0]) {
+				prompts = prompts[1:] // a prompt the test launched, not a refusal fed back
+				continue
+			}
 			out = append(out, stopFollowup{text: text})
 		case r.Role == "assistant" && len(out) > 0:
 			out[len(out)-1].wentOn = true
@@ -502,13 +502,13 @@ func cursorFollowups(record string) []stopFollowup {
 
 // BlockingErrors are the reasons the Stop hook refused the end of a turn with (the mock's
 // followup_message turns). A sub-agent's stop is not modelled.
-func (cursorDriver) BlockingErrors(record, hookEvent string, dedupe bool) []string {
+func (cursorDriver) BlockingErrors(record string, prompts []string, hookEvent string, dedupe bool) []string {
 	if hookEvent != "" && hookEvent != "Stop" {
 		return nil
 	}
 	var out []string
 	seen := map[string]bool{}
-	for _, f := range cursorFollowups(record) {
+	for _, f := range cursorFollowups(record, prompts) {
 		if dedupe && seen[f.text] {
 			continue
 		}
@@ -519,9 +519,9 @@ func (cursorDriver) BlockingErrors(record, hookEvent string, dedupe bool) []stri
 }
 
 // StopContinuations are the refusals after which the agent went on.
-func (cursorDriver) StopContinuations(record string) []string {
+func (cursorDriver) StopContinuations(record string, prompts []string) []string {
 	var out []string
-	for _, f := range cursorFollowups(record) {
+	for _, f := range cursorFollowups(record, prompts) {
 		if f.wentOn {
 			out = append(out, f.text)
 		}

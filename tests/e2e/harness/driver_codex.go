@@ -534,7 +534,7 @@ func hookPrompts(record string) (events, reasons []string, assistantAfter []int)
 	return
 }
 
-func (codexDriver) BlockingErrors(record, hookEvent string, dedupe bool) []string {
+func (codexDriver) BlockingErrors(record string, _ []string, hookEvent string, dedupe bool) []string {
 	events, reasons, _ := hookPrompts(record)
 	var out []string
 	seen := map[string]bool{}
@@ -552,7 +552,7 @@ func (codexDriver) BlockingErrors(record, hookEvent string, dedupe bool) []strin
 }
 
 // StopContinuations are the Stop refusals after which the agent went on: a step of its own followed.
-func (codexDriver) StopContinuations(record string) []string {
+func (codexDriver) StopContinuations(record string, _ []string) []string {
 	events, reasons, after := hookPrompts(record)
 	var out []string
 	for i, r := range reasons {
@@ -570,7 +570,7 @@ func (c codexDriver) SubagentBlockingErrors(records []string) []string {
 func (c codexDriver) AnySubagentBlockingErrors(records []string) []string {
 	var out []string
 	for _, r := range records {
-		out = append(out, c.BlockingErrors(r, "SubagentStop", true)...)
+		out = append(out, c.BlockingErrors(r, nil, "SubagentStop", true)...)
 	}
 	return out
 }
@@ -578,7 +578,7 @@ func (c codexDriver) AnySubagentBlockingErrors(records []string) []string {
 func (c codexDriver) SubagentFeedbackCount(records []string) int {
 	n := 0
 	for _, r := range records {
-		n += len(c.BlockingErrors(r, "SubagentStop", false))
+		n += len(c.BlockingErrors(r, nil, "SubagentStop", false))
 	}
 	return n
 }
