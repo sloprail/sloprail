@@ -20,7 +20,7 @@ type runRecord struct {
 	Fixture      string    `json:"fixture"`     // the fixture directory's own name (basename)
 	FixtureDir   string    `json:"fixture_dir"` // absolute path, for reproducing the run
 	Model        string    `json:"model"`       // the resolved --model (fixture default or override)
-	Harness      string    `json:"harness"`     // "claude" today; sr-agent's own resolution, once it reports one
+	Harness      string    `json:"harness"`     // the canonical id (claude, codex, cursor) the run was launched under
 	Passed       bool      `json:"passed"`
 	Reason       string    `json:"reason"`      // empty on a pass
 	AgentError   string    `json:"agent_error"` // the agent-under-test's own exit error, if any — a run can still be scored after this

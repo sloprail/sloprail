@@ -41,6 +41,9 @@ import (
 // cursorGrantEnv builds the private config dir for a run and the env that points
 // cursor-agent at it. cleanup removes the dir.
 func cursorGrantEnv(g accessGrant) (env, args []string, cleanup func(), err error) {
+	if g.AgentRun && len(g.Tools) == 0 && len(g.DenyTools) == 0 {
+		return nil, nil, nil, nil // the agent under test keeps its own config; nothing to grant
+	}
 	allow, deny, err := cursorRules(g)
 	if err != nil {
 		return nil, nil, nil, err
@@ -69,7 +72,10 @@ func cursorGrantEnv(g accessGrant) (env, args []string, cleanup func(), err erro
 			jg.Writable = append(jg.Writable, d.Path)
 		}
 	}
-	env = []string{"CURSOR_CONFIG_DIR=" + dir, jg.Encode()}
+	env = []string{"CURSOR_CONFIG_DIR=" + dir}
+	if !g.AgentRun { // the judge's own write confinement; the agent under test writes its project
+		env = append(env, jg.Encode())
+	}
 	if readonlyProject {
 		// A judge reads the project (readonly) by absolute path; it does not need it as
 		// its workspace, and the workspace is where cursor-agent discovers project hooks.

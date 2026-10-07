@@ -5,9 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Fixture is one evaluation case: what to seed, what to ask, how to score.
@@ -103,6 +106,12 @@ type Fixture struct {
 	// environment steers the agent, the prompt never has to.
 	DisallowedTools []string `yaml:"disallowedTools"`
 
+	// Harnesses names the harnesses this fixture can run under (claude, codex,
+	// cursor); empty means all of them. A run under another is skipped with the reason,
+	// not failed: a fixture that needs a Stop hook, say, cannot run where Stop never fires
+	// (Cursor's fires only in the TUI, and an eval runs headless).
+	Harnesses []string `yaml:"harnesses"`
+
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
 	// which sr-agent refuses rather than silently picking one, so this is
@@ -170,6 +179,11 @@ func (u SimulatedUser) UserModel() string {
 // reads with no YAML-escaping between them.
 func (f Fixture) promptPath() string { return filepath.Join(f.Dir, "prompt.md") }
 
+// Supports reports whether the fixture can run under the harness; Harnesses empty is all.
+func (f Fixture) Supports(id string) bool {
+	return len(f.Harnesses) == 0 || slices.Contains(f.Harnesses, id)
+}
+
 // LoadFixture reads and validates a fixture directory.
 func LoadFixture(dir string) (Fixture, error) {
 	abs, err := filepath.Abs(dir)
@@ -226,6 +240,11 @@ func LoadFixture(dir string) (Fixture, error) {
 			if _, err := os.Stat(filepath.Join(f.OverlayDir(), ".sloprail")); err == nil {
 				return Fixture{}, fmt.Errorf("%s/fixture.yaml: exampleSloprail is true but %s/.sloprail still exists — delete it, the shipped example's .sloprail/ already covers it", abs, f.OverlayDir())
 			}
+		}
+	}
+	for _, id := range f.Harnesses {
+		if _, ok := harness.Lookup(id); !ok {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: harnesses names %q — one of %s", abs, id, strings.Join(harness.Names(), ", "))
 		}
 	}
 	for _, p := range f.Plugins {

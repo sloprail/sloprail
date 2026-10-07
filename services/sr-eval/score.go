@@ -38,6 +38,9 @@ import (
 //
 // The scorer receives, as environment variables:
 //
+//	SR_EVAL_HARNESS       the harness the agent ran under (claude, codex, cursor);
+//	                      SLOPRAIL_HARNESS names the same, so sr-session and the other
+//	                      sloprail commands read the transcript in its own format
 //	SR_EVAL_TRANSCRIPT    absolute path to the agent-under-test's .jsonl
 //	SR_EVAL_PROJECT_DIR   absolute path to the seeded, possibly-mutated project
 //	SR_EVAL_FIXTURE_DIR   absolute path to the fixture directory itself
@@ -70,7 +73,7 @@ type scoreResult struct {
 	Verdict *Verdict // nil when the scorer wrote none
 }
 
-func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDir, agentHome string) (scoreResult, error) {
+func score(ctx context.Context, fx Fixture, ws *workspace, harnessID, transcriptPath, binDir, agentHome string) (scoreResult, error) {
 	verdictPath, cleanup, err := newVerdictFile()
 	if err != nil {
 		return scoreResult{}, err
@@ -80,6 +83,8 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 	cmd := exec.CommandContext(ctx, fx.ScorePath())
 	cmd.Dir = fx.Dir
 	cmd.Env = append(harness.Current().SessionEnv(os.Environ()),
+		"SR_EVAL_HARNESS="+harnessID,
+		harness.SelectEnv+"="+harnessID, // the transcript is that harness's: sloprail's own commands read it so
 		"SR_EVAL_TRANSCRIPT="+transcriptPath,
 		"SR_EVAL_PROJECT_DIR="+ws.project,
 		"SR_EVAL_FIXTURE_DIR="+fx.Dir,

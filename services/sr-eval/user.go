@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"github.com/sloprail/sloprail/internal/harness"
@@ -28,45 +27,28 @@ type exchange struct {
 	Agent string
 }
 
-// agentArgs is the sr-agent argv for one turn of the agent-under-test. The
-// first turn fixes the session's id (`--session-id`); every later turn
-// resumes it (`--resume`), so all turns land in ONE transcript. The rest is
-// launchAgent's long-standing wiring (see its doc comment), including the
-// fixture's disallowedTools, which every turn carries.
-func agentArgs(model, prompt, sessionID string, resume bool, disallowed []string) []string {
-	key := "session-id"
-	if resume {
-		key = "resume"
-	}
-	claudeArgs := map[string]string{
-		"settings":        "{}",
-		"permission-mode": "bypassPermissions",
-		key:               sessionID,
+// agentArgs is the sr-agent argv for one turn of the agent-under-test, under the
+// harness named by id. Everything harness-shaped (the unattended flags, how a session
+// is resumed, how a tool rule is spelt) is sr-agent's `--agent-run` / `--resume`:
+// this names the run and nothing more. The first turn starts a session; every later
+// one resumes it by its exact id (resumeID, read off the first turn's record), so all
+// turns land in ONE transcript.
+// The fixture's disallowedTools ride on every turn, comma-joined, not space-joined:
+// a rule such as `Bash(gh search:*)` carries a space of its own, and a space-joined
+// list splits it in two, so neither half removes anything (fixture.go's
+// toolRulePattern is what keeps an entry from smuggling a comma in to begin with).
+//
+// --harness is named, never detected: sr-eval strips the operator's own harness session
+// from the agent's environment, and detection reads exactly those variables.
+func agentArgs(harnessID, model, prompt, resumeID string, disallowed []string) []string {
+	args := []string{"--harness", harnessID, "--model", model, "--agent-run"}
+	if resumeID != "" {
+		args = append(args, "--resume", resumeID)
 	}
 	if len(disallowed) > 0 {
-		// Comma-joined, not space-joined: a rule such as `Bash(gh search:*)`
-		// carries a space of its own, and a space-joined list splits it in
-		// two, so neither half removes anything (fixture.go's toolRulePattern
-		// is what keeps an entry from smuggling a comma in to begin with).
-		claudeArgs["disallowed-tools"] = strings.Join(disallowed, ",")
+		args = append(args, "--disallowed-tools", strings.Join(disallowed, ","))
 	}
-	harness, _ := json.Marshal(claudeArgs)
-	// --harness is named, never detected: sr-eval strips the operator's own Claude
-	// Code session from the agent's environment (ambientenv.Session), and harness
-	// detection reads exactly those variables, so it would find none.
-	return []string{"--harness", "claude", "--model", model, "--claude-args", string(harness), "--prompt", prompt}
-}
-
-// newSessionID is a random RFC 4122 v4 UUID — the form Claude Code requires
-// of --session-id.
-func newSessionID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+	return append(args, "--prompt", prompt)
 }
 
 // userPromptTemplate frames the simulated user's task. The brief and the
@@ -148,7 +130,7 @@ func parseUserReply(raw string) (message string, done bool, err error) {
 // tool allowlist that grants nothing of the filesystem or shell, on a cheap
 // model. It sees only the brief and the conversation; it never sees the
 // project, the guardrails, or the transcript.
-func simulateUser(ctx context.Context, binDir, model, brief string, dialogue []exchange) (string, bool, error) {
+func simulateUser(ctx context.Context, harnessID, binDir, model, brief string, dialogue []exchange) (string, bool, error) {
 	cwd, err := os.MkdirTemp("", "sr-eval-user-")
 	if err != nil {
 		return "", false, err
@@ -156,7 +138,7 @@ func simulateUser(ctx context.Context, binDir, model, brief string, dialogue []e
 	defer os.RemoveAll(cwd)
 
 	c := exec.CommandContext(ctx, filepath.Join(binDir, "sr-agent"),
-		"--harness", "claude",
+		"--harness", harnessID,
 		"--model", model,
 		"--allowed-tools", "WebSearch",
 		"--prompt", buildUserPrompt(brief, dialogue),

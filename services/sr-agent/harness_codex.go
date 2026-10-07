@@ -53,7 +53,14 @@ import (
 // are Claude Code tool rules and have no Codex spelling; they are not passed.
 var codexSpec = harnessSpec{
 	name:   Codex,
-	binary: "codex",
+	binary: codex.Binary,
+
+	// The agent under test: hooks and the user-layer plugin config stay live (no
+	// --ignore-user-config, no --disable hooks, no --ephemeral: the rollout is the record
+	// the scorer reads), and nothing can answer an approval, so the sandbox is off, as
+	// Claude's bypassPermissions is; the run's own HOME and workspace are the boundary.
+	agentRunArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"},
+	resume:       func(id string) (subcommand, flags []string) { return []string{"exec", "resume", id}, nil },
 
 	execArgs:         []string{"exec"},
 	modelFlag:        "-m",
@@ -123,6 +130,9 @@ var codexSpec = harnessSpec{
 	// A caller's tools are not rules here: tools (codex.Harness.MapToolRules) maps them
 	// to the sandbox's network, the search mode and sub-agents, and refuses the rest.
 	grant: func(g accessGrant) []string {
+		if g.AgentRun {
+			return nil // the agent under test is not confined (agentRunArgs); `exec resume` takes no --sandbox
+		}
 		var writable []string
 		for _, d := range g.Dirs {
 			if d.Mode == dirWritable {

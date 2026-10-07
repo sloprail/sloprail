@@ -1,63 +1,43 @@
 package main
 
 import (
-	"encoding/json"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// claudeArgsOf decodes the --claude-args JSON out of an agentArgs argv.
-func claudeArgsOf(t *testing.T, argv []string) map[string]string {
-	t.Helper()
+// flagValue is the value following a flag in an argv, "" when absent.
+func flagValue(argv []string, flag string) string {
 	for i, a := range argv {
-		if a == "--claude-args" && i+1 < len(argv) {
-			var m map[string]string
-			if err := json.Unmarshal([]byte(argv[i+1]), &m); err != nil {
-				t.Fatalf("--claude-args is not a JSON object of strings: %v", err)
+		if a == flag && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
+}
+
+// The first turn starts the session; every later turn continues it — so all turns
+// land in one transcript. Both run the agent under test (hooks on, unattended), under
+// every harness, and neither spells a harness's own flags: sr-agent does.
+func TestAgentArgs_FirstTurnStartsLaterTurnsContinue(t *testing.T) {
+	for _, id := range []string{"claude", "codex", "cursor"} {
+		first := agentArgs(id, "m", "fix it", "", nil)
+		later := agentArgs(id, "m", "yes, commit it", "sid-1", []string{"Skill", "Task"})
+		if slices.Contains(first, "--resume") || flagValue(later, "--resume") != "sid-1" || slices.Contains(later, "--continue") {
+			t.Errorf("%s: only a later turn resumes, and by the exact id: first %v, later %v", id, first, later)
+		}
+		if flagValue(later, "--disallowed-tools") != "Skill,Task" || slices.Contains(first, "--disallowed-tools") {
+			t.Errorf("%s: disallowedTools ride every turn they are given on, comma-joined: first %v, later %v", id, first, later)
+		}
+		for _, argv := range [][]string{first, later} {
+			if !slices.Contains(argv, "--agent-run") || flagValue(argv, "--harness") != id || flagValue(argv, "--model") != "m" {
+				t.Errorf("%s: a turn lost the run's wiring: %v", id, argv)
 			}
-			return m
 		}
-	}
-	t.Fatalf("no --claude-args in %v", argv)
-	return nil
-}
-
-// The first turn fixes the session id; every later turn resumes it — so all
-// turns land in one transcript. Both keep the unattended, hooks-on wiring.
-func TestAgentArgs_FirstTurnSetsTheSessionLaterTurnsResumeIt(t *testing.T) {
-	first := claudeArgsOf(t, agentArgs("haiku", "fix it", "sid-1", false, nil))
-	if first["session-id"] != "sid-1" || first["resume"] != "" {
-		t.Fatalf("first turn must pass session-id and no resume, got %v", first)
-	}
-	later := claudeArgsOf(t, agentArgs("haiku", "yes, commit it", "sid-1", true, []string{"Skill", "Task"}))
-	if later["resume"] != "sid-1" || later["session-id"] != "" {
-		t.Fatalf("a later turn must resume the session, got %v", later)
-	}
-	if later["disallowed-tools"] != "Skill,Task" || first["disallowed-tools"] != "" {
-		t.Fatalf("disallowedTools must ride every turn it is given on, comma-joined: first %v, later %v", first, later)
-	}
-	for _, m := range []map[string]string{first, later} {
-		if m["settings"] != "{}" || m["permission-mode"] != "bypassPermissions" {
-			t.Fatalf("a turn lost the hooks-on, unattended wiring: %v", m)
+		if later[len(later)-2] != "--prompt" || later[len(later)-1] != "yes, commit it" {
+			t.Errorf("%s: the turn's message is not the prompt: %v", id, later)
 		}
-	}
-	argv := agentArgs("haiku", "yes, commit it", "sid-1", true, []string{"Skill", "Task"})
-	if argv[len(argv)-2] != "--prompt" || argv[len(argv)-1] != "yes, commit it" {
-		t.Fatalf("the turn's message is not the prompt: %v", argv)
-	}
-}
-
-func TestNewSessionID_IsAV4UUID(t *testing.T) {
-	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	a, err := newSessionID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := newSessionID()
-	if !re.MatchString(a) || a == b {
-		t.Fatalf("not a fresh v4 uuid: %q, %q", a, b)
 	}
 }
 
@@ -160,16 +140,10 @@ func TestLoadFixture_User(t *testing.T) {
 // The agent-under-test runs with the operator's Claude Code session stripped from
 // its environment, so sr-agent cannot detect the harness: sr-eval must name it.
 func TestAgentArgs_NameTheHarness(t *testing.T) {
-	for _, resume := range []bool{false, true} {
-		argv := agentArgs("haiku", "fix it", "sid-1", resume, nil)
-		named := false
-		for i, a := range argv {
-			if a == "--harness" && i+1 < len(argv) && argv[i+1] == "claude" {
-				named = true
-			}
-		}
-		if !named {
-			t.Errorf("resume=%v: argv %v does not name --harness claude; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
+	for _, resume := range []string{"", "sid-1"} {
+		argv := agentArgs("claude", "haiku", "fix it", resume, nil)
+		if flagValue(argv, "--harness") != "claude" {
+			t.Errorf("resume=%q: argv %v does not name --harness claude; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
 		}
 	}
 }

@@ -492,6 +492,11 @@
         "usage": "A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)"
       },
       {
+        "name": "agent-run",
+        "default": "false",
+        "usage": "Run as the agent UNDER TEST rather than as a judge: the project's hooks and plugins stay live and the run is unattended (what sr-eval launches)"
+      },
+      {
         "name": "allowed-tools",
         "usage": "Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")"
       },
@@ -528,6 +533,10 @@
         "name": "prompt-stdin",
         "default": "false",
         "usage": "Read the prompt from standard input, for one too large for a command line (the OS bounds argv and environment together)"
+      },
+      {
+        "name": "resume",
+        "usage": "With --agent-run: resume the session with this exact id (the harness's own session/thread/chat id), so a multi-turn run lands in one record"
       },
       {
         "name": "verify",
