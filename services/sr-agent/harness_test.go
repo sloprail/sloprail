@@ -397,7 +397,6 @@ func TestSanitizeChildEnvStripsCursorSessionIdentity(t *testing.T) {
 func TestDetectHarness_NamedBySloprailHarness(t *testing.T) {
 	for name, want := range map[string]Harness{
 		"cursor":      Cursor,
-		"claudecode":  ClaudeCode,
 		"claude-code": ClaudeCode,
 	} {
 		spec, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": name}))
