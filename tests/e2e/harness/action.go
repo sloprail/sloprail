@@ -1,9 +1,7 @@
 package harness
 
 import (
-	"errors"
 	"fmt"
-	"testing"
 )
 
 // ActionKind is what a Turn makes the agent do, in no harness's words.
@@ -81,25 +79,16 @@ type Action struct {
 // fingerprint names an action's content, for ids derived from what a scenario does.
 func (a Action) fingerprint() string { return fmt.Sprintf("%#v", a) }
 
-// UnsupportedError is a scenario step the selected harness cannot take. A test
-// that meets it is skipped, naming the step, not run as something else.
+// UnsupportedError is a scenario step the selected harness cannot take. It is never a
+// reason to skip a test: a test whose scenario has a step a harness lacks asks the
+// driver's declared capability (HasCap) or the driver itself (Env.ScenarioError) first and
+// asserts the outcome the product gives on that harness. A test that meets this error
+// without such a branch FAILS, naming the step, so no silent skip can appear.
 type UnsupportedError struct {
 	Harness string
 	Step    string
 }
 
 func (e *UnsupportedError) Error() string {
-	return fmt.Sprintf("harness %s cannot take the scenario step %s", e.Harness, e.Step)
-}
-
-// SkipIfUnsupported skips the test when err is an UnsupportedError and reports
-// whether it did.
-func SkipIfUnsupported(t testing.TB, err error) bool {
-	t.Helper()
-	var u *UnsupportedError
-	if errors.As(err, &u) {
-		t.Skipf("%v", u)
-		return true
-	}
-	return false
+	return fmt.Sprintf("harness %s cannot take the scenario step %s: branch on the harness's declared capability and assert the outcome it has instead of running this step", e.Harness, e.Step)
 }

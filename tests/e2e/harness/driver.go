@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// Capabilities a Driver may declare. A test that needs one the selected harness
-// lacks calls RequireCap and skips, naming it.
+// Capabilities a Driver may declare. A test that needs one the selected
+// harness lacks asserts the outcome that harness has instead (HasCap), never skips.
 const (
 	CapSubagents         = "subagents"
 	CapWorktrees         = "worktrees"
@@ -402,22 +402,4 @@ func HasCap(t testing.TB, cap string) bool {
 		}
 	}
 	return false
-}
-
-// RequireCap skips the test unless the selected harness has every capability named.
-func RequireCap(t testing.TB, caps ...string) {
-	t.Helper()
-	d, err := selectDriver()
-	if err != nil {
-		t.Fatal(err)
-	}
-	have := map[string]bool{}
-	for _, c := range d.Caps() {
-		have[c] = true
-	}
-	for _, c := range caps {
-		if !have[c] {
-			t.Skipf("harness %s lacks capability %q", d.Name(), c)
-		}
-	}
 }

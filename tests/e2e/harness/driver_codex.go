@@ -527,7 +527,7 @@ func (codexDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []stri
 }
 
 func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
-	e.t.Skipf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
+	e.t.Fatalf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
 }
 
 // OriginRecord is where a rollout begins: the thread id its session_meta opens on. A fork

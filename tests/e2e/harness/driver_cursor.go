@@ -175,7 +175,7 @@ func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
 	case SessionResume:
 		args = append(args, "--resume", e.harnessID(l.SessionID))
 	case SessionFork:
-		e.t.Skipf("harness cursor: a fork of a conversation is not modelled")
+		e.t.Fatalf("harness cursor: a fork of a conversation is not modelled: a test continues a conversation through RunContinued")
 	}
 	args = append(args, l.Prompt)
 	c.syncPlugins(e)
@@ -224,11 +224,11 @@ var mockUnmodeledStep = regexp.MustCompile(`cursor-mock: the scenario script's t
 func (c cursorDriver) Observe(e *Env, l Launch, output string) {
 	c.syncPluginsBack(e)
 	// A step the mock itself declares unmodeled (it refuses the call rather than guess a
-	// frame no recording shows) is a step this harness cannot take here: skip naming it, as
-	// for any step a harness lacks. The mock's own words are the reason, so nothing here
-	// restates which forms it models.
+	// frame no recording shows) is a gap of the mock, to be closed in harness-mocks with a
+	// recording: the test fails naming it. The mock's own words are the reason, so nothing
+	// here restates which forms it models.
 	if m := mockUnmodeledStep.FindString(output); m != "" {
-		e.t.Skipf("harness cursor: %s", m)
+		e.t.Fatalf("harness cursor: %s", m)
 	}
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
 		return
@@ -494,7 +494,7 @@ func (c cursorDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []s
 }
 
 func (cursorDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
-	e.t.Skipf("harness cursor: a fork of a conversation is not modelled")
+	e.t.Fatalf("harness cursor: a fork of a conversation is not modelled: a test continues a conversation through RunContinued")
 }
 
 // rejected walks a completed tool frame for the reason a hook gave when it refused the call.
