@@ -51,6 +51,25 @@ func TestPluginsResolveFromTheLocalPluginDirectory(t *testing.T) {
 	assert.Empty(t, empty.Roots)
 }
 
+func TestAPluginInstalledTwiceIsOnePlugin(t *testing.T) {
+	manifest := []byte(`{"name":"sloprail"}`)
+	plugin := filepath.Join(t.TempDir(), "sloprail")
+	require.NoError(t, os.MkdirAll(filepath.Join(plugin, ".cursor-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(plugin, ".cursor-plugin", "plugin.json"), manifest, 0o644))
+	project := t.TempDir()
+	require.NoError(t, Harness{}.InstallProjectHooks(project, plugin))
+
+	home := t.TempDir()
+	local := filepath.Join(home, ".cursor", "plugins", "local", "sloprail")
+	require.NoError(t, os.MkdirAll(filepath.Join(local, ".cursor-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(local, ".cursor-plugin", "plugin.json"), manifest, 0o644))
+
+	res, err := New().ResolvePlugins(project, home)
+	require.NoError(t, err)
+	require.Len(t, res.Roots, 1, "the project hooks' copy and the local copy are one plugin: %+v", res.Roots)
+	assert.Equal(t, plugin, res.Roots[0].Dir, "the one the project's hooks run stands for it")
+}
+
 func TestProcessesAreNeverReadAsGone(t *testing.T) {
 	_, found := New().ProcessOfSession("/h", "s")
 	assert.False(t, found)
