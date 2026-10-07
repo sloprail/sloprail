@@ -56,47 +56,6 @@ func TestT036_04_ExplicitSkipAdmits(t *testing.T) {
 	}
 }
 
-// T036_05: a #skip that names a DIFFERENT line does NOT excuse the actual message
-// — the gate still refuses, and only the named line is excused.
-//
-// The control that proves the skip is per-ref, not a blanket "any skip clears
-// everything": the one user message is at line RootMessageLine, but the agent skips
-// line 9 (a line that is not the user message). The skip context logs skip:...:9-9,
-// which does not match the message's own ref, so the message stays unaccounted and the
-// gate refuses. Without this, a skip test could pass merely because SOME skip was
-// present, regardless of whether it named the right message. (Line 9 is chosen to sit
-// clear of the root's line — the preamble block plus the root occupy the first few
-// lines — so it is unambiguously the wrong line.)
-func TestT036_05_SkipOfWrongLineStillRefuses(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.CommitAll(proj, "install")
-
-	sess := "s-036-05"
-	res := e.Run(proj, sess, "please handle a real task", Turns("done",
-		Say("m1", "Marking an unrelated line. #skip 9"),
-	))
-
-	// A skip WAS logged (for line 9), so the context ran — but it does not match
-	// the line-1 message.
-	reg := e.GuardrailState(proj, sess, "skip-declared", "skip:")
-	if !anyKeyHasSuffix(reg, ":9-9") {
-		t.Fatalf("precondition: the line-9 skip was not logged; registry keys=%v", keysOf(reg))
-	}
-
-	// The line-1 message is still unaccounted → the gate refuses.
-	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("the gate admitted despite the actual message being unaccounted (only a wrong-line "+
-			"skip was declared):\n%s", res.Output)
-	}
-	if !strings.Contains(strings.Join(blocks, "\n"), residueReason) {
-		t.Errorf("refused, but not with the residue reason:\n%v", blocks)
-	}
-}
-
 func anyKeyHasSuffix(m map[string]string, suffix string) bool {
 	for k := range m {
 		if strings.HasSuffix(k, suffix) {

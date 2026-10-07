@@ -2,9 +2,7 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -57,9 +55,10 @@ func TestMain(m *testing.M) {
 
 const exampleName = "completeness-artifact-on-trigger"
 
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/<name>.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	copyExampleTree(t, src, dst)
 }
@@ -92,13 +91,4 @@ func copyExampleTree(t *testing.T, src, dst string) {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
 }

@@ -3,7 +3,6 @@ package e2e
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,13 +49,14 @@ func TestMain(m *testing.M) {
 
 const exampleName = "task-management"
 
-// installExampleTree copies examples/<exampleName>/.sloprail into the project,
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/task-management.
+// installExampleTree copies testdata/<exampleName>/sloprail into the project,
 // verbatim, preserving each file's mode. The scripts (has-message-reference.sh,
 // resolve-referenced-message.sh) MUST keep their execute bit or the engine refuses
 // them as unrunnable — which is why the mode is carried, not fixed at 0644.
 func installExampleTree(t *testing.T, projDir string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail")
+	src := filepath.Join("testdata", exampleName, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
@@ -106,26 +106,4 @@ func installExampleTree(t *testing.T, projDir string) {
 	harness.CommitInstalled(t, projDir)
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
-
-func readProj(proj, rel string) (string, error) {
-	b, err := os.ReadFile(filepath.Join(proj, rel))
-	return string(b), err
-}
-
-// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
-// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
-// the gate on, the agent could not make that commit at all. The gate is exercised in
-// tests/e2e/harness/gate/058_cite_before_commit.
-func NewUncited(t *testing.T) *harness.Env {
-	return harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutShipped("sloprail/gate/cite-before-commit"))
-}

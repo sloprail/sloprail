@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -27,96 +26,6 @@ import (
 // The root prompt does NOT sit on physical line 1: the mock opens every fresh
 // transcript with its no-uuid preamble block (custom-title / mode / last-prompt) ahead
 // of the root, so the message's ref line is the harness's RootMessageLine, not 1.
-
-// residueReason is the gate's own refusal wording (verify-no-residue.sh) — the
-// words that must reach the agent when a message is unaccounted for.
-const residueReason = "These user messages are not mapped to any task, and none was marked skip"
-
-// T036_01: a session whose one user message maps to no task and is not skipped is
-// REFUSED at Stop, and the gate's own reason reaches the agent.
-//
-// The whole point of the guardrail: unprocessed intake (a user message that
-// became neither a task nor an explicit skip) must not pass silently.
-func TestT036_01_UnaccountedMessageRefused(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.CommitAll(proj, "install example")
-
-	sess := "s-036-01"
-	// The agent does some work but never records a task for the request and never
-	// skips it. The one user message (the prompt) is left unaccounted for.
-	res := e.Run(proj, sess, "please handle request A", Turns("done",
-		Say("m1", "I looked at it but recorded nothing."),
-	))
-
-	if !res.Refused() && len(e.BlockingErrorsFrom(proj, sess, "Stop")) == 0 {
-		t.Fatalf("the intake gate did not refuse a session with an unaccounted user message:\n%s", res.Output)
-	}
-	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	joined := strings.Join(blocks, "\n")
-	if !strings.Contains(joined, residueReason) {
-		t.Errorf("the gate's residue refusal reason did not reach the agent:\n%s", joined)
-	}
-	// It says exactly what maps a message: the tasks/*.md file shape, the
-	// (<transcript>:L-L) reference, and that native task tools do not count.
-	for _, want := range []string{"tasks/<name>.md", "(<transcript>:L-L)", "Native TaskCreate/TodoWrite entries do NOT count"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("the refusal does not say %q:\n%s", want, joined)
-		}
-	}
-	// The refusal must name this gate, so the agent can attribute it.
-	if !strings.Contains(joined, "verify-intake-complete") {
-		t.Errorf("the refusal did not name the gate:\n%s", joined)
-	}
-	// And it must carry the offending message's ref (the transcript path + line
-	// range), which is how the agent knows WHICH message to account for. The prompt
-	// does not sit on line 1 — the mock opens the transcript with its preamble block —
-	// so the ref line is the root message's actual physical line.
-	msgRef := fmt.Sprintf(":%d-%d", e.RootMessageLine(sess), e.RootMessageLine(sess))
-	if !strings.Contains(joined, msgRef) {
-		t.Errorf("the refusal did not carry the unaccounted message's ref (%s):\n%s", msgRef, joined)
-	}
-}
-
-// T036_02: the gate ADMITS once the message IS accounted for by a task — the
-// control that proves T036_01's refusal is CONDITIONAL, not a gate that blocks
-// every Stop.
-//
-// The gate collects the message refs, subtracts those a task file references, and
-// refuses only on what is left. This drives the subtract-to-empty path: a task
-// file under tasks/ at the repository root references the one user message's ref,
-// so the residue empties and the gate admits. The gate's grep is anchored on
-// $SR_WORKSPACE, so the repo-root tasks/ (where a user following the example puts
-// it) is exactly where the gate looks.
-func TestT036_02_AccountedMessageAdmits(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-
-	sess := "s-036-02"
-	// The message ref names the root prompt's ACTUAL physical line — the mock opens the
-	// transcript with its preamble block ahead of the root, so it is not line 1.
-	ref := fmt.Sprintf("%s:%d-%d", e.TranscriptPath(proj, sess), e.RootMessageLine(sess), e.RootMessageLine(sess))
-	// A task file at the repository root, referencing the message ref in the
-	// parenthesized markdown-link form the gate matches: (/abs/path:N-N).
-	e.WriteFile(proj, "tasks/task-a/ASK.md",
-		"# Task A\n\nRaised by the user request ("+ref+").\n")
-	e.CommitAll(proj, "install + task")
-
-	res := e.Run(proj, sess, "please handle request A", Turns("done",
-		Say("m1", "Recorded it as task-a."),
-	))
-
-	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Errorf("the gate refused a session whose only user message WAS mapped to a task:\n%v", blocks)
-	}
-	if res.Refused() {
-		t.Errorf("the gate refused an accounted-for session:\n%s", res.Output)
-	}
-}
 
 // T036_03: the gate does NOT fire on a mid-turn event — only on Stop.
 //

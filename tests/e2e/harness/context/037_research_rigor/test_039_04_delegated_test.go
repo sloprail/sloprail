@@ -14,6 +14,13 @@ import (
 // too. Found in a real Haiku run, which put #research only in the sub-agent's
 // prompt and so ran its research under no gate at all.
 
+// noCloneReason is the depth gate's own wording when a research run shows no
+// clone of its own — the words that must reach the agent.
+const noCloneReason = "This #research run has not cloned a repository"
+
+// whatToDo is what a depth refusal tells an agent that has cloned nothing.
+const whatToDo = "To finish the research: git clone a real repository that implements what you are researching, then read at least 2 of its source files (not only the README or docs)"
+
 // delegatedResearch runs a root turn that dispatches a #research sub-agent
 // scripted with subTurns, followed by the root's own after turns, and returns
 // the blocking errors at the root's Stop.

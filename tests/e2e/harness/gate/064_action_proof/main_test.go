@@ -42,7 +42,8 @@ func TestMain(m *testing.M) {
 // name and its relative script paths resolve.
 const exampleName = "action-proof"
 
-// installExampleTree copies examples/<exampleName>/.sloprail into the project,
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/action-proof.
+// installExampleTree copies testdata/<exampleName>/sloprail into the project,
 // verbatim, preserving each file's mode.
 //
 // The WHOLE tree, read off disk, not a restated const: a test carrying its own
@@ -54,7 +55,7 @@ const exampleName = "action-proof"
 // asserted on for that reason would be the wrong reason entirely.
 func installExampleTree(t *testing.T, projDir string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail")
+	src := filepath.Join("testdata", exampleName, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 
 	info, err := os.Stat(src)
@@ -108,15 +109,6 @@ func installExampleTree(t *testing.T, projDir string) {
 	if out, err := exec.Command("git", "-C", projDir, "commit", "-m", "baseline .sloprail").CombinedOutput(); err != nil {
 		t.Fatalf("install example tree: git commit: %v\n%s", err, out)
 	}
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // containsStr reports whether needle is in haystack — a tiny local helper so a

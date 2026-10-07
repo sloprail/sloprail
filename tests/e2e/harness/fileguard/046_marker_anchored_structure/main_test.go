@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,21 +28,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/<name> (.sloprail renamed sloprail).
 
 // installExampleTree copies the WHOLE examples/<name>/.sloprail tree into a
 // project, preserving each file's mode bits and recreating subdirectories. Read
 // off disk rather than restated as consts: examples are truth.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
@@ -86,35 +78,3 @@ func installExampleTree(t *testing.T, projDir, name string) {
 
 // joinBlocks renders a slice of blocking-error texts for a log/assert message.
 func joinBlocks(bs []string) string { return strings.Join(bs, "\n---\n") }
-
-// containsAll reports whether every needle appears in haystack.
-func containsAll(haystack string, needles ...string) bool {
-	for _, n := range needles {
-		if !strings.Contains(haystack, n) {
-			return false
-		}
-	}
-	return true
-}
-
-// fileGuardLedger counts the lines a file-guard's check appended to a file in its
-// own folder — how many times the check was ASKED. Absent means it never ran.
-// The shipped example writes no ledger, so this reads one only for the re-fire
-// test, which installs a ledger-writing check of the same marker-anchored shape.
-func fileGuardLedger(t *testing.T, projDir, guardName, file string) int {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", guardName, file))
-	if os.IsNotExist(err) {
-		return 0
-	}
-	if err != nil {
-		t.Fatalf("read file-guard ledger %s/%s: %v", guardName, file, err)
-	}
-	n := 0
-	for _, line := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
-		}
-	}
-	return n
-}

@@ -96,7 +96,8 @@ func repoRoot(t *testing.T) string {
 // examples-are-truth discipline the e2e suite rests on.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	// The fixture is a verbatim copy of sloprail-community examples/<name> (its .sloprail dir is testdata/<name>/sloprail).
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {

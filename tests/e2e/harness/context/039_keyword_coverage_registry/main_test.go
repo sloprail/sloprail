@@ -2,9 +2,7 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -52,9 +50,10 @@ func TestMain(m *testing.M) {
 
 const exampleName = "keyword-coverage-registry"
 
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/<name>.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	copyExampleTree(t, src, dst)
 }
@@ -87,21 +86,4 @@ func copyExampleTree(t *testing.T, src, dst string) {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// NewUncited is New with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
-// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
-// the gate on, the agent could not make that commit at all. The gate is exercised in
-// tests/e2e/harness/gate/058_cite_before_commit.
-func NewUncited(t *testing.T) *harness.Env {
-	return harness.New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit"))
 }

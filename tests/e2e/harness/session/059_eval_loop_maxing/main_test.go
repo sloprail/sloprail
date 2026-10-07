@@ -3,7 +3,6 @@ package e2e
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,10 +48,11 @@ const exampleName = "eval-loop-maxing"
 // (context/goal-tracking/, gate/goal-verify/, …), and a flat copy would silently
 // drop them. It copies examples/<name>/.sloprail — NOT the examples/guardrails/<name>
 // path 013 reached for, which does not exist and is exactly why 013 was red.
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/<name>.
 func installExampleTree(t *testing.T, proj string) {
 	t.Helper()
 
-	src := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail")
+	src := filepath.Join("testdata", exampleName, "sloprail")
 	dst := filepath.Join(proj, ".sloprail")
 
 	info, err := os.Stat(src)
@@ -109,15 +109,6 @@ func installExampleTree(t *testing.T, proj string) {
 	// diff; committing here reproduces that. No-op when the project is not a git
 	// repo (some tests install before GitInit, whose own commit then covers it).
 	harness.CommitInstalled(t, proj)
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // containsAny reports whether needle appears in any of the strings.

@@ -2,9 +2,7 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -37,10 +35,8 @@ import (
 // trajectory reported as "not cloned", Markdown writes by letter case, and the
 // eval scorer's claim about gates that never ran.
 var (
-	Turns   = harness.Turns
-	Bash    = harness.Bash
-	Say     = harness.Say
-	SayBash = harness.SayBash
+	Turns = harness.Turns
+	Bash  = harness.Bash
 )
 
 // Read is a turn where the agent reads a file with the Read tool.
@@ -62,9 +58,10 @@ func TestMain(m *testing.M) {
 
 const exampleName = "research-rigor"
 
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/<name>.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	copyExampleTree(t, src, dst)
 }
@@ -138,33 +135,10 @@ func sourceRepo(t *testing.T, e *harness.Env, name string) string {
 	return dir
 }
 
-// staleClone makes dst a checkout of src left over from an EARLIER session: git
-// dates the clone in its reflog (.git/logs/HEAD) with the committer date, so it
-// is set well before this session began — as a real leftover's would be. (A
-// clone made seconds before the session, in the same second as its first
-// record, would read as made during it.)
-func staleClone(t *testing.T, src, dst string) {
-	t.Helper()
-	cmd := exec.Command("git", "clone", "-q", src, dst)
-	cmd.Env = append(harness.HostEnv(), "GIT_COMMITTER_DATE=2020-01-01T00:00:00Z")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("stale clone: %v\n%s", err, out)
-	}
-}
-
 // scratch is a directory outside the project — where a real agent clones (its
 // scratchpad, /tmp). On macOS it sits under /var, a link to /private/var; the
 // gate reports both spellings as /var, which is how a refusal quotes it.
 func scratch(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
 }

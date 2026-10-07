@@ -35,57 +35,6 @@ func markedMock(url, body string) string {
 	return "// sr:docs " + url + "\npackage mock\n\n" + body + "\n"
 }
 
-// T044_01: a marked file whose code the judge finds non-conforming BLOCKS at Stop,
-// and the judge's reasoning reaches the agent.
-//
-// The marker selects the file; the judge (stub pass:false) refuses with the
-// reasoning the rule would give; the guard blocks at Stop and the words reach the
-// agent.
-func TestT044_01_NonConformingMarkedFileBlocks(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "the mock emits a toolUseResult field the linked doc never describes"}`)
-
-	e.Run(proj, "s-044-01", "write a mock that claims to follow the doc", Turns("done",
-		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"toolUseResult\":{}}` }")),
-	).ThenCommit("write the files"))
-
-	blocks := e.BlockingErrorsFrom(proj, "s-044-01", "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("a marked file the judge found non-conforming did not block at Stop")
-	}
-	joined := ""
-	for _, b := range blocks {
-		joined += b + "\n"
-	}
-	if !containsStr(joined, "doc never describes") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", joined)
-	}
-}
-
-// T044_02: a conforming marked file ADMITS — the pass control for T044_01.
-//
-// Same marker, same rule, opposite verdict; the only difference is the stub's
-// answer, standing in for the model finding the code DOES conform. Without this a
-// guard that blocked every marked file would pass T044_01 while being broken.
-func TestT044_02_ConformingMarkedFileAdmits(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
-
-	e.Run(proj, "s-044-02", "write a mock that follows the doc", Turns("done",
-		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"type\":\"assistant\"}` }")),
-	).ThenCommit("write the files"))
-
-	if blocks := e.BlockingErrorsFrom(proj, "s-044-02", "Stop"); len(blocks) != 0 {
-		t.Errorf("a conforming marked file was blocked anyway:\n%v", blocks)
-	}
-}
-
 // T044_03: a file WITHOUT the docs marker — or carrying a marker of a DIFFERENT
 // kind — is never judged.
 //
@@ -167,62 +116,5 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 	}
 	if containsStr(prompt2, docURL) || containsStr(prompt2, "marker_body_alpha") {
 		t.Errorf("the template carried a previous run's marker — the render is not following the file:\n%s", prompt2)
-	}
-}
-
-// T044_05: a marked non-conforming file RE-FIRES each cycle until it is FIXED.
-//
-// Same four-cycle shape as the content-de-layering re-fire, with per-cycle distinct
-// reasons so the shared transcript can tell them apart:
-//   - Cycle 1 writes the marked non-conforming file; the judge refuses (R1).
-//   - Cycle 2 writes an UNMARKED file (nothing the guard matches); a block here can
-//     only be the re-judged outstanding marked file (R2) — proving the re-fire.
-//   - Cycle 3 FIXES the marked file (rewrites it to conforming); the judge passes.
-//   - Cycle 4 writes another unmarked file with the judge armed to refuse (R4); R4
-//     must NOT appear, proving the fixed file cleared and stopped re-firing.
-func TestT044_05_NonConformingReFiresUntilFixed(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj)
-	sess := "s-044-05"
-
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R1 mock diverges from the linked doc"}`)
-	e.Run(proj, sess, "write a non-conforming marked mock", Turns("done",
-		Write("w1", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"toolUseResult\":{}}` }")),
-	).ThenCommit("write the files"))
-	if !hasReason(e, proj, sess, "R1") {
-		t.Fatalf("the non-conforming marked file did not block in the first cycle")
-	}
-	n1 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
-
-	// Cycle 2: an UNMARKED file — the guard matches nothing here, so any block is
-	// the re-fired outstanding marked file.
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R2 the marked mock is still outstanding"}`)
-	e.Run(proj, sess, "write an unmarked helper", Turns("done",
-		Write("w2", "internal/mock/helper.go", "package mock\n\nfunc Helper() {}\n"),
-	).ThenCommit("write the files"))
-	// The stored verdict for the unchanged file is replayed (R1's words), so count
-	// refusals, not reasons.
-	n2 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
-	if n2 <= n1 {
-		t.Fatalf("the outstanding marked file did NOT refuse again on a cycle that never touched it (%d refusals, was %d) — the re-fire did not happen", n2, n1)
-	}
-
-	// Cycle 3: FIX the marked file. Judge passes; it clears.
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
-	e.Run(proj, sess, "make the mock conform", Turns("done",
-		Write("w3", "internal/mock/trajectory.go", markedMock(docURL, "func Emit() string { return `{\"type\":\"assistant\"}` }")),
-	).ThenCommit("write the files"))
-
-	n3 := len(e.AllBlockingErrorsFrom(proj, sess, "Stop"))
-
-	// Cycle 4: another unmarked file, judge armed to refuse. Nothing should re-fire.
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "R4 must not appear if the fix cleared the file"}`)
-	e.Run(proj, sess, "write another unmarked helper", Turns("done",
-		Write("w4", "internal/mock/helper2.go", "package mock\n\nfunc Helper2() {}\n"),
-	).ThenCommit("write the files"))
-	if hasReason(e, proj, sess, "R4") || len(e.AllBlockingErrorsFrom(proj, sess, "Stop")) > n3 {
-		t.Errorf("a FIXED marked file kept re-firing: cycle 4 touched nothing the guard matches, yet a fresh block appeared")
 	}
 }

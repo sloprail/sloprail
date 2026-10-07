@@ -3,7 +3,6 @@ package e2e
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +19,8 @@ import (
 //
 // This supersedes the old 013 test, which reached for examples/guardrails/<name>
 // (a path that does not exist) and was red for that reason. The shipped example
-// lives at examples/<name>/.sloprail; that is what these tests install.
+// lives at examples/<name>/.sloprail; these tests install the verbatim copy under
+// testdata/<name>/sloprail.
 var (
 	New   = harness.New
 	Turns = harness.Turns
@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 // installed into the project verbatim.
 const exampleName = "required-context-precondition"
 
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/required-context-precondition.
 // installExampleTree copies the shipped example's entire .sloprail/ tree into a
 // project, verbatim, preserving directory structure and any execute bits.
 //
@@ -53,7 +54,7 @@ const exampleName = "required-context-precondition"
 func installExampleTree(t *testing.T, proj string) {
 	t.Helper()
 
-	src := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail")
+	src := filepath.Join("testdata", exampleName, "sloprail")
 	dst := filepath.Join(proj, ".sloprail")
 
 	info, err := os.Stat(src)
@@ -99,15 +100,6 @@ func installExampleTree(t *testing.T, proj string) {
 	if copied == 0 {
 		t.Fatalf("install example tree: %s held no files", src)
 	}
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // denyReason returns the reason of the first PreToolUse refusal in a run's

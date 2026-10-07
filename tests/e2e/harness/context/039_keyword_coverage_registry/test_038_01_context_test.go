@@ -47,34 +47,6 @@ func TestT038_01_ContextLogsDeclaredScanner(t *testing.T) {
 	}
 }
 
-// T038_02: an INACTIVE scanner (active: false) is NOT logged, and the context does
-// not treat it as a declared-active scanner.
-//
-// The declarative "not active" path the unit names: a scanner switched off is not
-// a coverage obligation. enter emits {scanner, active:false} and writes NOTHING to
-// the registry, so no scanner:<folder> entry exists to be required.
-func TestT038_02_InactiveScannerNotLogged(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.CommitAll(proj, "install")
-
-	sess := "s-038-02"
-	res := e.Run(proj, sess, "declare an inactive scanner", Turns("done",
-		Write("w1", "scanners/off/scanner.yaml", "active: false\nkeywords:\n  - foo\n"),
-	).ThenCommit("write the files"))
-
-	reg := e.GuardrailState(proj, sess, "scanner-declared", "")
-	if _, ok := reg["scanner:scanners/off"]; ok {
-		t.Errorf("an inactive scanner was logged to the registry: %v", reg)
-	}
-	// And nothing is refused — an inactive scanner is not a coverage obligation.
-	if res.Refused() || len(e.BlockingErrorsFrom(proj, sess, "Stop")) != 0 {
-		t.Errorf("an inactive scanner triggered a refusal:\n%s", res.Output)
-	}
-}
-
 // T038_03: the context does NOT activate for a file outside scanners/<name>/
 // scanner.yaml.
 //

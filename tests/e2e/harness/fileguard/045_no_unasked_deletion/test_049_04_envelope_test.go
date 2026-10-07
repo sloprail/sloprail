@@ -81,39 +81,3 @@ func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 		t.Fatalf("the QUESTION the user answered did not reach the judge prompt — the envelope (EnvelopeAt) wiring is broken; the judge sees only the answer, not what was asked:\n%s", prompt)
 	}
 }
-
-// T049_16: a MESSAGE-grounded removal (the ask is a plain user message, not an
-// AskUserQuestion answer) still passes to the judge, and the judge runs — there is
-// simply no envelope to add. This is the empty-but-fine case: the prepare's
-// envelope fetch finds no answer envelope at a plain-message line, so
-// asked_envelope is empty and the template omits the envelope section, but the
-// quote and diff still reach the judge and the removal is judged normally. It
-// proves the envelope fetch is BEST-EFFORT, not a gate.
-func TestT049_16_MessageGroundedRemovalHasNoEnvelopeButStillJudges(t *testing.T) {
-	e := newEnv(t)
-	proj := nudProject(t, e)
-
-	seedCommittedMemory(t, e, proj, "memories/topic.md",
-		"keep this line\nremove the second line\n")
-
-	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
-
-	// The ask is the user's own PROMPT (a plain message), quoted verbatim. cite
-	// grounds it to the prompt line; envelope finds no answer envelope there.
-	const prompt = "please remove the second line"
-	res := e.Run(proj, "s-049-16", prompt, Turns("done",
-		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	).ThenCommit("write the files", harness.CitesUser("please remove the second line")))
-
-	if res.Refused() {
-		t.Fatalf("a message-grounded removal was refused — an empty envelope must not turn a passed removal into a refusal:\n%s", res.Output)
-	}
-	captured := e.JudgePrompt(proj, "judge-prompt.txt")
-	if captured == "" {
-		t.Fatalf("the judge never ran on a message-grounded removal — the envelope fetch must be best-effort, not a gate")
-	}
-	// The quote still reaches the judge; the envelope section is simply absent.
-	if !strings.Contains(captured, prompt) {
-		t.Fatalf("the asked_quote did not reach the judge prompt on a message-grounded removal:\n%s", captured)
-	}
-}

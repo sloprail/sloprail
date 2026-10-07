@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +11,7 @@ import (
 
 // The agent is a10n-claude-mock with this repo's plugin enabled, so what fires
 // during a test is the wiring a user would get. These tests drive the SHIPPED
-// no-unasked-commit example (examples/no-unasked-commit/.sloprail), installed
+// no-unasked-commit example (testdata/no-unasked-commit/sloprail), installed
 // verbatim, never a copy embedded in this test file — a test carrying its own
 // copy of the rule would keep passing after the shipped one broke.
 type env = harness.Env
@@ -33,21 +32,13 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// installExampleTree copies the WHOLE examples/<name>/.sloprail tree into a
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/no-unasked-commit.
+// installExampleTree copies the WHOLE testdata/<name>/sloprail tree into a
 // project, preserving each file's mode bits and recreating subdirectories. Read
 // off disk rather than restated as consts: examples are truth.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {

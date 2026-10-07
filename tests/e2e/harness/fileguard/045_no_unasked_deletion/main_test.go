@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,21 +39,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/<name> (.sloprail renamed sloprail).
 
 // installExampleTree copies the WHOLE examples/<name>/.sloprail tree into a
 // project, preserving each file's mode bits and recreating subdirectories. Read
 // off disk rather than restated as consts: examples are truth.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
+	src := filepath.Join("testdata", name, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
@@ -88,11 +80,3 @@ func installExampleTree(t *testing.T, projDir, name string) {
 
 // (This package asserts on res.Refused()/res.Saw() and e.Exists(), so it needs no
 // blocking-error helpers; the gate refuses at pre-tool.)
-
-// newEnvUncited is newEnv with the commit-time sloprail/gate/cite-before-commit switched off, for a scenario about
-// what Stop or `sr-checks run` does with a commit that carries no (or no resolving) citation: with
-// the gate on, the agent could not make that commit at all. The gate is exercised in
-// tests/e2e/harness/gate/058_cite_before_commit.
-func newEnvUncited(t *testing.T) *harness.Env {
-	return harness.New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit"))
-}

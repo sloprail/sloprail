@@ -3,7 +3,6 @@ package e2e
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,12 +43,14 @@ func TestMain(m *testing.M) {
 
 const exampleName = "doc-conformance"
 
+// The fixture under testdata/ is a verbatim copy of sloprail-community examples/doc-conformance (.sloprail renamed sloprail).
+
 // installExampleTree copies examples/<exampleName>/.sloprail into the project,
 // verbatim, preserving each file's mode. See 042/043 for the rationale (lift the
 // real file, keep the exec bit).
 func installExampleTree(t *testing.T, projDir string) {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail")
+	src := filepath.Join("testdata", exampleName, "sloprail")
 	dst := filepath.Join(projDir, ".sloprail")
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
@@ -99,22 +100,4 @@ func installExampleTree(t *testing.T, projDir string) {
 	harness.CommitInstalled(t, projDir)
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("locate repo root: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
-
-func hasReason(e *harness.Env, proj, sess, marker string) bool {
-	for _, b := range e.BlockingErrorsFrom(proj, sess, "Stop") {
-		if containsStr(b, marker) {
-			return true
-		}
-	}
-	return false
-}

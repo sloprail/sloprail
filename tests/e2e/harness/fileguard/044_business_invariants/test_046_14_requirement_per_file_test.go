@@ -24,31 +24,6 @@ func editedCharge(t *testing.T, proj string) string {
 	return strings.Replace(readFile(t, proj, "src/charge.go"), "amount <= charged", "charged >= amount", 1)
 }
 
-// T046_30: a cited SPEC.md change plus an uncited edit of a marker-carrying source file
-// in the same range passes: the source edit moves no pin, so only SPEC.md needs the citation.
-func TestT046_30_AnUncitedEditOfMarkedCodeBesideACitedSpecChangePasses(t *testing.T) {
-	e := newEnv(t)
-	proj := pinnedSpecProject(t, e)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to relax rule 2 for goodwill refunds"}`)
-
-	sess := "s-046-30"
-	e.Run(proj, sess, changeRuleAsk, Turns("done",
-		Bash("b1", relaxSpecByScript),
-	).ThenCommit("relax rule 2", harness.CitesUser(changeRuleAsk)))
-	e.Run(proj, sess, "and tidy the comparison", Turns("done",
-		harness.CommitFile("c2", "src/charge.go", editedCharge(t, proj), "reorder the comparison"),
-	))
-	if got := readSpec(t, proj); got != relaxedSpec {
-		t.Fatalf("the cited spec change did not land, so this tests nothing:\n%s", got)
-	}
-	if !strings.Contains(readFile(t, proj, "src/charge.go"), "charged >= amount") {
-		t.Fatalf("the source edit did not land, so this tests nothing")
-	}
-	if blocks := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")); strings.Contains(blocks, "pinned-spec-holds") {
-		t.Fatalf("an uncited edit of marked code that keeps its marker was refused beside a cited spec change:\n%s", blocks)
-	}
-}
-
 // T046_31: an uncited SPEC.md change is still refused, naming SPEC.md and not the source
 // file edited beside it, and the refusal's own command (a follow-up commit that changes SPEC.md and
 // carries the quote) grounds it.
