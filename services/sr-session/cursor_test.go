@@ -61,15 +61,21 @@ func TestCursorPostToolKeepsTheOutput(t *testing.T) {
 	t.Setenv("SLOPRAIL_HARNESS", "cursor")
 	data := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", data)
-	cmd := newSessionPostToolCmd()
-	var out bytes.Buffer
-	cmd.SetIn(strings.NewReader(`{"hook_event_name":"postToolUse","conversation_id":"abc","session_id":"abc","workspace_roots":["/ws"],"tool_name":"Shell","tool_input":{"command":"echo hi"},"tool_output":"{\"output\":\"hi\\n\",\"exitCode\":0}","tool_use_id":"u1"}`))
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, cmd.RunE(cmd, nil))
-	assert.Empty(t, out.String())
+	run := func(payload string) string {
+		cmd := newSessionPostToolCmd()
+		var out bytes.Buffer
+		cmd.SetIn(strings.NewReader(payload))
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		require.NoError(t, cmd.RunE(cmd, nil))
+		return out.String()
+	}
+	assert.Empty(t, run(`{"hook_event_name":"preToolUse","conversation_id":"abc","session_id":"abc","workspace_roots":["/ws"],"tool_name":"Shell","tool_input":{"command":"echo hi"},"tool_use_id":"u1"}`))
+	assert.Empty(t, run(`{"hook_event_name":"postToolUse","conversation_id":"abc","session_id":"abc","workspace_roots":["/ws"],"tool_name":"Shell","tool_input":{"command":"echo hi"},"tool_output":"{\"output\":\"hi\\n\",\"exitCode\":0}","tool_use_id":"u1"}`))
 	b, err := os.ReadFile(filepath.Join(data, "sloprail", "cursor-tool-results", "abc.jsonl"))
 	require.NoError(t, err)
+	assert.Contains(t, string(b), `"kind":"pre"`)
+	assert.Contains(t, string(b), `"kind":"post"`)
 	assert.Contains(t, string(b), `"tool":"Bash"`)
 	assert.Contains(t, string(b), `"output":"hi\n"`)
 }

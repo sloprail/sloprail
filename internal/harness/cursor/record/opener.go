@@ -13,33 +13,55 @@ import (
 // OpenRecord implements harness.RecordOpener: the transcript at path as the engine
 // reads it, with what sloprail kept of the tools' outputs merged in.
 //
-// Two things are done to the stream, each only ever in terms of the lines before it, so
-// appending to the transcript or to the stored results never renumbers what was there:
+// Two things are done to the stream:
 //
 //   - Every tool_use block gets an id, `cursor-L<line>-<n>` (the transcript's own
 //     physical line and the block's place in it): Cursor writes none, and a tool_use
 //     without one cannot be joined to its result.
-//   - After an assistant line holding tool_use blocks, one user line follows with a
-//     tool_result block for each call a stored result answers, in the blocks' order.
-//     A call with no stored result (a tool whose hook did not run, or has not yet)
-//     simply has no result line.
+//   - After an assistant line's tool_use blocks, one user line follows per call that has
+//     a result, holding its tool_result block (see toolresults.go for which calls do:
+//     only those whose slot lines up with the transcript exactly).
 //
-// A stored result answers the first tool_use not yet answered with the same tool and
-// the same primary argument (the command of a shell call, the file of a file tool):
-// the transcript names no call id to match on, so the order Cursor ran them in is what
-// pairs them. The line numbers are the merged stream's; the engine opens every record
-// the same way, so a `<path>:<line>` it prints resolves against the stream it was made
-// from.
+// LINE NUMBERS NEVER SHIFT. A merged line is not part of the transcript's numbering (the
+// transcript's own lines keep the numbers the file gives them) and carries a number of its
+// own, ResultLineBase plus its line in the store (`sloprail_line`, read back into
+// harness.Record.Line). Both are fixed once written: a later result, a later transcript
+// line, or a later pairing never renumbers what a citation already names.
 func (Transcripts) OpenRecord(path string) (io.ReadCloser, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	results := loadResults(Transcripts{}.ConversationID(path))
+	st := loadStore(Transcripts{}.ConversationID(path))
+
+	// First pass: how many calls of each identity the transcript holds, to tell whether
+	// the slots line up with them.
+	counts := map[string]int{}
+	if err := eachCall(f, func(_ int, _ []byte, calls []call) {
+		for _, c := range calls {
+			counts[c.key]++
+		}
+	}); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	slots := st.pairing(counts)
+
 	pr, pw := io.Pipe()
 	go func() {
 		defer f.Close()
-		pw.CloseWithError(mergeResults(f, pw, results))
+		var side *os.File
+		if st.path != "" {
+			side, _ = os.Open(st.path)
+			if side != nil {
+				defer side.Close()
+			}
+		}
+		pw.CloseWithError(merge(f, pw, st, side, slots, counts))
 	}()
 	return pr, nil
 }
@@ -63,26 +85,59 @@ func (Transcripts) RecordVersion(path string) (int64, time.Time, error) {
 	return size, mod, nil
 }
 
-// mergeResults copies the transcript to w as OpenRecord describes.
-func mergeResults(r io.Reader, w io.Writer, results []*pendingResult) error {
+// merge copies the transcript to w as OpenRecord describes.
+func merge(r io.Reader, w io.Writer, st *store, side *os.File, slots map[string][]*slot, counts map[string]int) error {
+	seen := map[string]int{}
+	return eachLine(r, func(n int, line []byte) error {
+		out, calls := augment(line, n)
+		if _, err := w.Write(append(out, '\n')); err != nil {
+			return err
+		}
+		for _, c := range calls {
+			k := seen[c.key]
+			seen[c.key]++
+			if k >= counts[c.key] { // the transcript grew since it was counted
+				continue
+			}
+			ss := slots[c.key]
+			if k >= len(ss) {
+				continue
+			}
+			res, isErr, ok := ss[k].result()
+			if !ok || side == nil {
+				continue
+			}
+			text, ok := st.text(side, res)
+			if !ok {
+				continue
+			}
+			block := map[string]any{"type": "tool_result", "tool_use_id": c.id, "content": text}
+			if isErr {
+				block["is_error"] = true
+			}
+			synth, _ := json.Marshal(map[string]any{
+				"role":          "user",
+				"message":       map[string]any{"content": []any{block}},
+				"timestamp":     res.at,
+				"sloprail_line": ResultLineBase + res.idx,
+			})
+			if _, err := w.Write(append(synth, '\n')); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// eachLine calls fn for each line of r with its 1-based number, the line's trailing
+// newline removed. A final line with no newline is a line.
+func eachLine(r io.Reader, fn func(n int, line []byte) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
 	for n := 1; ; n++ {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
-			trimmed := bytes.TrimRight(line, "\r\n")
-			out, calls := augment(trimmed, n)
-			if _, werr := w.Write(append(out, '\n')); werr != nil {
-				return werr
-			}
-			if blocks, at := resultBlocks(calls, results); len(blocks) > 0 {
-				synth, _ := json.Marshal(map[string]any{
-					"role":      "user",
-					"message":   map[string]any{"content": blocks},
-					"timestamp": at,
-				})
-				if _, werr := w.Write(append(synth, '\n')); werr != nil {
-					return werr
-				}
+			if ferr := fn(n, bytes.TrimRight(line, "\r\n")); ferr != nil {
+				return ferr
 			}
 		}
 		if err != nil {
@@ -94,15 +149,24 @@ func mergeResults(r io.Reader, w io.Writer, results []*pendingResult) error {
 	}
 }
 
+// eachCall calls fn for each assistant line holding tool_use blocks.
+func eachCall(r io.Reader, fn func(n int, line []byte, calls []call)) error {
+	return eachLine(r, func(n int, line []byte) error {
+		if _, calls := augment(line, n); len(calls) > 0 {
+			fn(n, line, calls)
+		}
+		return nil
+	})
+}
+
 // call is one tool_use block of an assistant line.
 type call struct {
-	id    string
-	tool  string
-	input map[string]json.RawMessage
+	id  string
+	key string
 }
 
 // augment gives the tool_use blocks of an assistant line their ids and canonical form
-// and returns them. Any other line is returned unchanged.
+// and returns them with their identities. Any other line is returned unchanged.
 func augment(line []byte, n int) ([]byte, []call) {
 	var top map[string]json.RawMessage
 	if json.Unmarshal(line, &top) != nil {
@@ -126,16 +190,14 @@ func augment(line []byte, n int) ([]byte, []call) {
 		if typ != "tool_use" {
 			continue
 		}
-		var id string
+		var id, name string
 		_ = json.Unmarshal(b["id"], &id)
 		if id == "" {
 			id = fmt.Sprintf("cursor-L%d-%d", n, i)
 			b["id"], _ = json.Marshal(id)
 		}
-		c := call{id: id}
-		_ = json.Unmarshal(b["name"], &c.tool)
-		_ = json.Unmarshal(b["input"], &c.input)
-		calls = append(calls, c)
+		_ = json.Unmarshal(b["name"], &name)
+		calls = append(calls, call{id: id, key: Identity(name, b["input"])})
 	}
 	if len(calls) == 0 {
 		return line, nil
@@ -147,24 +209,4 @@ func augment(line []byte, n int) ([]byte, []call) {
 		return line, nil
 	}
 	return out, calls
-}
-
-// resultBlocks pairs each call with the stored result that answers it, and says when
-// the first of them was recorded (the line's timestamp).
-func resultBlocks(calls []call, results []*pendingResult) (blocks []map[string]any, at string) {
-	for _, c := range calls {
-		r := take(results, c.tool, c.input)
-		if r == nil {
-			continue
-		}
-		b := map[string]any{"type": "tool_result", "tool_use_id": c.id, "content": r.Output}
-		if r.IsError {
-			b["is_error"] = true
-		}
-		if at == "" {
-			at = r.At
-		}
-		blocks = append(blocks, b)
-	}
-	return blocks, at
 }

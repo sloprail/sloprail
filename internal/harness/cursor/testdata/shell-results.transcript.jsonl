@@ -1,5 +1,0 @@
-{"role":"user","message":{"content":[{"type":"text","text":"<timestamp/>\n<user_query>\nDo these as separate shell tool calls, one command per call, in order, whatever happens: 1) echo FIRST 2) grep zzz /dev/null (it exits 1, that is expected). Then reply with every string starting with CTX- that appears anywhere in your context, exactly as written and separated by spaces, or NONE if there is none.\n</user_query>"}]}}
-{"role":"assistant","message":{"content":[{"type":"text","text":"Running the two shell commands in order, one per call."},{"type":"tool_use","name":"Shell","input":{"command":"echo FIRST","description":"Echo FIRST marker"}}]}}
-{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Shell","input":{"command":"grep zzz /dev/null","description":"Grep zzz in /dev/null"}}]}}
-{"role":"assistant","message":{"content":[{"type":"text","text":"CTX-sessionStart-S1 CTX-postToolUse-P1 CTX-postToolUse-P2 CTX-postToolUseFailure-F1"}]}}
-{"type":"turn_ended","status":"success"}

@@ -17,6 +17,9 @@
     "beforeReadFile": [
       { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
     ],
+    "sessionEnd": [
+      { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
+    ],
     "stop": [
       { "command": "./hooks/sr-session-hook-cursor.sh stop", "timeout": 3600 }
     ],

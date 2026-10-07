@@ -31,6 +31,13 @@ type Record struct {
 
 	// Cwd is the working directory the harness ran this turn in.
 	Cwd string
+
+	// Line, when non-zero, is the line number this record is cited under instead of its
+	// physical place in the stream, and the record is not counted in the physical
+	// numbering. A harness whose opened stream (RecordOpener) carries lines of sloprail's
+	// own gives them numbers of their own, so that adding one never renumbers a line a
+	// citation already names.
+	Line int
 }
 
 // Entry converts a record into the canonical shape.

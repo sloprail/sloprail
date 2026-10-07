@@ -57,6 +57,15 @@ func ReadLines(path string) ([]LinedEntry, error) {
 	for sc.Scan() {
 		line++
 		rec, perr := parseLine(sc.Bytes())
+		if perr == nil && rec.Line > 0 {
+			// A line of the harness's own addition, cited under a number of its own and
+			// not part of the file's physical numbering (harness.Record.Line).
+			line--
+			if rec.UUID != "" {
+				entries = append(entries, LinedEntry{Entry: rec.Entry(), Line: rec.Line})
+			}
+			continue
+		}
 		if perr != nil {
 			continue // an unparseable line is the format having moved; still counted
 		}

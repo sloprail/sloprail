@@ -1,121 +1,128 @@
 package cursor
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/harness/cursor/record"
 )
 
 // A Read's postToolUse carries only the file's length (recorded, harness-mocks
 // runs/compaction-transcript-continuity: {"file_path","content_length"}); the bytes come
-// from a beforeReadFile between the Read's preToolUse and postToolUse (measured on
-// cursor-agent 2026.10.01). A beforeReadFile is the Read's result ONLY while a Read of that
-// file is pending: an attachment's, or the edit tool's, is not the Read's and is dropped.
+// from a beforeReadFile between the Read's preToolUse and postToolUse (recorded,
+// runs/file-tools; measured on cursor-agent 2026.10.01). A beforeReadFile is a Read's
+// result only while exactly one Read of that file is pending, and only once.
 
-type feeder struct {
-	t   *testing.T
-	rec harness.ToolResultRecorder
+func (f feeder) preRead(id, gen string) {
+	f.hook(`{"hook_event_name":"preToolUse",` + common + `,"generation_id":"` + gen + `","tool_name":"Read","tool_input":{"file_path":"/w/a.txt"},"tool_use_id":"` + id + `"}`)
 }
 
-func newFeeder(t *testing.T) feeder {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	return feeder{t, New().(harness.ToolResultRecorder)}
+func (f feeder) content(gen, bytes string) {
+	f.hook(`{"hook_event_name":"beforeReadFile",` + common + `,"generation_id":"` + gen + `","file_path":"/w/a.txt","content":"` + bytes + `"}`)
 }
 
-func (f feeder) hook(raw string) {
-	f.t.Helper()
-	require.NoError(f.t, f.rec.RecordToolResult(New().ParseHook(strings.NewReader(raw))))
+func (f feeder) postRead(id, gen string) {
+	f.hook(`{"hook_event_name":"postToolUse",` + common + `,"generation_id":"` + gen + `","tool_name":"Read","tool_input":{"file_path":"/w/a.txt"},"tool_output":"{\"file_path\":\"/w/a.txt\",\"content_length\":11}","tool_use_id":"` + id + `"}`)
 }
 
-const common = `"conversation_id":"abc","session_id":"abc","workspace_roots":["/w"]`
-
-func (f feeder) preRead(id string) {
-	f.hook(`{"hook_event_name":"preToolUse",` + common + `,"tool_name":"Read","tool_input":{"file_path":"/w/a.txt"},"tool_use_id":"` + id + `"}`)
-}
-
-func (f feeder) beforeReadFile(content string) {
-	f.hook(`{"hook_event_name":"beforeReadFile",` + common + `,"file_path":"/w/a.txt","content":"` + content + `"}`)
-}
-
-func (f feeder) postRead(id string) {
-	f.hook(`{"hook_event_name":"postToolUse",` + common + `,"tool_name":"Read","tool_input":{"file_path":"/w/a.txt"},"tool_output":"{\"file_path\":\"/w/a.txt\",\"content_length\":11}","tool_use_id":"` + id + `"}`)
-}
-
-// readTranscript writes a transcript of n Read calls of /w/a.txt and returns it merged.
-func readTranscript(t *testing.T, n int) []line {
-	dir := filepath.Join(t.TempDir(), "agent-transcripts", "abc")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	path := filepath.Join(dir, "abc.jsonl")
+func reads(t *testing.T, n int) map[string]string {
 	one := `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/w/a.txt"}}]}}` + "\n"
-	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat(one, n)), 0o644))
-	return openMerged(t, path)
+	return merged(t, strings.Repeat(one, n))
 }
 
 func TestReadContentFromBeforeReadFileIsTheReadsResult(t *testing.T) {
 	f := newFeeder(t)
-	f.preRead("a")
-	f.beforeReadFile("FIRST-BYTES")
-	f.postRead("a")
-	f.preRead("b")
-	f.beforeReadFile("SECOND-BYTES")
-	f.postRead("b")
-	got := readTranscript(t, 2)
-	require.Len(t, got, 4, "two Reads, each answered once")
-	assert.Equal(t, "FIRST-BYTES", got[1].Message.Content[0].Content)
-	assert.Equal(t, "SECOND-BYTES", got[3].Message.Content[0].Content)
+	f.preRead("a", "g1")
+	f.content("g1", "FIRST-BYTES")
+	f.postRead("a", "g1")
+	f.preRead("b", "g1")
+	f.content("g1", "SECOND-BYTES")
+	f.postRead("b", "g1")
+	assert.Equal(t, map[string]string{"cursor-L1-0": "FIRST-BYTES", "cursor-L2-0": "SECOND-BYTES"}, reads(t, 2))
 }
 
 // An attachment-style beforeReadFile (no Read pending) followed later by a real Read of the
 // same path with different content: the Read gets its own content, never the attachment's.
 func TestAnAttachmentsContentIsNeverALaterReadsResult(t *testing.T) {
 	f := newFeeder(t)
-	f.beforeReadFile("ATTACHMENT-BYTES") // @-attached file: no Read call
-	f.preRead("a")
-	f.beforeReadFile("READ-BYTES")
-	f.postRead("a")
-	got := readTranscript(t, 1)
-	require.Len(t, got, 2)
-	assert.Equal(t, "READ-BYTES", got[1].Message.Content[0].Content)
-	for _, l := range got {
-		for _, b := range l.Message.Content {
-			assert.NotContains(t, b.Content, "ATTACHMENT")
-		}
-	}
+	f.content("g1", "ATTACHMENT-BYTES") // @-attached file: no Read call
+	f.preRead("a", "g1")
+	f.content("g1", "READ-BYTES")
+	f.postRead("a", "g1")
+	assert.Equal(t, map[string]string{"cursor-L1-0": "READ-BYTES"}, reads(t, 1))
 }
 
-// The edit tool reads the file it edits (a beforeReadFile with no Read pending): dropped, so a
-// later Read does not inherit it, and a Read that returned nothing has no result.
+// The edit tool reads the file it edits (a beforeReadFile with no Read pending, after the
+// Read's post closed it): dropped; a Read that returned no bytes keeps the hook's own output.
 func TestAnEditToolsReadIsDroppedAndAReadWithoutContentKeepsItsOwnOutput(t *testing.T) {
 	f := newFeeder(t)
-	f.preRead("a")
-	f.postRead("a") // no beforeReadFile for this Read: only the length
-	f.beforeReadFile("EDIT-TOOLS-READ")
-	f.preRead("b")
-	f.postRead("b")
-	got := readTranscript(t, 2)
-	require.Len(t, got, 4)
-	for _, i := range []int{1, 3} {
-		assert.Contains(t, got[i].Message.Content[0].Content, "content_length", "the hook's own output, not the edit tool's bytes")
-	}
+	f.preRead("a", "g1")
+	f.postRead("a", "g1")
+	f.content("g1", "EDIT-TOOLS-READ")
+	res := reads(t, 1)
+	assert.Contains(t, res["cursor-L1-0"], "content_length")
+	assert.NotContains(t, res["cursor-L1-0"], "EDIT-TOOLS")
 }
 
 func TestAReadsContentWithNoPendingReadAtAllIsDropped(t *testing.T) {
 	f := newFeeder(t)
-	f.beforeReadFile("NOBODY-ASKED")
-	got := readTranscript(t, 1)
-	assert.Len(t, got, 1, "no result line")
+	f.content("g1", "NOBODY-ASKED")
+	assert.Empty(t, reads(t, 1))
+}
+
+// A second content for one pending Read: which bytes the Read returned is unknowable, so
+// it has no result at all (the first is never overwritten, the second never ignored).
+func TestASecondContentForOnePendingReadMakesItAmbiguous(t *testing.T) {
+	f := newFeeder(t)
+	f.preRead("a", "g1")
+	f.content("g1", "ONE")
+	f.content("g1", "TWO")
+	f.postRead("a", "g1")
+	assert.Empty(t, reads(t, 1))
+}
+
+// Two Reads of one file pending at once and one content: which Read it belongs to is unknowable.
+func TestOneContentWithTwoPendingReadsOfTheFileBelongsToNeither(t *testing.T) {
+	f := newFeeder(t)
+	f.preRead("a", "g1")
+	f.preRead("b", "g1")
+	f.content("g1", "BYTES")
+	f.postRead("a", "g1")
+	f.postRead("b", "g1")
+	assert.Empty(t, reads(t, 2))
+}
+
+// A Read that never completed does not stay pending for ever: a content of the next
+// generation binds to that generation's Read, not to the stale one.
+func TestAPendingReadExpiresAtTheNextGeneration(t *testing.T) {
+	f := newFeeder(t)
+	f.preRead("a", "g1") // never posts
+	f.preRead("b", "g2")
+	f.content("g2", "G2-BYTES")
+	f.postRead("b", "g2")
+	assert.Equal(t, map[string]string{"cursor-L2-0": "G2-BYTES"}, reads(t, 2))
+}
+
+func TestAPendingReadExpiresAfterTheWindow(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	key := record.Identity("Read", []byte(`{"file_path":"/w/a.txt"}`))
+	require.NoError(t, record.AppendLine("abc", record.StoredLine{Kind: record.KindPre, ToolUseID: "a", Tool: "Read", Key: key, Path: "/w/a.txt", At: old}))
+	require.NoError(t, record.AppendLine("abc", record.StoredLine{Kind: record.KindContent, Path: "/w/a.txt", Output: "LATE-BYTES"}))
+	assert.Empty(t, reads(t, 1), "the Read had been pending for an hour: the bytes are not its")
 }
 
 func TestBeforeReadFileParsesAsAReadWithItsContent(t *testing.T) {
-	in := New().ParseHook(strings.NewReader(`{"hook_event_name":"beforeReadFile",` + common + `,"file_path":"/w/a.txt","content":"hi\n"}`))
+	in := New().ParseHook(strings.NewReader(`{"hook_event_name":"beforeReadFile",` + common + `,"generation_id":"g1","file_path":"/w/a.txt","content":"hi\n"}`))
 	assert.Equal(t, "Read", in.ToolName)
 	assert.JSONEq(t, `{"file_path":"/w/a.txt"}`, string(in.ToolInput))
+	assert.Equal(t, "g1", in.GenerationID)
 	require.NotNil(t, in.Result)
 	assert.Equal(t, "hi\n", in.Result.Output)
+	var _ harness.ToolResultRecorder = New().(harness.ToolResultRecorder)
 }

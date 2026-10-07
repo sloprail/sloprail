@@ -34,6 +34,10 @@ type HookInput struct {
 	// anything is keyed on (see transcript.ResolveStableSessionID).
 	SessionID string `json:"session_id"`
 
+	// GenerationID names the agent turn (generation) the hook belongs to, for a harness
+	// that reports it (Cursor); empty otherwise.
+	GenerationID string `json:"generation_id,omitempty"`
+
 	// Source is SessionStart's "startup" | "resume" | "clear" | "compact".
 	Source string `json:"source"`
 
