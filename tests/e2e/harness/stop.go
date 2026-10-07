@@ -31,6 +31,11 @@ func (e *Env) hookEnv(sessionID string) []string {
 // ran: the session's id and the config dir its transcript is under.
 func (e *Env) SessionEnv(sessionID string) []string { return e.hookEnv(sessionID) }
 
+// IdentityPayload is a hook payload naming only the session and its project folder.
+func (e *Env) IdentityPayload(projDir, sessionID string) string {
+	return e.driver.IdentityPayload(e, projDir, sessionID)
+}
+
 // StopNow runs `sr-session stop` the way the harness does at the end of a turn.
 // active is the payload's stop_hook_active: true for the retry after a refusal.
 func (e *Env) StopNow(projDir, sessionID string, active bool) Result {

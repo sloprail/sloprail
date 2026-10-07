@@ -72,6 +72,14 @@ require:
 		harness.Commit("sb3", "write a"),
 	))
 	e.Run(proj, sess, prompt, Turns("done", harness.Dispatch("d1", "write it down", sub, "")))
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		// A harness that cannot link a sub-agent to its session: its cited write is refused, so
+		// there is no recorded quote to list.
+		if e.Exists(proj, "memories/a.md") {
+			t.Fatalf("a sub-agent's cited write landed on a harness that cannot link it to its session")
+		}
+		return
+	}
 	refusal := stopRefusal(e, proj, sess)
 	if got := harness.UngroundedFiles(refusal); got != "memories/a.md" {
 		t.Fatalf("premise: the refusal names %q, want memories/a.md:\n%s", got, refusal)

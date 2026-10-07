@@ -116,6 +116,9 @@ type codexBlock struct {
 func (c codexDriver) render(a Action) ([]codexBlock, error) {
 	switch a.Kind {
 	case ActWrite:
+		if strings.ContainsAny(a.Path, "\r\n") {
+			return nil, c.unsupported(a, "an apply_patch path is one line of the patch, so a path holding a line break cannot be named")
+		}
 		return []codexBlock{{line: codexLine(codexTool(a.ID, "apply_patch", map[string]any{"command": codexAddFile(a.Path, a.Content)}))}}, nil
 	case ActEdit:
 		if a.Old == "" {
@@ -387,6 +390,12 @@ func (codexDriver) StopPayload(e *Env, projDir, sessionID string, active bool) s
 	return string(payload)
 }
 
+// IdentityPayload is the session id and the working directory.
+func (codexDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	payload, _ := json.Marshal(map[string]any{"session_id": e.harnessID(sessionID), "cwd": projDir})
+	return string(payload)
+}
+
 func (codexDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"decision":"block"`)
 }
@@ -395,7 +404,7 @@ func (codexDriver) StopBlocked(output string) bool {
 func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
-		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check \\\n" +
+		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check --dangerously-bypass-hook-trust \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
 		"  -C " + shellQuote(projDir) + " -m mock-model \\\n" +
 		"  \"launched agent\" </dev/null\n"
@@ -475,6 +484,15 @@ func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string
 }
 
 var codexRefusal = regexp.MustCompile(`(?s)Command blocked by PreToolUse hook: (.*?)\. Command: `)
+
+// WrittenBytes: an apply_patch "Add File" is a list of "+<line>" rows, so a file it
+// creates always ends its last line (an empty one stays empty).
+func (codexDriver) WrittenBytes(content string) string {
+	if content == "" {
+		return ""
+	}
+	return strings.TrimSuffix(content, "\n") + "\n"
+}
 
 // Refusals reads the PreToolUse refusals the mock reports on its error stream.
 func (codexDriver) Refusals(output string) []string {
@@ -559,12 +577,21 @@ func (codexDriver) BlockingErrors(record string, _ []string, hookEvent string, d
 	return out
 }
 
-// StopContinuations are the Stop refusals after which the agent went on: a step of its own followed.
+// StopContinuations are the Stop refusals after which the agent went on: a step of its own
+// followed, or the continued turn reached a later Stop (which refused again). The last refusal
+// of a run that ended on it is one the harness gave up on, as at Claude's stop-hook cap.
 func (codexDriver) StopContinuations(record string, _ []string) []string {
 	events, reasons, after := hookPrompts(record)
 	var out []string
 	for i, r := range reasons {
-		if events[i] == "Stop" && after[i] > 0 {
+		if events[i] != "Stop" {
+			continue
+		}
+		laterStop := false
+		for _, ev := range events[i+1:] {
+			laterStop = laterStop || ev == "Stop"
+		}
+		if after[i] > 0 || laterStop {
 			out = append(out, r)
 		}
 	}

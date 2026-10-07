@@ -1065,7 +1065,14 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 			"path":                   s.ID,
 			grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.ForSubject(s))),
 		}}
-		v, err := ev.runner.CheckRequire(one)
+		// A requirement that resolves citations cannot be judged where citations cannot be
+		// resolved (a sub-agent of a harness that cannot link it to its parent): that is an
+		// error, recorded as one below, never a FAIL verdict, so the main agent's run judges it.
+		err := ev.requireUnavailable(p)
+		var v dispatchcore.Verdict
+		if err == nil {
+			v, err = ev.runner.CheckRequire(one)
+		}
 		out := CheckOutcome{Rule: g.Qualified(), Subject: s.ID, Kind: kind, Status: checkstore.StatusPass, Source: "ran"}
 		rec := checkstore.CheckRecord{Subject: s.ID, Kind: kind}
 		switch {
@@ -1108,6 +1115,15 @@ func (ev *changesetEvaluation) runRequirement(g declaration.FileGuard, req dispa
 		"Not grounded by a citation in the commit that last changed it: " + strings.Join(failed, ", ") + ".\n" +
 		citeHowToFix(cs, failed, changeset.TrailerFor(p.Citation.Pools()), ev.amendSafe(), ev.recordedQuotes(failed, p.Citation.Pools())) + "\n" + body + unresolvedNote(unresolved)
 	return dispatchcore.Verdict{Refused: true, Reason: reason}, nil
+}
+
+// requireUnavailable is transcript.ErrSubagentUnlinked when p resolves citations and this run
+// is a sub-agent's on a harness that cannot link it to its parent.
+func (ev *changesetEvaluation) requireUnavailable(p declaration.Prerequisite) error {
+	if p.Citation == nil {
+		return nil
+	}
+	return transcript.CitationsUnavailable(ev.params.Transcript, ev.params.Subagent)
 }
 
 // citeHowToFix says, for the files a citation does not ground, how to ground them.
