@@ -149,7 +149,15 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 		return nil, c.unsupported(a, "Codex has no skill tool")
 	case ActToolUse:
 		if a.Background {
-			return nil, c.unsupported(a, "a background command's receipt names no task")
+			if a.Tool != "Bash" {
+				return nil, c.unsupported(a, "spawn_agent has no background option: it answers at once and runs concurrently, with no receipt naming a task")
+			}
+			// A background command is the command with its output sent to a file a later read reads.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": backgroundShell(a.ID, a.Input["command"])}))}}, nil
+		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && strings.Contains(path, backgroundTmpMark) && len(a.Input) == 1 {
+			// the output file of a background command: the run's temporary directory is the shell's.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": `cat "` + strings.ReplaceAll(path, backgroundTmpMark, backgroundShellTmp) + `"`}))}}, nil
 		}
 		if path := a.Input["file_path"]; a.Tool == "Read" && path != "" && len(a.Input) == 1 {
 			// Codex reads a file through its shell: the Read of a whole file is `cat` of it.
@@ -174,8 +182,9 @@ func (c codexDriver) RenderScript(s Scenario) (string, error) {
 	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
 	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
 	compacts := 0
+	acts := s.launchedOutputActions()
 	for i, t := range s.turns {
-		blocks, err := c.render(t.act)
+		blocks, err := c.render(acts[i])
 		if err != nil {
 			return "", err
 		}
