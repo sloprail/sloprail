@@ -29,7 +29,7 @@ checks:
   refused (put the logic in the script). A relative path is resolved against the rule's folder.
 
 **A script's verdict is cached by content**, like every check ([file-guard.md](file-guard.md#cached-verdicts)):
-with the same rule hash, subject, files' content and citation quotes, `sr-checks run` does not
+with the same subject, files' content and citation quotes, `sr-checks run` does not
 execute it again (a fail is replayed) and `sr-checks verify` never executes it, it reads the stored
 verdict. A script that reads anything beyond its subject's files (a file under `SR_TREE`, a
 registry, an external spec) must declare it through the subject's `fingerprint` in the rule's

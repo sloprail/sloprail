@@ -56,9 +56,10 @@ is a pass with no `files`, never the same as a range that could not be computed.
 Anything that goes wrong in the engine (git, the rule's folder, a store that cannot be
 read) fails the run closed.
 
-A rule's identity is the files git tracks under its `.sloprail` root (its own folder, the other
-rules, shared scripts such as `_lib`), as they are on disk, so an uncommitted edit to any of
-them changes the hash and invalidates stored verdicts. Untracked and ignored files (a ledger or
+A rule's hash is the files git tracks under its `.sloprail` root (its own folder, the other
+rules, shared scripts such as `_lib`), as they are on disk. It is recorded on each run as
+provenance and is **not** part of a verdict's cache key: editing a rule's script or template
+reuses the verdicts already stored. Untracked and ignored files (a ledger or
 cache a check writes) do not count, so a check may keep such state there; a new, uncommitted rule
 hashes its unignored files; a plugin's rule hashes its plugin's `.sloprail` root. Anything git cannot
 answer (an error, a folder outside the repository) fails closed.
@@ -431,9 +432,11 @@ fails, and none is deleted. The gate's `match` reads the kind's own fields
 **Every check is cached by content**: a script, a judge and a requirement alike. Verdicts are
 stored on the orphan branch `sloprail/checks` (zstd segments, never checked out), which `run`
 pushes to `origin` and `verify` fetches, so another clone, another session and CI all read the
-same results. One verdict is kept per **guard x subject**, a fact about **(rule, rule hash,
-subject, fingerprint)** and nothing else: which session, agent, branch or range produced it is
-provenance. The rule hash covers every script and template in the rule's folder; the
+same results. One verdict is kept per **guard x subject**, a fact about **(rule, check,
+subject, fingerprint)** and nothing else: which session, agent, branch or range produced it, and
+the rule hash it ran under, are provenance. A change to the rule's own scripts or templates
+therefore does not re-judge; a rule whose verdicts must follow its definition hashes its own
+files into the subject's `fingerprint` from `subjects:`. The
 fingerprint is the sha256 of the subject's files' content (always), the citations' quotes (for
 `require: citation` rules) and the subject's own `fingerprint` from `subjects:` when it gave one.
 Never `prepare`'s output, the rendered prompt, a commit, its SHA or its message. The verdict
@@ -445,7 +448,7 @@ records each step's status and reason, so `sr-checks show` says which step faile
   stores the verdict.
 - **The effective base advances on a pass** (a10n's `GetEffectiveBase`). A rule is judged over
   `effective_base..head`. Starting at the base you asked for, the base moves to the head of a
-  stored COMPLETE PASSING evaluation (same rule hash, every subject of it passed) whose own base
+  stored COMPLETE PASSING evaluation (every subject of it passed) whose own base
   lies at or before the base reached so far and whose head is after it and an ancestor of the
   head being judged, and so on while one advances: passes over B1..H1 then H1..H2 reach H2, and a
   pass over a narrower range B2..H (B2 after B1) advances nothing, since B1..B2 was never judged.

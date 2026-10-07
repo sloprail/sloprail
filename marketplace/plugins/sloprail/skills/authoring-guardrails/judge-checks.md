@@ -108,10 +108,11 @@ script on its payload, under that key.
 
 A judge is **pure**: no side effects, it judges the slice it is handed. Like every check it is
 cached by content, as part of its guard's verdict over a subject (see
-[file-guard.md](file-guard.md#cached-verdicts)): the rule hash (which covers the template), the
+[file-guard.md](file-guard.md#cached-verdicts)): the
 subject, the **content of the subject's files** (always, whether or not the template renders
 them), for a `require: citation` rule the citations' quotes, and the
-subject's `fingerprint` from `subjects:`.
+subject's `fingerprint` from `subjects:`. The rule's definition is not in the key: changing the
+template reuses stored verdicts.
 
 **`prepare`'s output (`additionalContext`) and the rendered prompt are not in the key**: they
 may carry text derived from the session, which `verify` in CI cannot reproduce. No commit SHA,
