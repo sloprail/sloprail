@@ -28,6 +28,12 @@ const (
 	// what the root can cite of it are resolvable. Cursor records no parent anywhere (hook
 	// payloads, transcripts and layout hold none: harness-mocks runs/subagent-transcripts).
 	CapSubagentParentLink = "subagent-parent-link"
+
+	// CapRecordHoldsToolResults: the session's own record (transcript) holds the tools'
+	// results, refusals and sub-agent replies, and tags each tool call with its id. Cursor's
+	// transcript holds neither: sloprail keeps outputs in its own store, and a refusal is a
+	// hook rejection that never reaches the transcript.
+	CapRecordHoldsToolResults = "record-holds-tool-results"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -216,6 +222,21 @@ func mustDriver() Driver {
 		panic(err.Error())
 	}
 	return d
+}
+
+// HasCap reports whether the selected harness declares the capability, without skipping.
+func HasCap(t testing.TB, cap string) bool {
+	t.Helper()
+	d, err := selectDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range d.Caps() {
+		if c == cap {
+			return true
+		}
+	}
+	return false
 }
 
 // RequireCap skips the test unless the selected harness has every capability named.

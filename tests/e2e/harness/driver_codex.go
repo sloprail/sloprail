@@ -37,7 +37,7 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {

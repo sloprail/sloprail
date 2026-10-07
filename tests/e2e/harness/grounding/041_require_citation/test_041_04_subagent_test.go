@@ -125,18 +125,6 @@ func requireInSubagentRecord(t *testing.T, root, sub, callID string) {
 		}
 		return n
 	}
-	if body, _ := os.ReadFile(sub); !strings.Contains(string(body), "slop-turn") {
-		// A record that carries no call ids (Cursor's: its transcript names no ids and holds
-		// no results) cannot be counted by id: the sub-agent's conversation is a file of its
-		// own, so its tool call being there and not in the root's is what is checked.
-		if sub == root || !strings.Contains(string(body), `"tool_use"`) {
-			t.Fatalf("the sub-agent's record %s holds no tool call of its own", sub)
-		}
-		if rb, _ := os.ReadFile(root); strings.Contains(string(rb), `"name":"Bash"`) {
-			t.Fatalf("the sub-agent's shell call is in the root record, so this would not test the sub-agent's")
-		}
-		return
-	}
 	if n := count(sub); n != 2 {
 		t.Fatalf("expected the sub-agent's call and its result in its own record, found %d lines", n)
 	}
@@ -242,18 +230,15 @@ func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 	record, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-22"))
 	subRecord, _ := os.ReadFile(subs[0])
 	said := string(record) + string(subRecord)
-	if !strings.Contains(said, `"tool_result"`) {
-		// A record with no tool results (Cursor's transcript keeps none, and a refusal is
-		// one) cannot show the refusal's wording; that the write did not land is shown above.
-		t.Logf("the session's records hold no tool results: the refusal's wording is not observable")
-		said = ""
-	}
-	if said != "" && !strings.Contains(said, "does not resolve") {
+	// A harness whose record holds no tool results (and a refusal is one) cannot show the
+	// refusal's wording; that the write did not land is shown above.
+	wording := harness.HasCap(t, harness.CapRecordHoldsToolResults)
+	if wording && !strings.Contains(said, "does not resolve") {
 		t.Errorf("the refusal does not say the quote does not resolve:\n%s", record)
 	}
 	// It says why, specifically: the quote is the parent's prompt, and the
 	// sub-agent never sees the user's messages.
-	if said != "" && (!strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
+	if wording && (!strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
 		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.")) {
 		t.Errorf("the refusal does not tell the sub-agent it quoted its dispatch prompt:\n%s", record)
 	}
