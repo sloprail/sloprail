@@ -1,0 +1,27 @@
+# Where files may be written in this repository; everything else is refused.
+# Every top-level area is open as it was, except tests/, whose shape is fixed:
+# an e2e package is tests/e2e/<layer>/<area>/<NNN_name>/, its files flat, the
+# layer being cli (never starts the mock agent) or harness (does), which
+# tests/repo/e2e_layers_test.go checks against the code.
+allow:
+  - glob: "**/.sloprail/**"
+  - glob: "*"
+  - glob: ".claude/**"
+  - glob: ".claude-plugin/**"
+  - glob: ".github/**"
+  - glob: "bin/**"
+  - glob: ".bin/**"
+  - glob: "docs/**"
+  - glob: "examples/**"
+  - glob: "internal/**"
+  - glob: "marketplace/**"
+  - glob: "scripts/**"
+  - glob: "services/**"
+  - glob: "spec/**"
+  - glob: "tools/**"
+  - glob: "tests/repo/*"
+  - glob: "tests/e2e/*.md"
+  # the shared helper package, and the one helper package beside the session tests
+  - glob: "tests/e2e/harness/*"
+  - glob: "tests/e2e/harness/session/changesetkit/*"
+  - regex: '^tests/e2e/(cli|harness)/[a-z_]+/[0-9]{3}_[a-z0-9_]+/[^/]+$'

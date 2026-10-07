@@ -206,7 +206,7 @@ func TestMatchingEvents_NoMatchWakesAlways(t *testing.T) {
 
 // A gate trigger match that COMPILES but cannot be EVALUATED against the fired
 // event surfaces the error rather than reading as "did not wake" — the gate-side
-// of the fail-closed seam behind tests/e2e/session/027 (post_matcher_error),
+// of the fail-closed seam behind tests/e2e/harness/session/027 (post_matcher_error),
 // pinned at the dispatch level.
 //
 // This is where a broken or adversarial trigger would otherwise silently DISABLE a

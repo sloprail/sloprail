@@ -213,14 +213,14 @@ checks:
   with `e.GateLedgerLines(proj, name, file)`. Observe the verdict
 with `e.GateState`; observe a turn block with `e.BlockingErrorsFrom(…, "Stop")`. A gate
 whose check calls a model uses a judge template + one of the `InstallJudgeClaude*` shims
-(already in the harness). See `tests/e2e/fileguard/034_*` for file-guard check idioms
+(already in the harness). See `tests/e2e/harness/fileguard/034_*` for file-guard check idioms
 and the gate e2e dirs for gate idioms.
 
 ## Gate (build/vet/gofmt + the CI-faithful test run)
 
 ```sh
 go build ./... && go vet ./tests/... && gofmt -l tests/      # all clean
-go test -count=1 ./tests/e2e/session/<dir>/...              # green
+go test -count=1 ./tests/e2e/harness/session/<dir>/...              # green
 ```
 
 No `env -u …` prefix is needed: the harness strips the enclosing Claude Code session's

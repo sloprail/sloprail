@@ -16,7 +16,7 @@ import (
 // Makefile's test-e2e-shard cases, one matrix leg each in
 // .github/workflows/test.yml); a test package named in no shard — or a shard the
 // workflow does not run — is dropped from CI silently, which is how
-// tests/e2e/changeset and tests/e2e/checks went unrun for a while. These tests
+// tests/e2e/harness/changeset and tests/e2e/harness/checks went unrun for a while. These tests
 // fail the moment
 //
 //   - a tests/ package is in no shard (a new folder under tests/e2e/**, a new
