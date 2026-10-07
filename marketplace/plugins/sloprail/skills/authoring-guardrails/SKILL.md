@@ -298,9 +298,9 @@ nature is part of the key because a gate and a context may share a name:
 file-guard and leaves a file-guard of your own called `authoring-slop` in force.
 
 This also works on a shipped rule that will not **load**. A broken declaration
-refuses every action it was bound to — deliberately, since a rule that cannot be
-checked must not read as approval — and when it is a plugin's you cannot fix the
-file. Naming it here is the way out that does not mean uninstalling the plugin.
+refuses nothing: it is reported to the agent at the next hook and at Stop, every
+turn, until it is fixed or switched off — and when it is a plugin's you cannot fix
+the file. Naming it here is the way out that does not mean uninstalling the plugin.
 
 ## The cross-cutting references
 
