@@ -98,6 +98,11 @@
         ]
       },
       {
+        "path": "sr-session emit-context",
+        "use": "emit-context",
+        "short": "Write stdin as the running harness's SessionStart context (used by the plugin hook)"
+      },
+      {
         "path": "sr-session id",
         "use": "id",
         "short": "The identity this conversation keeps, whatever id the harness now reports"

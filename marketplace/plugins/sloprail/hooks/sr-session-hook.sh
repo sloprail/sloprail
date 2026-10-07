@@ -74,6 +74,30 @@ export SLOPRAIL_HARNESS
 subcommand="$1"
 shift
 
+# AT SESSION START, WHAT THE AGENT IS TOLD IS RENDERED BY THE HARNESS, NOT BY THIS
+# SCRIPT. Everything below prints the agent's start-up context as plain text
+# (rules-first.md, install notices, the load report). Whether plain stdout reaches
+# the model is the harness's contract, not a given: Claude Code and Codex inject
+# it, Cursor ignores it and reads {"additional_context"} (recorded runs in
+# harness-mocks). So this script runs itself once more with that text captured,
+# then hands the text to `sr-session emit-context`, which writes it in the running
+# harness's own form (harness.RenderHook): one place decides the form, per harness,
+# and this script never branches on which harness it is under. Only when
+# sr-session cannot be found does the text go out plain, as before.
+if [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_START_CAPTURE:-}" ]; then
+  binfile="$(mktemp)"
+  status=0
+  out="$(SLOPRAIL_START_CAPTURE=1 SLOPRAIL_START_BINFILE="$binfile" sh "$0" "$subcommand" "$@")" || status=$?
+  bin="$(cat "$binfile" 2>/dev/null || true)"
+  rm -f "$binfile"
+  if [ -n "$out" ]; then
+    if [ -z "$bin" ] || ! printf '%s\n' "$out" | "$bin" emit-context; then
+      printf '%s\n' "$out"
+    fi
+  fi
+  exit "$status"
+fi
+
 install_hint='curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh'
 
 # find_sr_session looks past bare $PATH, in the fixed order documented above,
@@ -209,6 +233,10 @@ fi
 # where the plugin's own authoring-slop refused every rule write until the agent
 # disabled it. So the directory the set was found in goes first on $PATH for
 # the engine — only that directory, which holds nothing but sloprail's binaries.
+# The outer start invocation renders this run's text with the binary found here.
+if [ -n "${SLOPRAIL_START_BINFILE:-}" ] && [ -n "$sr_session_bin" ]; then
+  printf '%s' "$sr_session_bin" > "$SLOPRAIL_START_BINFILE"
+fi
 saved_path="$PATH"
 if [ -n "$sr_session_bin" ]; then
   # sr:invariant install/engine-found-outside-the-path
