@@ -353,7 +353,7 @@ func TestCursorSpec_Invocation(t *testing.T) {
 	args, err := harnessGrant(cursorSpec, g)
 	require.NoError(t, err)
 	assert.Empty(t, args)
-	env, cleanup, err := harnessGrantEnv(cursorSpec, g)
+	env, _, cleanup, err := harnessGrantEnv(cursorSpec, g)
 	require.NoError(t, err)
 	defer cleanup()
 	require.Len(t, env, 2)
@@ -385,6 +385,7 @@ func TestCursorSizesAreCatalogueModels(t *testing.T) {
 }
 
 func TestSanitizeChildEnvStripsCursorSessionIdentity(t *testing.T) {
+	t.Setenv("SLOPRAIL_HARNESS", "cursor") // the strip is the running harness's (ChildEnvBlocklist)
 	out := sanitizeChildEnv([]string{"CURSOR_CONVERSATION_ID=c", "CURSOR_REQUEST_ID=r", "CURSOR_TRANSCRIPT_PATH=/t", "CURSOR_AGENT=1", "CURSOR_API_KEY=k"})
 	assert.Equal(t, []string{"CURSOR_AGENT=1", "CURSOR_API_KEY=k"}, out)
 }

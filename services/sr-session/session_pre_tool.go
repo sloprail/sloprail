@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -46,6 +47,13 @@ func newSessionPreToolCmd() *cobra.Command {
 // sr:invariant gates/broken-declaration-denies-nothing
 func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
+	// A launched judge of a harness that cannot confine it natively (harness.JudgeGate)
+	// is held to what it was granted before anything else, transcript or not.
+	if g, ok := harness.Current().(harness.JudgeGate); ok {
+		if reason := g.JudgeRefusal(p, os.Getenv); reason != "" {
+			return deny(cmd, reason)
+		}
+	}
 	if skipWithoutTranscript(cmd, p, false) {
 		return nil
 	}

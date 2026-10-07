@@ -56,25 +56,32 @@ var writeTools = map[string]bool{"Write": true, "Delete": true, "StrReplace": tr
 // Only file-changing tools are judged here: shell commands are rejected by Cursor
 // itself in a headless run without --force, and everything else reads.
 func (g JudgeGrant) Refusal(p Payload) string {
-	if p.HookEventName != PreToolUse || !writeTools[p.ToolName] {
+	if p.HookEventName != PreToolUse {
+		return ""
+	}
+	return g.RefusalFor(p.ToolName, p.ToolInput, p.Folder())
+}
+
+// RefusalFor is Refusal over a tool call however it arrived: the tool's name, its
+// arguments and the project folder a relative path is read against.
+func (g JudgeGrant) RefusalFor(tool string, input json.RawMessage, folder string) string {
+	if !writeTools[tool] {
 		return ""
 	}
 	var in struct {
 		FilePath string `json:"file_path"`
 		Path     string `json:"path"`
 	}
-	_ = json.Unmarshal(p.ToolInput, &in)
+	_ = json.Unmarshal(input, &in)
 	target := in.FilePath
 	if target == "" {
 		target = in.Path
 	}
 	if target == "" {
-		return fmt.Sprintf("this judge may not run %s: the file it changes is not named, so it cannot be checked against what the judge may write", p.ToolName)
+		return fmt.Sprintf("this judge may not run %s: the file it changes is not named, so it cannot be checked against what the judge may write", tool)
 	}
-	if !filepath.IsAbs(target) {
-		if f := p.Folder(); f != "" {
-			target = filepath.Join(f, target)
-		}
+	if !filepath.IsAbs(target) && folder != "" {
+		target = filepath.Join(folder, target)
 	}
 	for _, t := range resolveForms(target) {
 		for _, ro := range g.Readonly {

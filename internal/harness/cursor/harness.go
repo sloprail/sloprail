@@ -8,9 +8,9 @@
 // ask-user-question tool, no cwd on most payloads, a stop hook that never fires in
 // print mode.
 //
-// It does NOT register itself from init: choosing the process's harness is the
-// selection seam's concern (a registry with detection), and a blank import of this
-// package alongside claudecode would otherwise make Register panic. Use New.
+// Importing it registers it (wire.go); which harness a process runs is decided by
+// harness.Current: SLOPRAIL_HARNESS (the plugin's hook wrapper sets it), else
+// detection (Detect), else Claude Code.
 package cursor
 
 import (

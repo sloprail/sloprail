@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // A session with no transcript: codex --ephemeral reports transcript_path null on every hook, and
@@ -45,6 +47,14 @@ func sessionHasNoTranscript(p HookPayload, atStart bool) bool {
 	}
 	if atStart {
 		return false
+	}
+	// A path the harness did not report but located (harness.TranscriptLocator: Cursor
+	// names none on its first events) is where the record WILL be written, so a file
+	// not there yet is an empty transcript, not an ephemeral session.
+	if p.TranscriptPath == "" {
+		if _, ok := harness.Current().(harness.TranscriptLocator); ok {
+			return false
+		}
 	}
 	_, err = os.Stat(path)
 	return errors.Is(err, fs.ErrNotExist)

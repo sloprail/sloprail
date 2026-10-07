@@ -13,6 +13,12 @@
 #     writes to stdout is the engine's concern, not this wrapper's.
 set -eu
 
+# Name the harness outright: the engine's hook parser and responses are the running
+# harness's (internal/harness Current), and the environment alone does not say it is
+# Cursor (CURSOR_VERSION / CURSOR_PROJECT_DIR also appear in an editor's terminal).
+SLOPRAIL_HARNESS=cursor
+export SLOPRAIL_HARNESS
+
 subcommand="$1"
 here="$(dirname "$0")"
 
