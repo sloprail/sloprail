@@ -17,10 +17,13 @@ import (
 // zero value and lose it.
 type Harness string
 
-// ClaudeCode is the only harness supported today. Codex and Cursor are separate
-// tasks; what makes them cheap is that everything harness-shaped in this binary
-// is reached through the registry below rather than written inline.
+// ClaudeCode is the first harness this binary supported; Cursor follows it. What
+// makes another cheap is that everything harness-shaped in this binary is reached
+// through the registry below rather than written inline.
 const ClaudeCode Harness = "claude-code"
+
+// Cursor is Cursor's CLI agent, `cursor-agent`.
+const Cursor Harness = "cursor"
 
 // SizeAlias is one of the harness-agnostic sizes a model set may name.
 //
@@ -367,6 +370,71 @@ var claudeCodeSpec = harnessSpec{
 	},
 }
 
+// cursorSpec is Cursor (`cursor-agent -p`).
+//
+// What is established and where. The invocation shape (`cursor-agent -p --model <m>
+// --trust <prompt>`) is the one the harness-mocks recordings were taken with
+// (cursor-mock/snapshots/runs/*/run.yaml: `cursor-agent -p --force --trust --model
+// auto --output-format stream-json`); docs: https://cursor.com/docs/cli/headless and
+// https://cursor.com/docs/cli/reference/parameters. `--trust` is the headless
+// workspace-trust flag. `--force` is deliberately NOT passed: without it a headless
+// run rejects shell commands (recorded: runs/noninteractive-no-force), which is the
+// read-mostly posture a judge wants. File writes still apply without --force (the
+// same recording, against the doc's claim that they are only proposed), which is
+// what lets --verify's answer file be written.
+//
+// What is NOT available, and so is not pretended:
+//
+//   - Permissions. Cursor's allow/deny rules (Read/Write/Shell/WebFetch/Mcp tokens)
+//     live in <project>/.cursor/cli.json and ~/.cursor/cli-config.json
+//     (https://cursor.com/docs/cli/reference/permissions) and no CLI flag passes
+//     them, so grant is nil: sr-agent refuses --add-dir:readonly and
+//     --disallowed-tools under Cursor (harnessGrant) rather than dropping a
+//     promise it cannot keep.
+//   - Hook isolation. Claude Code gets `disableAllHooks` through --settings; Cursor
+//     has no flag or setting that disables the project's, the user's or a plugin's
+//     hooks, so a judge launched under Cursor runs them. baseArgs is only --trust.
+//   - A stdin prompt. The headless doc shows prompts as arguments only, so
+//     stdinPromptAbove is 0 and a prompt beyond ARG_MAX fails rather than being
+//     piped on faith.
+//   - A model catalogue. Only "auto" and "cursor-grok-4.5-high" appear in the
+//     recordings, so the size aliases resolve to those two; offers recognises
+//     Cursor's own name shapes by prefix and lets the CLI be the authority, as
+//     claudeCodeSpec does.
+var cursorSpec = harnessSpec{
+	name:   Cursor,
+	binary: "cursor-agent",
+
+	// CURSOR_AGENT=1 is set in the environment of every shell command the agent runs
+	// (recorded: runs/subprocess-session-env), which is where a judge check
+	// launched by a hook or tool call would look; CURSOR_INVOKED_AS is the same
+	// session's second marker.
+	detect: func(getenv func(string) string) bool {
+		return getenv("CURSOR_AGENT") != "" || getenv("CURSOR_INVOKED_AS") != ""
+	},
+	sizes: map[SizeAlias]string{
+		SizeXS:  "auto",
+		SizeSM:  "auto",
+		SizeMD:  "auto",
+		SizeLG:  "cursor-grok-4.5-high",
+		SizeXL:  "cursor-grok-4.5-high",
+		SizeXXL: "cursor-grok-4.5-high",
+	},
+	offers: func(model string) bool {
+		if model == "auto" {
+			return true
+		}
+		for _, prefix := range []string{"cursor-", "composer-", "gpt-", "sonnet-", "opus-", "gemini-", "grok-"} {
+			if strings.HasPrefix(model, prefix) {
+				return true
+			}
+		}
+		return false
+	},
+	argsFlag: "--cursor-args",
+	baseArgs: []string{"--trust"},
+}
+
 // isClaudeFamilyAlias reports whether a name is one of claude's own bare family
 // aliases. They carry no `claude-` prefix, so the prefix test alone would miss
 // them and a set naming `sonnet` outright would be skipped under the very
@@ -451,7 +519,7 @@ func within(path, dir string) bool {
 }
 
 // harnesses is the registry. Adding a harness is adding an entry here.
-var harnesses = []harnessSpec{claudeCodeSpec}
+var harnesses = []harnessSpec{claudeCodeSpec, cursorSpec}
 
 // ErrNoHarness is returned when the environment names no harness this binary
 // knows.

@@ -62,7 +62,7 @@ func TestDetectHarness_UnknownEnvironmentIsRefused(t *testing.T) {
 		}},
 		// A harness that exists but is not supported yet must fail detection,
 		// not fall through to Claude Code.
-		{"an unsupported harness", map[string]string{"CURSOR_AGENT": "1", "CODEX_SANDBOX": "1"}},
+		{"an unsupported harness", map[string]string{"CODEX_SANDBOX": "1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestResolveHarness_OverrideIsCaseSensitiveAndExact(t *testing.T) {
 }
 
 func TestSupportedNames_ListsTheRegistry(t *testing.T) {
-	assert.Equal(t, []string{"claude-code"}, supportedNames())
+	assert.Equal(t, []string{"claude-code", "cursor"}, supportedNames())
 }
 
 func TestLookupSpec(t *testing.T) {
@@ -315,4 +315,32 @@ func TestWithin(t *testing.T) {
 	assert.True(t, within(filepath.Join(root, "a", "b"), root))
 	assert.False(t, within(filepath.Dir(root), root))
 	assert.False(t, within(root+"-sibling", root), "a shared prefix is not containment")
+}
+
+// Cursor sets CURSOR_AGENT=1 and CURSOR_INVOKED_AS in the environment of every
+// command the agent runs (harness-mocks cursor-mock/snapshots/runs/subprocess-session-env),
+// and CLAUDE_PROJECT_DIR too, which must not read as Claude Code.
+func TestDetectHarness_Cursor(t *testing.T) {
+	for _, vars := range []map[string]string{
+		{"CURSOR_AGENT": "1"},
+		{"CURSOR_INVOKED_AS": "cursor-agent"},
+		{"CURSOR_AGENT": "1", "CLAUDE_PROJECT_DIR": "/p"},
+	} {
+		spec, err := DetectHarness(envOf(vars))
+		require.NoError(t, err)
+		assert.Equal(t, Cursor, spec.name)
+		assert.Equal(t, "cursor-agent", spec.binary)
+	}
+}
+
+func TestCursorSpec_Invocation(t *testing.T) {
+	require.NoError(t, aliasesComplete())
+	inv := BuildInvocation(cursorSpec, "auto", nil, "hello", func(string) string { return "" })
+	assert.Equal(t, []string{"-p", "--model", "auto", "--trust", "--", "hello"}, inv.Args)
+	assert.True(t, cursorSpec.offers("auto"))
+	assert.True(t, cursorSpec.offers("cursor-grok-4.5-high"))
+	assert.False(t, cursorSpec.offers("claude-sonnet-4-5"))
+
+	_, err := harnessGrant(cursorSpec, accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}}})
+	assert.ErrorIs(t, err, ErrModeUnsupported, "Cursor cannot express a readonly dir by flag, so it is refused")
 }
