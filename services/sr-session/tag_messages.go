@@ -47,7 +47,7 @@ import (
 // marks tags found only in seen as `seen`. end is where this read stopped, for
 // the caller to record once the Stop has been judged.
 func cycleAgentMessages(cmd *cobra.Command, store sessionstate.Store, p HookPayload) (seen, fresh []string, end string) {
-	path, err := p.Record()
+	path, err := recordOf(p)
 	if err != nil || path == "" {
 		// No record to read, or a path this must not read (a guessed file
 		// belonging to another conversation). Nothing to scan.

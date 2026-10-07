@@ -27,7 +27,7 @@ func TestRecordPrefersTheSubagentsOwn(t *testing.T) {
 		AgentTranscriptPath: "/cfg/projects/-proj/parent-session/subagents/agent-abc.jsonl",
 		AgentID:             "abc",
 	}
-	got, err := p.Record()
+	got, err := recordOf(p)
 	require.NoError(t, err)
 	assert.Equal(t, "/cfg/projects/-proj/parent-session/subagents/agent-abc.jsonl", got,
 		"a sub-agent's hook read the parent's record")
@@ -41,7 +41,7 @@ func TestRecordReconstructsFromAgentID(t *testing.T) {
 		TranscriptPath: "/cfg/projects/-proj/parent-session.jsonl",
 		AgentID:        "abc",
 	}
-	got, err := p.Record()
+	got, err := recordOf(p)
 	require.NoError(t, err)
 	assert.Equal(t,
 		filepath.Join("/cfg/projects/-proj/parent-session", transcript.SubagentDir, "agent-abc.jsonl"),
@@ -65,7 +65,7 @@ func TestRecordRefusesATraversingAgentID(t *testing.T) {
 				TranscriptPath: "/cfg/projects/-a-project/session.jsonl",
 				AgentID:        id,
 			}
-			_, err := p.Record()
+			_, err := recordOf(p)
 			require.Error(t, err, "an agent id of %q must be refused", id)
 			require.ErrorIs(t, err, transcript.ErrNotAnAgentID)
 		})
@@ -76,7 +76,7 @@ func TestRecordRefusesATraversingAgentID(t *testing.T) {
 // ordinary session, which is the common case and not a fault.
 func TestRecordOfARootSession(t *testing.T) {
 	p := HookPayload{TranscriptPath: "/cfg/projects/-proj/session.jsonl"}
-	got, err := p.Record()
+	got, err := recordOf(p)
 	require.NoError(t, err)
 	assert.Equal(t, "/cfg/projects/-proj/session.jsonl", got)
 	assert.False(t, p.IsSubagent())
@@ -289,7 +289,7 @@ func TestSessionDBPathNeedsASessionID(t *testing.T) {
 // does NOT silently become the parent's record or a path relative to nothing.
 func TestRecordWithAgentIDButNoParentPath(t *testing.T) {
 	p := HookPayload{AgentID: "abc"}
-	got, err := p.Record()
+	got, err := recordOf(p)
 	require.NoError(t, err)
 	assert.Empty(t, got, "a reconstruction with nothing to nest under must not invent a path")
 

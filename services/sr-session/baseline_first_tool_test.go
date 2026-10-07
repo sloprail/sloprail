@@ -274,7 +274,7 @@ func TestPreTool_SubagentsFirstToolCallTakesItsOwnPoint(t *testing.T) {
 		ToolName:       "Bash",
 		ToolInput:      json.RawMessage(`{"command":"git commit -am work"}`),
 	}
-	path, err := pre.Record()
+	path, err := recordOf(pre)
 	require.NoError(t, err)
 	require.Equal(t, sub.AgentTranscriptPath, path,
 		"the Pre payload does not resolve to the sub-agent's record, so this proves nothing")

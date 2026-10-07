@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -37,7 +36,7 @@ func sessionHasNoTranscript(p HookPayload, atStart bool) bool {
 	if p.SessionID == "" {
 		return false
 	}
-	path, err := p.SessionRecord()
+	path, err := sessionRecordOf(p)
 	if err != nil {
 		return false
 	}
@@ -61,7 +60,7 @@ func skipWithoutTranscript(cmd *cobra.Command, p HookPayload, atStart bool) bool
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), noTranscriptNotice)
 	if firstNoTranscriptNotice(p.SessionID) {
-		_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"systemMessage": noTranscriptNotice})
+		_ = tell(cmd, noTranscriptNotice)
 	}
 	return true
 }
