@@ -116,6 +116,53 @@ type SubagentsUnlinkable interface {
 	SubagentsUnlinkable() bool
 }
 
+// SessionRecord is one session record of a project: the harness's own id of the
+// session and the file holding it.
+type SessionRecord struct {
+	ID   string
+	Path string
+	// Root is true when the record is a conversation of its own that no other session
+	// dispatched (a user's session, a continuation or a fork of one), false for a
+	// sub-agent's record and for one the harness cannot prove to be a root (Cursor
+	// marks a root only when its sessionStart fired).
+	Root bool
+}
+
+// SessionLister is implemented by a Transcripts that can say which session records a
+// project (the working directory dir) holds, whatever its layout: Claude Code's flat
+// project directory, Codex's date-sharded tree filtered by each rollout's recorded
+// working directory, Cursor's agent-transcripts/<id>/<id>.jsonl. configDir is the
+// harness's ConfigDir. The records are in no particular order.
+type SessionLister interface {
+	ProjectSessions(configDir, dir string) []SessionRecord
+}
+
+// Companion is something a harness keeps for a session beside its record: what an
+// archive of the session needs besides the record and the sub-agents' records
+// (SubagentLocator).
+type Companion struct {
+	// Item names it in an archive's manifest ("session dir (tool-results)").
+	Item string
+	// Dir is the directory of the archive it is copied to.
+	Dir string
+	// Path is where it is: a directory or a file. Empty when the harness keeps none for
+	// this session, Why then saying why.
+	Path string
+	Why  string
+	// How says how Path was found, when that is worth recording.
+	How string
+	// Exclude are the top-level names under Path not copied, for they are archived another way.
+	Exclude []string
+}
+
+// CompanionLocator is implemented by a Transcripts whose session keeps files beside its
+// record: Claude Code's session directory (tool results) and temp directory (scratchpad,
+// task outputs), Cursor's store of the tools' outputs that sloprail's own hooks recorded.
+// A harness with none does not implement it.
+type CompanionLocator interface {
+	Companions(transcriptPath string) []Companion
+}
+
 // Transcripts is how a harness's session record is parsed and located: its line
 // format and its on-disk layout. Everything above this (walking a chain, citing,
 // the identity of a conversation) is harness-neutral and lives in internal/transcript.
@@ -136,6 +183,14 @@ type Transcripts interface {
 	// ProjectDir is where the harness keeps the session files of every session
 	// run in dir (already symlink-resolved); empty when configDir is empty.
 	ProjectDir(configDir, dir string) string
+}
+
+// RecordLister is implemented by a Transcripts whose project directory (ProjectDir) is not
+// one flat directory of session files: Codex keeps every session in a date-sharded tree, so
+// the conversation's other transcripts are found by walking it. ListRecords is every session
+// file under projectDir, in no particular order.
+type RecordLister interface {
+	ListRecords(projectDir string) []string
 }
 
 // RecordOpener is what a Transcripts MAY implement when the record the engine should

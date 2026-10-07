@@ -194,7 +194,7 @@ func SubagentPaths(path string) ([]string, error) {
 // first record is not written yet: that would make the parent's dispatch
 // prompt citable as the end user's words.
 func isSubagentRecord(path string) bool {
-	if p, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
+	if p, ok := harness.ForTranscript(path).Transcripts().(harness.SubagentLocator); ok {
 		if _, sub := p.ParentRecord(path); sub {
 			return true
 		}
@@ -227,7 +227,7 @@ func IsSubagentRecord(path string) bool { return isSubagentRecord(path) }
 func SessionRootOf(path string) string {
 	cur := path
 	for isSubagentRecord(cur) {
-		if p, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
+		if p, ok := harness.ForTranscript(cur).Transcripts().(harness.SubagentLocator); ok {
 			if parent, sub := p.ParentRecord(cur); sub {
 				if parent == "" || parent == cur {
 					return ""
@@ -259,15 +259,19 @@ func SessionRootOf(path string) string {
 // read is an error: a caller deciding that a quote lands on exactly one entry
 // must not decide it over records it silently skipped.
 func DescendantSubagentPaths(path string) ([]string, error) {
-	if l, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
+	if l, ok := harness.ForTranscript(path).Transcripts().(harness.SubagentLocator); ok {
 		var paths []string
 		for _, f := range l.SubagentFiles(path) {
 			if strings.HasSuffix(f.Path, jsonlSuffix) {
 				paths = append(paths, f.Path)
 			}
 		}
-		sort.Strings(paths)
-		return paths, nil
+		if len(paths) > 0 {
+			sort.Strings(paths)
+			return paths, nil
+		}
+		// None found by the harness that owns path: a record in another harness's layout
+		// (Claude Code's, which the harness has no way to claim) is still read by its own.
 	}
 	dir := subagentDirOf(path)
 	if dir == "" {
@@ -330,6 +334,11 @@ func subagentDirOf(path string) string {
 // link. The one hard error is an unreadable search directory, which is a broken
 // environment rather than a trajectory without a parent.
 func ParentPath(path, searchDir string) (string, error) {
+	if l, ok := harness.ForTranscript(path).Transcripts().(harness.SubagentLocator); ok {
+		if parent, sub := l.ParentRecord(path); sub {
+			return parent, nil
+		}
+	}
 	meta, ok, err := ReadSubagentMeta(path)
 	if err != nil {
 		return "", err

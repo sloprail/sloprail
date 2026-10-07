@@ -4,12 +4,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
-	"github.com/sloprail/sloprail/internal/transcript"
 )
+
+var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
+
+// repoSlug is a repository's path as one file name (every non-alphanumeric as "-"),
+// the same whichever harness the archive is of.
+func repoSlug(repo string) string { return nonAlnum.ReplaceAllString(repo, "-") }
 
 // repoOf names the repository a folder belongs to: its main worktree (the
 // parent of the git common dir, which every linked worktree shares), or the
@@ -168,12 +174,12 @@ func archiveChecks(m *archiveManifest, folders map[string][]string, ranges map[s
 				cmdArgs = append(cmdArgs, "--range", a)
 			}
 			var err error
-			if stdout, err = runTool(repo, nil, "sr-checks", cmdArgs...); err != nil {
+			if stdout, err = runTool(repo, nil, nil, "sr-checks", cmdArgs...); err != nil {
 				skip(err.Error())
 				continue
 			}
 		}
-		rel := filepath.Join("checks", transcript.EncodeProjectDir(repo)+".jsonl")
+		rel := filepath.Join("checks", repoSlug(repo)+".jsonl")
 		if err := os.MkdirAll(filepath.Join(dir, "checks"), 0o755); err != nil {
 			skip(err.Error())
 			continue

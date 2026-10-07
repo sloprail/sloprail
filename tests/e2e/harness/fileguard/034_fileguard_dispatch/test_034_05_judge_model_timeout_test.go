@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // This file covers a file-guard JUDGE with a per-judge MODEL and TIMEOUT
@@ -57,15 +59,16 @@ func TestT034_11_JudgeModelAndTimeoutReachTheInvocation(t *testing.T) {
 		t.Errorf("the judge's reasoning did not reach the agent:\n%s", joined)
 	}
 
-	// The check's model reached the harness: sr-agent resolved size-lg to opus and
-	// invoked `claude … --model opus …`, recorded here.
+	// The check's model reached the harness: sr-agent resolved size-lg to the harness's own
+	// name for it and invoked the harness with it, recorded here.
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
 		t.Fatalf("the recording shim did not capture the claude argv (was the judge invoked?): %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
-	if !hasAdjacentPair(lines, "--model", "opus") {
-		t.Errorf("the judge's model (size-lg) did not reach the harness as `--model opus`; argv was:\n%s", string(argv))
+	flag, model := e.LargeJudgeModelArgs()
+	if !hasAdjacentPair(lines, flag, model) {
+		t.Errorf("the judge's model (size-lg) did not reach the harness as `%s %s`; argv was:\n%s", flag, model, string(argv))
 	}
 }
 
@@ -109,6 +112,10 @@ func TestT034_12_ScopedAllowedToolsReachTheHarnessIntact(t *testing.T) {
 		Write("w1", "memories/note.md", "a substantive memory"),
 	).ThenCommit("add the memory"))
 
+	if !harness.HasCap(t, harness.CapScopedToolRules) {
+		assertScopedToolsRefused(t, e, proj, "s-034-12", argvFile)
+		return
+	}
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
 		t.Fatalf("the recording shim did not capture the claude argv (was the judge invoked?): %v", err)
@@ -170,6 +177,10 @@ func TestT034_13_DisallowedToolsReachTheHarnessIntact(t *testing.T) {
 		Write("w1", "memories/note.md", "a substantive memory"),
 	).ThenCommit("add the memory"))
 
+	if !harness.HasCap(t, harness.CapScopedToolRules) {
+		assertScopedToolsRefused(t, e, proj, "s-034-13", argvFile)
+		return
+	}
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
 		t.Fatalf("the recording shim did not capture the claude argv (was the judge invoked?): %v", err)
@@ -225,6 +236,20 @@ func TestT034_14_BadDisallowedToolsIsRefusedAtLoad(t *testing.T) {
 		if !strings.Contains(decl.Output, want) {
 			t.Errorf("sr-file declarations did not report %q:\n%s", want, decl.Output)
 		}
+	}
+}
+
+// assertScopedToolsRefused is the outcome on a harness that cannot scope a tool (Codex has a
+// sandbox, no per-tool permission list): the judge is not run on a wider grant than the rule
+// asked for; the changeset is refused naming why, and the harness was never invoked.
+func assertScopedToolsRefused(t *testing.T, e *harness.Env, proj, session, argvFile string) {
+	t.Helper()
+	joined := strings.Join(e.CheckRun(proj, session), "\n")
+	if !strings.Contains(joined, "cannot express") {
+		t.Errorf("a judge granted a tool rule this harness cannot scope was not refused with the reason:\n%s", joined)
+	}
+	if _, err := os.Stat(argvFile); err == nil {
+		t.Errorf("the harness was invoked with a grant wider than the rule asked for")
 	}
 }
 

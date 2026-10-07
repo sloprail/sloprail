@@ -484,6 +484,30 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
+// InstallJudgeScript puts a test's own stand-in for the judge's agent binary (body, a
+// script) where the judge resolves it: under the name the current harness's binary has.
+func (e *Env) InstallJudgeScript(body string) {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimScript, Body: body})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge shim: %v", err)
+	}
+}
+
+// InstallJudgeUsageLimit installs a judge that appends a line to $LEDGER per call and dies
+// the way the current harness does at a usage limit.
+func (e *Env) InstallJudgeUsageLimit() {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimUsageLimit})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write usage-limit judge shim: %v", err)
+	}
+}
+
+// JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
+// judge's agent launched so that the project's and plugins' hooks do not run in it.
+func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
@@ -515,6 +539,10 @@ func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
 		e.t.Fatalf("harness: write recording judge claude shim: %v", err)
 	}
 }
+
+// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+// harness's argv with, in the recording of InstallJudgeClaudeRecordingArgv.
+func (e *Env) LargeJudgeModelArgs() (flag, value string) { return e.driver.LargeJudgeModelArgs() }
 
 // InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
 // the judge was asked, so a test can assert what the template actually rendered.
@@ -909,8 +937,8 @@ func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 // SessionCLIEnv is the environment a service binary needs to read the record the harness
 // under test itself wrote (CLIDirectEnv): nil when the host environment already says so.
 func (e *Env) SessionCLIEnv() []string {
-	if d, ok := e.driver.(interface{ SessionCLIEnv(e *Env) []string }); ok {
-		return d.SessionCLIEnv(e)
+	if d, ok := e.driver.(interface{ CLIEnv(e *Env) []string }); ok {
+		return d.CLIEnv(e)
 	}
 	return nil
 }
@@ -1293,6 +1321,49 @@ func (e *Env) ConfigDir() string {
 // TmpDir is the mock's CLAUDE_CODE_TMPDIR: the root under which Claude Code keeps a session's
 // scratchpad and task outputs (<TmpDir>/claude-<uid>/<project dir>/<session>/).
 func (e *Env) TmpDir() string { return e.tmpDir }
+
+// HarnessSessionID is the id the harness gave the session a test calls id: the same id
+// for a harness that takes the caller's, the one the run printed for one that names its
+// sessions itself (what a tool run beside the harness, such as `sr-eval archive`, names it by).
+func (e *Env) HarnessSessionID(id string) string {
+	if v := e.harnessID(id); v != "" {
+		return v
+	}
+	return id
+}
+
+// SubagentRecordPath is where the record of the session's sub-agent is kept, "" for a
+// harness whose sub-agent record names no parent (see Driver.SubagentRecordPath).
+func (e *Env) SubagentRecordPath(projDir, sessionID, agentID string) string {
+	e.t.Helper()
+	return e.driver.SubagentRecordPath(e, projDir, sessionID, agentID)
+}
+
+// ForgeSubagentRecord writes the sub-agent's record in the harness's own shape and returns
+// its path, "" (nothing written) where the harness cannot tie one to its parent.
+func (e *Env) ForgeSubagentRecord(projDir, sessionID, agentID, cwd, prompt string) string {
+	e.t.Helper()
+	return e.driver.ForgeSubagentRecord(e, projDir, sessionID, agentID, cwd, prompt)
+}
+
+// SubagentHookPayload is a sub-agent hook's payload in the harness's own field shape.
+func (e *Env) SubagentHookPayload(projDir, sessionID, agentID, event, cwd string, extra map[string]any) string {
+	e.t.Helper()
+	return e.driver.SubagentHookPayload(e, projDir, sessionID, agentID, event, cwd, extra)
+}
+
+// ForgeBareTranscript writes a session record that holds one prompt and nothing else.
+func (e *Env) ForgeBareTranscript(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.driver.ForgeBareTranscript(e, projDir, sessionID)
+}
+
+// Companions are the files the harness keeps for the session beside its record
+// (archive-relative path -> content), nil where it keeps none.
+func (e *Env) Companions(projDir, sessionID string) map[string]string {
+	e.t.Helper()
+	return e.driver.Companions(e, projDir, sessionID)
+}
 
 // HomeDir is the HOME every process of this Env runs with (and so where sloprail's
 // state stores live).
@@ -1886,7 +1957,19 @@ const SessionStartAttachments = 2
 // citation's own output — read it from the file the mock wrote instead; this is the
 // up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	return MockPreambleLines + SessionStartAttachments + 1
+	pre, start := e.driver.RecordLayout()
+	return pre + start + 1
+}
+
+// NextPromptLine is the 1-based physical line the prompt of the next Run of sessionID
+// (a resume) will sit on, given the transcript as it stands.
+func (e *Env) NextPromptLine(proj, sessionID string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(e.TranscriptPath(proj, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: read transcript for the next prompt's line: %v", err)
+	}
+	return e.driver.NextPromptLine(string(body))
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation
@@ -2028,12 +2111,21 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 	e.driver.ForkTranscript(e, cwd, oldSessionID, newSessionID)
 }
 
+// originReader is what a Driver implements when its record does not open on a uuid-keyed
+// record with no parent (Claude's layout, the default): the id of where the file begins.
+type originReader interface {
+	OriginRecord(record string) string
+}
+
 // OriginRecord is the uuid of the first record in a session's transcript with no
 // parent — where that FILE begins, read straight off the file. Not the identity
 // walk: a test uses it to name what the walk should land on, and the walk is
 // asked of the engine (SessionIdentity).
 func (e *Env) OriginRecord(projDir, sessionID string) string {
 	e.t.Helper()
+	if o, ok := e.driver.(originReader); ok {
+		return o.OriginRecord(e.transcript(projDir, sessionID))
+	}
 	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
 		var rec struct {
 			UUID       string  `json:"uuid"`

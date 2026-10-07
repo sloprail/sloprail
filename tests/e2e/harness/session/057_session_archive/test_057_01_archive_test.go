@@ -27,17 +27,19 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 	e.GitInit(other)
 	e.FileGuard(other, "docs", judgeRule, map[string]string{"rubric.md.j2": rubric})
 	e.CommitAll(other, "the rule")
-	w.session(t, sess, background(sess), harness.Bash("other-"+sess, fmt.Sprintf(
+	w.session(t, sess, background(t, sess), harness.Bash("other-"+sess, fmt.Sprintf(
 		"mkdir -p %[1]s/docs && echo second > %[1]s/docs/b.md && git -C %[1]s add -A && git -C %[1]s commit -q -m b", other)))
 
-	// What the harness leaves around a real session is a transcript and a state store; the
-	// session directory and the scratchpad are Claude Code's own, so put what it would there.
+	// What a harness leaves around a real session is a record and a state store; the rest a
+	// session may have (a sub-agent's record tied to it, files kept beside the record, a temp
+	// dir) is the harness's own, so each driver puts what its harness would there.
 	transcript := e.TranscriptPath(w.proj, sess)
-	sessDir := strings.TrimSuffix(transcript, ".jsonl")
-	mustWrite(t, filepath.Join(sessDir, "subagents", "agent-a.jsonl"), "subagent record\n")
-	mustWrite(t, filepath.Join(sessDir, "tool-results", "r.txt"), "a big tool result\n")
-	temp := w.tempDir(t, sess)
-	mustWrite(t, filepath.Join(temp, "scratchpad", "notes", "plan.md"), "the plan\n")
+	sid := w.id(sess)
+	subagent := e.ForgeSubagentRecord(w.proj, sess, "a", w.proj, "make the thing")
+	companions := e.Companions(w.proj, sess)
+	if keepsTempDir(t) {
+		mustWrite(t, filepath.Join(w.tempDir(t, sess), "scratchpad", "notes", "plan.md"), "the plan\n")
+	}
 
 	// A stray file staged in the archive repository by hand must not be swept into the commit.
 	git(t, w.into, "init", "-q")
@@ -45,32 +47,59 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 	git(t, w.into, "add", "stray.txt")
 
 	dir := w.archive(t, "--session", sess)
+	m := readManifest(t, dir)
 
 	// the transcript, byte for byte
-	if got, want := readFile(t, filepath.Join(dir, sess, "transcript.jsonl")), readFile(t, transcript); got != want {
+	if got, want := readFile(t, filepath.Join(dir, sid, "transcript.jsonl")), readFile(t, transcript); got != want {
 		t.Fatalf("the archived transcript differs from the original")
 	}
-	// the session directory
-	if got := readFile(t, filepath.Join(dir, sess, "session-dir", "subagents", "agent-a.jsonl")); got != "subagent record\n" {
-		t.Fatalf("subagent record: %q", got)
+	if m.Harness != harness.Selected(t) {
+		t.Fatalf("the archive names harness %q, want %q", m.Harness, harness.Selected(t))
 	}
-	if got := readFile(t, filepath.Join(dir, sess, "session-dir", "tool-results", "r.txt")); got != "a big tool result\n" {
-		t.Fatalf("tool result: %q", got)
+	// the sub-agent's record where the harness ties one to its parent, and the archive saying
+	// so where it cannot
+	if harness.HasCap(t, harness.CapSubagentParentLink) {
+		if subagent == "" {
+			t.Fatalf("premise: the harness ties a sub-agent to its parent, so it has a record path")
+		}
+		if got, want := readFile(t, filepath.Join(dir, sid, "subagents", filepath.Base(subagent))), readFile(t, subagent); got != want {
+			t.Fatalf("subagent record: %q, want %q", got, want)
+		}
+		if !strings.HasPrefix(m.Subagents[sid], "archived: 1") {
+			t.Fatalf("the manifest on sub-agents: %q", m.Subagents[sid])
+		}
+	} else {
+		if subagent != "" || exists(filepath.Join(dir, sid, "subagents")) {
+			t.Fatalf("a harness that cannot tie a sub-agent to its parent archived one: %q", subagent)
+		}
+		if !strings.HasPrefix(m.Subagents[sid], "unlinkable") {
+			t.Fatalf("the archive does not say the sub-agents are unlinkable: %q", m.Subagents[sid])
+		}
 	}
-	// the temp dir: scratchpad and the task output the mock wrote
-	if got := readFile(t, filepath.Join(dir, sess, "tmp", "scratchpad", "notes", "plan.md")); got != "the plan\n" {
-		t.Fatalf("scratchpad: %q", got)
+	// what the harness keeps beside the record
+	for rel, want := range companions {
+		if got := readFile(t, filepath.Join(dir, sid, filepath.FromSlash(rel))); got != want {
+			t.Fatalf("%s: %q, want %q", rel, got, want)
+		}
 	}
-	tasks, _ := filepath.Glob(filepath.Join(dir, sess, "tmp", "tasks", "*.output"))
-	if len(tasks) != 1 {
-		t.Fatalf("the task output is not archived: %v", tasks)
+	// the temp dir: scratchpad and the task output the mock wrote, where the harness has one
+	if keepsTempDir(t) {
+		if got := readFile(t, filepath.Join(dir, sid, "tmp", "scratchpad", "notes", "plan.md")); got != "the plan\n" {
+			t.Fatalf("scratchpad: %q", got)
+		}
+		tasks, _ := filepath.Glob(filepath.Join(dir, sid, "tmp", "tasks", "*.output"))
+		if len(tasks) != 1 {
+			t.Fatalf("the task output is not archived: %v", tasks)
+		}
+	} else if exists(filepath.Join(dir, sid, "tmp")) {
+		t.Fatalf("a temp dir was invented for a harness that keeps none")
 	}
 	// the state store: every file of the real one, byte for byte
 	real, _ := filepath.Glob(filepath.Join(e.HomeDir(), "*", "*", "sloprail", "sessions", "*", "*", "state.db"))
 	if len(real) != 1 {
 		t.Fatalf("want one real state.db under %s, got %v", e.HomeDir(), real)
 	}
-	copied := stateFiles(t, dir, sess)
+	copied := stateFiles(t, dir, sid)
 	if len(copied) != 1 {
 		t.Fatalf("want the state.db copied, got %v", copied)
 	}
@@ -84,7 +113,7 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 	if refs.Code != 0 {
 		t.Fatalf("refs list: %s", refs.Output)
 	}
-	if got := readFile(t, filepath.Join(dir, sess, "refs.json")); got != refs.Output {
+	if got := readFile(t, filepath.Join(dir, sid, "refs.json")); got != refs.Output {
 		t.Fatalf("refs.json differs from `sr-session refs list --json`:\n%s\nvs\n%s", got, refs.Output)
 	}
 	var ranges []struct{ Folder, Head string }
@@ -92,7 +121,6 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 		t.Fatalf("want the project and the other repository tracked, got %s (%v)", refs.Output, err)
 	}
 	// the stored verdicts of each tracked repository
-	m := readManifest(t, dir)
 	if len(m.Checks) != 2 {
 		t.Fatalf("want checks for both repositories, got %+v", m.Checks)
 	}
@@ -104,7 +132,7 @@ func TestT057_01_ASessionIsArchivedWithEverythingItLeftBehind(t *testing.T) {
 		if got := readFile(t, filepath.Join(dir, c.File)); got != want.Output {
 			t.Fatalf("%s: with one session in the repository its archived checks are the whole `sr-checks log --json`:\n%s\nvs\n%s", c.Repo, got, want.Output)
 		}
-		if len(c.Sessions) != 1 || c.Sessions[0] != sess {
+		if len(c.Sessions) != 1 || c.Sessions[0] != sid {
 			t.Fatalf("%s tracked by %v", c.Repo, c.Sessions)
 		}
 	}
@@ -139,18 +167,22 @@ func TestT057_02_AllSessionsLabelAndInto(t *testing.T) {
 
 	dir := w.archive(t, "--all-sessions")
 	m := readManifest(t, dir)
-	if strings.Join(m.Sessions, ",") != "s-057-02a,s-057-02b" {
-		t.Fatalf("sessions: %v", m.Sessions)
+	want := []string{w.id("s-057-02a"), w.id("s-057-02b")}
+	sort.Strings(want)
+	if strings.Join(m.Sessions, ",") != strings.Join(want, ",") {
+		t.Fatalf("sessions: %v, want %v", m.Sessions, want)
 	}
 	for _, id := range m.Sessions {
 		if !exists(filepath.Join(dir, id, "transcript.jsonl")) || len(stateFiles(t, dir, id)) != 1 {
 			t.Fatalf("session %s is not whole in the archive", id)
 		}
 	}
-	// the default label is the project directory's name in Claude Code's config dir
-	projName := filepath.Base(filepath.Dir(w.e.TranscriptPath(w.proj, "s-057-02a")))
-	if filepath.Dir(dir) != filepath.Join(w.into, projName) || m.Label != projName {
-		t.Fatalf("default label: entry %s, label %q, want %q", dir, m.Label, projName)
+	// the default label is the harness's name for the project: a plain name that ends in the
+	// project folder's own
+	realProj, _ := filepath.EvalSymlinks(w.proj)
+	if filepath.Dir(dir) != filepath.Join(w.into, m.Label) || m.Label == "" || strings.ContainsAny(m.Label, `/\`) ||
+		!strings.HasSuffix(m.Label, filepath.Base(realProj)) {
+		t.Fatalf("default label: entry %s, label %q, want a plain name ending in %s", dir, m.Label, filepath.Base(realProj))
 	}
 
 	// an explicit label, in the same repository: a second commit, its own directory only
@@ -187,7 +219,23 @@ func TestT057_02_AllSessionsLabelAndInto(t *testing.T) {
 func TestT057_03_ANestedRepositoryInTheScratchpad(t *testing.T) {
 	w := newWorld(t)
 	const sess = "s-057-03"
-	w.session(t, sess, background(sess))
+	w.session(t, sess, background(t, sess))
+	sid := w.id(sess)
+	if !keepsTempDir(t) {
+		// The foreign tree an agent can litter with repositories is the harness's temp dir,
+		// and this harness keeps none: the archive holds none, and says nothing is missing.
+		dir := w.archive(t, "--session", sess)
+		if exists(filepath.Join(dir, sid, "tmp")) {
+			t.Fatalf("a temp dir was invented for a harness that keeps none")
+		}
+		for _, s := range readManifest(t, dir).Skipped {
+			t.Errorf("skipped %+v", s)
+		}
+		if st := git(t, w.into, "status", "--porcelain"); st != "" {
+			t.Fatalf("the archive repository is not clean after the commit: %q", st)
+		}
+		return
+	}
 	scratch := filepath.Join(w.tempDir(t, sess), "scratchpad", "clone")
 	mustWrite(t, filepath.Join(scratch, "file.txt"), "tracked in the clone\n")
 	git(t, scratch, "init", "-q")
@@ -217,17 +265,17 @@ func TestT057_03_ANestedRepositoryInTheScratchpad(t *testing.T) {
 		for _, s := range readManifest(t, dir).Skipped {
 			found = found || (strings.Contains(s.Item, odd+": not a regular file") && s.Reason == "not copied")
 		}
-		if !found || exists(filepath.Join(dir, sess, "tmp", odd)) {
+		if !found || exists(filepath.Join(dir, sid, "tmp", odd)) {
 			t.Errorf("%s: want it reported as skipped and not copied (found %v)", odd, found)
 		}
 	}
 
 	for _, c := range []string{"clone/file.txt", "empty-clone/wip.txt"} {
-		if !exists(filepath.Join(dir, sess, "tmp", "scratchpad", c)) {
+		if !exists(filepath.Join(dir, sid, "tmp", "scratchpad", c)) {
 			t.Errorf("%s is not archived", c)
 		}
 	}
-	if exists(filepath.Join(dir, sess, "tmp", "scratchpad", "clone", ".git")) {
+	if exists(filepath.Join(dir, sid, "tmp", "scratchpad", "clone", ".git")) {
 		t.Errorf("a nested .git was copied")
 	}
 	var nested int
@@ -260,28 +308,36 @@ func TestT057_04_SymlinkedRoots(t *testing.T) {
 	w := newWorld(t)
 	const sess = "s-057-04"
 	w.session(t, sess) // no background task: the transcript does not name the temp dir
-	// the session directory (sub-agent records) is itself a symlink to where Claude Code kept it
-	realSessDir := filepath.Join(filepath.Dir(w.e.TmpDir()), "real-session-dir")
-	mustWrite(t, filepath.Join(realSessDir, "subagents", "agent-a.jsonl"), "behind a symlink too\n")
-	if err := os.Symlink(realSessDir, strings.TrimSuffix(w.e.TranscriptPath(w.proj, sess), ".jsonl")); err != nil {
-		t.Fatal(err)
-	}
+	sid := w.id(sess)
+	// Claude Code keeps a session's files in a directory of its own and a temp dir; both can be
+	// symlinks. Another harness keeps neither, so there is nothing of its to put behind one.
+	layout := keepsTempDir(t)
+	linkedTmp := w.e.TmpDir()
+	if layout {
+		// the session directory (sub-agent records, tool results) is itself a symlink to where Claude Code kept it
+		realSessDir := filepath.Join(filepath.Dir(w.e.TmpDir()), "real-session-dir")
+		mustWrite(t, filepath.Join(realSessDir, "subagents", "agent-a.jsonl"), "behind a symlink too\n")
+		mustWrite(t, filepath.Join(realSessDir, "tool-results", "r.txt"), "a result behind a symlink\n")
+		if err := os.Symlink(realSessDir, strings.TrimSuffix(w.e.TranscriptPath(w.proj, sess), ".jsonl")); err != nil {
+			t.Fatal(err)
+		}
 
-	// the temp dir exists only under the env's temp root, which is reached through a symlink
-	projName := filepath.Base(filepath.Dir(w.e.TranscriptPath(w.proj, sess)))
-	realTmp := filepath.Join(w.e.TmpDir(), "elsewhere")
-	mustWrite(t, filepath.Join(realTmp, "scratchpad", "notes.txt"), "behind a symlink\n")
-	linkedTmp := filepath.Join(filepath.Dir(w.e.TmpDir()), "tmp-link")
-	if err := os.Symlink(w.e.TmpDir(), linkedTmp); err != nil {
-		t.Fatal(err)
-	}
-	uidDir := fmt.Sprintf("claude-%d", os.Getuid())
-	if err := os.MkdirAll(filepath.Join(w.e.TmpDir(), uidDir, projName), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// <tmp>/claude-<uid>/<project>/<session> is itself a symlink to the real directory
-	if err := os.Symlink(realTmp, filepath.Join(w.e.TmpDir(), uidDir, projName, sess)); err != nil {
-		t.Fatal(err)
+		// the temp dir exists only under the env's temp root, which is reached through a symlink
+		projName := filepath.Base(filepath.Dir(w.e.TranscriptPath(w.proj, sess)))
+		realTmp := filepath.Join(w.e.TmpDir(), "elsewhere")
+		mustWrite(t, filepath.Join(realTmp, "scratchpad", "notes.txt"), "behind a symlink\n")
+		linkedTmp = filepath.Join(filepath.Dir(w.e.TmpDir()), "tmp-link")
+		if err := os.Symlink(w.e.TmpDir(), linkedTmp); err != nil {
+			t.Fatal(err)
+		}
+		uidDir := fmt.Sprintf("claude-%d", os.Getuid())
+		if err := os.MkdirAll(filepath.Join(w.e.TmpDir(), uidDir, projName), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// <tmp>/claude-<uid>/<project>/<session> is itself a symlink to the real directory
+		if err := os.Symlink(realTmp, filepath.Join(w.e.TmpDir(), uidDir, projName, sess)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// the project, through a symlink
 	linkedProj := filepath.Join(filepath.Dir(w.e.TmpDir()), "proj-link")
@@ -290,18 +346,23 @@ func TestT057_04_SymlinkedRoots(t *testing.T) {
 	}
 
 	env := append(w.e.SessionEnv(""), "CLAUDE_CODE_TMPDIR="+linkedTmp)
-	r := w.e.CLIDirectEnv(linkedProj, env, "sr-eval", "archive", "--session", sess, "--into", w.into)
+	r := w.e.CLIDirectEnv(linkedProj, env, "sr-eval", "archive", "--session", sid, "--into", w.into)
 	if r.Code != 0 {
 		t.Fatalf("archive through symlinks: exit %d:\n%s", r.Code, r.Output)
 	}
 	dir := strings.TrimSpace(r.Output)
-	if got := readFile(t, filepath.Join(dir, sess, "tmp", "scratchpad", "notes.txt")); got != "behind a symlink\n" {
-		t.Fatalf("the scratchpad behind symlinks: %q", got)
+	if layout {
+		if got := readFile(t, filepath.Join(dir, sid, "tmp", "scratchpad", "notes.txt")); got != "behind a symlink\n" {
+			t.Fatalf("the scratchpad behind symlinks: %q", got)
+		}
+		if got := readFile(t, filepath.Join(dir, sid, "subagents", "agent-a.jsonl")); got != "behind a symlink too\n" {
+			t.Fatalf("the sub-agent record behind a symlink: %q", got)
+		}
+		if got := readFile(t, filepath.Join(dir, sid, "session-dir", "tool-results", "r.txt")); got != "a result behind a symlink\n" {
+			t.Fatalf("the session directory behind a symlink: %q", got)
+		}
 	}
-	if got := readFile(t, filepath.Join(dir, sess, "session-dir", "subagents", "agent-a.jsonl")); got != "behind a symlink too\n" {
-		t.Fatalf("the session directory behind a symlink: %q", got)
-	}
-	if len(stateFiles(t, dir, sess)) != 1 || !exists(filepath.Join(dir, sess, "transcript.jsonl")) {
+	if len(stateFiles(t, dir, sid)) != 1 || !exists(filepath.Join(dir, sid, "transcript.jsonl")) {
 		t.Fatalf("the session is not whole when the project is reached through a symlink")
 	}
 	if len(readManifest(t, dir).Checks) == 0 {
@@ -349,7 +410,8 @@ func TestT057_06_TheWorkingDirectoryDefinesTheProject(t *testing.T) {
 	w.sessionIn(t, second, "s-057-06-b")
 
 	r := w.archiveIn(t, second, "--session", "s-057-06-a", "--into", w.into)
-	if r.Code == 0 || !strings.Contains(r.Output, "s-057-06-a") {
+	idA, idB := w.id("s-057-06-a"), w.id("s-057-06-b")
+	if r.Code == 0 || !strings.Contains(r.Output, idA) {
 		t.Fatalf("another project's session was archived from here: exit %d:\n%s", r.Code, r.Output)
 	}
 	r = w.archiveIn(t, second, "--all-sessions", "--into", w.into)
@@ -357,10 +419,10 @@ func TestT057_06_TheWorkingDirectoryDefinesTheProject(t *testing.T) {
 		t.Fatalf("all-sessions in the second project: %s", r.Output)
 	}
 	dir := strings.TrimSpace(r.Output)
-	if m := readManifest(t, dir); strings.Join(m.Sessions, ",") != "s-057-06-b" || m.Cwd == w.proj {
+	if m := readManifest(t, dir); strings.Join(m.Sessions, ",") != idB || m.Cwd == w.proj {
 		t.Fatalf("the second project's archive holds %v (cwd %s)", m.Sessions, m.Cwd)
 	}
-	if !exists(filepath.Join(dir, "s-057-06-b", "transcript.jsonl")) || exists(filepath.Join(dir, "s-057-06-a")) {
+	if !exists(filepath.Join(dir, idB, "transcript.jsonl")) || exists(filepath.Join(dir, idA)) {
 		t.Fatalf("the archive is not the second project's alone")
 	}
 	// the checks are those of the second project's repository, not the first's
@@ -374,7 +436,7 @@ func TestT057_06_TheWorkingDirectoryDefinesTheProject(t *testing.T) {
 
 	nowhere := t.TempDir()
 	r = w.archiveIn(t, nowhere, "--all-sessions", "--into", w.into)
-	if r.Code == 0 || !strings.Contains(r.Output, "no Claude Code project directory") {
+	if r.Code == 0 || !strings.Contains(r.Output, "no "+harness.Selected(t)+" sessions for ") {
 		t.Fatalf("a directory with no project: exit %d:\n%s", r.Code, r.Output)
 	}
 }
@@ -417,7 +479,7 @@ func TestT057_07_WorktreesOfOneRepositoryShareOneChecksFile(t *testing.T) {
 		return harness.Bash("c-"+name, fmt.Sprintf(
 			"mkdir -p %[1]s/docs && echo %[2]s > %[1]s/docs/%[2]s.md && git -C %[1]s add -A && git -C %[1]s commit -q -m %[2]s", dir, name))
 	}
-	w.session(t, sess, background(sess), commitIn(wt1, "one"), commitIn(wt2, "two"), commitIn(other, "three"))
+	w.session(t, sess, background(t, sess), commitIn(wt1, "one"), commitIn(wt2, "two"), commitIn(other, "three"))
 
 	dir := w.archive(t, "--session", sess)
 	m := readManifest(t, dir)
@@ -472,7 +534,7 @@ func TestT057_07_WorktreesOfOneRepositoryShareOneChecksFile(t *testing.T) {
 		default:
 			t.Errorf("unexpected repository %s", c.Repo)
 		}
-		if len(c.Sessions) != 1 || c.Sessions[0] != sess {
+		if len(c.Sessions) != 1 || c.Sessions[0] != w.id(sess) {
 			t.Errorf("%s tracked by %v", c.Repo, c.Sessions)
 		}
 	}

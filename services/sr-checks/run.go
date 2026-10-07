@@ -124,9 +124,8 @@ func openSession(root string) session {
 	s := session{workspace: sessionpath.WorkspaceAnchor(root)}
 	s.record = transcript.CurrentSessionPath(root)
 	if s.record == "" {
-		// A gate's script runs in the engine's hook, whose environment the harness may
-		// give no session variable (Codex gives none): the engine names the record it
-		// resolved from the hook's payload.
+		// A check the engine runs is told its session's record (SR_TRANSCRIPT) whatever the
+		// harness exports to its hooks: Codex's hooks carry no session variable, only the payload.
 		s.record = os.Getenv(grounding.EnvTranscript)
 	}
 	if s.record == "" {

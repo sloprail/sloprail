@@ -56,6 +56,21 @@ func TestParseRecord_RealModelExecWrapper(t *testing.T) {
 		inputs[1]["command"], "a shell read is a Bash command with the line the agent ran")
 }
 
+// What a hook fed the agent is a user-role message Codex wrote (recorded: harness-mocks
+// codex-mock runs/stops), not the person's: it is meta, as Claude Code's Stop feedback is.
+func TestParseRecord_HookPromptIsMeta(t *testing.T) {
+	hook := `{"timestamp":"2026-10-01T12:43:30.000Z","ordinal":9,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<hook_prompt hook_run_id=\"stop\">REASON</hook_prompt>"}]}}`
+	rec, err := Transcripts{}.ParseRecord([]byte(hook))
+	require.NoError(t, err)
+	assert.Equal(t, "user", rec.Type)
+	assert.True(t, rec.IsMeta)
+
+	person := `{"timestamp":"2026-10-01T12:43:30.000Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the bug"}]}}`
+	rec, err = Transcripts{}.ParseRecord([]byte(person))
+	require.NoError(t, err)
+	assert.False(t, rec.IsMeta)
+}
+
 func TestLocateRolloutAndConfigDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -67,4 +82,20 @@ func TestLocateRolloutAndConfigDir(t *testing.T) {
 	require.NoError(t, os.WriteFile(want, []byte("{}\n"), 0o644))
 	assert.Equal(t, want, FindRollout(home, "abc-123"))
 	assert.Empty(t, FindRollout(home, "nope"))
+}
+
+// A sub-agent's rollout opens on a session_meta naming the ROOT session in session_id and
+// its own thread in id (recorded: harness-mocks codex-mock nested-subagents). The record's
+// origin is the thread's own, or the sub-agent would share its parent's identity and state.
+func TestParseRecord_SessionMetaOriginIsTheThreadsOwnID(t *testing.T) {
+	root, err := Transcripts{}.ParseRecord([]byte(
+		`{"type":"session_meta","payload":{"id":"root-1","session_id":"root-1","thread_source":"user"}}`))
+	require.NoError(t, err)
+	sub, err := Transcripts{}.ParseRecord([]byte(
+		`{"type":"session_meta","payload":{"id":"sub-1","session_id":"root-1","parent_thread_id":"root-1","thread_source":"subagent"}}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "root-1", root.UUID)
+	assert.Equal(t, "sub-1", sub.UUID, "the sub-agent's origin is its own thread, not the root session")
+	assert.Equal(t, "sub-1", sub.SessionID)
 }

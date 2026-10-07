@@ -135,12 +135,12 @@ func TestArchive_CopiesEverythingPerSession(t *testing.T) {
 	}
 	for _, id := range []string{"sess-1", "sess-2"} {
 		for rel, want := range map[string]string{
-			"transcript.jsonl":                    `{"type":"user"}`,
-			"session-dir/subagents/agent-a.jsonl": "sub",
-			"session-dir/tool-results/r.txt":      "result",
-			"tmp/scratchpad/notes.txt":            "scratch",
-			"tmp/tasks/t1.output":                 "task",
-			"state/" + id + "/state.db":           "sqlite-bytes",
+			"transcript.jsonl":               `{"type":"user"}`,
+			"subagents/agent-a.jsonl":        "sub",
+			"session-dir/tool-results/r.txt": "result",
+			"tmp/scratchpad/notes.txt":       "scratch",
+			"tmp/tasks/t1.output":            "task",
+			"state/" + id + "/state.db":      "sqlite-bytes",
 		} {
 			got, err := os.ReadFile(filepath.Join(dir, id, rel))
 			if err != nil || strings.TrimSpace(string(got)) != want {
@@ -173,8 +173,11 @@ func TestArchive_CopiesEverythingPerSession(t *testing.T) {
 	if m.Tools["sr-session"] != "sr-session version stub-1" || m.Tools["sr-checks"] != "sr-checks version stub-2" || m.Tools["git"] == "" {
 		t.Errorf("tool versions: %v", m.Tools)
 	}
-	if !strings.Contains(m.Sources.Scratchpad["sess-1"], "temp root") {
-		t.Errorf("scratchpad source: %v", m.Sources.Scratchpad)
+	if !strings.Contains(m.Sources.Companions["sess-1"]["scratchpad and tasks"], "temp root") {
+		t.Errorf("scratchpad source: %v", m.Sources.Companions)
+	}
+	if m.Harness != "claude" || m.Subagents["sess-1"] != "archived: 1 files" {
+		t.Errorf("harness %q, subagents %v", m.Harness, m.Subagents)
 	}
 
 	// Checks: the project repo and the other tracked folder, once each; the
@@ -243,7 +246,7 @@ func TestArchive_AllSessionsDefaultsLabelAndSkipsWhatIsAbsent(t *testing.T) {
 	for _, s := range m.Skipped {
 		reasons[s.Item] = s.Reason
 	}
-	for _, item := range []string{"session dir (subagents, tool-results)", "scratchpad and tasks", "sloprail state store"} {
+	for _, item := range []string{"session dir (tool-results)", "scratchpad and tasks", "sloprail state store"} {
 		if reasons[item] == "" {
 			t.Errorf("%q not recorded as skipped: %v", item, reasons)
 		}

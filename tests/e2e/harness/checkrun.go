@@ -303,6 +303,12 @@ func (e *Env) ensureTranscript(projDir, sessionID string) {
 	if sessionID == "" {
 		return
 	}
+	e.driver.SeedTranscript(e, projDir, sessionID)
+}
+
+// seedTranscriptFile writes record as the session's transcript where the harness keeps it, unless
+// one is there.
+func (e *Env) seedTranscriptFile(projDir, sessionID, record string) {
 	tp := e.transcriptPath(projDir, sessionID)
 	if _, err := os.Stat(tp); err == nil {
 		return
@@ -310,7 +316,7 @@ func (e *Env) ensureTranscript(projDir, sessionID string) {
 	if err := os.MkdirAll(filepath.Dir(tp), 0o755); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
-	rec := `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}` + "\n"
+	rec := record + "\n"
 	if err := os.WriteFile(tp, []byte(rec), 0o644); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
