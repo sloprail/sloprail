@@ -2493,6 +2493,59 @@ type Result struct {
 // refusal travels back in, or the agent's own output.
 func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
 
+// ToolResults returns the text of every tool_result block in a run's stream, in
+// order. Unlike Saw it does not see the agent's own tool input, Stop-hook
+// feedback frames (isSynthetic user records carrying text blocks) or the
+// stream's bookkeeping (subagent_stats): only what a tool answered.
+func (r Result) ToolResults() []string {
+	var out []string
+	for _, line := range strings.Split(r.Output, "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type    string          `json:"type"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_result" {
+				out = append(out, resultTexts(b.Content)...)
+			}
+		}
+	}
+	return out
+}
+
+// SawInToolResult reports whether text appears in some tool_result of the run.
+func (r Result) SawInToolResult(text string) bool {
+	for _, body := range r.ToolResults() {
+		if strings.Contains(body, text) {
+			return true
+		}
+	}
+	return false
+}
+
+// SawInRefusal reports whether text appears in the reason of some PreToolUse
+// refusal: what the agent was shown when a call was stopped.
+func (r Result) SawInRefusal(text string) bool {
+	for _, reason := range r.Refusals() {
+		if strings.Contains(reason, text) {
+			return true
+		}
+	}
+	return false
+}
+
 // Refusals returns the reason of every PreToolUse refusal in a run's stream, in
 // order.
 //
