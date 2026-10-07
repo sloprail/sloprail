@@ -25,8 +25,11 @@ import (
 //     that count names.
 //   - Sessions are named by the mock (the id its first frame prints), so a test's
 //     session id is an alias of it (Env.harnessIDs), as for Codex.
-//   - In `-p` the stop hook never fires: nothing refuses the end of a turn, so the
-//     Stop readers find nothing.
+//   - In `-p` the real cursor-agent never fires the stop hook (only its TUI does). Every
+//     run sets A10N_CURSOR_MOCK_STOP=1, the mock's declared opt-in (a deviation backed by
+//     the TUI recordings): it fires afterAgentResponse and stop each turn, and a stop
+//     hook's followup_message becomes the next turn. Runs of a launched agent (a judge,
+//     AgentShim) do not set it.
 //   - The sloprail plugin is loaded with --plugin-dir; extra plugins are the user's
 //     local plugins, <home>/.cursor/plugins/local/<name>.
 type cursorDriver struct{}
@@ -176,7 +179,7 @@ func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
 	cmd := exec.Command(e.mock, args...)
 	cmd.Dir = l.WorkDir
 	cmd.Env = append(cursorHostEnv(), e.autoWatchEnv()...)
-	cmd.Env = append(cmd.Env,
+	cmd.Env = append(cmd.Env, "A10N_CURSOR_MOCK_STOP=1",
 		"HOME="+e.home,
 		"TMPDIR="+e.tmpDir,
 		"PATH="+e.shimDir+string(os.PathListSeparator)+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -335,6 +338,7 @@ func (cursorDriver) StopBlocked(output string) bool {
 func (cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
+		"unset A10N_CURSOR_MOCK_STOP\n" +
 		"exec " + shellQuote(e.mock) + " -p --force --trust --output-format stream-json \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
 		"  --workspace " + shellQuote(projDir) + " \\\n" +
@@ -447,12 +451,87 @@ func (cursorDriver) ToolResults(output string) []string {
 	return out
 }
 
-// The stop hook never fires in `-p`, so there is no Stop refusal to read.
-func (cursorDriver) BlockingErrors(string, string, bool) []string { return nil }
-func (cursorDriver) StopContinuations(string) []string            { return nil }
-func (cursorDriver) SubagentBlockingErrors([]string) []string     { return nil }
-func (cursorDriver) AnySubagentBlockingErrors([]string) []string  { return nil }
-func (cursorDriver) SubagentFeedbackCount([]string) int           { return 0 }
+// stopFollowup is a message a stop hook's followup_message gave the agent: the mock (with its
+// stop opt-in) records it in the transcript as a user turn, the way the TUI does, and prints
+// nothing on the stream. A prompt is the first user record of a run, which a turn_ended closes;
+// any later user record before that is a follow-up. wentOn: the agent answered it.
+type stopFollowup struct {
+	text   string
+	wentOn bool
+}
+
+func cursorFollowups(record string) []stopFollowup {
+	var out []stopFollowup
+	fresh := true
+	for _, line := range strings.Split(record, "\n") {
+		var r struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Message struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &r) != nil {
+			continue
+		}
+		switch {
+		case r.Type == "turn_ended":
+			fresh = true
+		case r.Role == "user":
+			if fresh {
+				fresh = false
+				continue
+			}
+			text := ""
+			if len(r.Message.Content) > 0 {
+				text = r.Message.Content[0].Text
+			}
+			if i := strings.Index(text, "<user_query>\n"); i >= 0 {
+				text = text[i+len("<user_query>\n"):]
+			}
+			text = strings.TrimSuffix(text, "\n</user_query>")
+			out = append(out, stopFollowup{text: text})
+		case r.Role == "assistant" && len(out) > 0:
+			out[len(out)-1].wentOn = true
+		}
+	}
+	return out
+}
+
+// BlockingErrors are the reasons the Stop hook refused the end of a turn with (the mock's
+// followup_message turns). A sub-agent's stop is not modelled.
+func (cursorDriver) BlockingErrors(record, hookEvent string, dedupe bool) []string {
+	if hookEvent != "" && hookEvent != "Stop" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range cursorFollowups(record) {
+		if dedupe && seen[f.text] {
+			continue
+		}
+		seen[f.text] = true
+		out = append(out, f.text)
+	}
+	return out
+}
+
+// StopContinuations are the refusals after which the agent went on.
+func (cursorDriver) StopContinuations(record string) []string {
+	var out []string
+	for _, f := range cursorFollowups(record) {
+		if f.wentOn {
+			out = append(out, f.text)
+		}
+	}
+	return out
+}
+
+func (cursorDriver) SubagentBlockingErrors([]string) []string    { return nil }
+func (cursorDriver) AnySubagentBlockingErrors([]string) []string { return nil }
+func (cursorDriver) SubagentFeedbackCount([]string) int          { return 0 }
 
 // copyTree copies the files under src into dst, creating directories, replacing files.
 func copyTree(src, dst string) error {
