@@ -35,10 +35,13 @@ const SessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 // A session id inherited from a launcher, or a guessed file colliding with an
 // unrelated conversation, resolves to nothing rather than to the wrong record.
 func CurrentSessionPath(cwd string) string {
-	// A harness that names its session in the environment another way (Codex's
-	// CODEX_THREAD_ID, its rollout found by id) locates it itself.
-	if l, ok := harness.Current().(harness.CurrentSessionLocator); ok {
-		return l.CurrentSessionPath(cwd, os.Getenv)
+	// A harness that names its own session in the environment differently
+	// (harness.CurrentTranscriptLocator: Cursor's CURSOR_TRANSCRIPT_PATH, conversation id)
+	// answers for itself; Claude Code does not implement it and what follows is its logic.
+	if l, ok := harness.Current().(harness.CurrentTranscriptLocator); ok {
+		if path, handled := l.CurrentTranscript(os.Getenv, cwd); handled {
+			return path
+		}
 	}
 	sessionID := strings.TrimSpace(os.Getenv(SessionIDEnv))
 	if sessionID == "" {

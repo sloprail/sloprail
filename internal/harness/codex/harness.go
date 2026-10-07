@@ -75,15 +75,19 @@ func (Harness) OwnsTranscript(path string) bool {
 	return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
 }
 
-// CurrentSessionPath implements harness.CurrentSessionLocator: a shell command Codex
+// CurrentTranscript implements harness.CurrentTranscriptLocator: a shell command Codex
 // runs sees its session as CODEX_THREAD_ID (and CODEX_SESSION_ID), and the rollout is
-// found by that id.
-func (Harness) CurrentSessionPath(_ string, getenv func(string) string) string {
+// found by that id. Without either variable the process is not a Codex tool shell: no
+// opinion.
+func (Harness) CurrentTranscript(getenv func(string) string, _ string) (string, bool) {
 	id := strings.TrimSpace(getenv("CODEX_THREAD_ID"))
 	if id == "" {
 		id = strings.TrimSpace(getenv("CODEX_SESSION_ID"))
 	}
-	return record.FindRollout(record.ConfigDir(), id)
+	if id == "" {
+		return "", false
+	}
+	return record.FindRollout(record.ConfigDir(), id), true
 }
 
 // ProjectSkillDirs implements harness.SkillDirs: Codex reads a project's skills from

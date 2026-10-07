@@ -161,20 +161,38 @@ func TestParseHook_SpawnAgentIsTheCanonicalAgent(t *testing.T) {
 	}
 }
 
-func TestCurrentSessionPath_IsTheRolloutOfTheThreadInTheEnvironment(t *testing.T) {
+// The recorded exec run (testdata/file-tools.rollout.jsonl, SOURCE.txt) filed under
+// $CODEX_HOME/sessions as Codex files it; its shell tool sees CODEX_THREAD_ID.
+func TestCurrentTranscript_IsTheRecordedRolloutOfTheThreadInTheEnvironment(t *testing.T) {
+	const thread = "01a1023b-6884-70e1-97e5-09a47aeb4af5" // session_meta.payload.id of the recording
+	body, err := os.ReadFile(filepath.Join("testdata", "file-tools.rollout.jsonl"))
+	require.NoError(t, err)
+	require.Contains(t, string(body), thread)
+
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
-	dir := filepath.Join(home, "sessions", "2026", "10", "07")
+	dir := filepath.Join(home, "sessions", "2026", "10", "03")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	rollout := filepath.Join(dir, "rollout-2026-10-07T10-00-00-thread-1.jsonl")
-	require.NoError(t, os.WriteFile(rollout, []byte("{}\n"), 0o644))
+	rollout := filepath.Join(dir, "rollout-2026-10-03T16-46-51-"+thread+".jsonl")
+	require.NoError(t, os.WriteFile(rollout, body, 0o644))
 
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	h := Harness{}
-	assert.Equal(t, rollout, h.CurrentSessionPath("/any", env(map[string]string{"CODEX_THREAD_ID": "thread-1"})))
-	assert.Equal(t, rollout, h.CurrentSessionPath("/any", env(map[string]string{"CODEX_SESSION_ID": "thread-1"})))
-	assert.Empty(t, h.CurrentSessionPath("/any", env(map[string]string{"CODEX_THREAD_ID": "other"})))
-	assert.Empty(t, h.CurrentSessionPath("/any", env(nil)))
+
+	got, ok := h.CurrentTranscript(env(map[string]string{"CODEX_THREAD_ID": thread}), "/any")
+	assert.True(t, ok)
+	assert.Equal(t, rollout, got)
+
+	got, ok = h.CurrentTranscript(env(map[string]string{"CODEX_SESSION_ID": thread}), "/any")
+	assert.True(t, ok)
+	assert.Equal(t, rollout, got)
+
+	got, ok = h.CurrentTranscript(env(map[string]string{"CODEX_THREAD_ID": "01a1023b-0000-0000-0000-000000000000"}), "/any")
+	assert.True(t, ok, "Codex's session, its record not found: no fall-through to another harness")
+	assert.Empty(t, got)
+
+	_, ok = h.CurrentTranscript(env(nil), "/any")
+	assert.False(t, ok, "no Codex variable: no opinion")
 }
 
 func TestOwnsTranscript_ARolloutIsByItsName(t *testing.T) {

@@ -75,16 +75,6 @@ type ChildEnvBlocklist interface {
 	ChildEnvBlocklist() []string
 }
 
-// CurrentSessionLocator is what a Harness MAY implement to find the record of the
-// session a command is running inside, from that command's own environment (not from a
-// hook payload): the agent, or a rule's script, running `sr-session` from a tool shell.
-// getenv is the process's environment; "" means no session is named or its record is
-// not there. A harness without it is read through Transcripts alone (Claude Code's
-// exported session id and projects layout, internal/transcript).
-type CurrentSessionLocator interface {
-	CurrentSessionPath(cwd string, getenv func(string) string) string
-}
-
 // TranscriptOwner is what a Harness MAY implement to say that a session file is its
 // own by the file's name, so the record is read with ITS format whatever harness the
 // process otherwise runs under. A process told nothing about its harness (a test's
@@ -137,6 +127,18 @@ func ProjectSkillDirs(h Harness) []string {
 // sr-agent put the grant). "" means allowed, or not a launched judge.
 type JudgeGate interface {
 	JudgeRefusal(in HookInput, getenv func(string) string) string
+}
+
+// CurrentTranscriptLocator is what a Harness MAY implement so a tool the agent runs
+// (`cite` from a Bash call, the cite-before-commit gate) finds the CURRENT session's
+// own transcript from its environment, where Claude Code's logic (CLAUDE_CODE_SESSION_ID
+// and its projects directory, internal/transcript.CurrentSessionPath) does not apply.
+// getenv reads the tool's environment; cwd is the caller's working directory ("" for the
+// process's own). ok is false when the harness has no opinion (its variables are absent),
+// and the default logic then runs; ok true with an empty path means "this harness's
+// session, record not found", never a fall-through to another harness's lookup.
+type CurrentTranscriptLocator interface {
+	CurrentTranscript(getenv func(string) string, cwd string) (path string, ok bool)
 }
 
 // Default is the harness a process runs under when nothing selects another.
