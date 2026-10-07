@@ -9,9 +9,6 @@ fields:
   - name: files_content
     type: string
     doc: "The paths and content of the subject's files."
-  - name: citation_quotes
-    type: string[]
-    doc: "The quotes of the citations that ground the subject."
   - name: subject_fingerprint
     type: string
     doc: "The subject's own fingerprint, when its script gave one."

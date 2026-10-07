@@ -1,7 +1,6 @@
 predicate: >-
-  A finished {@fld:cache:StoredVerdict.status} of pass or fail for a key is
-  replayed by a run without executing any check, a fail with its
-  {@fld:cache:StoredVerdict.reasons}, until the input changes; the one exception is a fail that rested on
-  {@fld:cache:StoredVerdict.citation_quotes} the session could not find, which
-  is judged again once they resolve.
+  A stored pass, and a fail given by a judge, for a key is replayed by a run
+  or verify without executing any check, citation requirements included, with
+  the fail's {@fld:cache:StoredVerdict.reasons}, until the input changes; a
+  refusal given by a cheap check that may read citations is run again.
 why: Judges are paid for twice, or a refusal vanishes without the work changing.
