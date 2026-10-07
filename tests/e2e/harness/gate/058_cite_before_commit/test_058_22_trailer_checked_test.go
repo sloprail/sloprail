@@ -18,7 +18,7 @@ func TestT058_22_RefusalAsksForATrailerNotAChainedCite(t *testing.T) {
 	}
 	has(t, res.Output, "as a trailer")
 	has(t, res.Output, "the rule checks it")
-	refusal := res.Output[strings.Index(res.Output, "hook error"):]
+	refusal := strings.Join(res.Refusals(), "\n")
 	for _, gone := range []string{"cite part alone", "trajectory cite"} {
 		if strings.Contains(refusal, gone) {
 			t.Fatalf("the refusal still mentions %q:\n%s", gone, refusal)
