@@ -89,11 +89,11 @@ func TestT056_21_ASubagentsRangeIsNotAutoWatchedUnlessOptedIn(t *testing.T) {
 		if on {
 			sess = "s-056-21c-on"
 		}
-		res := runSubagentCommit(t, e, proj, sess)
+		runSubagentCommit(t, e, proj, sess)
 
 		got := strings.Join(e.AllBlockingErrorsFrom(proj, sess, "Stop"), "\n")
-		if !on && (len(autoRows(t, e, proj, sess)) != 0 || got != "" || res.AnySubagentStopBlocked()) {
-			t.Fatalf("off: auto rows %+v, root Stop said %q, sub-agent blocked %v", autoRows(t, e, proj, sess), got, res.AnySubagentStopBlocked())
+		if !on && (len(autoRows(t, e, proj, sess)) != 0 || got != "" || !e.NoSubagentStopBlock(proj, sess)) {
+			t.Fatalf("off: auto rows %+v, root Stop said %q, sub-agent blocked %v", autoRows(t, e, proj, sess), got, !e.NoSubagentStopBlock(proj, sess))
 		}
 		if on && !strings.Contains(got, failedText) {
 			t.Fatalf("on: the root's Stop did not verify the sub-agent's range:\n%s", got)

@@ -111,7 +111,7 @@ func TestT055_07_ASubagentOwesCommitsInItsOwnWorktreeOnly(t *testing.T) {
 	if !wt {
 		t.Fatalf("a sub-agent's own worktree is not a folder of the session: %+v", e.SessionFolders(proj, own))
 	}
-	if !res.AnySubagentStopBlocked() || !strings.Contains(res.Output, "docs/isolated.md") {
+	if !e.SubagentStopBlocked(proj, own, "docs/isolated.md") {
 		t.Fatalf("a sub-agent in its own worktree was not owed a commit for its uncommitted work:\n%s", res.Output)
 	}
 
@@ -119,7 +119,7 @@ func TestT055_07_ASubagentOwesCommitsInItsOwnWorktreeOnly(t *testing.T) {
 	res = e.Run(proj, shared, "delegate here", Turns("root done",
 		harness.Dispatch("d1", "write the doc", write("shared.md"), ""),
 	))
-	if res.AnySubagentStopBlocked() {
+	if !e.NoSubagentStopBlock(proj, shared) {
 		t.Fatalf("a sub-agent in the root's tree was refused for the root's tree:\n%s", res.Output)
 	}
 	if got := strings.Join(e.BlockingErrorsFrom(proj, shared, "Stop"), "\n"); !strings.Contains(got, "docs/shared.md") {

@@ -42,7 +42,7 @@ func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(
 		harness.CommitFile("c1", "docs/release.md", "the steps", "document the release"),
 	))
 	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	if !res.AnySubagentStopBlocked() {
+	if !e.SubagentStopBlocked(proj, sess, "") {
 		t.Fatalf("premise: the sub-agent's uncited commit should be refused at its Stop:\n%s", res.Output)
 	}
 	told := strings.Join(e.SubagentBlockingErrors(proj, sess), "\n")
@@ -123,7 +123,7 @@ func TestT003_75_AStashedUncitedChangeIsNotJudgedUntilItIsCommitted(t *testing.T
 		Bash("w2", "git stash push -u -q"),
 	))
 	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	if res.AnySubagentStopBlocked() {
+	if !e.NoSubagentStopBlock(proj, sess) {
 		t.Fatalf("a sub-agent's stashed change was judged:\n%s", res.Output)
 	}
 	if got := stopRefusals(e, proj, sess); got != "" {

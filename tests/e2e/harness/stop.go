@@ -69,30 +69,26 @@ func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
 // harness honours.
 func Blocked(r Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }
 
-// SubagentStopBlocked reports whether the run's stream shows a sub-agent's Stop
-// refused with a reason starting with the given text. The mock prints each as
-// `SubagentStop blocked (<reason>...`; the refusal reaches the sub-agent, not the
-// root's record, so BlockingErrorsFrom cannot see it.
-func (r Result) SubagentStopBlocked(reason string) bool {
-	return strings.Contains(r.Output, "SubagentStop blocked ("+reason)
-}
-
-// SubagentStopBlockedWith reports whether a sub-agent's Stop was refused with a
-// reason carrying text on the refusal's first line (the refusal now opens with the
-// folder and range, so the text is not at the start): the same message, not any
-// text elsewhere in the output.
-func (r Result) SubagentStopBlockedWith(text string) bool {
-	for _, line := range strings.Split(r.Output, "\n") {
-		if i := strings.Index(line, "SubagentStop blocked ("); i >= 0 && strings.Contains(line[i:], text) {
+// SubagentStopBlocked reports whether a sub-agent of the session was refused at its Stop with a
+// reason containing text ("" for any refusal). It reads the sub-agents' own transcripts, where
+// Claude Code records a SubagentStop refusal (the "Stop hook feedback" turn and its
+// hook_blocking_error), through SubagentBlockingErrors: a refusal counts only if the sub-agent
+// was told it. The run's stream carries no such line.
+func (e *Env) SubagentStopBlocked(projDir, sessionID, text string) bool {
+	e.t.Helper()
+	for _, b := range e.SubagentBlockingErrors(projDir, sessionID) {
+		if strings.Contains(b, text) {
 			return true
 		}
 	}
 	return false
 }
 
-// AnySubagentStopBlocked reports whether any sub-agent's Stop was refused.
-func (r Result) AnySubagentStopBlocked() bool {
-	return strings.Contains(r.Output, "SubagentStop blocked (")
+// NoSubagentStopBlock reports that no sub-agent of the session was refused at its Stop: the strict
+// negative (AnySubagentBlockingErrors), which a refusal recorded without its feedback cannot satisfy.
+func (e *Env) NoSubagentStopBlock(projDir, sessionID string) bool {
+	e.t.Helper()
+	return len(e.AnySubagentBlockingErrors(projDir, sessionID)) == 0
 }
 
 // shippedGates are the plugin's gates that would refuse a package's own setup: the

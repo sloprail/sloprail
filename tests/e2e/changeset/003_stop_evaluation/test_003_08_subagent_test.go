@@ -21,7 +21,7 @@ func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testi
 	res := e.Run(proj, "s-003-08a", "delegate here", Turns("root done",
 		harness.Dispatch("d1", "write the doc", sub, ""),
 	))
-	if res.AnySubagentStopBlocked() {
+	if !e.NoSubagentStopBlock(proj, "s-003-08a") {
 		t.Fatalf("a sub-agent in the session's own tree was judged, and refused, for a commit:\n%s", res.Output)
 	}
 	// The rule did judge the sub-agent's commit — at the root's Stop, again on each
@@ -41,7 +41,7 @@ func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testi
 	res = e2.Run(proj2, "s-003-08b", "delegate into isolation", Turns("root done",
 		harness.Dispatch("d1", "write the doc", sub2, "worktree"),
 	))
-	if !res.SubagentStopBlockedWith("FORBIDDEN text in the changeset") {
+	if !e2.SubagentStopBlocked(proj2, "s-003-08b", "FORBIDDEN text in the changeset") {
 		t.Fatalf("a sub-agent in its own worktree was not judged on its own commit:\n%s", res.Output)
 	}
 }

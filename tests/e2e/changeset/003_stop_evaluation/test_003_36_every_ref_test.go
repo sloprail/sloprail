@@ -60,10 +60,10 @@ func TestT003_36_TheSameInASubagentWorktree(t *testing.T) {
 	res := e.Run(proj, "s-003-36b", "delegate", Turns("root done",
 		harness.Dispatch("d1", "write the docs", sub, "worktree"),
 	))
-	if !res.SubagentStopBlockedWith("(sub-a, from ") {
+	if !e.SubagentStopBlocked(proj, "s-003-36b", "(sub-a, from ") {
 		t.Fatalf("a sub-agent's left branch was not judged at its Stop:\n%s", res.Output)
 	}
-	if !strings.Contains(res.Output, "sub-a") {
+	if !e.SubagentStopBlocked(proj, "s-003-36b", "sub-a") {
 		t.Fatalf("the refusal does not name the branch sub-a:\n%s", res.Output)
 	}
 }

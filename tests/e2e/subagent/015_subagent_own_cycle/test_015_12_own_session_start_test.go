@@ -62,7 +62,7 @@ func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T)
 
 	// Refuse first: the violation in D is judged, and only D.
 	// The refusal names the sub-agent's own worktree and the commit its range starts from.
-	if !res.SubagentStopBlocked("In ") || !strings.Contains(res.Output, "FORBIDDEN in: docs/d.md (file-guard") {
+	if !e.SubagentStopBlocked(proj, "s-015-12", "In ") || !e.SubagentStopBlocked(proj, "s-015-12", "FORBIDDEN in: docs/d.md (file-guard") {
 		t.Fatalf("the sub-agent was not refused for its own violation in D, or was refused for more than D:\n%s", res.Output)
 	}
 	c := e.Git(proj, "rev-parse", "HEAD") // main as the sub-agent's worktree was cut from it
