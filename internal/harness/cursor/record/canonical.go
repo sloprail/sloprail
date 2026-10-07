@@ -64,3 +64,23 @@ func canonicalMessage(raw json.RawMessage) json.RawMessage {
 	}
 	return out
 }
+
+// withRole puts the line's role into the message, where Claude Code and Codex
+// already carry it (`message.role`), so a reader of the canonical shape finds who
+// spoke in one place whatever the harness. A message that already names a role, or
+// is not an object, is returned unchanged.
+func withRole(raw json.RawMessage, role string) json.RawMessage {
+	var msg map[string]json.RawMessage
+	if role == "" || json.Unmarshal(raw, &msg) != nil {
+		return raw
+	}
+	if _, ok := msg["role"]; ok {
+		return raw
+	}
+	msg["role"], _ = json.Marshal(role)
+	out, err := json.Marshal(msg)
+	if err != nil {
+		return raw
+	}
+	return out
+}

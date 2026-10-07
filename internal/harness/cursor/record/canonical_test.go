@@ -67,9 +67,15 @@ func TestShellIsBashAndOtherToolsKeepTheirName(t *testing.T) {
 	assert.Equal(t, "Grep", got[1].Name)
 }
 
-func TestAMessageWithoutToolsIsUntouched(t *testing.T) {
+func TestAMessageWithoutToolsOnlyGainsItsRole(t *testing.T) {
 	line := `{"role":"user","message":{"content":[{"type":"text","text":"hi"}]}}`
 	r, err := Transcripts{}.ParseRecord([]byte(line))
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"content":[{"type":"text","text":"hi"}]}`, string(r.Message))
+	assert.JSONEq(t, `{"role":"user","content":[{"type":"text","text":"hi"}]}`, string(r.Message))
+}
+
+func TestWithRole(t *testing.T) {
+	got := string(withRole([]byte(`{"content":[{"type":"text","text":"hi"}]}`), "user"))
+	assert.Contains(t, got, `"role":"user"`)
+	assert.Equal(t, `{"role":"assistant"}`, string(withRole([]byte(`{"role":"assistant"}`), "user")))
 }
