@@ -19,6 +19,9 @@ for arg in "$@"; do
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
       ;;
   esac
+  # The prompt itself says where the project is (a harness may also hand it over as an argument).
+  tree="$(printf '%s' "$arg" | sed -n 's/.*The project being judged is at \(.*\)\. Paths in the material.*/\1/p' | head -1)"
+  if [ -n "$tree" ] && [ -f "$tree/REQUIRED.md" ]; then ok=yes; fi
   if [ -f "$arg/REQUIRED.md" ]; then ok=yes; fi
 done
 [ -n "$out" ] || exit 0
@@ -33,14 +36,14 @@ exit 0
 func requiredProject(t *testing.T) (*Env, string, string) {
 	t.Helper()
 	e, proj := judgeProject(t, verdictPass)
-	e.InstallShim("claude", requiredFileJudge)
+	e.InstallJudgeAgent(requiredFileJudge)
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 
 // judgeInTree is the turn an agent takes to have the judges asked about the branch a worktree
 // holds: `sr-checks run` from that worktree, over the branch's own commits.
 func judgeInTree(wt, base string) harness.Turn {
-	return Bash("j-"+filepath.Base(base), "cd "+wt+" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
+	return Bash("j-"+filepath.Base(base), "cd "+wt+" && "+harness.ShellEnv()+"sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
 }
 
 // commitOnX: from the coordinator's own checkout, make a commit on a new branch, then go

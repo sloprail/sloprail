@@ -241,6 +241,10 @@ func mustDriver() Driver {
 	return d
 }
 
+// ShellEnv is the environment assignments (each followed by a space, or "") a scenario's shell
+// command puts before sr-checks to be seen as run by the agent under the selected harness.
+func ShellEnv() string { return mustDriver().ShellEnv() }
+
 // HasCap reports whether the selected harness declares the capability, without skipping.
 func HasCap(t testing.TB, cap string) bool {
 	t.Helper()
