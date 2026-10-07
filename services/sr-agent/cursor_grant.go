@@ -40,34 +40,52 @@ import (
 
 // cursorGrantEnv builds the private config dir for a run and the env that points
 // cursor-agent at it. cleanup removes the dir.
-func cursorGrantEnv(g accessGrant) ([]string, func(), error) {
+func cursorGrantEnv(g accessGrant) (env, args []string, cleanup func(), err error) {
 	allow, deny, err := cursorRules(g)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	dir, err := os.MkdirTemp("", "sr-agent-cursor-*")
 	if err != nil {
-		return nil, nil, fmt.Errorf("making the permission config dir: %w", err)
+		return nil, nil, nil, fmt.Errorf("making the permission config dir: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
+	cleanup = func() { _ = os.RemoveAll(dir) }
 	cfg, _ := json.Marshal(map[string]any{
 		"permissions": map[string]any{"allow": allow, "deny": deny},
 	})
 	if err := os.WriteFile(filepath.Join(dir, "cli-config.json"), cfg, 0o600); err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("writing the permission config: %w", err)
+		return nil, nil, nil, fmt.Errorf("writing the permission config: %w", err)
 	}
 	// The second layer: the engine's own preToolUse hook, which fires inside the judge
 	// too, reads this and refuses a write outside the grant (cursor.JudgeGrant).
 	jg := cursor.JudgeGrant{Writable: []string{}, Readonly: []string{}}
+	readonlyProject := false
 	for _, d := range g.Dirs {
 		if d.Mode == dirReadonly {
 			jg.Readonly = append(jg.Readonly, d.Path)
+			readonlyProject = true
 		} else {
 			jg.Writable = append(jg.Writable, d.Path)
 		}
 	}
-	return []string{"CURSOR_CONFIG_DIR=" + dir, jg.Encode()}, cleanup, nil
+	env = []string{"CURSOR_CONFIG_DIR=" + dir, jg.Encode()}
+	if readonlyProject {
+		// A judge reads the project (readonly) by absolute path; it does not need it as
+		// its workspace, and the workspace is where cursor-agent discovers project hooks.
+		// MEASURED (cursor-agent 2026.10.01, 2026-10-07): with --workspace on an empty
+		// scratch dir, a file of a project that has .cursor/hooks.json was read by
+		// absolute path and none of that project's hooks fired (control, project as
+		// workspace: all fired). So a judge runs in an empty workspace and never runs
+		// the user's project hooks.
+		ws := filepath.Join(dir, "workspace")
+		if err := os.Mkdir(ws, 0o700); err != nil {
+			cleanup()
+			return nil, nil, nil, fmt.Errorf("making the judge workspace: %w", err)
+		}
+		args = []string{"--workspace", ws}
+	}
+	return env, args, cleanup, nil
 }
 
 // cursorRules turns an accessGrant into Cursor's allow and deny tokens.

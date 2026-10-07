@@ -88,11 +88,12 @@ func runVerified(
 		return err
 	}
 	harnessArgs = append(harnessArgs, grantArgs...)
-	grantEnv, cleanupGrant, err := harnessGrantEnv(spec, accessGrant{Dirs: dirs, Tools: allowedTools, DenyTools: disallowedTools})
+	grantEnv, envArgs, cleanupGrant, err := harnessGrantEnv(spec, accessGrant{Dirs: dirs, Tools: allowedTools, DenyTools: disallowedTools})
 	if err != nil {
 		return err
 	}
 	defer cleanupGrant()
+	harnessArgs = append(harnessArgs, envArgs...)
 
 	// The path is appended to the caller's prompt rather than replacing it: the
 	// caller's question is still the question, and this only says where the

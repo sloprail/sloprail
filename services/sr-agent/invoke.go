@@ -389,15 +389,15 @@ func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
 // harnessGrantEnv is harnessGrant for a harness that takes its permissions from a
 // configuration it reads (harnessSpec.grantEnv). Its error is what harnessGrant
 // would have refused. cleanup is never nil.
-func harnessGrantEnv(spec harnessSpec, g accessGrant) ([]string, func(), error) {
+func harnessGrantEnv(spec harnessSpec, g accessGrant) (env, args []string, cleanup func(), err error) {
 	if spec.grantEnv == nil {
-		return nil, func() {}, nil
+		return nil, nil, func() {}, nil
 	}
-	env, cleanup, err := spec.grantEnv(g)
+	env, args, cleanup, err = spec.grantEnv(g)
 	if cleanup == nil {
 		cleanup = func() {}
 	}
-	return env, cleanup, err
+	return env, args, cleanup, err
 }
 
 // CheckHarnessArgs reports a harness-args flag given while a different harness

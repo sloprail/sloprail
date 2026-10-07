@@ -118,9 +118,9 @@ type harnessSpec struct {
 
 	// grantEnv is grant for a harness whose permissions are not command-line flags
 	// but a configuration the process reads: it returns the environment that points
-	// the harness at one made for this run, and a cleanup that removes it. Used by
+	// the harness at one made for this run, any arguments that belong with it, and a cleanup that removes it. Used by
 	// Cursor (see cursor_grant.go). nil when the harness has none.
-	grantEnv func(g accessGrant) (env []string, cleanup func(), err error)
+	grantEnv func(g accessGrant) (env, args []string, cleanup func(), err error)
 }
 
 // claudeCodeSpec is Claude Code.
