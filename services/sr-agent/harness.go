@@ -566,6 +566,22 @@ func supportedNames() []string {
 //
 // The environment is read through a lookup so a test can supply one directly.
 func DetectHarness(getenv func(string) string) (harnessSpec, error) {
+	// SLOPRAIL_HARNESS is how a plugin's hook wrapper names its harness outright
+	// (internal/harness.SelectEnv): the hook runs without the markers a harness sets
+	// on its own shell commands (CURSOR_AGENT, CLAUDECODE), so detection alone would
+	// find nothing and a judge launched from that hook could not start. The engine
+	// spells Claude Code "claudecode"; this binary spells it "claude-code"; both are accepted.
+	if named := getenv("SLOPRAIL_HARNESS"); named != "" {
+		if named == "claudecode" {
+			named = string(ClaudeCode)
+		}
+		spec, ok := lookupSpec(Harness(named))
+		if !ok {
+			return harnessSpec{}, fmt.Errorf("%w: SLOPRAIL_HARNESS=%q (supported: %s)",
+				ErrUnknownHarness, named, strings.Join(supportedNames(), ", "))
+		}
+		return spec, nil
+	}
 	for _, spec := range harnesses {
 		if spec.detect(getenv) {
 			return spec, nil
