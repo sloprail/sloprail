@@ -39,6 +39,7 @@ printf 'predicate: no anchor here\nwhy: w\nextra: 1\n' > spec/demo/invariants/a.
 commit bad-shape
 if run; then dump "1: a malformed invariant passed"; fi
 refused "do not match spec.cue" "spec/demo/invariants/a.yaml" "#Invariant.predicate" || dump "1: no shape refusal naming spec.cue and the predicate"
+jq -es 'any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="refused" and (.reason|contains("Spec files that do not match spec.cue")))' < "$SR_EVENTS_FILE" >/dev/null || dump "1: the refusal is not the shape check's"
 [ ! -s "$JUDGE_LOG" ] || dump "1: the judge ran on a bucket the shape check refused"
 printf 'predicate: A {@fld:demo:Thing.on} thing holds.\nwhy: w\n' > spec/demo/invariants/a.yaml
 commit fixed-shape
@@ -52,6 +53,7 @@ printf 'predicate: A {@ent:demo:Missing} holds.\nwhy: w\n' > spec/demo/invariant
 commit bad-mention
 if run; then dump "2: an unresolved mention passed"; fi
 refused "do not resolve" "spec/demo/entities/Missing.yaml" || dump "2: no refusal naming the missing entity file"
+jq -es 'any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="refused" and (.reason|contains("Spec mentions that do not resolve")))' < "$SR_EVENTS_FILE" >/dev/null || dump "2: the refusal is not the mention check's"
 [ ! -s "$JUDGE_LOG" ] || dump "2: the judge ran on a bucket the mention check refused"
 printf 'doc: A missing thing, now present.\nfields:\n  - name: on\n    type: bool\n' > spec/demo/entities/Missing.yaml
 commit entity-added
@@ -65,6 +67,7 @@ printf 'predicate: A {@fld:demo:Thing.on} thing refuses PreToolUse.\nwhy: w\n' >
 commit harness-word
 if run; then dump "3: an invariant naming a harness event passed"; fi
 refused "MOCK: names the harness event PreToolUse" || dump "3: no refusal carrying the judge's reasoning"
+jq -es 'any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="refused" and (.reason|contains("MOCK: names the harness event PreToolUse")))' < "$SR_EVENTS_FILE" >/dev/null || dump "3: the refusal is not the judge's"
 printf 'predicate: A {@fld:demo:Thing.on} thing refuses an action before it happens.\nwhy: w\n' > spec/demo/invariants/c.yaml
 commit neutral
 run || dump "3: the neutral rewording was refused"
