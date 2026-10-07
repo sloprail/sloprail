@@ -2,19 +2,19 @@
   "version": 1,
   "hooks": {
     "sessionStart": [
-      { "command": "\"${CURSOR_PLUGIN_ROOT:-.}/hooks/sr-session-hook-cursor.sh\" start", "timeout": 3600 }
+      { "command": "./hooks/sr-session-hook-cursor.sh start", "timeout": 3600 }
     ],
     "preToolUse": [
-      { "command": "\"${CURSOR_PLUGIN_ROOT:-.}/hooks/sr-session-hook-cursor.sh\" pre-tool", "timeout": 3600 }
+      { "command": "./hooks/sr-session-hook-cursor.sh pre-tool", "timeout": 3600 }
     ],
     "stop": [
-      { "command": "\"${CURSOR_PLUGIN_ROOT:-.}/hooks/sr-session-hook-cursor.sh\" stop", "timeout": 3600 }
+      { "command": "./hooks/sr-session-hook-cursor.sh stop", "timeout": 3600 }
     ],
     "subagentStart": [
-      { "command": "\"${CURSOR_PLUGIN_ROOT:-.}/hooks/sr-session-hook-cursor.sh\" subagent-start", "timeout": 60 }
+      { "command": "./hooks/sr-session-hook-cursor.sh subagent-start", "timeout": 60 }
     ],
     "subagentStop": [
-      { "command": "\"${CURSOR_PLUGIN_ROOT:-.}/hooks/sr-session-hook-cursor.sh\" subagent-stop", "timeout": 3600 }
+      { "command": "./hooks/sr-session-hook-cursor.sh subagent-stop", "timeout": 3600 }
     ]
   }
 }
