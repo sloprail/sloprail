@@ -68,3 +68,19 @@ func TestLocateRolloutAndConfigDir(t *testing.T) {
 	assert.Equal(t, want, FindRollout(home, "abc-123"))
 	assert.Empty(t, FindRollout(home, "nope"))
 }
+
+// A sub-agent's rollout opens on a session_meta naming the ROOT session in session_id and
+// its own thread in id (recorded: harness-mocks codex-mock nested-subagents). The record's
+// origin is the thread's own, or the sub-agent would share its parent's identity and state.
+func TestParseRecord_SessionMetaOriginIsTheThreadsOwnID(t *testing.T) {
+	root, err := Transcripts{}.ParseRecord([]byte(
+		`{"type":"session_meta","payload":{"id":"root-1","session_id":"root-1","thread_source":"user"}}`))
+	require.NoError(t, err)
+	sub, err := Transcripts{}.ParseRecord([]byte(
+		`{"type":"session_meta","payload":{"id":"sub-1","session_id":"root-1","parent_thread_id":"root-1","thread_source":"subagent"}}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "root-1", root.UUID)
+	assert.Equal(t, "sub-1", sub.UUID, "the sub-agent's origin is its own thread, not the root session")
+	assert.Equal(t, "sub-1", sub.SessionID)
+}

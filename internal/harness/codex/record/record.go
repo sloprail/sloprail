@@ -92,7 +92,10 @@ func (Transcripts) ParseRecord(raw []byte) (harness.Record, error) {
 
 	switch l.Type {
 	case "session_meta":
-		id := firstNonEmpty(p.SessionID, p.ID)
+		// The thread's OWN id: a sub-agent's rollout names the root session in session_id
+		// (recorded: harness-mocks codex-mock nested-subagents), so keying on that would
+		// give the sub-agent its parent's identity and state.
+		id := firstNonEmpty(p.ID, p.SessionID)
 		rec.UUID, rec.ParentUUID, rec.SessionID, rec.Cwd = id, nil, id, p.Cwd
 	case "turn_context":
 		rec.Cwd = p.Cwd
