@@ -70,17 +70,21 @@ var codexSpec = harnessSpec{
 		return false
 	},
 
-	// The size aliases name OpenAI's current coding models. The names are the ones
-	// harness-mocks' recordings ran (gpt-5.6-luna) and the docs' family names; as with
-	// Claude's, a model a Codex release retires is refused by codex, loudly, rather
-	// than substituted.
+	// The size aliases name models that RUN. Checked on codex 0.160.1 with a ChatGPT
+	// login (the account type `codex login` gives a person): the account's model list
+	// (models_cache.json) offers gpt-6-luna (fast), gpt-6.1-sol (workhorse) and
+	// gpt-6-astra (frontier), and a `codex exec -m <name>` of each answered. The
+	// earlier guesses gpt-5.6 and gpt-5.6-pro are REFUSED there ("not supported when
+	// using Codex with a ChatGPT account"); gpt-5.6-luna ran but is "older". An API-key
+	// account's list differs, so a caller pins a concrete name with --model; a model
+	// a Codex release retires is refused by codex, loudly, rather than substituted.
 	sizes: map[SizeAlias]string{
-		SizeXS:  "gpt-5.6-luna",
-		SizeSM:  "gpt-5.6-luna",
-		SizeMD:  "gpt-5.6",
-		SizeLG:  "gpt-5.6",
-		SizeXL:  "gpt-5.6-pro",
-		SizeXXL: "gpt-5.6-pro",
+		SizeXS:  "gpt-6-luna",
+		SizeSM:  "gpt-6-luna",
+		SizeMD:  "gpt-6.1-sol",
+		SizeLG:  "gpt-6.1-sol",
+		SizeXL:  "gpt-6-astra",
+		SizeXXL: "gpt-6-astra",
 	},
 
 	// A concrete name is one of OpenAI's when it carries their prefix; the harness

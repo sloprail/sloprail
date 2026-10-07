@@ -23,9 +23,9 @@ func TestCodexSpec_IsDetectedFromWhatCodexSetsAndBeatsAnInheritedClaudeMarker(t 
 }
 
 func TestCodexSpec_BuildsAnExecInvocationThatLoadsNoHooks(t *testing.T) {
-	inv := BuildInvocation(codexSpec, "gpt-5.6", nil, "question", envOf(nil))
+	inv := BuildInvocation(codexSpec, "gpt-6.1-sol", nil, "question", envOf(nil))
 	assert.Equal(t, "codex", inv.Binary)
-	assert.Equal(t, []string{"exec", "-m", "gpt-5.6",
+	assert.Equal(t, []string{"exec", "-m", "gpt-6.1-sol",
 		"--ignore-user-config", "--disable", "hooks", "--ephemeral", "--skip-git-repo-check",
 		"--", "question"}, inv.Args)
 	assert.Empty(t, inv.Stdin)
@@ -36,7 +36,7 @@ func TestCodexSpec_ALargePromptGoesOnStdin(t *testing.T) {
 	for i := range big {
 		big[i] = 'x'
 	}
-	inv := BuildInvocation(codexSpec, "gpt-5.6", nil, string(big), envOf(nil))
+	inv := BuildInvocation(codexSpec, "gpt-6.1-sol", nil, string(big), envOf(nil))
 	assert.Equal(t, string(big), inv.Stdin)
 	assert.Equal(t, "-", inv.Args[len(inv.Args)-1], "codex exec reads the prompt from stdin given -")
 }
