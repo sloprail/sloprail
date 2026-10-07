@@ -32,7 +32,7 @@ func TestT001_32_AJudgeOutageIsReportedOnceWithItsCause(t *testing.T) {
 	base := e.CommitAll(proj, "the rules")
 	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
 	e.CommitAll(proj, "add a")
-	e.InstallShim("claude", usageLimitClaude)
+	e.InstallJudgeAgent(usageLimitClaude)
 	env := append(e.SessionEnv(sessionID), "LEDGER="+ledger, "SLOPRAIL_JUDGE_RETRY_BACKOFF=0s")
 	run := func() (int, string) {
 		r := quiet(e.CLIDirectEnv(proj, env, "sr-checks", "run", "--base", base, "--head", "HEAD"))

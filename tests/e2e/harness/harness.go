@@ -484,6 +484,14 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
+// InstallJudgeAgent is InstallShim for the binary the judge runs under this harness (`claude`,
+// `codex`, `cursor-agent`): a test's own script standing in for the judge's model.
+func (e *Env) InstallJudgeAgent(script string) {
+	e.t.Helper()
+	name, _ := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimPlain})
+	e.InstallShim(name, script)
+}
+
 // JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
 // judge's agent launched so that the project's and plugins' hooks do not run in it.
 func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }

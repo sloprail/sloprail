@@ -30,7 +30,7 @@ func TestT003_28_AJudgePromptBeyondArgMaxIsJudged(t *testing.T) {
 	// The claude stand-in reads its prompt from STDIN (it is given none as an
 	// argument), records how large the prompt and its own argv were, and answers.
 	record := filepath.Join(t.TempDir(), "claude-record")
-	e.InstallShim("claude", `#!/bin/sh
+	e.InstallJudgeAgent(`#!/bin/sh
 tmp="$(mktemp)"
 cat > "$tmp"
 argv=0
