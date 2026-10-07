@@ -161,17 +161,22 @@ func (p HookInput) FileEffects() []FileEffect { return p.Files }
 // gitrepo.Root), and a hook invoked below the top of the tree would otherwise make
 // the two phases report different spellings of one file, so a rule binding
 // PreFileCreate and PostFileCreate with a single matcher would match on one and not
-// the other. An unresolvable root yields "", which filemod reads as "no workspace
-// named" and leaves the path as the harness spelled it.
+// the other.
+//
+// A directory outside any repository is its own workspace (sessionpath.WorkspaceAnchor
+// says the same): a harness that reports ABSOLUTE paths (Cursor does, for every
+// write) would otherwise leave them absolute in a project without a repository, and
+// no rule bound to a workspace-relative path would ever match. Only a payload that
+// names no cwd yields "", which filemod reads as "no workspace named" and leaves
+// the path as the harness spelled it.
 func (p HookInput) Root() string {
 	if p.Cwd == "" {
 		return ""
 	}
-	root, err := gitrepo.Root(p.Cwd)
-	if err != nil {
-		return ""
+	if root, err := gitrepo.Root(p.Cwd); err == nil && root != "" {
+		return root
 	}
-	return root
+	return p.Cwd
 }
 
 // HeadContent implements filemod.HeadReader: a workspace-relative file's bytes in
