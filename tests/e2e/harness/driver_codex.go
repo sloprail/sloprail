@@ -41,8 +41,10 @@ func (codexDriver) Name() string { return "codex" }
 // Caps: Codex has no Skill tool, no ask-user-question in exec, no worktree hooks
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
+func (codexDriver) SkillLoadTool() string { return "Bash" }
+
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText}
+	return []string{CapSubagents, CapSubagentLifecycleHooks, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -100,6 +102,9 @@ func codexUpdateFile(path, oldText, newText string) string {
 	return b.String()
 }
 
+// codexWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
+const codexWorkspaceMark = "@@WORKSPACE@@"
+
 func (codexDriver) unsupported(a Action, why string) error {
 	return &UnsupportedError{Harness: "codex", Step: fmt.Sprintf("%s (kind %d): %s", a.ID, a.Kind, why)}
 }
@@ -146,7 +151,9 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 			{suffix: "w", spawnedBy: a.ID},
 		}, nil
 	case ActSkill:
-		return nil, c.unsupported(a, "Codex has no skill tool")
+		// Codex has no skill tool: reading the skill's SKILL.md through the shell is how it loads one.
+		path := codexWorkspaceMark + "/" + harness.ProjectSkillDirs(codexharness.New())[0] + "/" + a.Text + "/SKILL.md"
+		return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + path}))}}, nil
 	case ActToolUse:
 		if a.Background {
 			if a.Tool != "Bash" {
@@ -218,6 +225,15 @@ fi
 				continue
 			}
 			line = injectCodexMarker(line, t.act.ID, marker)
+			if strings.Contains(line, codexWorkspaceMark) {
+				// the line names a path in the workspace: the script runs there, so $PWD is its root
+				fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  printf '%%s\n' %s | sed "s|%s|$PWD|g"
+  exit 0
+fi
+`, marker, shQuote(line), codexWorkspaceMark)
+				continue
+			}
 			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
   printf '%%s\n' %s
   exit 0

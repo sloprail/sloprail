@@ -23,8 +23,10 @@ type claudeDriver struct{}
 
 func (claudeDriver) Name() string { return "claude" }
 
+func (claudeDriver) SkillLoadTool() string { return "Skill" }
+
 func (claudeDriver) Caps() []string {
-	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
+	return []string{CapSubagents, CapSubagentLifecycleHooks, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
 		CapSeveralCallsInOneEntry, CapDispatchWithoutCallID, CapCompactionNamesParent,
 		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapProseWithCallInOneEntry}
 }

@@ -115,8 +115,8 @@ func TestT031_07_EventsFlagNarrows(t *testing.T) {
 		if got := eventsOf(both); len(got) != 2 {
 			t.Fatalf("unfiltered, the entry should carry both a command and a tag, got %v", got)
 		}
-		if bothTag.Line != both.Line {
-			t.Fatalf("the command and the tag should be on the SAME entry (line %d vs %d)", both.Line, bothTag.Line)
+		if bothTag.UUID != both.UUID {
+			t.Fatalf("the command and the tag should be on the SAME entry (%s vs %s)", both.UUID, bothTag.UUID)
 		}
 	} else {
 		if got := eventsOf(both); len(got) != 1 {
@@ -125,8 +125,8 @@ func TestT031_07_EventsFlagNarrows(t *testing.T) {
 		if got := eventsOf(bothTag); len(got) != 1 {
 			t.Fatalf("the message's entry should carry just the tag, got %v", got)
 		}
-		if bothTag.Line == both.Line {
-			t.Fatalf("the record writes the prose and the call as two entries, but both events are on line %d", both.Line)
+		if bothTag.UUID == both.UUID {
+			t.Fatalf("the record writes the prose and the call as two entries, but both events are on entry %s", both.UUID)
 		}
 	}
 

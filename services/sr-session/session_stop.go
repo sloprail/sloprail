@@ -60,8 +60,15 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the payload names no working directory, so there is no folder to judge")
 			return nil
 		}
+		counter, counted := storelessRefusalCounter(p)
+		if counted && stopHookBlockCapReached(cmd, counter, p) {
+			return nil
+		}
 		if reason := natureStopDispatch(cmd, p); reason != "" {
-			note := fmt.Sprintf("\n(sloprail's session state could not be opened, so this Stop was judged without it and the refusal-loop cap does not apply: %v)", err)
+			if counted {
+				countStopRefusal(cmd, counter)
+			}
+			note := fmt.Sprintf("\n(sloprail's session state could not be opened, so this Stop was judged without it: %v)", err)
 			if berr := block(cmd, p, reason+note); berr != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", berr)
 			}

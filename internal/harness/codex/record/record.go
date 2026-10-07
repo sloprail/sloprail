@@ -57,10 +57,13 @@ import (
 type Transcripts struct{}
 
 type line struct {
-	Timestamp string          `json:"timestamp"`
-	Ordinal   int             `json:"ordinal"`
-	Type      string          `json:"type"`
-	Payload   json.RawMessage `json:"payload"`
+	Timestamp string `json:"timestamp"`
+	// Ordinal is the line's position in its thread, which Codex writes on every
+	// rollout line (recorded: every harness-mocks codex-mock run); a pointer so a
+	// line without one is not mistaken for position 0.
+	Ordinal *int            `json:"ordinal"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 type payload struct {
@@ -158,7 +161,7 @@ func eventMsg(rec harness.Record, l line, p payload) harness.Record {
 }
 
 func responseItem(rec harness.Record, l line, p payload) harness.Record {
-	rec.UUID = firstNonEmpty(p.ID, p.CallID, ordinalID(l))
+	rec.UUID = firstNonEmpty(p.ID, ordinalID(l))
 	switch p.Type {
 	case "message":
 		text := inputText(p.Content)
@@ -343,7 +346,15 @@ func inputText(raw json.RawMessage) string {
 	return strings.Join(out, "")
 }
 
-func ordinalID(l line) string { return fmt.Sprintf("ordinal-%d", l.Ordinal) }
+// ordinalID names an item that carries no id of its own by its line's ordinal, which is
+// unique within a record. The call id is no identity of an entry: a tool call and its
+// output share it. A line with neither is no addressable entry, so it gets no uuid.
+func ordinalID(l line) string {
+	if l.Ordinal == nil {
+		return ""
+	}
+	return fmt.Sprintf("ordinal-%d", *l.Ordinal)
+}
 
 func firstNonEmpty(ss ...string) string {
 	for _, s := range ss {
