@@ -397,6 +397,15 @@ JUDGE_VERDICT_EOF
 fi
 exit 0
 `
+	case JudgeShimScript:
+		script = s.Body
+	case JudgeShimUsageLimit:
+		// claude reports a usage limit on stdout, status 1.
+		script = `#!/bin/sh
+echo call >>"$LEDGER"
+echo "Claude AI usage limit reached|1760000000"
+exit 1
+`
 	case JudgeShimSlow:
 		script = `#!/bin/sh
 out=""
