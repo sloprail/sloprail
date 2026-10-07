@@ -37,7 +37,7 @@ func realpath(t *testing.T, p string) string {
 func TestDotDir_FromSubdirectoryFindsTheProjectRoot(t *testing.T) {
 	repo := initRepo(t)
 	sub := filepath.Join(repo, "memories", "tasks", "distribution")
-	mkdirs(t, filepath.Join(repo, DotDirName), filepath.Join(repo, claudeDirName), sub)
+	mkdirs(t, filepath.Join(repo, DotDirName), filepath.Join(repo, ".claude"), sub)
 
 	root := realpath(t, repo)
 	assert.Equal(t, filepath.Join(root, DotDirName), dotDir(sub),
@@ -62,7 +62,7 @@ func TestDotDir_NearestWins(t *testing.T) {
 // user's own ~/.claude) is not this project's settings.
 func TestProjectDir_StopsAtTheRepositoryRoot(t *testing.T) {
 	outer := t.TempDir()
-	mkdirs(t, filepath.Join(outer, claudeDirName))
+	mkdirs(t, filepath.Join(outer, ".claude"))
 	repo := filepath.Join(outer, "repo")
 	mkdirs(t, repo)
 	runGit(t, repo, "init", "--initial-branch=main")

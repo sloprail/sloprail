@@ -129,6 +129,23 @@ type JudgeGate interface {
 	JudgeRefusal(in HookInput, getenv func(string) string) string
 }
 
+// ToolResultRecorder is what a Harness MAY implement when its own session record
+// holds no tool results: the engine's post-tool hook hands it each call's outcome
+// (HookInput.Result) to keep, and its Transcripts' RecordOpener merges them back into
+// the record the engine reads. in.Event names the hook.
+type ToolResultRecorder interface {
+	RecordToolResult(in HookInput) error
+}
+
+// HookDir is what a Harness MAY implement when its hooks do not run where the agent's
+// commands do (Cursor runs a plugin's hook from the plugin's directory): the directory
+// a pending command's relative paths are resolved against, "" when the hook already runs
+// there. The engine's pre-tool hook works from it, so `> notes.md` names the file the
+// command will write and not one beside the plugin.
+type HookDir interface {
+	CommandDir(in HookInput) string
+}
+
 // CurrentTranscriptLocator is what a Harness MAY implement so a tool the agent runs
 // (`cite` from a Bash call, the cite-before-commit gate) finds the CURRENT session's
 // own transcript from its environment, where Claude Code's logic (CLAUDE_CODE_SESSION_ID

@@ -32,15 +32,34 @@ One Claude Code session, one prompt: make every capability in [`harness-mocks`](
 
 ## Install
 
+sloprail is installed per project: run these from the project's root.
+
+Claude Code:
+
 ```
-/plugin marketplace add sloprail/sloprail
-/plugin install sloprail@sloprail-marketplace
+claude plugin marketplace add sloprail/sloprail --scope project
+claude plugin install sloprail@sloprail-marketplace --scope project
 ```
 
-Pick the project scope. The first session after that installs the `sr*`
+Codex (then enable the plugin in the project's `.codex/config.toml`, and trust its hooks with `sr-session codex-trust`):
+
+```
+codex plugin marketplace add sloprail/sloprail
+codex plugin add sloprail@sloprail-marketplace
+```
+
+Cursor (plugins are per user; this also installs the binaries):
+
+```
+curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh -s -- --harness cursor
+```
+
+The first session after that installs the `sr*`
 binaries the hooks call, once: the release matching the plugin's version,
 checksum-verified, into `~/.local/bin`, and says so. From then on every tool
 call and turn-end runs through sloprail — you don't run anything by hand.
+[Install](https://sloprail.com/docs/getting-started/install/) has each
+harness's verification step and what differs between them.
 
 <details>
 <summary>Rather install the binaries yourself?</summary>

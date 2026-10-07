@@ -10,8 +10,7 @@ git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 BASE=$(git rev-parse HEAD)
 # one agent run with no turn sets up the plugin (config dir and plugin cache) for sr-checks here
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
-export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
-export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
+while IFS= read -r kv; do export "$kv"; done < <(echo "$SETUP" | jq -er ".env[]")
 : > "$SR_EVENTS_FILE"
 
 # a structure declaration one level too high is committed

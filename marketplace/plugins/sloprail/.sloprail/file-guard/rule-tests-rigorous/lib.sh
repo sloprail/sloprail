@@ -126,16 +126,19 @@ root_abs() {
   if [ -n "$1" ]; then printf '%s/%s' "$SR_TREE" "$1"; else printf '%s' "$SR_TREE"; fi
 }
 
-# plugin_manifest <tree-relative root> -> the absolute path of the nearest `.claude-plugin/plugin.json` at or
+# plugin_manifest <tree-relative root> -> the absolute path of the nearest plugin.json (under .claude-plugin,
+# .codex-plugin or .cursor-plugin; keep in step with internal/harness/pluginmanifest.go) at or
 # above the dir that holds the `.sloprail` (up to the tree's root); nothing for a rule that lives in the project.
 plugin_manifest() {
-  local d
+  local d m
   d="$(root_abs "$1")"
   while :; do
-    if [ -f "$d/.claude-plugin/plugin.json" ]; then
-      printf '%s\n' "$d/.claude-plugin/plugin.json"
-      return 0
-    fi
+    for m in .claude-plugin .codex-plugin .cursor-plugin; do
+      if [ -f "$d/$m/plugin.json" ]; then
+        printf '%s\n' "$d/$m/plugin.json"
+        return 0
+      fi
+    done
     [ "$d" = "$SR_TREE" ] && return 0
     case "$d" in "$SR_TREE"/*) ;; *) return 0 ;; esac
     d="$(dirname "$d")"

@@ -47,7 +47,7 @@ The output is JSON on stdout:
                       prints subjects, one payload per subject, from running that script.
 
 Nothing is run and nothing is recorded. Where the session cannot be found from the environment
-(no CLAUDE_CODE_SESSION_ID), quotes are not resolved.`,
+(no harness session identity), quotes are not resolved.`,
 		Args: cobra.NoArgs,
 		RunE: runChangeset,
 	}

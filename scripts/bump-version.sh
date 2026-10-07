@@ -34,7 +34,8 @@ esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
-plugin_jsons=$(find "$root/marketplace/plugins" -maxdepth 3 -name plugin.json \( -path '*/.claude-plugin/*' -o -path '*/.codex-plugin/*' -o -path '*/.cursor-plugin/*' \))
+. "$root/scripts/plugin-manifest-dirs.sh"
+plugin_jsons=$(plugin_manifests "$root")
 marketplace_json="$root/.claude-plugin/marketplace.json"
 
 for f in $plugin_jsons; do
