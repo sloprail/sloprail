@@ -78,6 +78,10 @@ func launchBackground(t *testing.T, record, agent string) {
 }
 
 func TestT002_09_ARunningBackgroundSubagentsFolderIsNamedNotRefusedAndOwedOnceItStops(t *testing.T) {
+	// The step this harness cannot take: launching a sub-agent in the background and having its
+	// record show the launch and the end (an Agent call with run_in_background, a task
+	// notification). No recorded transcript of this harness holds that shape.
+	harness.RequireCap(t, harness.CapBackgroundTasks)
 	const sess = "s-002-09"
 	e, proj, other, record, agent := busyFolder(t, sess)
 
