@@ -161,22 +161,16 @@ func ToolUseJSON(id, name, inputJSON string) Turn {
 // toolUseResultJSON is a raw JSON value (an object, a string — whatever the artifact
 // is), placed verbatim under `toolUseResult`.
 func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJSON string) (Turn, Turn) {
+	return toolUseWithResultRaw(id, name, inputObject(name, input), toolUseResultJSON)
+}
+
+// toolUseWithResultRaw is ToolUseWithResult with the input already a JSON object.
+func toolUseWithResultRaw(id, name, inputJSON, toolUseResultJSON string) (Turn, Turn) {
 	// The tool_use, with a top-level `id` as the marker anchor so the block's own
 	// `id` stays clean and equal to `id`.
-	var ib strings.Builder
-	ib.WriteByte('{')
-	first := true
-	for k, v := range input {
-		if !first {
-			ib.WriteByte(',')
-		}
-		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
-	}
-	ib.WriteByte('}')
 	use := Turn{jsonl: fmt.Sprintf(
 		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		id+"#u", "e2e-turn-"+id+"u", id, name, ib.String())}
+		id+"#u", "e2e-turn-"+id+"u", id, name, inputJSON)}
 	// The artifact record: a user tool_result for the same id, carrying the
 	// `toolUseResult`. Its top-level `id` is the marker anchor; `tool_use_id` stays
 	// clean and equal to `id` so it correlates to the tool_use above.
@@ -265,11 +259,16 @@ func AnswerQuestion(id string, qa ...[2]string) Turn {
 // so an answer without its question cannot show that an answer is kept out of
 // the tool-output pool because it is the user's words.
 //
-// The mock does not implement AskUserQuestion and answers the tool_use with its
-// own error result; the answer envelope follows it for the same id, the way the
-// harness writes the person's selection.
+// The tool_use carries the input real Claude Code sends (a questions array with
+// options), which the mock models; it has no user to ask, so it answers the call
+// with its own error result, and the answer envelope follows it for the same id,
+// the way the harness writes the person's selection. The harness runs the mock
+// with a permission host (--permission-prompt-tool stdio), which is what offers
+// AskUserQuestion to a non-interactive run.
 func AskUserQuestion(id, question, answer string) (Turn, Turn) {
-	use, _ := ToolUseWithResult(id, "AskUserQuestion", map[string]string{"question": question}, "null")
+	input := fmt.Sprintf(`{"questions":[{"question":%s,"header":"Question","multiSelect":false,"options":[{"label":%s,"description":%s},{"label":"other","description":"another answer"}]}]}`,
+		jsonStr(question), jsonStr(answer), jsonStr(answer))
+	use, _ := toolUseWithResultRaw(id, "AskUserQuestion", input, "null")
 	return use, AnswerQuestion(id, [2]string{question, answer})
 }
 
@@ -491,6 +490,12 @@ fi
 // uuid and an explicit null parent — and inventing a plausible parent chain
 // here would be this file asserting a shape it does not maintain.
 func toolUse(id, name string, input map[string]string) string {
+	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, id, name, inputObject(name, input))
+}
+
+// inputObject is a tool's input as a JSON object, each value typed by inputValue.
+func inputObject(name string, input map[string]string) string {
 	var ib strings.Builder
 	ib.WriteByte('{')
 	first := true
@@ -502,8 +507,7 @@ func toolUse(id, name string, input map[string]string) string {
 		fmt.Fprintf(&ib, "%q:%s", k, inputValue(name, k, v))
 	}
 	ib.WriteByte('}')
-	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		"e2e-turn-"+id, id, name, ib.String())
+	return ib.String()
 }
 
 // typedInputs lists, for the tools the mock models, the inputs real Claude Code

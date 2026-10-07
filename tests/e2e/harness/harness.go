@@ -2871,6 +2871,9 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
+		// A permission host, which is what offers AskUserQuestion to a
+		// non-interactive run (the mock refuses the tool otherwise).
+		"--permission-prompt-tool", "stdio",
 	}
 	args = append(args, sessionFlags...)
 	args = append(args, prompt)
