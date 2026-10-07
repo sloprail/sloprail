@@ -1,0 +1,8 @@
+predicate: >-
+  At session start, unless {@fld:install:Plugin.auto_install} is false, a missing engine, or one
+  older than the plugin's {@fld:install:Plugin.version} (an unreleased `dev` build is never
+  older), is replaced by the release named by {@fld:install:Plugin.release_tag}, and the session
+  is told.
+why: >-
+  An engine behind the plugin lacks features the plugin's rules assume, and a "latest" install could differ from the plugin.
+needs: [plugin-hooks, session-start-hook]

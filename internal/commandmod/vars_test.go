@@ -46,6 +46,7 @@ func TestVars_LiteralAssignmentsAreExpanded(t *testing.T) {
 	}
 }
 
+// sr:proves events/command-undecidable-not-guessed
 func TestVars_UnresolvableWordsLeaveAGap(t *testing.T) {
 	cases := []struct {
 		name, line string

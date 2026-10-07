@@ -55,6 +55,7 @@ func kindsByPath(events []event.Event) map[string]string {
 // `echo x > out.md` appears twice on purpose — once over an existing file and
 // once over an absent one — because those are different answers and only one of
 // them is an event. See TestExtractCommand_ACreationIsNotPredicted.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_TheFourMeasuredCommands(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"notes.md", "a.md", "b.md", "out.md", "f.md"} {
@@ -103,6 +104,7 @@ func TestExtractCommand_TheFourMeasuredCommands(t *testing.T) {
 // produced an event, a guardrail about a file would fire on the agent merely
 // reading it — which would make the feature worse than its absence, because a
 // rule that fires on `cat` is a rule its author turns off.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_ACommandTouchingNothingProducesNoEvent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")
@@ -145,6 +147,7 @@ func TestExtractCommand_ACommandTouchingNothingProducesNoEvent(t *testing.T) {
 // string would make `unknown-tool > new.md` indistinguishable from `touch
 // new.md`, whose empty content is a FACT. That distinction is the whole point of
 // the change, so preserving it here matters more than emitting one more event.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_ACreationIsNotPredictedWhenItsBytesAreUnknowable(t *testing.T) {
 	dir := t.TempDir()
 	absent := filepath.Join(dir, "not-there-yet.md")
@@ -194,6 +197,7 @@ func TestExtractCommand_ACreationIsNotPredictedWhenItsBytesAreUnknowable(t *test
 // the command would leave, trailing newline included. The newline is not a
 // detail: `echo hi` writes "hi\n" and `printf '%s' hi` writes "hi", and a rule
 // fingerprinting the file gets a different answer for each.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_ACreationIsPredictedWhenItsBytesAreDerivable(t *testing.T) {
 	for name, tc := range map[string]struct {
 		command string
@@ -736,6 +740,7 @@ func TestExtractCommand_PrintfWidenedFormatsAreRenderedExactly(t *testing.T) {
 // misjudging the boundary is a `result` that is confidently WRONG rather than
 // absent. A rule cannot tell a wrong answer from a right one, so an absent one
 // is strictly better.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractCommand_SedInPlaceIsAnUpdateWithNoDerivableResult(t *testing.T) {
 	for _, command := range []string{
 		"sed -i 's/a/b/' %s",
@@ -889,6 +894,7 @@ func TestExtractCommand_TouchingAnExistingFileDoesNotClaimToEmptyIt(t *testing.T
 // `rm gone.md` deletes no file. Announcing a PreFileDelete would fire a rule on
 // a file that was never at risk, and a refusal would block a command that would
 // have changed nothing.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_RemovingWhatIsNotThereIsNotADeletion(t *testing.T) {
 	events, err := extractFor(t, "rm "+filepath.Join(t.TempDir(), "gone.md"))
 	require.NoError(t, err)
@@ -974,6 +980,7 @@ func TestExtractCommand_ArgumentsWithNeitherShapeProduceNothing(t *testing.T) {
 // TestExtractCommand_AWrapperDoesNotHideTheDeletion pins that the evasion
 // commandmod's unwrapping already prevents for invocations is prevented for
 // files too. A rule evadable by typing `sudo` is a suggestion.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_AWrapperDoesNotHideTheDeletion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")
@@ -998,6 +1005,7 @@ func TestExtractCommand_AWrapperDoesNotHideTheDeletion(t *testing.T) {
 // A rule should be asked once about a file. Asking twice runs a judging hook
 // twice over one decision, and a judge hook is a model call rather than a
 // function — so a repeated path is a cost as well as a wrong.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_OneFileIsOneEvent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")
@@ -1021,6 +1029,7 @@ func TestExtractCommand_OneFileIsOneEvent(t *testing.T) {
 //
 // The test above used the same spelling twice, which the raw key already caught,
 // so the contract read as pinned while three other spellings of it were not.
+// sr:proves events/command-changes-are-file-changes
 func TestExtractCommand_OneFileIsOneEventAcrossSpellings(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1117,6 +1126,7 @@ func TestExtractCommand_ADeletionCarriesNoResult(t *testing.T) {
 // the stat fails for a reason that is not "not there" — which is what `unknown`
 // means, and what must be reported rather than folded into absent. Folding it
 // would announce a deletion of a file nobody could see.
+// sr:proves events/one-bad-path-keeps-the-rest
 func TestExtractCommand_TheOtherPathsSurviveOneBadOne(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root traverses a 0000 directory, so the stat cannot be made to fail this way")
@@ -1199,6 +1209,7 @@ func extractForIn(t *testing.T, command, root string) ([]event.Event, error) {
 //
 // Both kinds are asserted because they are two separate constructions in the
 // source and a fix to one leaves the other wrong.
+// sr:proves events/path-inside-or-absolute
 func TestExtractCommand_AnAbsolutePathInsideTheWorkspaceIsReportedRelative(t *testing.T) {
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "memories", "notes.md")

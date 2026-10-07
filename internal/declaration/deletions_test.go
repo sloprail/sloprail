@@ -44,6 +44,7 @@ checks:
 	}
 }
 
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestLoad_FileGuard_DeletionsUnknownValueRefused(t *testing.T) {
 	for _, bad := range []string{"inlcude", "Include", "ONLY", "true", "all", "skip "} {
 		t.Run(bad, func(t *testing.T) {
@@ -65,6 +66,7 @@ checks:
 
 // A YAML boolean is not a deletions value either: `deletions: true` reads as the
 // string "true" and is refused, not taken as "include".
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestLoad_FileGuard_DeletionsBooleanRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/g/file-guard.yaml": `

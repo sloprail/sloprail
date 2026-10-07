@@ -1,0 +1,29 @@
+doc: One end-to-end test of a rule, a script run by `sr test` in a sandbox project.
+fields:
+  - name: owner
+    type: string
+    doc: The one rule the case belongs to, named as `<nature>/<rule>`, or `file-guard/structure`.
+  - name: location
+    type: string
+    doc: Where the case lives, within its owning rule's folder.
+    constraint_expr: ".sloprail/<nature>/<rule>/tests/<case>/test.sh, or .sloprail/file-guard/structure.tests/<case>/test.sh"
+  - name: status
+    type: string
+    doc: The outcome of the case.
+    enum: [pass, fail, error]
+  - name: exit_status
+    type: int32
+    doc: The status the case's script exits with.
+    constraint_expr: 0 is pass, 2 is error, anything else is fail
+  - name: timeout
+    type: duration
+    doc: How long a case may run before it is an error.
+    constraint_expr: default 5 minutes
+  - name: jobs
+    type: int32
+    doc: How many cases run in parallel.
+    constraint_expr: default 5
+  - name: environment
+    type: string
+    doc: The variables the case's script sees.
+    constraint_expr: built from scratch (fake home, own temp directory, sloprail and system tools on the path); nothing else from the caller

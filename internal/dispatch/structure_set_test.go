@@ -66,6 +66,10 @@ var (
 	fxShadowADR = pluginGate("shadow-adr", []string{"docs/**/.adr/"}, globs("docs/**/.adr/*.md"), nil)
 )
 
+// sr:proves structure/plugin-owns-its-scope
+// sr:proves structure/project-deny-vetoes-plugin
+// sr:proves structure/two-owners-conflict
+// sr:proves structure/unowned-paths-are-the-projects
 func TestStructureSet_DecisionMatrix(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -159,6 +163,7 @@ func TestStructureSet_DecisionMatrix(t *testing.T) {
 // A project-only set decides EXACTLY as the single structure gate always has —
 // same verdict AND same refusal wording — over every shape the existing structure
 // tests exercise (glob, regex, deny exception, one-segment *).
+// sr:proves structure/unowned-paths-are-the-projects
 func TestStructureSet_ProjectOnlyIsUnchanged(t *testing.T) {
 	gate := projectGate(
 		[]declaration.StructureEntry{

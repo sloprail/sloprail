@@ -1,0 +1,5 @@
+predicate: >-
+  A citation requirement ({@ent:checks:Requirement}) judged at the end of a turn is met only when every part of the file's change the agent made is covered by a {@ent:citations:Citation} in an accepted pool: a citation grounds only the change it rode on, a cited whole-file write grounds the file as it stands, and a cited change that was denied, failed or never ran grounds nothing.
+why: >-
+  An uncited edit made beside a cited one would slip through the end-of-turn check.
+needs: [stop-hook-payload, posttooluse-payload]

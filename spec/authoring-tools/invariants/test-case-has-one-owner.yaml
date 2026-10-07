@@ -1,0 +1,6 @@
+predicate: >-
+  Every {@ent:authoring-tools:TestCase} found under a rule's folder is reported with exactly one
+  {@fld:authoring-tools:TestCase.owner}, the rule whose folder holds it, and cases anywhere else
+  (such as a retired top-level `tests/`) are not run.
+why: >-
+  A rule author needs to know which rule a failing case speaks for, and a stray case must not count as coverage.

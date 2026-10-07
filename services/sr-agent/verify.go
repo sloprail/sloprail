@@ -216,6 +216,7 @@ func retryPromptSuffix(outputPath, complaint string) string {
 // Exit status is the verdict: zero passes, non-zero fails. That is the
 // convention every check in a shell already uses, so `jq -e`, `test`, `grep -q`
 // and a Python `sys.exit(1)` all work as verifiers with nothing adapted.
+// sr:invariant judges/verdict-is-a-binary-pass
 func RunVerifier(ctx context.Context, verifier, outputPath string, attempt, attempts int, stderr io.Writer) error {
 	content, err := os.ReadFile(outputPath)
 	if err != nil {

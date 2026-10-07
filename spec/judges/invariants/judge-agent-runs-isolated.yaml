@@ -1,0 +1,6 @@
+predicate: >-
+  The agent a {@ent:judges:Judge} launches carries none of the caller's hooks
+  or session identity, so it cannot nest a judge inside a judge nor be taken
+  for the session it judges.
+why: Judging a change triggers more judging without end, or the judge's activity lands in the judged session's record.
+needs: [noninteractive-run]

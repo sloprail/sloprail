@@ -12,7 +12,7 @@ import (
 // The "reported" half of broken_declaration_is_not_silent, for the NEW nature
 // format, pinned where the channel can be read.
 //
-// The e2e suite (tests/e2e/pre_tool/013_broken_declaration_is_not_silent) proves
+// The e2e suite (tests/e2e/harness/pre_tool/013_broken_declaration_is_not_silent) proves
 // the agent-visible half — a malformed file-guard.yaml blocks NOTHING and does not
 // disarm a sound rule beside it. What that suite cannot see is the REPORT: measured
 // through the e2e mock, a permitted action carries neither stdout nor stderr back to
@@ -46,6 +46,7 @@ func writeFileGuardYAML(t *testing.T, proj, name, yaml string, scripts map[strin
 // guard) and must NOT deny — the two halves of "an invalid guardrail blocks nothing
 // but is not silently ignored". Both are asserted on the channels that carry them:
 // the report on stderr, the non-denial on stdout.
+// sr:proves gates/broken-declaration-denies-nothing
 func TestPreTool_MalformedFileGuardIsReportedAndDoesNotDeny(t *testing.T) {
 	proj := initRepo(t)
 	writeFileGuardYAML(t, proj, "typo", `match: marker.kind == "endpoint"
@@ -84,6 +85,7 @@ checks:
 // a declaration out of at all. It names no bindings, so the engine cannot scope a
 // refusal — and it must not respond by refusing everything (the fail-closed this
 // design removed). It is still reported as not loaded.
+// sr:proves gates/broken-declaration-denies-nothing
 func TestPreTool_UnparseableFileGuardIsReportedAndDoesNotDeny(t *testing.T) {
 	proj := initRepo(t)
 	writeFileGuardYAML(t, proj, "unreadable", ":this is not: valid yaml: at all\n  - [unbalanced\n", nil)

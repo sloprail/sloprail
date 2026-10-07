@@ -10,6 +10,7 @@ func launchedBy(getenv func(string) string) []string { return checkrun.LaunchedB
 
 // isLaunchedBy reports whether this session is running underneath the named guardrail's own
 // hook: that guardrail is not enforced inside it, every other one is.
+// sr:invariant checks/check-launched-agent-does-not-reenter-its-rule
 func isLaunchedBy(getenv func(string) string, guardrail string) bool {
 	return checkrun.IsLaunchedBy(getenv, guardrail)
 }

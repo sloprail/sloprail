@@ -13,6 +13,7 @@ import (
 
 // A script check that could not run, or said {"error": true}, refuses (fail-closed) but is typed
 // NoVerdict, so a caller that caches never stores it; its own refusal is a verdict.
+// sr:proves checks/error-reports-are-not-answers
 func TestRunScript_NoVerdictTypesAnErrorNotARefusal(t *testing.T) {
 	cases := []struct {
 		name, body string
@@ -42,6 +43,8 @@ func TestRunScript_NoVerdictTypesAnErrorNotARefusal(t *testing.T) {
 }
 
 // A prepare that cannot run is no verdict either; a prepare that refused in words is.
+// sr:proves checks/check-that-cannot-answer-refuses
+// sr:proves checks/error-reports-are-not-answers
 func TestRunPrepare_NoVerdictOnlyWhenItCouldNotRun(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string, mode os.FileMode) {

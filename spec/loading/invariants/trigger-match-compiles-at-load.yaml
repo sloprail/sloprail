@@ -1,0 +1,5 @@
+predicate: >-
+  A gate's or context's trigger match, and a file-guard's match, that reads a
+  fact the event or file does not carry makes the {@ent:loading:Rule}
+  {@fld:loading:Rule.status} invalid and names the available facts.
+why: A rule with an uncompilable match would look enforced while never matching.

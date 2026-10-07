@@ -1,0 +1,6 @@
+predicate: >-
+  A deleted file is in {@fld:fileguard:Changeset.files} only as
+  {@fld:fileguard:FileGuard.deletions} admits: not at all by default, beside
+  the rest under include, alone under only; a file added and deleted within
+  one range is not judged.
+why: Deleting a guarded file escapes its rule, or rules fire on deletions they were not asked about.

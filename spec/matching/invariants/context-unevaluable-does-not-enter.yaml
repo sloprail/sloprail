@@ -1,0 +1,4 @@
+predicate: >-
+  A context {@ent:matching:Match} that cannot be evaluated does not enter its
+  context on that occurrence, and the failure is reported.
+why: A context never opens and the person running the agent is not told why.

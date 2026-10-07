@@ -83,6 +83,7 @@ func (e usageError) Unwrap() error { return e.err }
 
 // exitStatus is the status main exits with for err: a command's own
 // (exitCodeError), 64 for a usage error, otherwise 1.
+// sr:invariant cli/file-validate-usage-is-not-a-refusal
 func exitStatus(err error) int {
 	var coded *exitCodeError
 	if errors.As(err, &coded) {

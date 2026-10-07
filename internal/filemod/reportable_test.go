@@ -232,6 +232,7 @@ func TestReportable_WithNoRootAnAbsolutePathKeepsItsAbsoluteSpelling(t *testing.
 // catches one and misses the others, and a fingerprint keyed on path records
 // independent verdicts for one file. The guarantee is not "each is reasonable"
 // but that they are all the SAME string.
+// sr:proves events/path-inside-or-absolute
 func TestReportable_TwoSpellingsOfOnePathProduceOneReportedPath(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
@@ -548,6 +549,7 @@ func TestLookAt_AFifoIsPresentAndNotAFile(t *testing.T) {
 // stopped being its own state the pre phase would stop returning. Asserting the
 // silence alone would not catch that — a hung call produces no event either.
 // The deadline is what tells "no event" from "no answer".
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_AWriteAimedAtAFifoProducesNoEventAndDoesNotBlock(t *testing.T) {
 	dir := t.TempDir()
 	fifo := filepath.Join(dir, "pipe")

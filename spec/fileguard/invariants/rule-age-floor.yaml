@@ -1,0 +1,5 @@
+predicate: >-
+  A rule's {@fld:fileguard:Changeset.base} is never earlier than the parent
+  of the commit that last changed the rule, so work made before the rule
+  existed is not judged by it.
+why: A newly added rule blames the whole branch for what it did not exist to prevent.

@@ -214,6 +214,7 @@ func TestUserWordsAnswerFromToolResult(t *testing.T) {
 }
 
 // TestCiteUniqueMatch: a quote in exactly one user message resolves to that line.
+// sr:proves citations/quote-resolves-to-exactly-one-entry
 func TestCiteUniqueMatch(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
@@ -266,6 +267,7 @@ func TestCiteNoMatch(t *testing.T) {
 // with plain string content (the same shape a typed message has) but are not the
 // person's own words, so grounding a claim on them would be a false citation, the
 // same as citing the agent's own output.
+// sr:proves citations/user-pool-is-the-persons-own-words
 func TestCiteExcludesHarnessInjectedUserMessages(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
@@ -437,6 +439,7 @@ func TestCiteToolResultResolvesToolOutput(t *testing.T) {
 // is only in a USER message does not resolve under SourceToolResult. An
 // "observation" citing the user's ask instead of a tool result is a mis-citation,
 // and the tool_result pool refuses it so the deterministic guard can catch it.
+// sr:proves citations/pool-is-not-borrowed
 func TestCiteToolResultRefusesUserWords(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
@@ -488,6 +491,7 @@ func TestCiteBothPoolsResolveEither(t *testing.T) {
 // (the agent narrating that it ran something) does not resolve — narration is not a
 // result — and a harness-injected user message contributes no tool_result body, so
 // its noise is not citable as output either.
+// sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestCiteToolResultExcludesAssistantAndHarnessNoise(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
@@ -748,6 +752,7 @@ func TestCiteResolvesAMidTurnQueuedCommandWithImage(t *testing.T) {
 // so, both from `cite` (UnresolvedHint) and from a commit trailer resolved across
 // sessions — a bare "not there word for word" sent agents hunting a typo in a
 // verbatim quote (#295).
+// sr:proves citations/unresolved-trailers-are-reported-not-dropped
 func TestUnresolvedHint_NamesSloprailOutputAsExcluded(t *testing.T) {
 	saved := CommandEchoes
 	t.Cleanup(func() { CommandEchoes = saved })

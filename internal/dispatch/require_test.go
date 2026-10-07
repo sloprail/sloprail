@@ -68,6 +68,7 @@ func boolStr(b bool) string {
 // sub-agent's own file is sidechain, so the old "skip IsSidechain" loop skipped
 // the one entry that mattered, on every read, no matter how many times the
 // sub-agent invoked the skill.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_SubagentOwnRecord_SkillCounts(t *testing.T) {
 	dir := t.TempDir()
 	subPath := filepath.Join(dir, "parent-session", "subagents", "agent-abc.jsonl")
@@ -86,6 +87,7 @@ func TestSkillLoadedInTrajectory_SubagentOwnRecord_SkillCounts(t *testing.T) {
 // half: a sub-agent's own transcript with no Skill tool_use at all correctly
 // finds nothing (proves the fix does not simply always return true for a
 // sub-agent file).
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_SubagentOwnRecord_NoSkillRefuses(t *testing.T) {
 	dir := t.TempDir()
 	subPath := filepath.Join(dir, "parent-session", "subagents", "agent-abc.jsonl")
@@ -105,6 +107,7 @@ func TestSkillLoadedInTrajectory_SubagentOwnRecord_NoSkillRefuses(t *testing.T) 
 // but should the field ever be present there, an entry marked sidechain in the
 // ROOT's own file is a delegated child's — a different line of work — and must
 // stay excluded from what the ROOT's own Stop check reads.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_RootExcludesExitedChildSubagent(t *testing.T) {
 	dir := t.TempDir()
 	rootPath := filepath.Join(dir, "parent-session.jsonl")
@@ -127,6 +130,7 @@ func TestSkillLoadedInTrajectory_RootExcludesExitedChildSubagent(t *testing.T) {
 // TestSkillLoadedInTrajectory_RootOwnSkillStillCounts: the ordinary root case is
 // unaffected by the fix — a root's own, non-sidechain Skill tool_use still
 // counts.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_RootOwnSkillStillCounts(t *testing.T) {
 	dir := t.TempDir()
 	rootPath := filepath.Join(dir, "parent-session.jsonl")
@@ -144,6 +148,7 @@ func TestSkillLoadedInTrajectory_RootOwnSkillStillCounts(t *testing.T) {
 // entry point, as require.go's checkRequire calls it) rather than the bare
 // trajectory reader, so the fix is pinned at the same seam a real SubagentStop
 // dispatch uses.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_SubagentOwnRecord_EndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	subPath := filepath.Join(dir, "parent-session", "subagents", "agent-abc.jsonl")

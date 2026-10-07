@@ -1,0 +1,16 @@
+doc: "A rule that judges committed work: the files its match selects in a commit range."
+fields:
+  - name: name
+    type: string
+    doc: "The rule's name as a refusal cites it."
+  - name: match
+    type: string
+    doc: "Which changed files of the range the rule is about."
+  - name: deletions
+    type: string
+    doc: "Whether deleted files are in what the rule judges."
+    constraint_expr: "default skip"
+    enum: [skip, include, only]
+  - name: subjects
+    type: string
+    doc: "An optional script that names the units judged separately."

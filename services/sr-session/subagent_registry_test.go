@@ -93,6 +93,7 @@ func (f *registryFixture) own(agent, folder string) {
 	require.NoError(f.t, f.store.TrackRange(sessionstate.TrackedRange{SessionID: regSession, Folder: folder, Head: "feat-" + agent, Base: "b", AgentID: agent}))
 }
 
+// sr:proves subagents/running-background-agent-left-unjudged
 func TestSettle_ABackgroundLaunchIsWaitedFor_AndItsNotificationEndsTheWait(t *testing.T) {
 	f := newRegistryFixture(t)
 	path := f.transcript("p", launchRecord("bg1")...)
@@ -122,6 +123,7 @@ func TestSettle_EachTerminalNotificationStatusEndsTheRun(t *testing.T) {
 
 // An agent the registry has never heard of is judged, and so is one only a start hook announced:
 // nothing says it is a background agent, so nothing is left unjudged for it.
+// sr:proves subagents/ranges-verified-at-the-parents-turn-end
 func TestSettle_AnUnknownAgentIsJudged_AndSoIsOneThatIsNotKnownToBeBackground(t *testing.T) {
 	f := newRegistryFixture(t)
 	plan := f.settle(f.transcript("p", "{}"))
@@ -135,6 +137,7 @@ func TestSettle_AnUnknownAgentIsJudged_AndSoIsOneThatIsNotKnownToBeBackground(t 
 
 // Compaction rewrites what the transcript holds; a resume reads a new file. The registry is the
 // store's, so the agent is still waited for, and its end is still heard.
+// sr:proves subagents/agent-registry-survives-compaction
 func TestSettle_CompactionAndAResumedSessionWithANewTranscriptKeepTheRegistry(t *testing.T) {
 	f := newRegistryFixture(t)
 	f.settle(f.transcript("before", launchRecord("bg1")...))
@@ -175,6 +178,7 @@ func TestSettle_ANotificationIsAppliedOnce(t *testing.T) {
 	assert.True(t, plan.Waiting["bg1"])
 }
 
+// sr:proves subagents/silent-agent-stops-being-waited-for
 func TestSettle_ASilentAgentIsNamedThenEscalatedToStaleAndJudged(t *testing.T) {
 	f := newRegistryFixture(t)
 	f.own("bg1", "/w1")
@@ -214,6 +218,7 @@ func TestSettle_ASilentAgentIsNamedThenEscalatedToStaleAndJudged(t *testing.T) {
 	assert.True(t, plan.Waiting["bg1"], "an agent calling tools is running")
 }
 
+// sr:proves subagents/silent-agent-stops-being-waited-for
 func TestSettle_TheAgentsOwnTranscriptGrowingIsActivity(t *testing.T) {
 	f := newRegistryFixture(t)
 	f.own("bg1", "/w1")
@@ -242,6 +247,7 @@ func TestSettle_ASilentAgentWithNoRangesIsNotNamed(t *testing.T) {
 	assert.Empty(t, plan.Silent, "there are no ranges left unjudged to name")
 }
 
+// sr:proves subagents/silent-agent-stops-being-waited-for
 func TestSettle_ThresholdsComeFromTheConfig(t *testing.T) {
 	f := newRegistryFixture(t)
 	f.config("subagent_silent_after_minutes: 2\nsubagent_stale_after_minutes: 4\n")
@@ -269,6 +275,7 @@ func TestSettle_AnInvalidConfigFallsBackToTheDefaultsAndSaysSo(t *testing.T) {
 }
 
 // The session's process is gone (nothing can still be running under it): stale, judged.
+// sr:proves subagents/ranges-verified-at-the-parents-turn-end
 func TestSettle_AnAgentWhoseHarnessProcessIsGoneIsStale(t *testing.T) {
 	f := newRegistryFixture(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(f.home, ".claude", "sessions"), 0o755))

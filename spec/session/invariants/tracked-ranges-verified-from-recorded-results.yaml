@@ -1,0 +1,3 @@
+predicate: >-
+  At each turn end every {@ent:session:TrackedRange} of the session is verified against already-recorded check results, asking no model and writing nothing, and only failures are reported: a range whose judges have not been asked passes the turn end and is left to CI verification and the push gate.
+why: The turn-end check spends model calls or blocks on work nobody judged, or lets a recorded failure through.

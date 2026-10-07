@@ -47,6 +47,7 @@ func runVerifier(t *testing.T, verdict string) (code int, stderr string) {
 }
 
 // A passing verdict exits 0.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_PassExitsZero(t *testing.T) {
 	code, _ := runVerifier(t, `{"pass": true, "reasoning": ""}`)
 	assert.Equal(t, 0, code, "a passing verdict must exit 0")
@@ -55,6 +56,7 @@ func TestVerifier_PassExitsZero(t *testing.T) {
 // A FALSE verdict is a clean fail — exit non-zero, reasoning surfaced — NOT "not a
 // boolean". This is the jq `// empty` trap: `.pass // empty` reads a boolean false
 // as empty, which would misreport a real refusal as a malformed verdict.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_FalseIsCleanFail(t *testing.T) {
 	code, stderr := runVerifier(t, `{"pass": false, "reasoning": "the proof is missing"}`)
 	assert.NotEqual(t, 0, code, "a failing verdict must exit non-zero")
@@ -65,6 +67,7 @@ func TestVerifier_FalseIsCleanFail(t *testing.T) {
 
 // A clean fail exits 3 — sr-agent's final rejection — so the judge is not
 // re-asked for a verdict that was already well formed.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_CleanFailIsFinal(t *testing.T) {
 	code, _ := runVerifier(t, `{"pass": false, "reasoning": "the proof is missing"}`)
 	assert.Equal(t, 3, code, "a well-formed fail must be final (exit 3), not a re-ask")
@@ -74,6 +77,7 @@ func TestVerifier_CleanFailIsFinal(t *testing.T) {
 // that verdict. The flat-object pattern used to grab the quoted fragment
 // (`{kind, fqn, line}`), misread every such refusal as "not a boolean", and
 // re-ask the judge — measured on every refusal of a real onboarding run.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_BracesInReasoningAreNotTheVerdict(t *testing.T) {
 	verdict := `{"pass": false, "reasoning": "markers are {kind, fqn, line} objects; use ${payload} and .event.newContent"}`
 	code, stderr := runVerifier(t, verdict)
@@ -84,6 +88,7 @@ func TestVerifier_BracesInReasoningAreNotTheVerdict(t *testing.T) {
 
 // A verdict whose `pass` is neither true nor false is malformed — the script asks
 // for a retry rather than guessing.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_NonBooleanAsksRetry(t *testing.T) {
 	code, stderr := runVerifier(t, `{"pass": "maybe", "reasoning": "x"}`)
 	assert.NotEqual(t, 0, code)
@@ -92,6 +97,7 @@ func TestVerifier_NonBooleanAsksRetry(t *testing.T) {
 
 // No JSON object at all is a retry, not a pass — an empty or prose-only answer must
 // not slip through as approval.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_NoVerdictAsksRetry(t *testing.T) {
 	code, stderr := runVerifier(t, `I could not decide.`)
 	assert.NotEqual(t, 0, code)
@@ -100,6 +106,7 @@ func TestVerifier_NoVerdictAsksRetry(t *testing.T) {
 
 // A verdict wrapped in a ```json code fence is still read — models fence their
 // output, and the script strips the fence before extracting.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_StripsCodeFence(t *testing.T) {
 	code, _ := runVerifier(t, "```json\n{\"pass\": true, \"reasoning\": \"\"}\n```")
 	assert.Equal(t, 0, code, "a fenced passing verdict must still be accepted")
@@ -107,6 +114,7 @@ func TestVerifier_StripsCodeFence(t *testing.T) {
 
 // reasonFromVerifierOutput recovers the reasoning line the script prints — the
 // path a judge's refusal reason travels back to the agent.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestReasonFromVerifierOutput(t *testing.T) {
 	stderr := "sr-agent: verifier (attempt 1/2): JUDGE-REASON: the proof is missing\n"
 	assert.Equal(t, "the proof is missing", reasonFromVerifierOutput([]byte(stderr)))
@@ -122,6 +130,7 @@ func TestReasonFromVerifierOutput(t *testing.T) {
 // A judge that never wrote its verdict is refused with ONE fixed sentence, not
 // with sr-agent's whole stderr (its banner, a harness warning, a deleted temp
 // path).
+// sr:proves judges/verdict-is-a-binary-pass
 func TestJudgeRefusalReason_NeverWrittenVerdictIsAFixedReason(t *testing.T) {
 	stderr := []byte("sr-agent: harness claude-code, model sonnet (from \"size-md\")\n" +
 		"Warning: something the harness printed\n" +
@@ -130,6 +139,7 @@ func TestJudgeRefusalReason_NeverWrittenVerdictIsAFixedReason(t *testing.T) {
 }
 
 // An older sr-agent on PATH that does not know a judge's flags is named as such.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestJudgeRefusalReason_OlderSrAgentIsNamed(t *testing.T) {
 	stderr := []byte("Error: unknown flag: --add-dir:readonly\nIf that was meant to be the prompt ...\n")
 	got := judgeRefusalReason(nil, stderr)
@@ -138,12 +148,14 @@ func TestJudgeRefusalReason_OlderSrAgentIsNamed(t *testing.T) {
 }
 
 // A verifier's own reasoning still wins over both.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestJudgeRefusalReason_VerifierReasoningWins(t *testing.T) {
 	stderr := []byte("sr-agent: verifier (attempt 1/2): JUDGE-REASON: the change drops field x\n")
 	assert.Equal(t, "the change drops field x", judgeRefusalReason(nil, stderr))
 }
 
 // A judge that produced no parseable answer is a typed NoVerdict refusal; a real refusal is not.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestJudgeRefusal_NoVerdictIsTyped(t *testing.T) {
 	none := judgeRefusal(nil, []byte("sr-agent: the agent wrote no output to /x"))
 	assert.True(t, none.Refused)
@@ -155,6 +167,7 @@ func TestJudgeRefusal_NoVerdictIsTyped(t *testing.T) {
 
 // Only the verifier's own reasoning of a rejected verdict is a verdict; every other failure of
 // the judge (old sr-agent, the model's or transport's error text, a blank) is NoVerdict too.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestJudgeRefusal_OnlyAVerifierReasonIsAVerdict(t *testing.T) {
 	assert.False(t, judgeRefusal(nil, []byte("sr-agent: verifier (attempt 1/2): JUDGE-REASON: the change drops field x\n")).NoVerdict)
 	for _, stderr := range []string{
@@ -168,6 +181,7 @@ func TestJudgeRefusal_OnlyAVerifierReasonIsAVerdict(t *testing.T) {
 
 // A multi-line reasoning (a numbered list of every failing item) survives the verifier's
 // output whole: the script JSON-encodes it on the marker line and the reader decodes it.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerifier_MultilineReasoningSurvivesRoundTrip(t *testing.T) {
 	want := "1. the ADR is not cited\n2. the migration is missing\n3. the test asserts nothing"
 	verdict, err := json.Marshal(map[string]any{"pass": false, "reasoning": want})
@@ -183,6 +197,7 @@ func TestVerifier_MultilineReasoningSurvivesRoundTrip(t *testing.T) {
 	assert.Equal(t, "line one\nline two", passReasonFromVerifierOutput([]byte(stderr)))
 }
 
+// sr:proves judges/verdict-is-a-binary-pass
 func TestReasonFromVerifierOutput_EncodedForms(t *testing.T) {
 	// Multi-line, decoded whole.
 	enc := "sr-agent: verifier (attempt 1/1): JUDGE-REASON-JSON: \"a\\nb\\nc\"\n"

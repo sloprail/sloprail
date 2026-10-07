@@ -53,6 +53,7 @@ type envSpec struct {
 }
 
 // caseEnv builds one case's environment: the allowlisted variables of the caller, then what sr-test sets.
+// sr:invariant authoring-tools/test-case-environment-is-hermetic
 func caseEnv(caller []string, s envSpec) []string {
 	var env []string
 	for _, kv := range caller {
@@ -81,6 +82,7 @@ func caseEnv(caller []string, s envSpec) []string {
 		env = append(env, "SR_TEST_PLUGIN_DIR="+strings.Join(s.Plugins, string(os.PathListSeparator)))
 	}
 	// An unmocked judge is always an error: a case never reaches a model.
+	// sr:invariant authoring-tools/test-case-never-reaches-a-model
 	env = append(env, "SR_CHECKS_JUDGE_MOCKS={}")
 	return env
 }

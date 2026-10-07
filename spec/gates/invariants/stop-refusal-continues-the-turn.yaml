@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:gates:Gate} that refuses when the agent is about to finish hands
+  its {@fld:gates:Refusal.reason} back and the turn goes on instead of ending.
+why: The agent would stop with the objection unaddressed.
+needs: [stop-block-continuation]

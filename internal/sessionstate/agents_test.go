@@ -166,6 +166,7 @@ func TestAgents_ListCarriesTheTrackedRangesTheAgentOwns(t *testing.T) {
 
 // The registry belongs to the session's own store, not to a transcript or a harness session id:
 // closed and opened again (a resume in a new process), it is all there.
+// sr:proves subagents/agent-registry-survives-compaction
 func TestAgents_SurviveAReopenedStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	s, err := Open(path)

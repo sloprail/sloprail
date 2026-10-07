@@ -52,6 +52,7 @@ func (f *evalFixture) rangeTo(t *testing.T, base, head string) gitrepo.Range {
 // One evaluation answers every rule's effective base from one shared ancestry memo. Each rule
 // must get exactly the base it would get from an evaluation of its own (no sharing at all):
 // B1..H1 then H1..H2 reach H2; a rule only ever judged over a narrow range stays at B1.
+// sr:proves fileguard/passes-not-re-examined
 func TestAncestryMemo_SharedEvaluationAgreesWithOneEvaluationPerRule(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	guards := f.manyRules(t, 6)
@@ -122,6 +123,7 @@ func TestAncestryMemo_AnUnrelatedBranchDoesNotInheritAnotherRangesAnswer(t *test
 
 // Many rules judged by one evaluation at concurrency > 1: the ancestry memo is hit from the
 // pool's goroutines at once (run under -race). Run, then verify, both over the original range.
+// sr:proves fileguard/refusals-independent
 func TestAncestryMemo_ManyRulesInOneEvaluationUnderConcurrency(t *testing.T) {
 	t.Setenv(StopConcurrencyEnv, "8")
 	f := newEvalFixture(t, nil).withSession(t)

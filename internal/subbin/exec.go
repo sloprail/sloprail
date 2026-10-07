@@ -27,6 +27,7 @@ import (
 // timeout must have the kill reach the process actually doing the work; without
 // relaying, a SIGTERM would kill the proxy alone and orphan the child, which
 // holds the inherited pipes open and hangs whatever waits on the proxy.
+// sr:invariant cli/proxy-forwards-unchanged
 func Exec(ctx context.Context, name string, args ...string) error {
 	bin, err := Find(name)
 	if err != nil {

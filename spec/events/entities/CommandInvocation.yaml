@@ -1,0 +1,30 @@
+doc: One program a shell command line runs, as listed on a command event after the line's nesting is flattened.
+fields:
+  - name: bin
+    type: string
+    doc: The program's basename.
+  - name: argv
+    type: string[]
+    doc: The arguments with quoting undone, program included.
+  - name: gaps
+    type: string[]
+    doc: Positions in argv where a word could not be resolved and was dropped.
+  - name: gitGapEarly
+    type: bool
+    doc: Whether a git invocation lost a word among its global options or at its subcommand.
+  - name: flags
+    type: Record<string>
+    doc: Each flag name, without dashes, to the list of every value it was given.
+  - name: cwd
+    type: string
+    doc: The directory the line's own cd commands put the program in.
+    constraint_expr: empty when unknown
+  - name: env
+    type: Record<string>
+    doc: The environment the line itself sets for the program.
+  - name: stdin
+    type: string
+    doc: The literal heredoc or here-string text fed to the program.
+  - name: stdinKnown
+    type: bool
+    doc: Whether stdin is literal text.

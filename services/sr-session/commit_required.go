@@ -80,6 +80,7 @@ type uncommittedGuarded struct {
 // It covers the session's own tree and every other folder the session registered for this
 // agent (an ad-hoc repository a command ran in), each under ITS OWN rules: reg is what loads
 // them. reg may be nil, which covers the own tree only.
+// sr:invariant fileguard/commit-required
 func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.FileGuard, store sessionstate.Store, reg ...*module.Registry) string {
 	if !ownsTree(p) {
 		return ""
@@ -210,6 +211,7 @@ func prefetchFolders(folders []sessionstate.Folder, covered map[string]bool, reg
 	return out
 }
 
+// sr:invariant fileguard/commit-required
 func owedInWith(status func(string) ([]gitrepo.Uncommitted, error), root string, guards []declaration.FileGuard) ([]uncommittedGuarded, string) {
 	changes, err := status(root)
 	if err != nil {
@@ -337,6 +339,7 @@ func isNotARepo(err error) bool { return errors.Is(err, gitrepo.ErrNotARepositor
 // that cannot be determined, or a top level that cannot be read, means the
 // sub-agent IS gated — declining to gate on a guess is how a sub-agent's commit
 // goes unjudged.
+// sr:invariant fileguard/commit-required
 func ownsTree(p HookPayload) bool {
 	if !p.IsSubagent() {
 		return true

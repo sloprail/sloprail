@@ -15,7 +15,7 @@ plugin is a unit that carries its own verification.
 
 It reuses the main repo's **shared e2e harness**
 (`github.com/sloprail/sloprail/tests/e2e/harness`), the same one
-`tests/e2e/session/*` and `tests/e2e/examples/*` drive. That harness is pulled in
+`tests/e2e/harness/session/*` and `tests/e2e/harness/examples/*` drive. That harness is pulled in
 with a `replace` directive pointing at the repo root:
 
 ```

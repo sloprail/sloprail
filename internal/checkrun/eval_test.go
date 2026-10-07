@@ -164,6 +164,7 @@ func TestEvaluate_ARefusingCheckRefusesWithItsReason(t *testing.T) {
 	assert.Equal(t, "docs", r.Name)
 }
 
+// sr:proves fileguard/nothing-selected-passes
 func TestEvaluate_MatchSelectingNothingIsAPass(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "notes/a.md", "FORBIDDEN but unguarded")
@@ -173,6 +174,8 @@ func TestEvaluate_MatchSelectingNothingIsAPass(t *testing.T) {
 	assert.Equal(t, 0, f.runs(t), "no file selected, no check run")
 }
 
+// sr:proves fileguard/unreadable-range-refuses
+// sr:proves matching/unevaluable-never-passes
 func TestEvaluate_AMatchThatDoesNotCompileFailsClosedAndIsRecordedAsAnEngineFailure(t *testing.T) {
 	f := newEvalFixture(t, func(g *declaration.FileGuard) { g.Match = `path ==` })
 	f.commitDoc(t, "docs/a.md", "clean")
@@ -196,6 +199,7 @@ func TestEvaluate_ARuleFolderThatCannotBeHashedFailsClosed(t *testing.T) {
 
 // A range that holds no commit (base == head) is a computed, empty range: nothing to judge. A
 // repository with no commit at all has no range, which gitrepo.ResolveRange refuses.
+// sr:proves fileguard/nothing-selected-passes
 func TestEvaluate_ARangeWithNoCommitHasNothingToJudge(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	p := f.params(t, f.results)
@@ -263,6 +267,7 @@ func TestEvaluate_NoGuardsNoWork(t *testing.T) {
 	assert.Nil(t, outcomes)
 }
 
+// sr:proves fileguard/refusals-independent
 func TestEvaluate_EachRuleIsEvaluatedAndOnlyTheRefusalsReturn(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
@@ -451,6 +456,7 @@ func TestRequireAndCheckKinds(t *testing.T) {
 	assert.Equal(t, "check[2]:judge:rubric.md.j2", checkKind(2, declaration.Check{Judge: "rubric.md.j2"}))
 }
 
+// sr:proves citations/unresolved-trailers-are-reported-not-dropped
 func TestCitationItemsAndUnresolvedNote(t *testing.T) {
 	assert.Empty(t, unresolvedNote(nil))
 	missed := []changeset.Unresolved{{Commit: "abcdef0123456789", Trailer: changeset.TrailerCitesUser, Quote: "nobody said it", Err: errors.New("does not resolve")}}
@@ -534,7 +540,7 @@ func TestEvaluate_AnEngineFailureNamesTheFiles(t *testing.T) {
 
 // Every check kind is cached by the guard's content: the same input is a hit (pass or fail,
 // a fail replayed), and `verify` only ever reads what `run` stored.
-func TestEvaluate_AScriptIsCachedByContentAndAFailIsReplayed(t *testing.T) {
+func TestEvaluate_AScriptIsCachedByContentAndAFailIsJudgedAgain(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	f.commitDoc(t, "docs/a.md", "clean")
 
@@ -551,11 +557,12 @@ func TestEvaluate_AScriptIsCachedByContentAndAFailIsReplayed(t *testing.T) {
 	assert.Contains(t, r.Reason, "forbidden words")
 	require.Equal(t, 2, f.runs(t), "changed content is a miss")
 	r, refused = f.evaluate(t, f.results)
-	require.True(t, refused, "the stored fail is replayed")
+	require.True(t, refused, "still refused")
 	assert.Contains(t, r.Reason, "forbidden words")
-	assert.Equal(t, 2, f.runs(t), "a replayed fail does not run the script")
+	assert.Equal(t, 3, f.runs(t), "only a pass is a hit: a stored fail is judged again")
 }
 
+// sr:proves cache/verify-read-only
 func TestEvaluate_VerifyNeverExecutesAnythingAndOnlyReadsStoredVerdicts(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	f.commitDoc(t, "docs/a.md", "clean")
@@ -591,6 +598,7 @@ func TestEvaluate_VerifyNeverExecutesAnythingAndOnlyReadsStoredVerdicts(t *testi
 }
 
 // An engine error is no verdict: the next run starts the guard again.
+// sr:proves cache/unfinished-never-stored
 func TestEvaluate_AnEngineErrorStoresNoVerdict(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "docs/a.md", "clean")
@@ -699,6 +707,7 @@ func (f *evalFixture) verifyReasons(t *testing.T) []FileGuardResult {
 
 // A `run` with no session cannot ground the trailers: it refuses saying so, and the refusal is
 // no verdict about the key (a real session computes the same key), so nothing is stored.
+// sr:proves cache/unfinished-never-stored
 func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
 	f := citedFixture(t)
 	r, refused := f.evaluate(t, f.results)
@@ -712,8 +721,10 @@ func TestEvaluate_ARunWithoutASessionStoresNoCitationVerdict(t *testing.T) {
 	assert.Empty(t, guardRows(t, f.results, f.guard), "nothing is stored under the guard x subject key")
 }
 
-// A quote that does not resolve in a present session is a real refusal: stored as a FAIL.
-func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
+// A quote that does not resolve in a present session is a refusal of a MISS, stored under the
+// content key like any other so verify can say why. Only a pass is a hit: the next run judges
+// the content again.
+func TestEvaluate_AnUnresolvedCitationIsRefusedStoredAndJudgedAgain(t *testing.T) {
 	f := citedFixture(t)
 	record := filepath.Join(t.TempDir(), "s-eval.jsonl")
 	require.NoError(t, os.WriteFile(record, []byte(""), 0o644))
@@ -723,21 +734,14 @@ func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
 	ev.identity = ev.runIdentity()
 	first, refused := ev.evaluate(f.guard)
 	require.True(t, refused)
-
-	rows := guardRows(t, f.results, f.guard)
-	require.Len(t, rows, 1, "run stored one verdict under the guard x subject key")
-	assert.Equal(t, checkstore.StatusFail, rows[0].Status)
-	assert.NotEmpty(t, rows[0].Fingerprint)
-	stored := rows[0]
+	assert.NotEmpty(t, first.Reason)
+	assert.Len(t, guardRows(t, f.results, f.guard), 1, "stored under the content key")
 
 	got := f.verifyReasons(t)
-	require.Len(t, got, 1, "verify reports the stored refusal (non-zero exit)")
-	assert.NotContains(t, got[0].Reason, "not judged yet")
-	assert.Equal(t, first.Reason, got[0].Reason, "verify reports the refusal's own reason")
-	assert.NotEmpty(t, got[0].Reason)
+	require.Len(t, got, 1)
+	assert.Equal(t, first.Reason, got[0].Reason, "verify says why")
 
-	// A second run with the same input replays the stored FAIL: nothing new is recorded and
-	// no check script runs.
+	// A second run asks the citation again (nothing is replayed) and says the same.
 	counting := &recordCountingStore{Store: f.results}
 	p2 := f.params(t, counting)
 	p2.Transcript = record
@@ -745,15 +749,10 @@ func TestEvaluate_AnUnresolvedCitationIsStoredAsFail(t *testing.T) {
 	ev2.identity = ev2.runIdentity()
 	again, refused := ev2.evaluate(f.guard)
 	require.True(t, refused)
-	assert.Equal(t, first.Reason, again.Reason, "the stored refusal is replayed")
-	require.NotEmpty(t, counting.records)
+	assert.Equal(t, first.Reason, again.Reason)
 	for _, rec := range counting.records {
-		assert.Equal(t, true, rec.Metadata["replayed"], "%s is replayed from the store, not judged again", rec.Kind)
+		assert.NotEqual(t, true, rec.Metadata["replayed"], "%s was checked afresh", rec.Kind)
 	}
-	assert.Equal(t, 0, f.runs(t), "no check script ran")
-	rows = guardRows(t, f.results, f.guard)
-	require.Len(t, rows, 1)
-	assert.Equal(t, stored.Fingerprint, rows[0].Fingerprint, "same key")
 }
 
 // recordCountingStore collects the checks recorded through it.
@@ -823,9 +822,9 @@ func (f *evalFixture) evaluateWith(t *testing.T, record, batch string) (FileGuar
 	return ev.evaluate(f.guard)
 }
 
-// A content check's FAIL is replayed even though a quote was unresolved when it ran: once the
-// quote resolves, the judge is not asked again (only a citation requirement's FAIL is re-judged).
-func TestEvaluate_AContentFailWithAnUnresolvedQuoteIsStillReplayed(t *testing.T) {
+// Only a pass is a hit, so a content check's FAIL is judged again by the next run, whatever the
+// citations did meanwhile.
+func TestEvaluate_AContentFailIsJudgedAgainOnceAQuoteResolves(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	require.NoError(t, os.MkdirAll(filepath.Join(f.repo, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(f.repo, "docs", "a.md"), []byte("FORBIDDEN"), 0o644))
@@ -844,10 +843,11 @@ func TestEvaluate_AContentFailWithAnUnresolvedQuoteIsStillReplayed(t *testing.T)
 	r, refused := f.evaluateWith(t, resolved, "b2")
 	require.True(t, refused)
 	assert.Contains(t, r.Reason, "forbidden words")
-	assert.Equal(t, 1, f.runs(t), "the stored content fail is replayed, the judge is not asked again")
+	assert.Equal(t, 2, f.runs(t), "only a pass is a hit: the content fail is judged again")
 }
 
 // A citation requirement's FAIL caused by an unresolved quote is re-judged once it resolves.
+// sr:proves cache/finished-verdicts-reused
 func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *testing.T) {
 	f := citedFixture(t)
 	empty := filepath.Join(t.TempDir(), "empty.jsonl")
@@ -865,6 +865,7 @@ func TestEvaluate_ACitationFailFromAnUnresolvedQuoteIsRejudgedOnceItResolves(t *
 // A check that returned no verdict (a judge that answered nothing parseable, a script that could
 // not run or said it errored) is an engine-side failure, not a verdict on the content; a script's
 // own refusal and a real judge refusal are verdicts.
+// sr:proves cache/unfinished-never-stored
 func TestReturnedNoVerdict_OnlyACheckThatAnsweredNothing(t *testing.T) {
 	none := dispatchcore.Verdict{Refused: true, NoVerdict: true, Reason: "any wording at all"}
 	assert.True(t, returnedNoVerdict(none))
@@ -875,6 +876,7 @@ func TestReturnedNoVerdict_OnlyACheckThatAnsweredNothing(t *testing.T) {
 // A check that errored (a script saying {"error": true}, one that cannot be executed) refuses
 // (fail-closed) but stores no verdict under the key: the next run, over the same content, runs
 // the check again.
+// sr:proves cache/unfinished-never-stored
 func TestEvaluate_AScriptThatErroredIsNeverCached(t *testing.T) {
 	cases := map[string]func(t *testing.T, f *evalFixture){
 		"says error": func(t *testing.T, f *evalFixture) {
@@ -908,8 +910,9 @@ func TestEvaluate_AScriptThatErroredIsNeverCached(t *testing.T) {
 	}
 }
 
-// A script's plain refusal is a verdict: stored, and replayed without running again.
-func TestEvaluate_AScriptRefusalIsStillCached(t *testing.T) {
+// A script's plain refusal is a verdict: stored (verify reads it), but only a pass is a hit, so
+// the next run asks again.
+func TestEvaluate_AScriptRefusalIsStoredAndAskedAgain(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
 	_, refused := f.evaluate(t, f.results)
@@ -917,11 +920,17 @@ func TestEvaluate_AScriptRefusalIsStillCached(t *testing.T) {
 	n := f.runs(t)
 	_, refused = f.evaluate(t, f.results)
 	assert.True(t, refused)
-	assert.Equal(t, n, f.runs(t))
+	assert.Equal(t, n+1, f.runs(t))
+	p := f.params(t, f.results)
+	p.Verify = true
+	got, _ := Evaluate(p)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Reason, "forbidden words", "verify reads the stored refusal")
 }
 
 // Verify over a range whose latest run left the judge without a verdict says so, in the judge's
 // words; it is "not judged yet", never a stored FAIL.
+// sr:proves cache/unfinished-never-stored
 func TestEvaluate_VerifyNamesAJudgeThatReturnedNoVerdict(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "docs/a.md", "clean")
@@ -938,6 +947,7 @@ func TestEvaluate_VerifyNamesAJudgeThatReturnedNoVerdict(t *testing.T) {
 
 // A run with no session (no transcript) stores no FAIL: a verdict may depend on the transcript,
 // so the author's later real run judges fresh. A pass is stored.
+// sr:proves cache/unfinished-never-stored
 func TestEvaluate_ASessionlessRunStoresNoFail(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "docs/a.md", "FORBIDDEN")
@@ -967,6 +977,7 @@ func TestEvaluate_ASessionlessRunStoresNoFail(t *testing.T) {
 
 // A stored FAIL of an uncited change is never replayed once the same content is re-landed as
 // one cited commit on a fresh branch: the quotes that ground the file are part of the key.
+// sr:proves cache/finished-verdicts-reused
 func TestEvaluate_ACitationFailIsNotReplayedOnceTheSameContentIsCitedOnAFreshBranch(t *testing.T) {
 	f := newEvalFixture(t, func(g *declaration.FileGuard) {
 		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
@@ -998,6 +1009,7 @@ func TestEvaluate_ACitationFailIsNotReplayedOnceTheSameContentIsCitedOnAFreshBra
 // The report: two files, one cited commit on the old branch grounded b only, and the file a
 // was refused. Re-landed as one commit citing the same quote on a fresh branch (same content,
 // same quote set), a is grounded now: the verdict key is per file, so it is judged fresh.
+// sr:proves cache/finished-verdicts-reused
 func TestEvaluate_AStoredCitationFailIsNotReplayedWhenTheQuoteNowGroundsAnotherFile(t *testing.T) {
 	f := newEvalFixture(t, func(g *declaration.FileGuard) {
 		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
@@ -1038,6 +1050,7 @@ func TestEvaluate_AStoredCitationFailIsNotReplayedWhenTheQuoteNowGroundsAnotherF
 
 // A stored citation FAIL with the same key from another branch is judged again, so its
 // reason names the commit of the current range, not the old branch's.
+// sr:proves cache/finished-verdicts-reused
 func TestEvaluate_ACitationFailReplayedAcrossBranchesNamesTheCurrentCommit(t *testing.T) {
 	f := newEvalFixture(t, func(g *declaration.FileGuard) {
 		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
@@ -1075,6 +1088,7 @@ func (f *evalFixture) verifyOver(t *testing.T, base string) ([]FileGuardResult, 
 // the per-file citation quotes (and the verdict key) differ; the same base and head TREES are
 // the same change, judged already: verify reads the PR run's verdict. A base that moved is a
 // different change: not judged.
+// sr:proves cache/squash-reuses-verdict
 func TestEvaluate_VerifyReusesAVerdictJudgedOverTheSameTrees(t *testing.T) {
 	f := newEvalFixture(t, func(g *declaration.FileGuard) {
 		g.Require = []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}}
@@ -1103,7 +1117,8 @@ func TestEvaluate_VerifyReusesAVerdictJudgedOverTheSameTrees(t *testing.T) {
 	got, outcomes := f.verifyOver(t, fromRule)
 	assert.Empty(t, got, "the PR run's verdict is reused")
 	require.NotEmpty(t, outcomes)
-	assert.Contains(t, outcomes[0].Source, "stored, same trees as")
+	// (a squash commit with the same files is the same content key: a plain hit)
+	assert.Equal(t, "cached", outcomes[0].Source)
 
 	// Main moved while the PR was open: the squash's base tree is not the PR's.
 	runGit(t, f.repo, "checkout", "-q", "-b", "moved", fromRule)
@@ -1111,6 +1126,6 @@ func TestEvaluate_VerifyReusesAVerdictJudgedOverTheSameTrees(t *testing.T) {
 	runGit(t, f.repo, "merge", "--squash", "pr")
 	runGit(t, f.repo, "commit", "-m", "squash of pr, main moved")
 	got, _ = f.verifyOver(t, moved)
-	require.Len(t, got, 1)
-	assert.Contains(t, got[0].Reason, "not judged yet")
+	// The content is the judged one, so its pass holds whatever the squash commit cites.
+	assert.Empty(t, got)
 }

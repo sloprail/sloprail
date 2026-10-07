@@ -1,0 +1,4 @@
+predicate: >-
+  A session resumed from a different working directory keeps its {@fld:session:Session.identity} and finds its own record and state where it began, and never takes another conversation's file in its place.
+why: A resumed session loses its state or inherits another conversation's.
+needs: [session-resume]

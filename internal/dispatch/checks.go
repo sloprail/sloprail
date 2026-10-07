@@ -32,6 +32,7 @@ import (
 // exit code. A judge check is the model half: prepare (if set) runs first and its
 // additionalContext feeds the judge's prompt, then the judge renders and is asked
 // for a pass/fail verdict. The two are dispatched on which field the check set.
+// sr:invariant checks/prepare-skip-abstains
 func (r Runner) runCheck(req Request, c declaration.Check) (Verdict, error) {
 	switch {
 	case c.Script != "":
@@ -65,6 +66,8 @@ func (r Runner) runCheck(req Request, c declaration.Check) (Verdict, error) {
 //
 // A script's own prepare (optional) has run first: its additionalContext reaches the
 // script under that key of the payload.
+// sr:invariant checks/exit-status-is-the-verdict
+// sr:invariant checks/error-reports-are-not-answers
 func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Verdict, error) {
 	payload, err := r.checkPayloadJSON(req)
 	if err != nil {
@@ -123,6 +126,8 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Ve
 //     standard payload rather than replacing it, and the model runs. Empty stdout
 //     is this case with no additional context — silence lets the judge run, it is
 //     not a skip.
+//
+// sr:invariant checks/prepare-skip-abstains
 func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error) {
 	prepared, v, err := r.PrepareJudge(req, c)
 	if err != nil || v.Refused {
@@ -310,6 +315,7 @@ type preparedResult struct {
 // fed a half-prepared prompt would judge against something the author did not
 // intend, and an envelope the engine cannot read must resolve to a refusal, never a
 // silent skip or a half-read prompt.
+// sr:invariant checks/check-that-cannot-answer-refuses
 func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict, error) {
 	payload, err := r.checkPayloadJSON(req)
 	if err != nil {

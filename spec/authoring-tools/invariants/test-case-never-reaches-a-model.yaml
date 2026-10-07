@@ -1,0 +1,5 @@
+predicate: >-
+  A judge check inside a {@ent:authoring-tools:TestCase} is never sent to a model: it takes the
+  verdict of the mock the case names for it, and with none it refuses naming the missing mock.
+why: >-
+  A test that spends a model call, or lets an unmocked judge approve, is neither deterministic nor free.

@@ -39,7 +39,11 @@ func ResolveCitationAcrossSessions(current, projectDir string, req CitationReque
 		return Citation{}, err
 	}
 	var unreadable []string
+	needle := citeNeedle(req.Quote)
 	for _, path := range candidates {
+		if !sessionMayContain(path, needle) {
+			continue
+		}
 		matches, err := CiteInSession(path, req.Quote, req.SourceTypes)
 		if err != nil {
 			if errors.Is(err, ErrNoSessionRoot) {
@@ -114,4 +118,25 @@ func sessionCandidates(current, projectDir string) ([]string, error) {
 		out = append(out, o.path)
 	}
 	return out, nil
+}
+
+// sessionMayContain reports whether any record of the session at path — the
+// root and its sub-agents, every record a pool may draw on — could hold a
+// quote with this needle. A session whose raw bytes lack it cannot answer, and
+// is skipped without being parsed: of a project's sessions, a quote is in a few.
+// Anything unreadable might contain it, so the real search reports why.
+func sessionMayContain(path string, needle []byte) bool {
+	if needle == nil {
+		return true
+	}
+	userIn, toolIn, err := citationRecords(path, false)
+	if err != nil {
+		return true
+	}
+	for _, r := range append(toolIn, userIn) {
+		if r != "" && fileMayContain(r, needle) {
+			return true
+		}
+	}
+	return false
 }

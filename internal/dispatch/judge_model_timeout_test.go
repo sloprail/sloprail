@@ -23,6 +23,7 @@ import (
 
 // The check's Model and Timeout reach the judgeCall the runner builds — the
 // threading from declaration.Check through runJudgeCheck.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestJudgeCheck_ModelAndTimeoutThreadToJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
@@ -47,6 +48,7 @@ func TestJudgeCheck_ModelAndTimeoutThreadToJudgeCall(t *testing.T) {
 
 // The request's Workspace reaches the judgeCall, which is what hands sr-agent the
 // project as a read-only `--add-dir:readonly`.
+// sr:proves judges/judge-cannot-change-the-project
 func TestJudgeCheck_WorkspaceThreadsToJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
@@ -67,6 +69,7 @@ func TestJudgeCheck_WorkspaceThreadsToJudgeCall(t *testing.T) {
 
 // An unset model and timeout leave the judgeCall's fields at their zero values,
 // which the judge path resolves to the engine defaults (size-md, 30s).
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestJudgeCheck_UnsetModelTimeoutAreZeroOnJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
@@ -87,6 +90,7 @@ func TestJudgeCheck_UnsetModelTimeoutAreZeroOnJudgeCall(t *testing.T) {
 // A malformed timeout that somehow reached the runner (the loader validates it,
 // so this is the defensive path) fails CLOSED — the judge is not asked under a
 // timeout the rule did not actually specify.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestJudgeCheck_MalformedTimeoutFailsClosed(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
@@ -119,6 +123,7 @@ func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
 // judgeCommand carries the check's allowed_tools to sr-agent as `--allowed-tools`,
 // space-joined and quoted; a check that named none omits the flag so sr-agent
 // grants only the answer folder's scoped Edit rule its own verdict file needs.
+// sr:proves judges/judge-cannot-change-the-project
 func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
 	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"}, nil, "")
 	assert.Contains(t, cmd, "--allowed-tools 'Read WebFetch'",
@@ -133,6 +138,7 @@ func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
 // judgeCommand hands sr-agent the workspace as `--add-dir:readonly`, quoted (a project
 // path may hold a space), so the judge can read the project it judges and never
 // write it; a judge with no workspace gets no project access.
+// sr:proves judges/judge-cannot-change-the-project
 func TestJudgeCommand_CarriesTheWorkspaceAsAReadonlyDir(t *testing.T) {
 	cmd := judgeCommand("/tmp/verify.sh", "size-md", nil, nil, "/work/my proj")
 	assert.Contains(t, cmd, "--add-dir:readonly '/work/my proj'")
@@ -144,6 +150,7 @@ func TestJudgeCommand_CarriesTheWorkspaceAsAReadonlyDir(t *testing.T) {
 // The prompt names the workspace when the engine knows it — the judge starts in
 // the rule's folder and the material's paths are repository-relative — and says
 // nothing when it does not.
+// sr:proves judges/judge-cannot-change-the-project
 func TestWorkspaceNote(t *testing.T) {
 	note := workspaceNote("/work/proj")
 	assert.Contains(t, note, "/work/proj")
@@ -162,6 +169,7 @@ func TestJudgeCommand_ScopedToolRulesSurviveTheCommandLine(t *testing.T) {
 
 // A check's disallowed_tools reach sr-agent as --disallowed-tools, joined and
 // quoted like allowed_tools, scoped rules whole; none named, no flag.
+// sr:proves judges/judge-cannot-change-the-project
 func TestJudgeCommand_CarriesDisallowedTools(t *testing.T) {
 	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Bash(curl:*)"}, []string{"Bash(curl * -o *)", "Bash(curl * -d @*)"}, "")
 	assert.Contains(t, cmd, "--disallowed-tools 'Bash(curl * -o *) Bash(curl * -d @*)'")
@@ -169,6 +177,7 @@ func TestJudgeCommand_CarriesDisallowedTools(t *testing.T) {
 }
 
 // The check's disallowed_tools reach the judgeCall the runner builds.
+// sr:proves judges/judge-cannot-change-the-project
 func TestJudgeCheck_DisallowedToolsThreadToJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
@@ -200,6 +209,7 @@ func TestJudgeCall_ModelDefaultsToSizeMD(t *testing.T) {
 // KILLED and reported expired — the mechanism a per-judge timeout rides on, and
 // the fail-closed guarantee (an over-time judge is stopped, then refused at the
 // call site).
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunShell_CustomTimeoutKillsLongRun(t *testing.T) {
 	start := time.Now()
 	_, _, _, expired, _, startErr := runShell("", "sleep 10", nil, nil, 200*time.Millisecond)
@@ -212,6 +222,7 @@ func TestRunShell_CustomTimeoutKillsLongRun(t *testing.T) {
 
 // A timed-out command that ignores SIGTERM is SIGKILLed after the grace, and a grandchild of it
 // goes with it: SIGTERM first, so a child that manages groups of its own can take them down.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunShell_TimeoutEscalatesTermToKill(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	cmd := "trap '' TERM; sleep 120 & echo $! > " + pidFile + "; while :; do sleep 1; done"
@@ -241,6 +252,7 @@ func running(pid int) bool {
 
 // runShell with a zero timeout falls back to the default bound rather than
 // running unbounded — a quick command still completes normally under it.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunShell_ZeroTimeoutUsesDefault(t *testing.T) {
 	_, _, code, expired, _, startErr := runShell("", "printf ok", nil, nil, 0)
 	require.NoError(t, startErr)
@@ -253,6 +265,7 @@ func TestRunShell_ZeroTimeoutUsesDefault(t *testing.T) {
 // a longer bound is allowed, but exceeding whatever bound applies is still a
 // refusal, never a pass. Exercised through the real judge path (askJudge) with a
 // verifier and a stub sr-agent that sleeps past the bound.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestJudge_ExceedingCustomTimeoutRefuses(t *testing.T) {
 	dir := t.TempDir()
 	// A fake `sr-agent` on PATH that sleeps well past the tiny timeout below, so

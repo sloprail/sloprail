@@ -152,6 +152,7 @@ const gateStatePrefix = "gate:"
 // newNatureDeclarations loads the new-format declarations in force for a folder: the project's
 // own under `.sloprail`, PLUS those shipped by the plugins the project has enabled. Failures
 // are reported on the command's stderr and never refuse (see checkrun.LoadDeclarations).
+// sr:invariant gates/broken-declaration-denies-nothing
 func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry, sessionStart ...string) declaration.Loaded {
 	return checkrun.LoadDeclarations(cmd.ErrOrStderr(), cwd, reg, sessionStart...)
 }
@@ -212,6 +213,8 @@ type gateResult struct {
 // — for THIS slice the context map is whatever context state exists (empty until
 // the context slice populates it), threaded through so that slice changes only the
 // map's source, not this dispatch.
+// sr:invariant matching/unevaluable-never-passes
+// sr:invariant gates/multi-file-call-refused-whole
 func runGatesForEvents(
 	cmd *cobra.Command,
 	reg *module.Registry,
@@ -236,6 +239,7 @@ func runGatesForEvents(
 	var results []gateResult
 
 	for _, g := range gates {
+		// sr:invariant gates/undecidable-gate-refuses
 		fired, err := matchingEvents(cmd, reg, g, events, contextMap)
 		if err != nil {
 			// A trigger's match could not be COMPILED or EVALUATED. That is not the
@@ -302,6 +306,7 @@ func runGatesForEvents(
 				// any outer entry, so a nested launch carries the whole chain.
 				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 			})
+			// sr:invariant gates/undecidable-gate-refuses
 			emitGate(g, e, scope, verdict, err)
 			if err != nil {
 				// The runner itself could not decide (a programming error, not a check
@@ -379,6 +384,7 @@ func withResolveNote(reason, note string) string {
 // triggers cannot be said to have cleanly not matched, so it refuses rather than
 // hunting for a later trigger that might wake it — a broken trigger is a fault to
 // surface, not a condition to route around.
+// sr:invariant matching/unevaluable-never-passes
 func matchingEvents(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event, contextMap map[string]natures.ContextState) ([]event.Event, error) {
 	matched := make([]bool, len(events))
 	for _, trig := range g.On {

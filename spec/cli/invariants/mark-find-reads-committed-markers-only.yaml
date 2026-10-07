@@ -1,0 +1,6 @@
+predicate: >-
+  `sr mark find` reports a {@ent:cli:Marker} only when it is in the committed tree at the asked
+  revision, never from the working tree, and exits 0 when one is found, 1 when none is, and 2 when
+  the tree could not be read, which is never "none".
+why: >-
+  A rule that relies on markers must not be satisfied by an uncommitted edit, nor read an unreadable tree as "no markers".

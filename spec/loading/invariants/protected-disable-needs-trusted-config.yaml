@@ -1,0 +1,6 @@
+predicate: >-
+  A {@fld:loading:Config.disabled} entry naming the plugin's rule that judges
+  rule changes is honoured only when the config committed at the commit the
+  session began at lists it; entries in the working tree, in the agent's own
+  commits, or with no known start are ignored.
+why: An agent could switch off the check on its own rule changes.

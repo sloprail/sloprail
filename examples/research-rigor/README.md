@@ -353,7 +353,7 @@ not hide the rest.
 
 ## Proof
 
-- **E2e:** `tests/e2e/examples/039_research_rigor/` — a proposal written before
+- **E2e:** `tests/e2e/harness/examples/039_research_rigor/` — a proposal written before
   depth refused before it lands, after depth landing, NOTES.md with no research
   untouched, and the evasions (a shell heredoc or append into NOTES.md, the
   proposal in another Markdown file) refused; activation, a shallow run

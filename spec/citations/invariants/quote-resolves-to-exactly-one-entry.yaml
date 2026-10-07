@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:citations:Citation} exists for a {@fld:citations:Citation.quote} only when the quote lands on exactly one entry of the pools it names; a quote found nowhere or in several entries yields no Citation and an error saying which.
+why: >-
+  An ambiguous or invented quote would ground a change in words nobody can point to.
+needs: [session-transcript-file]

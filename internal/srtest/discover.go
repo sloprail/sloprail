@@ -98,6 +98,7 @@ func sloprailDirs(root string) ([]string, error) {
 // **/.sloprail/file-guard/structure.tests/<case>/test.sh. Order: the root's cases, then the rest
 // by subject. corePlugin (may be "") is the core sloprail plugin folder added to a plugin case
 // unless that case's plugin is itself.
+// sr:invariant authoring-tools/test-case-has-one-owner
 func Discover(root, corePlugin string) ([]Case, error) {
 	dirs, err := sloprailDirs(root)
 	if err != nil {

@@ -192,6 +192,7 @@ func TestCheckFreeSpace(t *testing.T) {
 
 // A run that cannot start exits 2 with the reason on stdout AND stderr —
 // never a silent exit that reads like a failed eval.
+// sr:proves authoring-tools/eval-unrunnable-is-not-a-failure
 func TestRun_EarlyFailureIsExit2AndLoud(t *testing.T) {
 	t.Setenv(minFreeMBEnv, "999999999")
 	var stdout, stderr bytes.Buffer
@@ -216,6 +217,7 @@ func TestRun_EarlyFailureIsExit2AndLoud(t *testing.T) {
 
 // Any other failure before there is a transcript — here a fixture that does not
 // load — is exit 2 as well, and says so.
+// sr:proves authoring-tools/eval-unrunnable-is-not-a-failure
 func TestRun_UnloadableFixtureIsExit2(t *testing.T) {
 	t.Setenv(minFreeMBEnv, "0")
 	var stdout bytes.Buffer

@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:judges:Judge} whose {@fld:judges:Judge.template} cannot be read,
+  parsed or rendered (including a filter the engine lacks or a render that
+  hangs) refuses the action naming the template, and the model is not asked.
+why: A typo in a rubric hands the model a blank or garbled prompt and the judge rules on it anyway.

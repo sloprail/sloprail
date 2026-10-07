@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:cli:Validation} of a document that violates its schema, or that cannot be checked, has
+  {@fld:cli:Validation.exit_status} 1, while a misuse of the command (an unknown flag or wrong
+  argument count) has 64.
+why: >-
+  A hook that reads the status must tell "this document is refused" from "this command was called wrongly".

@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:fileguard:FileGuard} whose range cannot be read, or whose
+  {@fld:fileguard:FileGuard.match} cannot decide, refuses and says why, and
+  is never read as an empty {@fld:fileguard:Changeset.files}.
+why: A git failure silently approves unjudged work.

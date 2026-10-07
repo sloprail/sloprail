@@ -206,7 +206,7 @@ func TestMatchingEvents_NoMatchWakesAlways(t *testing.T) {
 
 // A gate trigger match that COMPILES but cannot be EVALUATED against the fired
 // event surfaces the error rather than reading as "did not wake" — the gate-side
-// of the fail-closed seam behind tests/e2e/session/027 (post_matcher_error),
+// of the fail-closed seam behind tests/e2e/harness/session/027 (post_matcher_error),
 // pinned at the dispatch level.
 //
 // This is where a broken or adversarial trigger would otherwise silently DISABLE a
@@ -221,6 +221,7 @@ func TestMatchingEvents_NoMatchWakesAlways(t *testing.T) {
 // branch: int of a string is well-formed, so the trigger LOADS clean, and at run
 // time the vm refuses int("npm"). It is the same expression 014 and 027 ride on
 // the gate side. (An absent flag no longer errors: it reads as an empty list.)
+// sr:proves matching/unevaluable-never-passes
 func TestMatchingEvents_UnevaluableMatchErrorsNotSkip(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)
@@ -267,6 +268,7 @@ func TestWritePath(t *testing.T) {
 // checkStructureGate combines every loaded structure gate: a plugin's scoped one
 // refuses a create/update inside its scope, while a DELETE inside the same scope
 // is not gated at all (a delete is not a write), and the refusal names the plugin.
+// sr:proves structure/deletes-are-not-writes
 func TestCheckStructureGate_PluginScopeGatesWritesNotDeletes(t *testing.T) {
 	plugin := declaration.StructureGate{
 		Scope:  []declaration.StructureEntry{{Glob: ".mdmap/"}},

@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:citations:Citation} whose {@fld:citations:Citation.sourceTypes} is user quotes only what the person wrote or chose (typed messages, messages sent mid-turn, the answer picked to a question), never the agent's text, harness-injected messages, hook feedback, compaction summaries, or the question text itself.
+why: >-
+  A rule demanding the user's words would be satisfied by words the user never said.
+needs: [session-transcript-file, transcript-record-envelope, compaction-transcript-continuity]

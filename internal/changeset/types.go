@@ -225,6 +225,7 @@ func (cs Changeset) Change() string {
 // file byte-identical to a state an earlier commit of the range made, and that commit is
 // cited, the file is grounded by that citation (a revert of an uncited tweak, a restore of
 // cited work). An uncited edit whose content no cited commit made stays uncited.
+// sr:invariant citations/trailer-grounds-only-the-last-changing-commit
 func (cs Changeset) ForFile(f File) []Citation {
 	if len(f.Commits) == 0 {
 		return nil

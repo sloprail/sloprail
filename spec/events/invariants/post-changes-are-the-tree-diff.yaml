@@ -1,0 +1,9 @@
+predicate: >-
+  After a turn the post {@ent:events:FileChange}s are the difference between
+  the tree and the session's baseline, whatever any tool announced: a create,
+  an update carrying the baseline bytes in
+  {@fld:events:FileChange.oldContent}, or a delete, one per file, and none for
+  a file untouched, restored to its original or created and removed within the
+  turn.
+why: Work done by any means is missed, or an untouched file is judged again.
+needs: [stop-hook-payload]

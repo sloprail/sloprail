@@ -1,0 +1,7 @@
+predicate: >-
+  While the {@fld:install:Engine.installed} is false, the {@ent:install:Plugin} refuses every
+  attempt to write or edit a file, telling the agent that sloprail cannot check it and how to
+  install the engine.
+why: >-
+  Letting writes through unguarded is the silent no-op where a stranger believes the rules are enforcing.
+needs: [plugin-hooks, pretooluse-refusal, hook-exit-code-semantics]

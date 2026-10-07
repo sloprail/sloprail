@@ -150,6 +150,7 @@ func joined(refusals []string) string { return strings.Join(refusals, "\n") }
 
 // A range of a still-running background agent is skipped and listed, never refused for; the
 // ranges of a finished agent and of no agent are judged.
+// sr:proves subagents/running-background-agent-left-unjudged
 func TestVerifyTrackedRanges_ARunningAgentsRangeIsSkippedAndListed(t *testing.T) {
 	lines := append([]string{rsOrigin}, rsLaunch("bg1")...)
 	lines = append(lines, rsLaunch("bg2")...)
@@ -164,6 +165,7 @@ func TestVerifyTrackedRanges_ARunningAgentsRangeIsSkippedAndListed(t *testing.T)
 }
 
 // The Stop shows failures only: ranges nobody has judged pass it, with no refusal and no note.
+// sr:proves session/tracked-ranges-verified-from-recorded-results
 func TestVerifyTrackedRanges_UnjudgedRangesAreNotReported(t *testing.T) {
 	lines := append([]string{rsOrigin}, rsLaunch("bg1")...)
 	p, _ := stageStopRule(t, validRule, lines...)
@@ -173,6 +175,7 @@ func TestVerifyTrackedRanges_UnjudgedRangesAreNotReported(t *testing.T) {
 }
 
 // Once the agent's terminal notification is in the record, its range is judged.
+// sr:proves subagents/running-background-agent-left-unjudged
 func TestVerifyTrackedRanges_AFinishedAgentsRangeIsJudgedAtTheNextStop(t *testing.T) {
 	lines := append([]string{rsOrigin}, rsLaunch("bg1")...)
 	p, _ := stageStop(t, lines...)
@@ -191,6 +194,7 @@ func TestVerifyTrackedRanges_AFinishedAgentsRangeIsJudgedAtTheNextStop(t *testin
 }
 
 // Fail closed: a record that cannot be read or parsed skips nothing.
+// sr:proves subagents/ranges-verified-at-the-parents-turn-end
 func TestVerifyTrackedRanges_AnUnknownRecordJudgesEverything(t *testing.T) {
 	lines := append([]string{rsOrigin}, rsLaunch("bg1")...)
 	p, _ := stageStop(t, append(lines, "{torn")...)

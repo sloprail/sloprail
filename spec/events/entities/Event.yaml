@@ -1,0 +1,24 @@
+doc: What the engine derives from an agent's action or turn boundary and hands to rules, matches and checks; a kind plus the fields that kind declares.
+fields:
+  - name: kind
+    type: string
+    doc: What happened and when.
+    enum: [PreFileCreate, PreFileUpdate, PreFileDelete, PreCommandInvoke, PreToolUse, PostFileCreate, PostFileUpdate, PostFileDelete, PostTagWrite, Stop]
+  - name: fields
+    type: Record<string>
+    doc: The values the kind declares.
+    constraint_expr: always an object, never null; every declared field present, holding its empty value when there is nothing to carry; empty for a turn end
+  - name: tool
+    type: string
+    doc: The tool a pre-action call is about to run, on a tool-use event.
+  - name: input
+    type: Record<string>
+    doc: The arguments of that tool call, on a tool-use event.
+    constraint_expr: an empty object when the call has none or they are not an object
+  - name: raw
+    type: string
+    doc: The shell command line exactly as written, on a command event.
+  - name: tags
+    type: string[]
+    doc: The hash-tags the agent wrote in its own prose this turn, on a tag event.
+    constraint_expr: in order of first appearance, no duplicates; a tag starts with a letter or underscore

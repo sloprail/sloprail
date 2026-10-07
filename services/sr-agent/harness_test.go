@@ -208,6 +208,7 @@ func TestClaudeGrant_WritableDirIsAddedAndAllowed(t *testing.T) {
 // A readonly dir is a working directory (readable by Read/Grep/Glob with no
 // grant) and denied to every file-writing tool — a deny beats any allow,
 // including a Write the caller itself asked for.
+// sr:proves judges/judge-cannot-change-the-project
 func TestClaudeGrant_ReadonlyDirIsAddedAndDenied(t *testing.T) {
 	project := realDir(t, "project")
 
@@ -266,6 +267,7 @@ func TestClaudeGrant_CallerDeniesJoinTheReadonlyDenies(t *testing.T) {
 // into the project (measured in review). claude cannot express "deny except
 // this sub-dir", so resolveAddDirs and runVerified keep writable dirs out of
 // readonly ones instead; the grant never weakens the deny.
+// sr:proves judges/judge-cannot-change-the-project
 func TestClaudeGrant_ReadonlyDenyIsNeverDropped(t *testing.T) {
 	project := realDir(t, "project")
 	inner := filepath.Join(project, "tmp", "answer")

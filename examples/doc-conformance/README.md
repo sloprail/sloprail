@@ -101,7 +101,7 @@ measured to leak: `-sLo`, `--etag-save`, `--stderr`, `--hsts`, `--dump-header`,
 
 ## Coverage
 
-- e2e: `tests/e2e/examples/044_doc_conformance/` covers the marker match, a
+- e2e: `tests/e2e/harness/examples/044_doc_conformance/` covers the marker match, a
   refusal blocking at Stop and judged again with the fix commit until fixed, the URL and change
   reaching the prompt, the raw-doc instructions reaching the prompt, and the
   pinned grant and its deny reaching the harness intact.

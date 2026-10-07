@@ -1,0 +1,24 @@
+doc: A project's own settings over rules and sessions, kept in its config file beside its rules.
+fields:
+  - name: disabled
+    type: string[]
+    doc: Qualified names of rules the project switches off.
+  - name: enabled
+    type: string[]
+    doc: Qualified names of rules shipped disabled that the project switches on.
+  - name: stop_hook_block_cap
+    type: int32
+    constraint_expr: ">= 0; default 8; 0 means no cap set by sloprail"
+    doc: How many consecutive refusals of a turn's end are allowed before the turn ends un-judged.
+  - name: enable_subagent_stop_check
+    type: bool
+    constraint_expr: default false
+    doc: Whether a sub-agent's own end of turn also verifies tracked changes.
+  - name: subagent_silent_after_minutes
+    type: int32
+    constraint_expr: "> 0; default 10"
+    doc: Minutes of silence after which a background sub-agent is named as silent.
+  - name: subagent_stale_after_minutes
+    type: int32
+    constraint_expr: "> subagent_silent_after_minutes; default 60"
+    doc: Minutes of silence after which a background sub-agent stops being waited for.

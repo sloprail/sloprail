@@ -335,6 +335,7 @@ func isRegular(info os.FileInfo) bool {
 // statement is that paths are classified as CLEANED, and a producer emitting
 // ".." through a symlinked directory is naming something it did not mean to.
 // git does not produce such paths, and the contract already asks for clean ones.
+// sr:invariant events/path-inside-or-absolute
 func resolve(root, path string) (clean, full string, err error) {
 	// One check rather than two. An emptiness test used to stand here as well,
 	// and absoluteness subsumes it exactly — "" and "   " are not absolute — so

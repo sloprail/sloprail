@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// sr:proves fileguard/subject-contract
 func TestParseSubjects(t *testing.T) {
 	cs := Changeset{Files: []File{{Path: "a.md"}, {Path: "b.md"}}}
 
@@ -32,6 +33,7 @@ func TestParseSubjects(t *testing.T) {
 
 // A subject naming no file (an FQN) is valid only with a fingerprint: it is all its key is made
 // of, and a subject with neither would be keyed by nothing.
+// sr:proves fileguard/subject-contract
 func TestParseSubjects_FQNSubjectNeedsAFingerprint(t *testing.T) {
 	cs := Changeset{Files: []File{{Path: "a.md"}}}
 

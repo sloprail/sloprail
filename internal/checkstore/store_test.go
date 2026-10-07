@@ -68,6 +68,7 @@ func TestSchema_TablesAndColumnsAreA10nsNames(t *testing.T) {
 	}
 }
 
+// sr:proves cache/verify-read-only
 func TestOpenReadOnly_ReadsWhatTheWriterRecordedAndCannotWrite(t *testing.T) {
 	backend := checkcache.NewMemory()
 	w := Open(backend, false)

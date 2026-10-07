@@ -1,0 +1,8 @@
+# Writing a spec entity is refused until the document-entity skill was loaded this
+# session: it holds what a good entity is (copied verbatim from a10n). Covers every
+# file under spec/<domain>/entities/, written by a file tool or a command.
+on:
+  - event: PreFileWrite
+    match: event.path matches "^spec/[a-z0-9-]+/entities/"
+require:
+  - skill: document-entity

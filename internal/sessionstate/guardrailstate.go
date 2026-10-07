@@ -22,6 +22,7 @@ import (
 // guarantees the named context entered this cycle before the reading gate runs.
 // So a cross-guardrail read composes with `require` — the read gets the entries,
 // `require` gets the ordering — and neither get nor set is opened by it.
+// sr:invariant session/state-is-the-guardrails-own
 func (s *store) State(guardrail, key string) (string, bool, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -113,6 +114,7 @@ func (s *store) ListState(guardrail, prefix string) ([]Entry, error) {
 // column within it. So naming an owner reaches another RULE's rows in the same
 // session's database and can reach nothing in another session's or another
 // workspace's.
+// sr:invariant session/state-is-the-guardrails-own
 func (s *store) ListStateOwned(owner, prefix string) ([]Entry, error) {
 	return s.listState(owner, prefix)
 }

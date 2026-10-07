@@ -164,6 +164,7 @@ func TestProjectDirOfANonSubagentPathIsItsOwnDirectory(t *testing.T) {
 // real files in the real nested layout: a parent transcript and a sub-agent's
 // beside it. The two identities must differ, because everything downstream is
 // keyed on them.
+// sr:proves subagents/own-session
 func TestStableIDOfSubagentIsItsOwn(t *testing.T) {
 	projectDir := t.TempDir()
 	parentPath := filepath.Join(projectDir, "parent-session.jsonl")
@@ -205,6 +206,7 @@ func TestStableIDOfSubagentIsItsOwn(t *testing.T) {
 // Nothing here is a sub-agent special case, which is the point: the sub-agent
 // arrives with its own session id and its own cwd, and those are already the two
 // coordinates the path is built from.
+// sr:proves subagents/own-session
 func TestSessionDBPathSeparatesSubagentFromParent(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	tree := t.TempDir()
@@ -387,6 +389,7 @@ func TestWorkspaceAnchorFallsBackOutsideARepository(t *testing.T) {
 // test precisely because it is the one protection that survives the harness
 // misreporting the session. If it did not hold, an isolated sub-agent could be
 // exempted by — or could exempt — the parent, on content in a different tree.
+// sr:proves subagents/own-session
 func TestIsolatedSubagentKeysApartEvenUnderTheParentsIdentity(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	tree := initRepo(t)

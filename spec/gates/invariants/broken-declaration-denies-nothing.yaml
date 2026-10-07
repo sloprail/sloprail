@@ -1,0 +1,4 @@
+predicate: >-
+  A gate whose {@fld:gates:Gate.loaded} is false is reported by name on every
+  pass and denies nothing, while the gates beside it keep running.
+why: A typo in one rule would block all work, or switch off every other rule.

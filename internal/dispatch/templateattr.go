@@ -42,6 +42,7 @@ var endRaw = regexp.MustCompile(`\{%[-+]?\s*endraw\s*[-+]?%\}`)
 // whose name is interpolated), and closes at `>`. An attribute value opens at a
 // quote whose previous non-space byte is `=`. An unterminated Jinja delimiter is
 // left as written, for gonja to refuse (or the watchdog, where gonja loops).
+// sr:invariant judges/rendered-values-cannot-break-out
 func escapeAttributeValues(src string) string {
 	var b strings.Builder
 	inTag := false

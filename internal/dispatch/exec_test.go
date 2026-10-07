@@ -14,13 +14,14 @@ import (
 // These cover the killed-by-signal diagnosis in the script path: runShell must
 // recover the signal that ExitCode() flattens to -1, and scriptRefusalReason must
 // turn it into a "killed" message rather than the "exit -1 … no reason" the code
-// alone would yield. The e2e sibling (tests/e2e/fileguard/036_killed_by_signal)
+// alone would yield. The e2e sibling (tests/e2e/harness/fileguard/036_killed_by_signal)
 // proves the same fact end to end through the real dispatch and the agent stream;
 // this pins the two engine seams directly and cheaply.
 
 // runShell recovers the SIGNAL of a process the OS killed, which ExitCode() alone
 // reports as a bare -1. A check that SIGKILLs its own shell is the stand-in for
 // any violent death (a crash, an OOM kill, an outside `kill`).
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunShell_RecoversKillingSignal(t *testing.T) {
 	_, _, code, expired, signal, startErr := runShell("", "kill -9 $$", nil, nil, 0)
 
@@ -43,6 +44,7 @@ func TestRunShell_OrdinaryExitCarriesNoSignal(t *testing.T) {
 
 // scriptRefusalReason says the check was KILLED (and names the signal) for a
 // signalled death, in place of the regressed "exit -1 … no reason".
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestScriptRefusalReason_KilledBySignalSaysKilled(t *testing.T) {
 	got := scriptRefusalReason("./crash.sh", -1, syscall.SIGKILL, nil, nil)
 
@@ -56,6 +58,7 @@ func TestScriptRefusalReason_KilledBySignalSaysKilled(t *testing.T) {
 // A signalled death does NOT wear the timeout wording. The timeout is reported
 // before scriptRefusalReason is ever reached (runScriptExec's expired branch), so
 // the killed message must not claim a deadline the engine did not impose.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestScriptRefusalReason_KilledIsNotTimeout(t *testing.T) {
 	got := scriptRefusalReason("./crash.sh", -1, syscall.SIGKILL, nil, nil)
 
@@ -76,6 +79,7 @@ func TestScriptRefusalReason_OrdinaryExitKeepsBareFallback(t *testing.T) {
 // (fail-closed preserved) with a "killed" reason and no "exit -1". This is the
 // whole script path — runShell's signal recovery feeding scriptRefusalReason —
 // exercised against a genuinely signalled process rather than a synthesised code.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunScriptExec_SignalledCheckRefusesWithKilled(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "k.sh"), []byte("#!/bin/sh\nkill -9 $$\n"), 0o755))
@@ -111,6 +115,7 @@ func TestRunShell_CannotStartReturnsStartErr(t *testing.T) {
 // must not be read as approval. The error return is nil BECAUSE the refusal is the
 // answer: the old dispatch returned an error here and refused at the call site;
 // this keeps every script outcome one shape (a Verdict), so no caller re-decides.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunScriptExec_CannotStartRefuses(t *testing.T) {
 	res, err := runScriptExec(scriptCall{
 		Dir:    t.TempDir(),
@@ -191,6 +196,7 @@ fi
 // A declared script runs DIRECTLY: one without the execute bit, without a shebang
 // or with a non-standard interpreter is refused, naming the file and the fix —
 // never run through `sh <file>`.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunScript_RefusesWhatCannotBeExecedDirectly(t *testing.T) {
 	dir := t.TempDir()
 	for _, f := range []struct {
@@ -229,6 +235,7 @@ func TestRunScript_RefusesWhatCannotBeExecedDirectly(t *testing.T) {
 // empty: a stale id inherited from an outer process (a check that launched an
 // agent hands its environment down) must not tell a main-session check it runs
 // inside a sub-agent.
+// sr:proves subagents/subagent-id-reaches-checks
 func TestRunScriptExec_AgentIDEnvOverridesInherited(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "want.sh"), []byte(`#!/bin/sh

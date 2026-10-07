@@ -49,6 +49,7 @@ func readOwnerList(t *testing.T, workspace, session, caller, owner, prefix strin
 	return entries
 }
 
+// sr:proves session/state-is-the-guardrails-own
 func TestListEntries_OwnerReadsAcrossGuardrailsWithinTheSession(t *testing.T) {
 	// The capability: a caller in one session reads a DIFFERENT guardrail's
 	// entries in that same session. This is the CLI path, not the store method
@@ -64,6 +65,7 @@ func TestListEntries_OwnerReadsAcrossGuardrailsWithinTheSession(t *testing.T) {
 	assert.Equal(t, `{"kw":["x"]}`, entries[0].Value)
 }
 
+// sr:proves cli/state-is-scoped-to-the-calling-rule
 func TestListEntries_EmptyOwnerIsCallerScoped(t *testing.T) {
 	// Without --owner the read is the caller's own, unchanged. The caller reads
 	// its own entry and not the owner's, even though both live in the one
@@ -80,6 +82,8 @@ func TestListEntries_EmptyOwnerIsCallerScoped(t *testing.T) {
 	assert.Equal(t, "reader-value", entries[0].Value)
 }
 
+// sr:proves cli/state-is-scoped-to-the-calling-rule
+// sr:proves session/state-is-the-guardrails-own
 func TestListEntries_OwnerCannotReadAnotherSession(t *testing.T) {
 	// The fail-closed property that matters most. Session 1 holds the owner's
 	// entry; a caller in session 2 asks for the SAME owner and gets nothing,
@@ -101,6 +105,8 @@ func TestListEntries_OwnerCannotReadAnotherSession(t *testing.T) {
 	assert.Empty(t, other, "--owner read reached across sessions: it must not")
 }
 
+// sr:proves cli/state-is-scoped-to-the-calling-rule
+// sr:proves session/state-is-the-guardrails-own
 func TestListEntries_OwnerCannotReadAnotherWorkspace(t *testing.T) {
 	// The other half of the boundary: same session id, different workspace. The
 	// database is keyed by workspace too, so naming the owner from workspace B
@@ -133,6 +139,8 @@ func TestListEntries_OwnerWithNoEntriesIsEmpty(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+// sr:proves cli/state-is-scoped-to-the-calling-rule
+// sr:proves session/state-is-the-guardrails-own
 func TestOpenSessionState_OutsideAHookErrors(t *testing.T) {
 	// --owner does not change the precondition: the CLI still needs a guardrail
 	// in scope, because without SR_GUARDRAIL there is no caller identity for the

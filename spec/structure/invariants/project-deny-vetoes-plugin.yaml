@@ -1,0 +1,6 @@
+predicate: >-
+  A path inside a plugin's {@fld:structure:StructureGate.scope} is refused
+  when the project's {@fld:structure:StructureGate.deny} matches it, even if
+  the plugin allows it.
+why: A project could not keep the last word on its own tree.
+needs: [pretooluse-refusal]

@@ -15,7 +15,7 @@ import (
 // the one block that fails the turn — the rendering half of "at Stop, every rule's
 // objection is reported at once, not one turn per rule".
 //
-// The property is re-tested end to end at tests/e2e/session/024 (two file guards
+// The property is re-tested end to end at tests/e2e/harness/session/024 (two file guards
 // both refusing at Stop; the agent sees both), but nothing pinned the collection
 // at the unit level: 024 drives the whole dispatch through the mock, so it cannot
 // isolate that the JOIN keeps every refusal rather than dropping to the first. The
@@ -44,6 +44,7 @@ func TestJoinRefusals_OneIsRenderedBare(t *testing.T) {
 // about to spend a turn on this, and reporting one at a time turns one correction
 // into as many turns as there are rules; so every refusal must survive the join,
 // each attributable to its own rule.
+// sr:proves session/turn-end-refusal-is-one-block-naming-each-rule
 func TestJoinRefusals_AllCollectedNotStoppedAtFirst(t *testing.T) {
 	refusals := []string{
 		"secrets must not be committed (file-guard \"no-secrets\")",

@@ -86,6 +86,7 @@ func recordCalls(entries []LinedEntry) map[string]recordCall {
 // citableResults returns, for each tool_use id in the record, whether the
 // result answering it is a tool's own output. An id not in the map — a call not
 // in the record — is not.
+// sr:invariant citations/tool-result-pool-is-genuine-tool-output
 func citableResults(entries []LinedEntry) map[string]bool {
 	calls := recordCalls(entries)
 	citable := map[string]bool{}
@@ -409,14 +410,15 @@ func excludedResultHint(path, quote string, subagent bool) string {
 	if err != nil {
 		return ""
 	}
+	needle := citeNeedle(quote)
 	for _, r := range records {
-		entries, err := ReadLines(r)
+		rec, err := loadRecord(r)
 		if err != nil {
 			continue
 		}
-		calls := recordCalls(entries)
-		for _, e := range entries {
-			if e.Type != EntryUser || len(e.Message) == 0 {
+		calls := rec.recordCalls()
+		for _, e := range rec.entries {
+			if e.Type != EntryUser || len(e.Message) == 0 || !mayContain(e.Message, needle) {
 				continue
 			}
 			var msg userMessage

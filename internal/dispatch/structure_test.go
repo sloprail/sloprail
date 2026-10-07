@@ -25,6 +25,7 @@ func glob(p string) declaration.StructureEntry  { return declaration.StructureEn
 func regex(p string) declaration.StructureEntry { return declaration.StructureEntry{Regex: p} }
 
 // A path matching an allow glob is permitted; one matching nothing is denied.
+// sr:proves structure/deny-by-default
 func TestStructure_DenyByDefault(t *testing.T) {
 	sg := compile(t, []declaration.StructureEntry{glob("memories/updates/*.md")}, nil)
 
@@ -84,6 +85,7 @@ func TestStructure_GlobAndRegexTogether(t *testing.T) {
 }
 
 // A deny exception carves a path back OUT of what allow permitted.
+// sr:proves structure/deny-subtracts-from-allow
 func TestStructure_DenyCarvesException(t *testing.T) {
 	sg := compile(t,
 		[]declaration.StructureEntry{glob("memories/**/*.md")},
@@ -102,6 +104,7 @@ func TestStructure_DenyCarvesException(t *testing.T) {
 
 // A deny that matches nothing already allowed is a no-op — it cannot ADD a
 // permission, only subtract.
+// sr:proves structure/deny-subtracts-from-allow
 func TestStructure_DenyMatchingNothingAllowed_IsNoOp(t *testing.T) {
 	sg := compile(t,
 		[]declaration.StructureEntry{glob("memories/updates/*.md")},

@@ -1,0 +1,4 @@
+predicate: >-
+  A turn end sent again after a refusal is judged like the first one until {@fld:session:Session.consecutive_stop_refusals} reaches {@fld:loading:Config.stop_hook_block_cap}, after which the next retry lets the turn end un-judged and says so; the count starts over when a turn end is not a retry or completes.
+why: An agent passes a rule by replying twice, or a refusal loop never ends.
+needs: [stop-hook-payload, stop-block-continuation]

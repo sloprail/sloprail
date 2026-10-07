@@ -1,0 +1,18 @@
+doc: The sloprail plugin a person installs into their agent harness, which hooks sloprail into the session.
+fields:
+  - name: version
+    type: string
+    doc: The plugin's release version.
+    constraint_expr: semantic version
+  - name: release_tag
+    type: string
+    doc: The release the plugin and the commands installed for it come from.
+    constraint_expr: equals `v` followed by version
+  - name: hooked_moment
+    type: string
+    doc: A moment of the session the plugin makes the engine run at.
+    enum: [session-start, before-action, turn-end, subagent-start, subagent-stop, worktree-remove]
+  - name: auto_install
+    type: bool
+    doc: Whether the plugin installs or upgrades the engine itself at session start.
+    constraint_expr: default true; false when SLOPRAIL_NO_AUTO_INSTALL is set

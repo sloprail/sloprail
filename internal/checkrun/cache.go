@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/checkcache"
+	"github.com/sloprail/sloprail/internal/declaration"
 )
 
 // OpenCache is the repository's check cache: the orphan branch `sloprail/checks`, read from
@@ -15,8 +16,10 @@ import (
 // another machine pushed are found; a remote that cannot be reached is reported on w and the
 // local copy is used. With write (`run`) it then also imports an older engine's stores and
 // pushes what is pending; without it (`verify`, `show`) it only reads: nothing is pushed,
-// migrated or written.
-func OpenCache(w io.Writer, root string, write bool) (*checkcache.Store, error) {
+// migrated or written. guards are the rules in force: an older store's verdicts are re-keyed
+// by them (a verdict of a rule not among them is left behind).
+// sr:invariant cache/verify-read-only
+func OpenCache(w io.Writer, root string, write bool, guards []declaration.FileGuard) (*checkcache.Store, error) {
 	opt := checkcache.Options{Dir: root}
 	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
 		opt.Remote = "origin"
@@ -35,9 +38,14 @@ func OpenCache(w io.Writer, root string, write bool) (*checkcache.Store, error) 
 	if err := store.Sync(); err != nil {
 		fmt.Fprintf(w, "sloprail: the check results could not be fetched from origin, using the local copy: %v\n", err)
 	}
-	// Results filed under an older key schema are re-keyed once (a no-op when current).
-	if _, err := store.MigrateKeys(); err != nil {
+	// Results filed under an older key schema are re-keyed once (a no-op when current), by
+	// rebuilding each stored pass's key at its recorded range (RebuildKeys): nothing is judged.
+	store.SetRebuild(RebuildKeys(root, guards))
+	stats, done, err := store.MigrateKeys()
+	if err != nil {
 		fmt.Fprintf(w, "sloprail: the check results could not be re-keyed, older verdicts may be judged again: %v\n", oneLine(err))
+	} else if done {
+		fmt.Fprint(w, migrationLine(stats))
 	}
 	return store, nil
 }

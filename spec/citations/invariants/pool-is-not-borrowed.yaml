@@ -1,0 +1,5 @@
+predicate: >-
+  A quote grounds only in a pool its citation names, so a Citation records the pools it landed in ({@fld:citations:Citation.sourceTypes}), a Sloprail-Cites-User trailer resolves in the user pool alone and a Sloprail-Cites-Tool trailer in tool_result alone.
+why: >-
+  Tool output could stand in for the user's words, or the reverse, and satisfy a rule that asked for the other.
+needs: [session-transcript-file]

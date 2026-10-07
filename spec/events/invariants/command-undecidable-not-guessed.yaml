@@ -1,0 +1,7 @@
+predicate: >-
+  A word of a command line whose value depends on running something or on an
+  environment the line does not set is never guessed at: no
+  {@ent:events:CommandInvocation} is invented from it, its position is
+  recorded in {@fld:events:CommandInvocation.gaps}, and a line that does not
+  parse yields no invocations but keeps {@fld:events:Event.raw}.
+why: A rule fires on a program the command never runs, or trusts a path the engine could not resolve.

@@ -11,6 +11,7 @@ import (
 // file-guard/structure.tests/<case>/. Nothing under them is a declaration: a case may carry
 // declaration-looking files (the rules it runs against), and none of them is loaded, none is
 // invalid, none is a rule.
+// sr:proves loading/rule-discovery
 func TestLoad_CaseFoldersAddNoRules(t *testing.T) {
 	root := writeDecl(t, map[string]string{
 		"gate/real/gate.yaml":                          "on:\n  - event: PreFileWrite\n    match: event.path startsWith \"x/\"\nrequire:\n  - skill: s\n",

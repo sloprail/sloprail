@@ -51,6 +51,7 @@ func storedCitations(t *testing.T, store sessionstate.Store) string {
 // A file the agent never touched that is not as the agent left it (a background job writes it) is
 // found again at the first hook of every cycle. It is one stretch: the history holds it once, however
 // many cycles the session runs, and every hook of the session stays as cheap as the first.
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
 func TestHistoryStaysOneStretchWhileTheFileStaysAsAnotherLeftIt(t *testing.T) {
 	_, store, cycle := boundedRepo(t)
 	long := strings.Repeat("sleep 1000 && echo done ", 400)

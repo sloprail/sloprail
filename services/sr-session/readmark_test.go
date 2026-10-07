@@ -244,6 +244,7 @@ func (s *session) cycle() {
 	s.dispatched(false)
 }
 
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestReadMark_DoesNotMarkTurnsAppendedAfterTheCycleRead(t *testing.T) {
 	// F1, and the reason the mark is carried forward rather than re-derived.
 	//
@@ -565,6 +566,7 @@ func TestReadMark_HeldUntilTheCycleActuallyDispatches(t *testing.T) {
 	assert.Equal(t, a, s.mark())
 }
 
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestReadMark_FirstCycleReadsTheWholeSession(t *testing.T) {
 	// Nothing has been read yet, so everything is this cycle's work. Correct
 	// rather than a special case.
@@ -575,6 +577,7 @@ func TestReadMark_FirstCycleReadsTheWholeSession(t *testing.T) {
 	assert.Equal(t, []string{s.uuid(0), a, b}, uuidsOf(s.query()))
 }
 
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestReadMark_AdvancesWhenACycleCompletes(t *testing.T) {
 	// The mark moves at the end of a cycle that finished, and the next cycle
 	// sees only what happened after it.
@@ -593,6 +596,7 @@ func TestReadMark_AdvancesWhenACycleCompletes(t *testing.T) {
 	assert.Equal(t, []string{next}, uuidsOf(s.query()))
 }
 
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestReadMark_DoesNotAdvanceOnAnInterruptedCycle(t *testing.T) {
 	// The rule the whole mark depends on.
 	//
@@ -674,6 +678,7 @@ func TestReadMark_AdvancesAcrossSeveralCompletedCycles(t *testing.T) {
 	}
 }
 
+// sr:proves session/judged-position-advances-to-what-was-offered
 func TestReadMark_UnreadablePositionReadsTheWholeRecord(t *testing.T) {
 	// A position that cannot be read is not a position saying nothing needs
 	// judging. Defaulting the other way would have a rule report no violations

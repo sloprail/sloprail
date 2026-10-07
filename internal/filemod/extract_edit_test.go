@@ -82,6 +82,7 @@ func TestExtractPending_EditCreatingAFileCarriesItsRealContent(t *testing.T) {
 // body, so the rule meant nothing. Both halves are checked here because the
 // property is that the two differ — pinning only the non-empty case would let a
 // fix that reports every Edit-create as non-empty pass.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractPending_EditCreateIsDistinguishableFromAGenuinelyEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 
@@ -128,6 +129,7 @@ func TestExtractPending_EditCreateIsDistinguishableFromAGenuinelyEmptyFile(t *te
 // KNOWN, and a pre-write gate may legitimately judge it. This is what a
 // notebook create (resultKnown false, its cell source not the document) must be
 // tellable from; the two share `newContent: ""` and differ only in this boolean.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractPending_GenuineEmptyCreateIsResultKnown(t *testing.T) {
 	dir := t.TempDir()
 	for name, payload := range map[string]fakePending{
@@ -184,6 +186,7 @@ func TestExtractPending_EditCreateCarriesMarkersFromTheResultingBody(t *testing.
 //
 // Silence is the same answer extractCommand gives for a path it cannot classify
 // honestly, and the tree diff at session stop still reports whatever does land.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_EditWhoseOldStringIsAbsentFromTheFileProducesNoEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("the actual body\n"), 0o644))
@@ -204,6 +207,7 @@ func TestExtractPending_EditWhoseOldStringIsAbsentFromTheFileProducesNoEvent(t *
 // once, because it cannot know which the author meant. The engine cannot know
 // either — so it must not pick the first and report bytes the tool will never
 // write.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_EditWhoseOldStringIsAmbiguousProducesNoEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("dup\nmiddle\ndup\n"), 0o644))
@@ -310,6 +314,7 @@ func TestExtractPending_EditOnAnExistingFileCarriesTheResultingBytes(t *testing.
 //
 // Hence `resultKnown`. Both fields are always present; the boolean is what
 // carries the distinction that absence could not.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractPending_UpdateSaysWhetherItsResultIsKnown(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "existing.md")
@@ -356,6 +361,7 @@ func TestExtractPending_UpdateSaysWhetherItsResultIsKnown(t *testing.T) {
 //
 // Without this test the pair could be reduced to a single field and the suite
 // would still pass, which is exactly the mutation it exists to kill.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractPending_ResultKnownIsWhatSeparatesUnknownFromEmptied(t *testing.T) {
 	dir := t.TempDir()
 
@@ -579,6 +585,7 @@ func TestExtractPending_MultiEditCreatingAFileCarriesTheFinalBody(t *testing.T) 
 //
 // Reporting the partial result of the edits that DID apply would announce a
 // state the file never reaches.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_MultiEditWhoseLaterEditCannotApplyProducesNoEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("alpha\n"), 0o644))
@@ -683,6 +690,7 @@ func TestExtractPending_APerEditReplaceAllIsNotHonouredAndStaysSilent(t *testing
 // TestExtractPending_AnEmptyEditsArrayProducesNoEvent holds the degenerate
 // shape. An edits array with nothing in it changes no bytes, so there is no
 // modification to be about.
+// sr:proves events/pre-file-change-only-for-writes
 func TestExtractPending_AnEmptyEditsArrayProducesNoEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("alpha\n"), 0o644))
@@ -721,6 +729,7 @@ func TestExtractPending_AnEmptyEditsArrayProducesNoEvent(t *testing.T) {
 // The fix is a second PATH KEY, not a tool-name branch — `notebook_path` names
 // a file as surely as `file_path` does, and reading the key keeps working when
 // a vendor renames the tool.
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractPending_ANotebookWriteIsAFileEventWithNoDerivableResult(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nb.ipynb")
 	require.NoError(t, os.WriteFile(path, []byte(`{"cells":[]}`), 0o644))
@@ -756,6 +765,7 @@ func TestExtractPending_ANotebookWriteIsAFileEventWithNoDerivableResult(t *testi
 // the engine decide key order, indentation and unicode escaping, and a result
 // that is close but unequal to what Jupyter writes is worse than an honest
 // "not known".
+// sr:proves events/unknown-bytes-are-flagged
 func TestExtractPending_ANotebookNeverReportsCellSourceAsFileContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.ipynb")
 

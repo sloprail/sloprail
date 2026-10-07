@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:gates:Refusal} names its {@fld:gates:Refusal.gate} and, when the
+  gate ships from one, its {@fld:gates:Gate.plugin}.
+why: The agent could not tell which rule to satisfy, or that a rule it never wrote is in force.

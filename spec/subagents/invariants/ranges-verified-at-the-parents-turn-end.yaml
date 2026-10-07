@@ -1,0 +1,4 @@
+predicate: >-
+  The commit ranges of a {@ent:subagents:SubAgent} not known to be still running in the background (a foreground one, one the session does not know, one whose harness process has gone, or any when the record of sub-agents cannot be read) are verified at the end of its {@fld:subagents:SubAgent.parent}'s turn, and at the sub-agent's own end only when {@fld:loading:Config.enable_subagent_stop_check} is on.
+why: Half-finished delegated work is refused mid-flight, a gap in what sloprail knows lets unjudged commits wait forever, or delegated work is never verified at all.
+needs: [subagent-lifecycle-hooks, background-agent]

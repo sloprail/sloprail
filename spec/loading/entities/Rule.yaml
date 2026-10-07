@@ -1,0 +1,33 @@
+doc: A guardrail declared as a folder under a project's or a plugin's rules directory, of one nature.
+fields:
+  - name: nature
+    type: string
+    enum: [file-guard, gate, context, structure]
+    doc: Which kind of rule it is; a structure gate is one file rather than a named folder.
+  - name: name
+    type: string
+    doc: The rule's folder name, which is what a refusal cites. A structure gate has none.
+  - name: plugin
+    type: string
+    doc: The plugin that ships the rule; empty for the project's own rule.
+  - name: qualified_name
+    type: string
+    doc: The rule's switch-off key, <nature>/<name> for the project's own and <plugin>/<nature>/<name> for a plugin's.
+  - name: status
+    type: string
+    enum: [loaded, invalid, degraded, shadowed, disabled]
+    doc: Whether the rule is enforced (loaded), enforced but unable to run a declared script (degraded), or not enforced because it failed validation, lost precedence, or was switched off.
+  - name: trigger_events
+    type: string[]
+    doc: The event kinds a gate or context wakes on, after alias expansion.
+  - name: ships_disabled
+    type: bool
+    doc: Whether a gate declares itself off by default until a project enables it.
+  - name: scope
+    type: string[]
+    doc: The folders a plugin's structure gate owns.
+  - name: deletions
+    type: string
+    enum: [skip, include, only]
+    constraint_expr: absent means skip
+    doc: Whether a file-guard also covers deleted files.

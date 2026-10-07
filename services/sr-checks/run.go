@@ -169,6 +169,7 @@ func (t target) contexts(cmd *cobra.Command) map[string]natures.ContextState {
 	return checkrun.LoadContextMap(cmd.ErrOrStderr(), t.sess.state, t.loaded.Contexts)
 }
 
+// sr:invariant cli/checks-range-is-stated-and-resolves
 func resolveTarget(cmd *cobra.Command) (target, error) {
 	baseRev, _ := cmd.Flags().GetString("base")
 	headRev, _ := cmd.Flags().GetString("head")
@@ -200,6 +201,8 @@ func resolveTarget(cmd *cobra.Command) (target, error) {
 	return target{root: root, rng: r, loaded: loaded, sess: openSession(root)}, nil
 }
 
+// sr:invariant fileguard/unloadable-guard-refuses
+// sr:invariant cli/checks-exit-status-is-the-verdict
 func execute(cmd *cobra.Command, m mode) error {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	t, err := resolveTarget(cmd)
@@ -239,7 +242,7 @@ func execute(cmd *cobra.Command, m mode) error {
 		}
 		reap.Temp("", t.root) // what killed runs left in the temp dir, and their dead worktrees
 	}
-	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun)
+	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun, t.loaded.FileGuards)
 	if err != nil {
 		return err
 	}

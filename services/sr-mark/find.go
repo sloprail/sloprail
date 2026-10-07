@@ -56,6 +56,7 @@ func newFindCmd() *cobra.Command {
 	return cmd
 }
 
+// sr:invariant cli/mark-find-reads-committed-markers-only
 func runFind(cmd *cobra.Command, args []string) error {
 	fail := func(format string, a ...any) error {
 		return &exitError{code: 2, msg: "sr-mark find: " + fmt.Sprintf(format, a...)}

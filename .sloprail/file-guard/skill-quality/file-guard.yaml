@@ -51,7 +51,7 @@ checks:
   # claudeCodeSpec.grant), never an unscoped Write — and the project stays
   # denied to every file-writing tool. The exact grant (the answer folder's Edit
   # rule(s) plus Read, nothing else) is pinned end-to-end by
-  # TestJudgeReadsTheWorkspaceButCannotWriteIt in tests/e2e/engine_repo_judges/.
+  # TestJudgeReadsTheWorkspaceButCannotWriteIt in tests/e2e/harness/engine_repo_judges/.
   # No explicit timeout: runs under the engine's own default
   # (internal/dispatch/exec.go's defaultCheckTimeout), so this tracks that
   # value rather than needing to be kept in sync with it by hand.

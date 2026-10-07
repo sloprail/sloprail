@@ -1,0 +1,4 @@
+predicate: >-
+  A running background {@ent:subagents:SubAgent} whose {@fld:subagents:SubAgent.last_activity} is older than {@fld:loading:Config.subagent_silent_after_minutes} is named at the parent's turn end while still waited for, and older than {@fld:loading:Config.subagent_stale_after_minutes} its {@fld:subagents:SubAgent.status} becomes stale and its ranges are judged.
+why: A dead background agent holds its work out of judgement forever.
+needs: [background-agent]

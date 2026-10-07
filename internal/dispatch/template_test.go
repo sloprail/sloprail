@@ -85,6 +85,7 @@ func TestTemplate_ForLoop(t *testing.T) {
 }
 
 // The two filters this renderer registers (matching a10n's set) work.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestTemplate_RegisteredFilters(t *testing.T) {
 	assert.Equal(t, "a/b", render(t, `{{ p | dirname }}`, `{"p":"a/b/c.md"}`))
 	assert.Equal(t, "TestFoo", render(t, `{{ s | funcname }}`, `{"s":"e2e.TestFoo"}`))
@@ -93,6 +94,7 @@ func TestTemplate_RegisteredFilters(t *testing.T) {
 // A value rendered inside a quoted tag attribute — `<file path="{{ event.path }}">`
 // — cannot end the attribute and add one of its own: there its quotes and `&`
 // are escaped too, while the same value in the tag's body keeps them.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{`<file path="{{ p }}">{{ p }}</file>`, `<file path="x&#34; evil=&#34;1">x" evil="1</file>`},
@@ -134,6 +136,7 @@ func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
 
 // The attribute escape is the engine's, applied by context: a template that
 // names it is refused as naming an unknown filter, so no value is escaped twice.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestTemplate_AttributeEscapeIsReservedToTheEngine(t *testing.T) {
 	for _, src := range []string{
 		`<c k="{{ p | attrescape }}">`,
@@ -150,6 +153,7 @@ func TestTemplate_AttributeEscapeIsReservedToTheEngine(t *testing.T) {
 // A template that does not parse is reported in the author's own terms: the
 // same error the original template gives, positions included — nothing the
 // engine injected to escape attribute values.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_ParseErrorNamesOnlyTheAuthorsTemplate(t *testing.T) {
 	for _, src := range []string{
 		`<c k="{{ p }}"> {{ p | }}`, // a filter with no name, after an attribute value
@@ -167,6 +171,7 @@ func TestTemplate_ParseErrorNamesOnlyTheAuthorsTemplate(t *testing.T) {
 
 // A RUNTIME error inside an attribute value is also reported at the author's
 // own position, not the rewritten template's.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_RuntimeErrorNamesTheAuthorsPosition(t *testing.T) {
 	for _, src := range []string{
 		`<c k="{{ missing.deep }}">`,
@@ -185,6 +190,7 @@ func TestTemplate_RuntimeErrorNamesTheAuthorsPosition(t *testing.T) {
 // reports no error, so a typo would hand the judge garbage. Every filter name —
 // in an expression, in a `{% filter %}` block, in a branch that does not run, in
 // an attribute value — is checked before rendering, and the error names it.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_UnknownFilterFailsClosed(t *testing.T) {
 	for _, src := range []string{
 		`{{ p | nosuch }}`,
@@ -210,6 +216,7 @@ func TestTemplate_UnknownFilterFailsClosed(t *testing.T) {
 // time (a variable) is caught when it runs. Either way the render is an error
 // naming it, and the process survives (an unknown test is a panic gonja cannot
 // print, which used to take the whole hook down).
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_UnknownFilterOrTestInAnArgumentFailsClosed(t *testing.T) {
 	vars := map[string]any{"p": "v", "list": []any{map[string]any{"x": "a"}}, "f": "nosuch", "tst": "nosuchtest"}
 	for src, name := range map[string]string{
@@ -245,6 +252,7 @@ func TestTemplate_UnknownFilterOrTestInAnArgumentFailsClosed(t *testing.T) {
 // FAIL-CLOSED on a filter that returns an error instead of raising one — gonja's
 // own slice, sum, unique and urlize do — which would otherwise print the error
 // object's name into the prompt.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_FilterErrorValueFailsClosed(t *testing.T) {
 	out, err := renderTemplate(`{{ p | slice("3") }}`, map[string]any{"p": []any{"a", "b"}})
 	if assert.Error(t, err, "a filter's error value rendered as %q", out) {
@@ -256,6 +264,7 @@ func TestTemplate_FilterErrorValueFailsClosed(t *testing.T) {
 // error, not a silent blank — the caller refuses on it. These are the malformed
 // shapes gonja rejects promptly with a parse error; the one it instead HANGS on
 // (an unterminated `{{`) is covered by the watchdog test below.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_ParseErrorFailsClosed(t *testing.T) {
 	for _, src := range []string{
 		`{% if event.path %}unclosed`, // missing endif
@@ -273,6 +282,7 @@ func TestTemplate_ParseErrorFailsClosed(t *testing.T) {
 // hook. The watchdog turns "did not finish in time" into an error (→ refusal).
 // renderTimeout is lowered here so the proof is fast; production keeps the
 // generous bound.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_HangingTemplateFailsClosedViaWatchdog(t *testing.T) {
 	orig := renderTimeout
 	renderTimeout = 150 * time.Millisecond
@@ -290,6 +300,7 @@ func TestTemplate_HangingTemplateFailsClosedViaWatchdog(t *testing.T) {
 // missing-parent access and an `{% if %}` on an undefined both throw). So a template
 // written for a prepare-backed judge that references `additionalContext.<x>` when no
 // prepare ran refuses, rather than asking the model a prompt with a hole in it.
+// sr:proves judges/unrenderable-template-refuses
 func TestTemplate_MissingReferenceFailsClosed(t *testing.T) {
 	// `additionalContext` absent (no prepare ran) but the template reads a key off
 	// it: an error, so a template written for a prepare-backed judge cannot be

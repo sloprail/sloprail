@@ -1,0 +1,6 @@
+predicate: >-
+  When two {@ent:loading:Rule}s share a nature and name, the plugin's
+  protected rule wins, then the project's own, then the earlier-listed
+  plugin; the loser has {@fld:loading:Rule.status} shadowed and is reported
+  naming both sides.
+why: A project could override the rule judging its own rule changes, or a user would believe two rules run when one does.

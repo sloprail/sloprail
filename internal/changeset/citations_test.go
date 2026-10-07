@@ -46,6 +46,7 @@ func TestResolveCitations_UserAndToolTrailersLandInTheEventCitationShape(t *test
 	assert.Equal(t, []transcript.SourceType{transcript.SourceToolResult}, (*asked)[1].SourceTypes, "Cites-Tool asks the tool pool only")
 }
 
+// sr:proves citations/unresolved-trailers-are-reported-not-dropped
 func TestResolveCitations_AnUnresolvableQuoteIsNotACitationAndIsReported(t *testing.T) {
 	resolve, _ := fakeResolver(map[string]transcript.SourceType{})
 	cites, unresolved := ResolveCitations([]Commit{
@@ -58,6 +59,7 @@ func TestResolveCitations_AnUnresolvableQuoteIsNotACitationAndIsReported(t *test
 	assert.Contains(t, unresolved[0].String(), "abcdef012345")
 }
 
+// sr:proves citations/pool-is-not-borrowed
 func TestResolveCitations_ATrailerCannotBorrowAnotherPool(t *testing.T) {
 	// The words are in the tool output, and the commit claims the user said them.
 	resolve, _ := fakeResolver(map[string]transcript.SourceType{"green": transcript.SourceToolResult})
@@ -137,6 +139,7 @@ func TestAttributeFiles_AFileIsGroundedByTheCommitsThatChangedIt(t *testing.T) {
 	assert.Equal(t, []string{"two.md"}, cites[1].Files)
 }
 
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestForFile_OnlyTheCommitThatLastChangedTheFileGroundsIt(t *testing.T) {
 	cs := Changeset{Citations: []Citation{
 		{Citation: transcript.Citation{Quote: "a"}, Commits: []string{"c1"}},

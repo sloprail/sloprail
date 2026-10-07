@@ -131,6 +131,7 @@ return, never another session's or another tree's.`,
 // same session database, same prefix semantics. An empty owner is the ordinary
 // caller-scoped read; a named owner is the cross-guardrail read, which the store
 // offers for list alone.
+// sr:invariant cli/state-is-scoped-to-the-calling-rule
 func listEntries(store sessionstate.Store, guardrail, owner, prefix string) ([]sessionstate.Entry, error) {
 	if owner != "" {
 		return store.ListStateOwned(owner, prefix)

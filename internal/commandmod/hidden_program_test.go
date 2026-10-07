@@ -8,6 +8,7 @@ import (
 
 // A wrapper whose own bare word (timeout's duration) was lost does not eat the
 // program in its place: the program is still reported, with the gap before it.
+// sr:proves events/command-undecidable-not-guessed
 func TestHidden_ALostWrapperWordDoesNotHideTheProgram(t *testing.T) {
 	inv := firstInv(t, `timeout $T git push`, "git")
 	assert.Equal(t, []string{"git", "push"}, inv.Argv)

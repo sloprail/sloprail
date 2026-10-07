@@ -1,0 +1,5 @@
+predicate: >-
+  A renamed file is in {@fld:fileguard:Changeset.files} when the rule's
+  {@fld:fileguard:FileGuard.match} holds on its new path or on the path it
+  came from.
+why: Moving a file out of a guarded path becomes a way to change it unjudged.

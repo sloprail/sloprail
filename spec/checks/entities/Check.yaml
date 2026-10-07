@@ -1,0 +1,27 @@
+doc: One step of a rule that decides whether an action may proceed, run in the order the rule lists them; a script, or a judge.
+fields:
+  - name: script
+    type: string
+    doc: The executable the check runs, a path relative to the rule's folder plus plain arguments.
+    constraint_expr: no shell syntax; run directly, never through a shell
+  - name: prepare
+    type: string
+    doc: An optional script run first on the same input; it may add context for the check or ask for the check to be skipped.
+  - name: judge
+    type: judges.Judge
+    doc: The model-backed alternative to a script.
+  - name: exit_status
+    type: int32
+    doc: The status a script ends with.
+    constraint_expr: 0 permits, any other value refuses
+  - name: reported_error
+    type: bool
+    doc: True when a refusing script says on its output that it errored rather than decided.
+  - name: timeout_seconds
+    type: int32
+    doc: How long a script may run before it is killed with everything it started.
+    constraint_expr: default 600; overridden by a positive duration in SLOPRAIL_CHECK_TIMEOUT
+  - name: refusal_reason
+    type: string
+    doc: The words the agent hears when the check refuses.
+    constraint_expr: "taken in order from the reason of a JSON object on stdout, a fixed diagnosis (killed by a signal, not executable, not found), plain stdout, plain stderr, a fixed line naming the check and its exit status"

@@ -1,0 +1,6 @@
+predicate: >-
+  In a {@ent:matching:Match} over a command, a flag's value is a list of every
+  value given, and an absent flag reads as an empty list, so `"x" in
+  .flags.name` is false rather than an error and comparing a flag to a string
+  or nil is refused at load.
+why: A flag rule errors on every command without the flag, or never matches.

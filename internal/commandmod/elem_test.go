@@ -120,6 +120,7 @@ func TestArgvStringPredicatesStillLoad(t *testing.T) {
 // rather than for their mistake. The KEYS stay open; every VALUE is declared a
 // list of strings (TestFlagValueIsAListAtLoad), so the reads here are the list
 // spellings.
+// sr:proves matching/flag-values-are-lists
 func TestFlagsStayOpen(t *testing.T) {
 	k := kindDecl(t, commandmod.KindPreInvoke)
 
@@ -145,6 +146,7 @@ func TestFlagsStayOpen(t *testing.T) {
 // `.flags.tag == "next"` loaded and permitted `--tag=next`. Declaring the
 // values a list makes the checker refuse the comparison when the rule loads, so
 // the rule is reported instead of quietly guarding nothing.
+// sr:proves matching/flag-values-are-lists
 func TestFlagValueIsAListAtLoad(t *testing.T) {
 	k := kindDecl(t, commandmod.KindPreInvoke)
 
@@ -177,6 +179,7 @@ func TestFlagValueIsAListAtLoad(t *testing.T) {
 // a command lacking the flag would refuse every such call. An absent flag
 // reads as an empty list, so each spelling answers false without the flag and
 // true with it.
+// sr:proves matching/flag-values-are-lists
 func TestAbsentFlagReadsAsAnEmptyList(t *testing.T) {
 	k := kindDecl(t, commandmod.KindPreInvoke)
 	without := commandmod.ExtractCommand(`npm publish`).Event()
@@ -203,6 +206,7 @@ func TestAbsentFlagReadsAsAnEmptyList(t *testing.T) {
 
 // TestFlagLoadErrorSaysFlagsAreLists: a rule comparing a flag to a string is
 // refused at load, and the refusal says why.
+// sr:proves matching/flag-values-are-lists
 func TestFlagLoadErrorSaysFlagsAreLists(t *testing.T) {
 	_, err := guardrail.CompileMatcherFor(`any(invocations, .flags.tag == "next")`, kindDecl(t, commandmod.KindPreInvoke))
 	require.Error(t, err)
@@ -213,6 +217,7 @@ func TestFlagLoadErrorSaysFlagsAreLists(t *testing.T) {
 // so a rule asking whether one is nil — or supplying its own `??` default —
 // would answer the same for every command. Refused at load, with the spelling
 // that asks the question.
+// sr:proves matching/flag-values-are-lists
 func TestAbsentFlagNilQuestionsAreRefused(t *testing.T) {
 	k := kindDecl(t, commandmod.KindPreInvoke)
 	for _, src := range []string{

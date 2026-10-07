@@ -1,0 +1,6 @@
+predicate: >-
+  A {@ent:loading:Rule} whose {@fld:loading:Rule.status} is invalid
+  (unparseable, missing its YAML, or failing validation) is reported with
+  every fault found, its owner and a remedy, and does not change the status
+  of any other rule.
+why: One typo would disarm the whole project, or an author would fix faults one reload at a time.

@@ -43,6 +43,8 @@ than guessing which rule is asking.`,
 // Both the guardrail and the session come from the environment the engine set
 // when it ran the hook, never from arguments. A hook able to name either could
 // read a rule it was never told about, or reach into another session's record.
+// sr:invariant cli/state-is-scoped-to-the-calling-rule
+// sr:invariant session/state-is-the-guardrails-own
 func openSessionState() (sessionstate.Store, string, error) {
 	guardrail := os.Getenv(GuardrailEnv)
 	if guardrail == "" {

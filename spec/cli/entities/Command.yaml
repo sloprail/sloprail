@@ -1,0 +1,9 @@
+doc: A sloprail command a person or a script runs, either the root `sr` or one of its services.
+fields:
+  - name: service
+    type: string
+    doc: The word typed after `sr` that names the service the command runs.
+    enum: [session, file, mark, agent, eval, checks, test]
+  - name: exit_status
+    type: int32
+    doc: The process exit status; for the root command, the one the service returned.

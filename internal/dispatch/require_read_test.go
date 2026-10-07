@@ -76,6 +76,7 @@ func TestSkillFilePaths_EmptyWorkspaceOrNameYieldsNothing(t *testing.T) {
 // no Skill tool_use anywhere, but a Read tool_use named exactly the skill's own
 // SKILL.md — which is the same content loading the skill would have shown —
 // satisfies the check.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_ReadToolOnSkillFileCounts(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "document-decision")
@@ -94,6 +95,7 @@ func TestSkillLoadedInTrajectory_ReadToolOnSkillFileCounts(t *testing.T) {
 
 // TestSkillLoadedInTrajectory_CatOnSkillFileCounts is the Bash half: no Skill
 // tool_use, no Read tool_use, only a `cat` of the skill's own file.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_CatOnSkillFileCounts(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "document-decision")
@@ -112,6 +114,7 @@ func TestSkillLoadedInTrajectory_CatOnSkillFileCounts(t *testing.T) {
 
 // TestSkillLoadedInTrajectory_HeadOnSkillFileCounts pins a second read-shaped
 // binary, so the case above is not read as "only cat is recognised".
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_HeadOnSkillFileCounts(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "document-decision")
@@ -133,6 +136,7 @@ func TestSkillLoadedInTrajectory_HeadOnSkillFileCounts(t *testing.T) {
 // read of the skill's own file — not even a read of some OTHER file — still
 // finds nothing. Unchanged behaviour, and the case that would catch an
 // over-broad match (e.g. matching on skill NAME rather than the resolved path).
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillLoadedInTrajectory_NeitherSkillNorReadRefuses(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkillFile(t, workspace, "document-decision")
@@ -196,6 +200,7 @@ func TestSkillLoadedInTrajectory_SubagentOwnRecord_CatCounts(t *testing.T) {
 // point) with a Request carrying a real Workspace, so the path resolution half
 // (SkillFilePaths, threaded through Request.Workspace) is exercised at the same
 // seam a real dispatch uses — not just the bare trajectory reader.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_ReadOnly_EndToEnd(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "document-decision")
@@ -225,6 +230,7 @@ func TestCheckSkill_ReadOnly_EndToEnd(t *testing.T) {
 // pin at the same end-to-end seam: neither a Skill tool_use nor a read of the
 // skill's own file anywhere in the trajectory still refuses, with the combined
 // remedy naming both ways to clear it.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_NoSkillNoReadEndToEnd_StillRefuses(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkillFile(t, workspace, "document-decision")

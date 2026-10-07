@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:fileguard:FileGuard} that fails to load counts as a refusal and is
+  named with its reason, so {@fld:fileguard:FileGuardRun.exit_code} is 1.
+why: A broken rule judges nothing and the work passes as clean.

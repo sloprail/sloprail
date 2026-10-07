@@ -78,6 +78,7 @@ type FileHistory struct {
 // uncitedParts is every stretch of the history that no cited change counting
 // for pools made and that the agent made (foreign stretches are skipped), with
 // content where it is known.
+// sr:invariant citations/citation-at-stop-charges-every-uncited-part
 func (h FileHistory) uncitedParts(pools []transcript.SourceType) []UncitedChange {
 	points := append([]HistoryPoint(nil), h.Points...)
 	sort.SliceStable(points, func(i, j int) bool { return points[i].At < points[j].At })

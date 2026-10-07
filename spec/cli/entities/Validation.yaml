@@ -1,0 +1,6 @@
+doc: One `sr file validate` check of a document against a schema.
+fields:
+  - name: exit_status
+    type: int32
+    doc: The process exit status.
+    constraint_expr: one of 0 (conforms), 1 (refused or could not be checked), 64 (usage error)

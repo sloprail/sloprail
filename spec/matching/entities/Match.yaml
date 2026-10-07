@@ -1,0 +1,10 @@
+doc: The expression or glob that narrows which occurrences of an event a rule applies to.
+fields:
+  - name: expression
+    type: string
+    doc: The match source as written; a file-guard's may be a bare path glob.
+    constraint_expr: empty admits every occurrence of a gate or context trigger's event
+  - name: scope
+    type: string
+    doc: Which variables the match may read.
+    enum: [file-guard, gate, context]

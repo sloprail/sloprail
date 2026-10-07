@@ -1,0 +1,7 @@
+predicate: >-
+  While the {@fld:install:Engine.installed} is false, the {@ent:install:Plugin} refuses no action
+  other than a file write and never blocks the session from starting or a turn from ending; it
+  warns the person, and at session start the agent too, that guardrails are not enforcing.
+why: >-
+  Refusing commands would stop the session from installing the engine, and bricking the harness teaches users to uninstall.
+needs: [plugin-hooks, session-start-hook, hook-additional-context, hook-exit-code-semantics]

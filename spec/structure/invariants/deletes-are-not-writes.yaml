@@ -1,0 +1,5 @@
+predicate: >-
+  Deleting a file is never refused by a {@ent:structure:StructureGate}, which
+  governs only where files may be created or changed.
+why: Agents could not clean up files that sit outside the allowed layout.
+needs: [pretooluse-refusal]

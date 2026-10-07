@@ -401,6 +401,7 @@ func (iv Invalid) has(kind error) bool {
 // nothing. That makes the wording matter more, not less: it is the only thing
 // between a rule that silently stopped enforcing and a person who fixes it, so it
 // has to name a remedy the reader can actually perform.
+// sr:invariant loading/one-broken-rule-disables-only-itself
 func (iv Invalid) Remedy() string {
 	if !iv.Origin.FromPlugin() {
 		if iv.has(ErrMalformed) {
@@ -459,6 +460,9 @@ func (iv Invalid) Remedy() string {
 // expressions, which have no kind declaration to compile against — the same
 // position internal/guardrail.Load (versus LoadWith) takes. Every caller about to
 // act on what it loaded passes modules.Registry.
+// sr:invariant loading/one-broken-rule-disables-only-itself
+// sr:invariant loading/unreadable-config-fails-the-load
+// sr:invariant loading/precedence-and-shadowing
 func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	// The project's disable list, read first so a config that exists and cannot be
 	// parsed refuses the whole load rather than silently re-enabling every rule the
@@ -795,6 +799,7 @@ func parseStructure(root string, origin Origin) (*StructureGate, []Invalid, erro
 // file-guard/) is not a name and is skipped here; structure.yaml is read by its
 // own parseStructure, not through this enumeration. The folder structure.tests/ (the
 // structure gate's sr-test cases) is skipped the same way: it is no rule.
+// sr:invariant loading/rule-discovery
 func natureNames(root, dir string) ([]string, error) {
 	entries, err := os.ReadDir(natureDir(root, dir))
 	if os.IsNotExist(err) {
@@ -824,6 +829,7 @@ func natureNames(root, dir string) ([]string, error) {
 // declaration, not an absent one: the folder `gate/foo/` with no `gate.yaml`
 // inside is a half-written gate, and refusing it by name is better than silently
 // skipping a folder the author clearly meant to hold a rule.
+// sr:invariant loading/one-broken-rule-disables-only-itself
 func parseYAMLFile(path string, dst any) []Problem {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -864,6 +870,7 @@ func parseYAML(path string, data []byte, dst any) []Problem {
 
 // keepDegradedInForce drops a Degraded entry whose declaration lost precedence (Shadowed): it is
 // not loaded, so there is nothing enforced for the report to be about.
+// sr:invariant loading/declared-script-fault-keeps-rule-enforced
 func keepDegradedInForce(l *Loaded) {
 	inForce := map[string]bool{}
 	for _, g := range l.FileGuards {
@@ -923,6 +930,7 @@ func sortLoaded(l *Loaded) {
 // out of here avoids inventing a second reporting path for a case the Invalid set
 // already covers.
 
+// sr:invariant loading/precedence-and-shadowing
 func resolveFileGuards(out *Loaded, sound []FileGuard) {
 	claimed := map[string]FileGuard{}
 	for _, g := range sound {
@@ -986,6 +994,8 @@ func shadowOf(nature Nature, name string, loser Origin, loserDir string, winner 
 // declaration would keep a consuming project's logs noisy with a report they have
 // no way to silence. This is guardrail.Store.Resolve's disable step, applied to
 // every nature.
+// sr:invariant loading/disabled-by-qualified-name
+// sr:invariant loading/shipped-disabled-needs-enabled
 func applyDisable(out *Loaded, cfg config) {
 	// A gate that ships off (`enabled: false`) is inert unless the project enabled it.
 	offGates := out.Gates[:0]

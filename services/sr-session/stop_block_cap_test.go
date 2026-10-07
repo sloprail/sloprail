@@ -33,6 +33,7 @@ func (s *session) refusedStop(retry bool) (stdout, stderr string) {
 // The default: a retry is judged, not waved through — an agent does not pass a
 // rule by replying twice. After DefaultStopHookBlockCap refusals in a row (the
 // harness's own cap, 8), the next retry ends un-judged and says so.
+// sr:proves session/turn-end-retry-judged-until-cap
 func TestStopHookBlockCap_DefaultJudgesRetriesUpToTheHarnessCap(t *testing.T) {
 	s := newSession(t)
 	s.turn()
@@ -52,6 +53,7 @@ func TestStopHookBlockCap_DefaultJudgesRetriesUpToTheHarnessCap(t *testing.T) {
 
 // 0 is no engine cap: the loop runs until a reply passes (or the harness's own
 // cap ends it).
+// sr:proves session/turn-end-retry-judged-until-cap
 func TestStopHookBlockCap_ZeroNeverGivesWay(t *testing.T) {
 	s := newSession(t)
 	s.setBlockCap(t, "stop_hook_block_cap: 0\n")
@@ -66,6 +68,7 @@ func TestStopHookBlockCap_ZeroNeverGivesWay(t *testing.T) {
 
 // 1 is the old engine's behaviour, now a project's explicit choice: refuse once,
 // let the retry end un-judged — and leave the mark where it was.
+// sr:proves session/turn-end-retry-judged-until-cap
 func TestStopHookBlockCap_OneRefusesOnceThenLetsTheRetryEnd(t *testing.T) {
 	s := newSession(t)
 	s.setBlockCap(t, "stop_hook_block_cap: 1\n")
@@ -82,6 +85,7 @@ func TestStopHookBlockCap_OneRefusesOnceThenLetsTheRetryEnd(t *testing.T) {
 
 // A Stop that is not a retry begins a new sequence. A count left over from a
 // sequence the harness cut short must not shorten the next turn's.
+// sr:proves session/turn-end-retry-judged-until-cap
 func TestStopHookBlockCap_ANewTurnStartsANewCount(t *testing.T) {
 	s := newSession(t)
 	s.setBlockCap(t, "stop_hook_block_cap: 2\n")

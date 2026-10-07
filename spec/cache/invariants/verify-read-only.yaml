@@ -1,0 +1,6 @@
+predicate: >-
+  Verifying never executes a check and never writes a
+  {@ent:cache:StoredVerdict}; a subject whose key has none is reported as
+  not judged yet and refuses, and a stored fail shows its
+  {@fld:cache:StoredVerdict.reasons}.
+why: CI judges, or passes work nobody judged.

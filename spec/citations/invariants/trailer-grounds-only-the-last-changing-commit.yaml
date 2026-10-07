@@ -1,0 +1,4 @@
+predicate: >-
+  A {@ent:citations:Citation} carried by commits ({@fld:citations:Citation.commits}) grounds a file in {@fld:citations:Citation.files} only when that commit last substantively changed it or the file is restored byte-for-byte to a state a cited commit made, so an uncited change on top of a cited one, or a whitespace-only commit, is uncited.
+why: >-
+  A citation on an early commit would cover later edits nobody grounded.

@@ -222,6 +222,7 @@ func TestSessionStart_DegradedIdentityIsKeyedAndReported(t *testing.T) {
 // session whose SessionStart could record nothing has its point taken by the
 // first tool call — before the tool runs, so on the commit the session began on
 // — and a commit the agent makes afterwards does not move it.
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestPreTool_FirstToolCallTakesThePoint(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	tree := initRepo(t)

@@ -117,6 +117,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 0. context enters on the Post file events AND the tag events, populating
 	//    context[] before commit-required, the file-guards and the gates read it. Never blocks.
 	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
+	// sr:invariant contexts/gate-sees-context-activated-this-turn
 	enterRefusals := runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
 	// An enter that could not run is no decline (the context would stay off and the rules reading
 	// it silently not fire): the Stop that handled its Post trigger is refused, and so is any
@@ -150,14 +151,17 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
 	//    the subjectless one cyclemod produces. Refusals block the turn.
 	stop := cyclemod.Event()
+	// sr:invariant gates/stop-refusal-continues-the-turn
 	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{stop}, scope, store, contextMap, gatesMap, resolveNotes{}) {
 		if r.Refused {
+			// sr:invariant gates/refusal-names-gate-and-plugin
 			refusals = append(refusals, r.Reason+" (gate "+r.Attribution+")")
 		}
 	}
 
 	// 4. context exits, AFTER file-guards and gates decided. Lifecycle: flips active/inactive. Only an exit
 	//    that could not finish (killed on its timeout) refuses the turn.
+	// sr:invariant contexts/gate-sees-context-activated-this-turn
 	refusals = append(refusals, runContextExits(cmd, loaded.Contexts, stop, scope, store, contextMap, gatesMap)...)
 
 	// What this Stop was shown, so the next Stop — if this cycle is still open —
@@ -225,6 +229,7 @@ func natureStopBoundKinds(loaded declaration.Loaded) []string {
 //
 // The header is printed once. A range that several rules refused is one item with its rules as
 // sub-items (see rangeRefusal), so it counts as a list and wears the header even when alone.
+// sr:invariant session/turn-end-refusal-is-one-block-naming-each-rule
 func joinRefusals(refusals []string) string {
 	if len(refusals) == 0 {
 		return ""

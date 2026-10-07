@@ -60,6 +60,7 @@ func TestModule_InputIsAnOpenMap(t *testing.T) {
 	}
 }
 
+// sr:proves events/any-tool-call-is-an-event
 func TestExtract_OneEventCarryingToolAndInput(t *testing.T) {
 	events, err := New().Extract(preInput(pending{
 		tool: "WebFetch",
@@ -82,6 +83,7 @@ func TestExtract_OneEventCarryingToolAndInput(t *testing.T) {
 // no file and no command — an MCP call, a web fetch — still produces a
 // PreToolUse, because the question this kind answers is "what tool is this",
 // not "what does it do".
+// sr:proves events/any-tool-call-is-an-event
 func TestExtract_FiresForAnyTool(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -101,6 +103,7 @@ func TestExtract_FiresForAnyTool(t *testing.T) {
 	}
 }
 
+// sr:proves events/any-tool-call-is-an-event
 func TestExtract_EmptyInputWhenNoArguments(t *testing.T) {
 	// A tool called with nothing still gets an event, with input as an empty
 	// object — the fact worth reporting is that the tool is about to run, and a
@@ -113,6 +116,7 @@ func TestExtract_EmptyInputWhenNoArguments(t *testing.T) {
 		"absent arguments become an empty object, never null")
 }
 
+// sr:proves events/any-tool-call-is-an-event
 func TestExtract_NonObjectArgumentsStillProduceAnEvent(t *testing.T) {
 	// Arguments that are valid JSON but not an object (a bare string, a number, a
 	// list) leave input empty rather than dropping the event. The tool is still

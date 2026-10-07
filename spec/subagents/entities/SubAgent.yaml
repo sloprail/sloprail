@@ -1,0 +1,21 @@
+doc: An agent a session dispatched to do part of its work, in the foreground or in the background.
+fields:
+  - name: agent_id
+    type: string
+    doc: The identifier the harness gave the sub-agent.
+  - name: parent
+    type: session.Session
+    doc: The session that dispatched it.
+  - name: session
+    type: session.Session
+    doc: The sub-agent's own session, with its own record, state and baseline.
+  - name: background
+    type: bool
+    doc: Whether it runs concurrently with its parent's turn.
+  - name: status
+    type: string
+    doc: Whether the sub-agent is still running, how it ended, or that it went silent for too long.
+    enum: [running, completed, failed, killed, stale]
+  - name: last_activity
+    type: string
+    doc: The latest sign of life, from its own tool calls or the growth of its own record.

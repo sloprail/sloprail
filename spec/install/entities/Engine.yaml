@@ -1,0 +1,12 @@
+doc: The installed set of sloprail commands that enforces the rules.
+fields:
+  - name: installed
+    type: bool
+    doc: Whether the engine can be found.
+  - name: version
+    type: string
+    doc: The version the engine reports; `dev` for an unreleased build.
+  - name: install_dir
+    type: string
+    doc: The directory the commands are installed together into.
+    constraint_expr: default ~/.local/bin; SLOPRAIL_INSTALL_DIR overrides

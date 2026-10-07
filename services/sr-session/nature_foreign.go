@@ -23,6 +23,7 @@ import (
 // targets. Each project's gates govern its own tree, so writing from project A into
 // sibling repo B (a Write, an Edit, a delete, or a Bash command that writes there or
 // runs in B: `git -C B commit`, `cd B && ...`) is judged by B's own gates too.
+// sr:invariant gates/sibling-project-gates-apply
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	if v := dispatchOwnNaturePreTool(cmd, p, reg, scope, store); v.Blocked != "" {
 		return v
@@ -46,6 +47,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 // The repo is the workspace its gates run in, and the paths its gates see are relative
 // to it. Its verdicts and contexts stay out of the session's state: a gate name may
 // collide with one of the session's.
+// sr:invariant gates/sibling-project-gates-apply
 func dispatchForeignGates(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope) natureVerdict {
 	if reg == nil {
 		return natureVerdict{}

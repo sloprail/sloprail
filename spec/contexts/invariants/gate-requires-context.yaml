@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:gates:Gate} that requires a {@ent:contexts:Context} refuses while
+  its {@fld:contexts:Context.active} is false and is satisfied once it is
+  true.
+why: A guard meant to apply only inside a mode would apply outside it, or never.

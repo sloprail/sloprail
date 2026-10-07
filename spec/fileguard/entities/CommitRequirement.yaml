@@ -1,0 +1,13 @@
+doc: "What is owed at the end of an agent's turn for uncommitted work on guarded paths."
+fields:
+  - name: paths
+    type: string[]
+    doc: "Uncommitted paths some file-guard selects."
+  - name: listed
+    type: int32
+    doc: "How many of the paths a refusal names."
+    constraint_expr: "at most 20, the rest counted"
+  - name: repeat_limit
+    type: int32
+    doc: "Consecutive refusals for the same set of paths after which the turn is let end."
+    constraint_expr: "the project's configured block cap; 0 never releases"

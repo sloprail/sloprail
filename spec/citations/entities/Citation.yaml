@@ -1,0 +1,31 @@
+doc: A quote of earlier words that an action or a commit names as the ground for a change, resolved against the session record.
+fields:
+  - name: quote
+    type: string
+    doc: The exact words cited.
+    constraint_expr: non-empty; matches word for word, whitespace runs interchangeable
+  - name: sourceTypes
+    type: string[]
+    doc: The pools the quote actually landed in.
+    enum: [user, tool_result]
+  - name: path
+    type: string
+    doc: The record file holding the cited entry.
+  - name: line
+    type: int32
+    doc: Where the cited entry sits in that record.
+    constraint_expr: ">= 1"
+  - name: message
+    type: string
+    doc: The full text of the cited entry, so a judge can weigh the quote against its context.
+    constraint_expr: at most 16 KiB
+  - name: call
+    type: string
+    doc: For tool output, the call that produced it; empty for the user pool.
+    constraint_expr: at most 2 KiB per call
+  - name: commits
+    type: string[]
+    doc: For a commit trailer, the commits that carry the quote.
+  - name: files
+    type: string[]
+    doc: The files of the changeset that those commits changed.

@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:fileguard:FileGuard} whose subjects script prints something that
+  does not describe valid {@ent:fileguard:Subject} entries of its
+  {@ent:fileguard:Changeset} refuses, and is never read as a pass.
+why: A malformed subject list reads as a pass or keys a verdict by nothing.

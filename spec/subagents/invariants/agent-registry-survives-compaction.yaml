@@ -1,0 +1,4 @@
+predicate: >-
+  Which {@ent:subagents:SubAgent} were dispatched and their {@fld:subagents:SubAgent.status} are remembered across a compaction, a cleared conversation and a resume into a new transcript.
+why: A running agent becomes unknown after a compaction and its work is judged half-done.
+needs: [compaction-transcript-continuity, session-resume]

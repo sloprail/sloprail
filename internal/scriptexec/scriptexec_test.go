@@ -21,6 +21,7 @@ func write(t *testing.T, body string, mode os.FileMode) string {
 	return p
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestVerify(t *testing.T) {
 	cases := []struct {
 		name string
@@ -48,6 +49,7 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestVerifyErrorNamesFileAndFix(t *testing.T) {
 	err := Verify(write(t, "true\n", 0o755))
 	if err == nil || !strings.Contains(err.Error(), "x.sh") || !strings.Contains(err.Error(), "#!/usr/bin/env bash") {
@@ -59,6 +61,7 @@ func TestVerifyErrorNamesFileAndFix(t *testing.T) {
 	}
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestVerifyDeclared(t *testing.T) {
 	dir := t.TempDir()
 	if err := VerifyDeclared(dir, "./missing.sh"); err != nil {
@@ -73,6 +76,7 @@ func TestVerifyDeclared(t *testing.T) {
 	}
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestCommandRunsDirectly(t *testing.T) {
 	p := write(t, "#!/bin/sh\nexit 3\n", 0o755)
 	cmd, err := Command(context.Background(), p)
@@ -87,6 +91,7 @@ func TestCommandRunsDirectly(t *testing.T) {
 	}
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestArgv(t *testing.T) {
 	dir := "/guard"
 	ok := map[string][]string{
@@ -115,6 +120,7 @@ func TestArgv(t *testing.T) {
 
 // Only the first word used to be checked, so a chain, a pipe or a quoted path ran unchecked under
 // `sh -c`: the whole string must now be a path plus plain arguments, and the file must verify.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestVerifyDeclaredRefusesShellSyntax(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.sh"), []byte("#!/bin/sh\ntrue\n"), 0o755)

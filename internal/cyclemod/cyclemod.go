@@ -70,6 +70,7 @@ func (*Module) Extract(module.Input) ([]event.Event, error) { return nil, nil }
 // could give it fields the declaration says it has none of, and nothing would
 // catch that: the matcher is compiled against the declaration, so an extra
 // field would simply be unreadable and unmentioned.
+// sr:invariant events/turn-end-every-turn
 func Event() event.Event {
 	return event.Event{Kind: KindStop, Fields: map[string]any{}}
 }

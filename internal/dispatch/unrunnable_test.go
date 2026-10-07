@@ -37,6 +37,7 @@ func brokenIn(t *testing.T, b brokenScript) (dir string) {
 	return dir
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestUnrunnableScript_RefusesInEveryRole(t *testing.T) {
 	for _, b := range brokenScripts {
 		t.Run(b.name, func(t *testing.T) {
@@ -92,6 +93,7 @@ func TestUnrunnableScript_RefusesInEveryRole(t *testing.T) {
 
 // A declared script is exec'd directly (a path plus plain arguments), never through `sh -c`: a
 // chain, a pipe or a quoted path is refused before anything runs, and plain arguments arrive.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestRunScriptExec_NoShellSyntax(t *testing.T) {
 	dir := t.TempDir()
 	mark := filepath.Join(dir, "ran")
@@ -116,6 +118,7 @@ func TestRunScriptExec_NoShellSyntax(t *testing.T) {
 
 // The control: an enter that RUNS and exits non-zero is a decline, never a refusal; and one
 // whose declared file is gone is unrunnable (refused), not a decline.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestEnterContext_DeclineIsNotARefusalButMissingIs(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "no.sh"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
@@ -134,6 +137,7 @@ func TestEnterContext_DeclineIsNotARefusalButMissingIs(t *testing.T) {
 	assert.Contains(t, v.Reason, "gone.sh")
 }
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestContextScriptFault(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "ok.sh"), []byte("#!/bin/sh\n"), 0o755))

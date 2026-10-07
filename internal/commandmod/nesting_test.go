@@ -58,6 +58,7 @@ func countOf(hay []string, needle string) int {
 // TestNesting_ShellOperators: every operator that joins statements. Each one
 // nests a program one level deeper than a string match would look, and none of
 // them may hide it.
+// sr:proves events/command-nesting-flattened
 func TestNesting_ShellOperators(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -94,6 +95,7 @@ func TestNesting_ShellOperators(t *testing.T) {
 // CallExpr at the top — a traversal matching only calls would see through none
 // of them — and a program in a loop body is as much about to run as one on the
 // first line.
+// sr:proves events/command-nesting-flattened
 func TestNesting_ControlFlow(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -135,6 +137,7 @@ func TestNesting_ControlFlow(t *testing.T) {
 // another. The inner statements are walked as syntax and never run — proven
 // separately in TestExtractCommand_ResolvesNothingUnsafe — so the inner program
 // is reported without the substitution ever executing.
+// sr:proves events/command-nesting-flattened
 func TestNesting_Substitutions(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -176,6 +179,7 @@ func TestNesting_Substitutions(t *testing.T) {
 //
 // Both are emitted. A rule about npm is defeated by `sudo npm publish` if only
 // sudo is reported, and a rule about sudo is defeated by reporting only npm.
+// sr:proves events/command-nesting-flattened
 func TestNesting_Wrappers(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -304,6 +308,7 @@ func TestNesting_WrapperArgvIsTheWrappedVector(t *testing.T) {
 // These must stay red-on-change in the OTHER direction: if one of them starts
 // reporting its hidden program, the module has begun guessing, and that is a
 // regression rather than an improvement.
+// sr:proves events/command-undecidable-not-guessed
 func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -478,6 +483,7 @@ func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 // The interpreter is still reported in every case. Unwrapping ADDS what the
 // payload runs; a rule about `sh` must not be defeated by the fix to a rule
 // about npm.
+// sr:proves events/command-nesting-flattened
 func TestNesting_LiteralInterpreterPayloadsAreUnwrapped(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -551,6 +557,7 @@ func TestNesting_LiteralInterpreterPayloadsAreUnwrapped(t *testing.T) {
 // with what it runs would close the npm gap and open a `sh` one — a rule about
 // shelling out would stop firing on every line that shells out, which is the
 // same silent-never-fires failure pointed at a different rule.
+// sr:proves events/command-nesting-flattened
 func TestNesting_InterpreterIsStillReported(t *testing.T) {
 	for _, src := range []string{
 		`sh -c "npm publish"`,
@@ -596,6 +603,7 @@ func TestNesting_InterpreterIsStillReported(t *testing.T) {
 // about `sh` fires at any depth, and only the innermost payload goes unread.
 // Returning nothing at the limit would be the worse failure — it would make
 // deep nesting a way to hide the outer levels too.
+// sr:proves events/command-nesting-flattened
 func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
 	// The bound is pinned to a LITERAL, not read from the constant.
 	//
@@ -750,6 +758,7 @@ func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
 // dropped is the CLAIM that the substring match is how a rule must reach npm.
 // It is not, any more — `.bin == "npm"` fires on this line now — and leaving the
 // workaround documented would leave a rule author writing the fragile spelling.
+// sr:proves events/command-nesting-flattened
 func TestNesting_FindExecIsUnwrapped(t *testing.T) {
 	for _, src := range []string{
 		`find . -exec npm publish \;`,
@@ -1657,6 +1666,7 @@ func TestNesting_Redirections(t *testing.T) {
 
 // TestNesting_DeepStructureIsFlatCompletely: depth is not a budget that runs
 // out. A hundred wrappers and a hundred subshells both report everything.
+// sr:proves events/command-nesting-flattened
 func TestNesting_DeepStructureIsFlatCompletely(t *testing.T) {
 	t.Run("100 nested subshells", func(t *testing.T) {
 		src := strings.Repeat("( ", 100) + "npm publish" + strings.Repeat(" )", 100)

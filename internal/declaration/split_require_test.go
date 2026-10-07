@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestValidateFileGuard_RefusesSessionRequireNamingTheGate(t *testing.T) {
 	cases := map[string]Prerequisite{
 		"skill":   {Skill: "authoring-guardrails", Files: []string{"gate.md"}},

@@ -248,6 +248,7 @@ func indexOf(args []string, want string) int {
 // actually ships, or the tests would pass against a drifted baseArgs. This pins
 // them together, so a change to claudeCodeSpec.baseArgs that forgot to update the
 // const (or vice-versa) fails here rather than letting the two disagree.
+// sr:proves judges/judge-agent-runs-isolated
 func TestBaseArgs_IsolationSettingsMatchTheConst(t *testing.T) {
 	assert.Equal(t, []string{"--settings", claudeIsolationSettings, "--permission-mode", "default"}, claudeCodeSpec.baseArgs)
 }
@@ -256,6 +257,7 @@ func TestBaseArgs_IsolationSettingsMatchTheConst(t *testing.T) {
 // objects do not: --settings is merged over the project and user settings, so a
 // judge session would still run their Stop hooks and nest a judge inside a judge
 // (measured against the real CLI; see claudeCodeSpec.baseArgs).
+// sr:proves judges/judge-agent-runs-isolated
 func TestBaseArgs_IsolationSettingsDisableAllHooks(t *testing.T) {
 	var settings map[string]any
 	require.NoError(t, json.Unmarshal([]byte(claudeCodeSpec.baseArgs[1]), &settings))
@@ -265,6 +267,7 @@ func TestBaseArgs_IsolationSettingsDisableAllHooks(t *testing.T) {
 // The isolation --settings is ALWAYS present, whatever else the caller passed —
 // it is the whole point of moving it into baseArgs. Even a bare run with no caller
 // args carries it.
+// sr:proves judges/judge-agent-runs-isolated
 func TestBuildInvocation_IsolationSettingsAlwaysPresent(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "haiku", nil, "q", noBinaryOverride)
 	i := indexOf(inv.Args, "--settings")

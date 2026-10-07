@@ -1,0 +1,10 @@
+# Every invariant a change touches is implemented and proven [deterministic]; the
+# markers are read over the whole committed tree, so deleting a proving test (its marker leaves) breaks
+# coverage of the invariant it named.
+match: >-
+  path matches "^spec/[a-z0-9-]+/invariants/[a-z0-9-]+[.]yaml$"
+  or any(markers, .kind == "invariant" or .kind == "proves")
+  or any(oldMarkers, .kind == "invariant" or .kind == "proves")
+deletions: include
+checks:
+  - script: ./covered.sh

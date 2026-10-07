@@ -42,6 +42,8 @@ func IsLiteralScope(glob string) bool { return !strings.ContainsAny(glob, "*?[")
 //   - when every scope entry is a LITERAL folder, every allow/deny entry must lie
 //     inside one of them. With a wildcard scope this cannot be decided at load, so
 //     it is skipped — an entry outside the scope is inert at write time anyway.
+//
+// sr:invariant loading/structure-scope-by-owner
 func validateStructureScope(s StructureGate) []Problem {
 	if !s.Origin.FromPlugin() {
 		if len(s.Scope) > 0 {

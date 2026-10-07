@@ -54,6 +54,7 @@ func sessionHasNoTranscript(p HookPayload, atStart bool) bool {
 // skipWithoutTranscript is the guard every hook that runs rules starts with: when the session has
 // no transcript it says so (once per session on the screen, always on stderr) and returns true,
 // and the hook does nothing more.
+// sr:invariant session/no-transcript-switches-guardrails-off
 func skipWithoutTranscript(cmd *cobra.Command, p HookPayload, atStart bool) bool {
 	if !sessionHasNoTranscript(p, atStart) {
 		return false

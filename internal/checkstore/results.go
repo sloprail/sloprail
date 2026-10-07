@@ -250,6 +250,7 @@ func (s *store) CachedCheck(rule, subject, kind, fingerprint string) (CachedChec
 // (at whatever definition) whose base and head TREES equal these: identical trees are an identical
 // net change, whichever commits (a squash of a judged branch) carry it. The newest such pass
 // or fail wins; a run without trees, or with an engine error, never matches.
+// sr:invariant cache/squash-reuses-verdict
 func (s *store) CachedByTrees(rule, subject, kind, baseTree, headTree string) (CachedCheck, bool, error) {
 	if baseTree == "" || headTree == "" {
 		return CachedCheck{}, false, nil

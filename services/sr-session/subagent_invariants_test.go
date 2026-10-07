@@ -40,7 +40,7 @@ import (
 //
 // What is true now: session_subagent_stop.go dispatches through completeCycle,
 // and the coverage that paragraph described as "what would be needed" exists —
-// tests/e2e/subagent/015_subagent_own_cycle runs the same guardrail in parent
+// tests/e2e/harness/subagent/015_subagent_own_cycle runs the same guardrail in parent
 // and sub-agent and asserts each was handed its own turns and reached its own
 // state, which is judged_on_its_own_record and subagent_state_is_its_own
 // observed end to end rather than argued structurally.
@@ -128,6 +128,7 @@ func TestInvariant_judged_on_its_own_record(t *testing.T) {
 // tree is the case that matters: a sub-agent that did NOT get its own worktree
 // has the same workspace as its parent, so the id is the only thing separating
 // them.
+// sr:proves subagents/own-session
 func TestInvariant_subagent_state_is_its_own(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 

@@ -48,6 +48,7 @@ func writeGate(name, dir, script, match string, kinds ...string) declaration.Gat
 
 // A gate is asked about EVERY file a call changes: the first passes, the second
 // and third fail, and the results name both failing files and not the passing one.
+// sr:proves gates/multi-file-call-refused-whole
 func TestRunGatesForEvents_ChecksEveryFileOfTheCall(t *testing.T) {
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "ledger")
@@ -160,6 +161,7 @@ exit 1
 
 // A single-file call's one refusal keeps its wording exactly, and a multi-file
 // call names each refused file.
+// sr:proves gates/multi-file-call-refused-whole
 func TestGateRefusal_SingleFileKeepsItsWordingMultiFileNamesEach(t *testing.T) {
 	one := []event.Event{preWrite(declaration.KindPreFileCreate, "a.go")}
 	got := gateRefusal([]gateResult{{Refused: true, Reason: "nope", Attribution: `"g"`, Path: "a.go"}}, one, "")

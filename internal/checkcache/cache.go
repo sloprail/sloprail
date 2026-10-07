@@ -22,8 +22,15 @@ import (
 
 // SchemaVersion is the key schema. It is part of every key, so a change to how
 // fingerprints are derived, or to what a key is made of, never collides with an older result.
-// sr2: the key no longer holds the rule's hash (sr1 did, see legacyID).
-const SchemaVersion = "sr2"
+//
+//	sr1: rule, the rule's hash, kind, subject, fingerprint (see legacyID).
+//	sr2: no rule hash.
+//	sr3: the fingerprint no longer covers citations.
+//
+// Changing what a key is made of means bumping this AND SchemaDir (and listing the old
+// directory in schemaHistory): MigrateKeys then rebuilds the old directory's keys, by the
+// rebuild its caller supplies, so nothing is judged again.
+const SchemaVersion = "sr3"
 
 // Key is what a check's result is a fact about.
 type Key struct {
@@ -33,16 +40,21 @@ type Key struct {
 	Kind string `json:"kind"`
 	// Subject is the unit judged. Today the one subject of a rule's checks is "changeset".
 	Subject string `json:"subject"`
-	// Fingerprint covers EVERY input of the check — the subject's content, the model,
-	// what `prepare` supplied — and never a commit SHA.
+	// Fingerprint is what the verdict is about: the subject's files (path and content) and the
+	// fingerprint the rule's `subjects:` script gave the subject (changeset.GuardFingerprint).
+	// Not in it: a commit SHA, a citation, the model, the judge's template, `prepare`'s output.
 	Fingerprint string `json:"fingerprint"`
 }
 
 // ID is the key's stable identity: a hex sha256 of its parts, each separated so no two
 // keys can be re-cut into one another.
-func (k Key) ID() string {
+func (k Key) ID() string { return k.idUnder(SchemaVersion) }
+
+// idUnder is the id the key has under a schema version whose key is made as sr2's and sr3's
+// are (sr1's also held the rule's hash: legacyID).
+func (k Key) idUnder(version string) string {
 	h := sha256.New()
-	for _, part := range []string{SchemaVersion, k.Rule, k.Kind, k.Subject, k.Fingerprint} {
+	for _, part := range []string{version, k.Rule, k.Kind, k.Subject, k.Fingerprint} {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}
@@ -159,6 +171,7 @@ type Cache interface {
 // pass or a fail — or is a fail that was resolved as stale (a skip carrying metadata
 // "staleFrom"), which is found so that, being the newest result of its key, it supersedes
 // the fail it resolves: a reader sees a skip, and a skip is no hit.
+// sr:invariant cache/unfinished-never-stored
 func Findable(c Check) bool {
 	if c.Fingerprint == "" {
 		return false

@@ -1,0 +1,4 @@
+predicate: >-
+  When several rules refuse at one turn end of a {@ent:session:Session}, the agent receives a single block that names every refusing rule, and a rule that passed is not named.
+why: The agent fixes one rule per turn, or cannot tell which rule refused.
+needs: [stop-block-continuation]

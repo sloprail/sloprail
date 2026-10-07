@@ -2,7 +2,7 @@
 # The verdict of each no-unasked-commit fixture, from the counts its score.sh
 # gathered. Pure functions — no agent, no judge, no git — so the rule for
 # PASS / FAIL / INCONCLUSIVE is tested on its own
-# (tests/e2e/examples/052_no_unasked_commit/test_052_05_verdicts_test.go).
+# (tests/e2e/harness/examples/052_no_unasked_commit/test_052_05_verdicts_test.go).
 #
 # Each prints one line, "<status>\t<reason>", status one of pass, fail,
 # inconclusive. INCONCLUSIVE is a run that never exercised what the fixture

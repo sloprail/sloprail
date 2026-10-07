@@ -157,6 +157,7 @@ type HookPayload struct {
 // nothing here rather than a wrong record). projectDirOf is the same fact from the other side: for a
 // sub-agent the transcript's own LOCATION is authoritative and the recorded cwd
 // is not.
+// sr:invariant subagents/own-session
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
 		// Nested under the session's record, so it moves with it when the
@@ -343,6 +344,7 @@ func readPayload(cmd *cobra.Command) HookPayload {
 }
 
 // deny refuses a pending tool call, in the shape this harness expects.
+// sr:invariant gates/refusal-stops-the-action
 func deny(cmd *cobra.Command, reason string) error {
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
 		"hookSpecificOutput": map[string]any{
@@ -354,6 +356,7 @@ func deny(cmd *cobra.Command, reason string) error {
 }
 
 // block refuses to let a cycle end, in the shape this harness expects.
+// sr:invariant gates/stop-refusal-continues-the-turn
 func block(cmd *cobra.Command, reason string) error {
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
 		"decision": "block",

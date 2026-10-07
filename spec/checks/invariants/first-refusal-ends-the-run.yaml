@@ -1,0 +1,6 @@
+predicate: >-
+  A rule's {@ent:checks:Check}s run in the order the rule lists them and the
+  first one whose {@fld:checks:Verdict.refused} is true ends the run: no
+  later check runs and its {@fld:checks:Verdict.reason} is the one the agent
+  hears.
+why: Authors cannot sequence checks (one writing what the next reads), and the agent hears an unrelated later refusal.

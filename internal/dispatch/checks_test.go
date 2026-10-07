@@ -60,6 +60,7 @@ func TestPrepareFeedsAdditionalContext(t *testing.T) {
 // fails this test twice over (the flag AND the verdict). Permitted because the one
 // check abstained and no other check refused — the runner reaches the end of the
 // chain with no refusal, which is the clean pass.
+// sr:proves checks/prepare-skip-abstains
 func TestPrepareSkip_OnlyCheck_PermitsWithoutModelCall(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
@@ -82,6 +83,7 @@ func TestPrepareSkip_OnlyCheck_PermitsWithoutModelCall(t *testing.T) {
 // runJudgeCheck returns an ABSTAIN verdict on skip — not an affirmative pass. This
 // pins the distinction directly: the verdict carries Abstained, not a plain pass,
 // so the check-loop can tell "reached no verdict" from "passed".
+// sr:proves checks/prepare-skip-abstains
 func TestPrepareSkip_RunJudgeCheckAbstains(t *testing.T) {
 	r := Runner{
 		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
@@ -100,6 +102,7 @@ func TestPrepareSkip_RunJudgeCheckAbstains(t *testing.T) {
 // check that REFUSES, must still refuse. If skip forced a pass this write would be
 // wrongly permitted; because it abstains, the second check still runs and its
 // refusal still wins. The judge model is never invoked.
+// sr:proves checks/prepare-skip-abstains
 func TestPrepareSkip_DoesNotMaskALaterRefusal(t *testing.T) {
 	judgeAsked := false
 	secondRan := false
@@ -136,6 +139,7 @@ func TestPrepareSkip_DoesNotMaskALaterRefusal(t *testing.T) {
 
 // A judge that skips, FOLLOWED BY a second check that PASSES, permits — the abstain
 // drops out and the passing check leaves the chain with no refusal.
+// sr:proves checks/prepare-skip-abstains
 func TestPrepareSkip_FollowedByAPass_Permits(t *testing.T) {
 	secondRan := false
 	r := Runner{
@@ -201,6 +205,7 @@ func TestPrepareEmptyOutput_NoAdditionalContext(t *testing.T) {
 }
 
 // A prepare that FAILS to run fails the check closed — the judge is never asked.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestPrepareFailure_FailsCheckClosed(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
@@ -223,6 +228,7 @@ func TestPrepareFailure_FailsCheckClosed(t *testing.T) {
 
 // A prepare whose stdout is not the {additionalContext:{...}} shape fails closed —
 // a half-prepared prompt must not reach the model.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestPrepareBadShape_FailsClosed(t *testing.T) {
 	r := Runner{
 		skillLoaded: func(string, string, string) (bool, error) { return true, nil },

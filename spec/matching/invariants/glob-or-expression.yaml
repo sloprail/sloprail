@@ -1,0 +1,5 @@
+predicate: >-
+  A file-guard {@fld:matching:Match.expression} containing no whitespace or
+  quote is a path glob anchored to the whole path and a malformed glob is
+  refused at load, while any other is an expression.
+why: A path such as `commands/one.md` is misread as an expression or a glob matches a substring of other paths.

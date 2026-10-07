@@ -98,6 +98,7 @@ func TestCompileFileMatch_RefusesMisspelledMarkerField(t *testing.T) {
 
 // A file-guard's scope has no `context`: it judges committed bytes with no
 // session, so a read of it is refused at compile, as an unknown name.
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileFileMatch_ContextIsNotInScope(t *testing.T) {
 	for _, src := range []string{`context["research-run"].active`, `not context["x"].active`, `any(markers, context["x"].active)`} {
 		_, err := CompileFileMatch(src)
@@ -112,6 +113,7 @@ func TestCompileFileMatch_ContextIsNotInScope(t *testing.T) {
 // The whole reason the scopes are split: a file-guard's `match` reasons about a
 // file's own facts, not an event's fields, so `event` is not in its scope and an
 // expression reaching for it is refused at load.
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileFileMatch_RefusesOutOfScopeVariable(t *testing.T) {
 	_, err := CompileFileMatch(`event.path == "x"`)
 	require.Error(t, err)
@@ -153,6 +155,7 @@ func TestCompileFileMatch_EmptyAdmitsEverything(t *testing.T) {
 // The union's common half: a bare glob is compiled to a path match without the
 // author writing `path startsWith`. `**` reaches any depth, which is the case
 // the shorthand exists for.
+// sr:proves matching/glob-or-expression
 func TestCompileFileMatch_GlobShorthandMatchesPath(t *testing.T) {
 	m, err := CompileFileMatch(`memories/**/*.md`)
 	require.NoError(t, err)
@@ -177,6 +180,7 @@ func TestCompileFileMatch_GlobShorthandMatchesPath(t *testing.T) {
 // A single `*` is one segment: it does NOT cross a separator. This is the
 // distinction between `*` and `**`, and the reason a glob needs its own
 // translation rather than a substring test.
+// sr:proves matching/glob-or-expression
 func TestCompileFileMatch_GlobSingleStarIsOneSegment(t *testing.T) {
 	m, err := CompileFileMatch(`memories/*.md`)
 	require.NoError(t, err)
@@ -195,6 +199,7 @@ func TestCompileFileMatch_GlobSingleStarIsOneSegment(t *testing.T) {
 }
 
 // `?` is exactly one non-separator character.
+// sr:proves matching/glob-or-expression
 func TestCompileFileMatch_GlobQuestionMark(t *testing.T) {
 	m, err := CompileFileMatch(`file-?.md`)
 	require.NoError(t, err)
@@ -216,6 +221,7 @@ func TestCompileFileMatch_GlobQuestionMark(t *testing.T) {
 
 // A character class passes through, and its glob-style `!` negation is
 // translated to a regexp `^`.
+// sr:proves matching/glob-or-expression
 func TestCompileFileMatch_GlobCharacterClass(t *testing.T) {
 	m, err := CompileFileMatch(`log[0-9].txt`)
 	require.NoError(t, err)
@@ -253,6 +259,7 @@ func TestCompileFileMatch_GlobDotIsLiteral(t *testing.T) {
 
 // An unterminated character class is a malformed glob, refused at load rather
 // than compiled into something that quietly matches wrong.
+// sr:proves matching/glob-or-expression
 func TestCompileFileMatch_MalformedGlobIsRefusedAtLoad(t *testing.T) {
 	_, err := CompileFileMatch(`log[0-9.txt`)
 	require.Error(t, err)
@@ -306,6 +313,7 @@ func TestCompileFileMatch_GlobErrorNamesTheAuthoredPattern(t *testing.T) {
 // legal filename characters `<`/`>` (`a<b>.md`, `file[<>].md`) — are the ones
 // that must now read as globs, and they anchor this test where the old one only
 // ever used a keyword as a SUBSTRING (`android/`, `contextual/`).
+// sr:proves matching/glob-or-expression
 func TestLooksLikeGlob_Discriminates(t *testing.T) {
 	// Every real expression carries a space or a quote, so none is a glob.
 	expressions := []string{
@@ -358,6 +366,7 @@ func TestLooksLikeGlob_Discriminates(t *testing.T) {
 // cases must actually COMPILE as a glob and MATCH as a path, end to end — the
 // blind spot was that these were refused at load, so the fix is proven by them
 // loading and firing.
+// sr:proves matching/glob-or-expression
 func TestCompileFileMatch_KeywordSegmentGlobsCompileAndMatch(t *testing.T) {
 	for _, tc := range []struct {
 		glob string
@@ -468,6 +477,7 @@ func TestCompileGateMatch_ReadsEventFields(t *testing.T) {
 
 // A gate narrowing on a path writes it out under `event` — there is no glob
 // half here, so the path is read as an ordinary event field.
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileGateMatch_ReadsEventPath(t *testing.T) {
 	m, err := CompileGateMatch(`event.path startsWith "guarded/"`, preFileCreateKind)
 	require.NoError(t, err)
@@ -483,6 +493,7 @@ func TestCompileGateMatch_ReadsEventPath(t *testing.T) {
 
 // The event's fields are checked to the same depth a top-level field is: a typo
 // on a field the kind does not declare is refused at load.
+// sr:proves matching/checked-at-load
 func TestCompileGateMatch_RefusesMisspelledEventField(t *testing.T) {
 	_, err := CompileGateMatch(`event.paht startsWith "x"`, preFileCreateKind)
 	require.Error(t, err)
@@ -499,6 +510,7 @@ func TestCompileGateMatch_RefusesMisspelledFieldInEventPredicate(t *testing.T) {
 
 // A gate reads `context` the same way a file-guard does — the spec keeps the
 // map at parity across the scopes.
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileGateMatch_ReadsContext(t *testing.T) {
 	m, err := CompileGateMatch(`context["research-run"].active`, preFileCreateKind)
 	require.NoError(t, err)
@@ -513,6 +525,7 @@ func TestCompileGateMatch_ReadsContext(t *testing.T) {
 
 // The gate scope has no `gates` map (the spec gives it none), and no `markers` —
 // those are a file's facts. Reaching for either is refused at load.
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileGateMatch_RefusesOutOfScopeVariables(t *testing.T) {
 	for _, src := range []string{
 		`gates["build"].status == "pass"`,
@@ -554,6 +567,7 @@ var postFileCreateKind = module.KindDecl{
 	Fields: []module.FieldDecl{{Name: "path", Type: module.TypeString}},
 }
 
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileContextMatch_ReadsEventAndContext(t *testing.T) {
 	m, err := CompileContextMatch(`event.path endsWith "goal.yaml"`, postFileCreateKind)
 	require.NoError(t, err)
@@ -582,6 +596,7 @@ func TestCompileContextMatch_NegatedContextRead(t *testing.T) {
 	assert.True(t, admitted, "the context is not active")
 }
 
+// sr:proves matching/checked-at-load
 func TestCompileContextMatch_RefusesMisspelledEventField(t *testing.T) {
 	_, err := CompileContextMatch(`event.paht == "x"`, postFileCreateKind)
 	require.Error(t, err)
@@ -607,6 +622,7 @@ func TestCompileContextMatch_EmptyAdmitsEverything(t *testing.T) {
 // The scope env builders themselves
 // ---------------------------------------------------------------------------
 
+// sr:proves matching/scope-reads-its-own-facts
 func TestFileMatchScope_ExposesExactlyItsVariables(t *testing.T) {
 	env := fileMatchScope()
 
@@ -623,6 +639,7 @@ func TestFileMatchScope_ExposesExactlyItsVariables(t *testing.T) {
 	assert.NotContains(t, env, "gates")
 }
 
+// sr:proves matching/scope-reads-its-own-facts
 func TestEventMatchScope_ExposesEventFieldsAndContext(t *testing.T) {
 	env := eventMatchScope(preFileCreateKind)
 
@@ -645,6 +662,7 @@ func TestScopes_ContextMapIsOpen(t *testing.T) {
 	assert.Equal(t, types.Any, eventMatchScope(preFileCreateKind)["context"])
 }
 
+// sr:proves matching/scope-reads-its-own-facts
 func TestCompileFileMatch_StatusAndTrailersAreInScope(t *testing.T) {
 	m, err := CompileFileMatch(`status == "D" and "move-only" in (trailers["Sloprail-Refactor"] ?? [])`)
 	require.NoError(t, err)

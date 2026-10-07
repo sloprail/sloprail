@@ -142,6 +142,7 @@ func runJudgeAgent(j judgeCall) (Verdict, error) {
 // renderJudgePrompt renders the judge's template against its input. A template that
 // cannot be read or rendered is a refusal (the reason, fail-closed: a judge whose prompt
 // cannot be assembled has judged nothing), not an error.
+// sr:invariant judges/unrenderable-template-refuses
 func renderJudgePrompt(j judgeCall) (rendered, refusal string, err error) {
 	templatePath := resolveScriptPath(j.Dir, j.Template)
 	src, err := os.ReadFile(templatePath)
@@ -212,6 +213,8 @@ fix the work.`
 
 // askJudge runs sr-agent with the rendered prompt and a verify script that
 // enforces the verdict shape, and reports the verdict.
+// sr:invariant judges/verdict-is-a-binary-pass
+// sr:invariant judges/failed-judge-refuses-in-fixed-words
 func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// The verify script sr-agent will run against the agent's output file. Written
 	// to a temp file this package owns, made executable, removed after.
@@ -303,6 +306,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 // disallowed_tools, when the check named any, is sr-agent's `--disallowed-tools`
 // in the same joined form; sr-agent splits both lists paren-aware, so a scoped
 // rule's spaces (`Bash(curl * -o *)`) stay inside it.
+// sr:invariant judges/judge-cannot-change-the-project
 func judgeCommand(verifier, model string, allowedTools, disallowedTools []string, workspace string) string {
 	cmd := fmt.Sprintf(
 		`sr-agent --model %s --verify %s`,
@@ -368,6 +372,7 @@ func judgeEnv(j judgeCall) []string {
 
 // judgeRefusal is the refusal of a judge that exited non-zero, typed: NoVerdict when it
 // produced no parseable answer at all, so no caller reads the reason text to tell.
+// sr:invariant judges/failed-judge-refuses-in-fixed-words
 func judgeRefusal(stdout, stderr []byte) Verdict {
 	reason := judgeRefusalReason(stdout, stderr)
 	v := refuse(reason)
