@@ -69,18 +69,12 @@ case $? in
      refuse "'sr-mark find' failed in $top, so whether the committed tree carries a '$MARKER' CI marker could not be checked: $why" ;;
 esac
 
-# The release the CI job installs sloprail from: `v<version>` of the plugin installed here (this
-# project's entry in installed_plugins.json: its version field, else the plugin.json under its
-# installPath), else the version in this plugin's own plugin.json, so CI runs the engine installed here.
-installed="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
+# The release the CI job installs sloprail from: `v<version>` of the plugin installed here (the version
+# `sr-session plugins` reports for the plugin resolved at this plugin's root), else the version in this
+# plugin's own plugin.json, so CI runs the engine installed here.
 ver=
-if [ -n "$plugin_root" ] && [ -r "$installed" ]; then
-  entry="$(jq -r --arg root "$plugin_root" '[.plugins[]?[]? | select((.installPath // "") == $root)][0] // empty | [.version // "", .installPath // ""] | @tsv' "$installed" 2>/dev/null)"
-  ver="${entry%%$'\t'*}"
-  ipath="${entry#*$'\t'}"
-  if [ -z "$ver" ] && [ -n "$ipath" ] && [ -r "$ipath/.claude-plugin/plugin.json" ]; then
-    ver="$(jq -r '.version // empty' "$ipath/.claude-plugin/plugin.json" 2>/dev/null)"
-  fi
+if [ -n "$plugin_root" ]; then
+  ver="$(sr-session plugins 2>/dev/null | jq -r --arg root "$plugin_root" 'select((.root // "") == $root) | .version // empty' 2>/dev/null | head -n1)"
 fi
 if [ -z "$ver" ] && [ -n "$plugin_root" ] && [ -r "$plugin_root/.claude-plugin/plugin.json" ]; then
   ver="$(jq -r '.version // empty' "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null)"
