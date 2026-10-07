@@ -146,7 +146,10 @@ func (cursorDriver) pluginDirs(e *Env) []string {
 	if err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
-	abs := strings.ReplaceAll(string(raw), `"./hooks/`, `"`+filepath.Join(root, "hooks")+`/`)
+	// cursor-agent runs a plugin's hook from the plugin's directory with CURSOR_PLUGIN_ROOT (and
+	// CLAUDE_PLUGIN_ROOT) naming it; the mock does neither, so the command says both itself.
+	abs := strings.ReplaceAll(string(raw), `"./hooks/`,
+		`"cd `+root+` && CURSOR_PLUGIN_ROOT=`+root+` CLAUDE_PLUGIN_ROOT=`+root+` `+filepath.Join(root, "hooks")+`/`)
 	dir := filepath.Join(e.tmpDir, "cursor-plugin")
 	if err := os.MkdirAll(filepath.Join(dir, ".cursor-plugin"), 0o755); err != nil {
 		e.t.Fatalf("harness: %v", err)

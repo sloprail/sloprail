@@ -61,6 +61,24 @@ func TestCodexMatrixIsASubsetOfMakefileShards(t *testing.T) {
 	}
 }
 
+// The allowed-to-fail Cursor job runs shards of the Makefile, never one it lacks.
+func TestCursorMatrixIsASubsetOfMakefileShards(t *testing.T) {
+	root := repoRoot(t)
+	for _, p := range cursorMatrixProblems(readRepoFile(t, root, "Makefile"), readRepoFile(t, root, ".github/workflows/test.yml")) {
+		t.Error(p)
+	}
+}
+
+func TestGuardFiresOnACursorShardTheMakefileLacks(t *testing.T) {
+	makefile := "test-e2e-shard: mock\n\t@case \"$(SHARD)\" in \\\n\t  a) x ;; \\\n\t  *) exit 2 ;; \\\n\tesac\n"
+	if got := cursorMatrixProblems(makefile, "cursor-shard: [a]\n"); len(got) != 0 {
+		t.Errorf("a subset was reported: %v", got)
+	}
+	if got := cursorMatrixProblems(makefile, "cursor-shard: [a, z]\n"); len(got) == 0 {
+		t.Error("a Cursor shard missing from the Makefile was not reported")
+	}
+}
+
 func TestGuardFiresOnACodexShardTheMakefileLacks(t *testing.T) {
 	makefile := "test-e2e-shard: mock\n\t@case \"$(SHARD)\" in \\\n\t  a) x ;; \\\n\t  *) exit 2 ;; \\\n\tesac\n"
 	if got := codexMatrixProblems(makefile, "codex-shard: [a]\n"); len(got) != 0 {
@@ -399,7 +417,16 @@ func matrixProblems(makefile, workflow string) []string {
 // codexMatrixProblems reports the shards of the workflow's `codex-shard: [...]` matrix
 // that the Makefile does not define.
 func codexMatrixProblems(makefile, workflow string) []string {
-	m := regexp.MustCompile(`codex-shard:\s*\[([^\]]*)\]`).FindStringSubmatch(workflow)
+	return harnessMatrixProblems("codex", makefile, workflow)
+}
+
+// cursorMatrixProblems is the same for the `cursor-shard: [...]` matrix.
+func cursorMatrixProblems(makefile, workflow string) []string {
+	return harnessMatrixProblems("cursor", makefile, workflow)
+}
+
+func harnessMatrixProblems(harness, makefile, workflow string) []string {
+	m := regexp.MustCompile(harness + `-shard:\s*\[([^\]]*)\]`).FindStringSubmatch(workflow)
 	if m == nil {
 		return nil // no Codex job: nothing to keep in step
 	}
@@ -418,7 +445,7 @@ func codexMatrixProblems(makefile, workflow string) []string {
 	var problems []string
 	for _, sh := range strings.Split(m[1], ",") {
 		if sh = strings.TrimSpace(sh); !have[sh] {
-			problems = append(problems, "the Codex job runs shard "+sh+" which the Makefile does not define")
+			problems = append(problems, "the "+harness+" job runs shard "+sh+" which the Makefile does not define")
 		}
 	}
 	return problems
