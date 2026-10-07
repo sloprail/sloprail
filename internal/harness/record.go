@@ -83,6 +83,25 @@ type ConversationNamer interface {
 	ConversationID(path string) string
 }
 
+// SubagentFile is one file of a sub-agent's record: where it is, and the path under
+// which an archive of the session keeps it (relative, so a nested layout survives).
+type SubagentFile struct {
+	Path string
+	Rel  string
+}
+
+// SubagentLocator is implemented by a Transcripts that can find, from a session's
+// record alone, the files holding the sub-agents that session spawned (their records
+// and companions), however the harness lays them out: Claude Code nests them under
+// <session>/subagents/, Codex writes each as a rollout of its own naming its parent
+// thread in its first line. A harness whose sub-agent records cannot be tied to their
+// parent from what it writes does not implement it (Cursor: a sub-agent is a sibling
+// conversation directory and the parent link is only in hook payloads, recorded in
+// harness-mocks cursor-mock subagent-transcripts), and has none to find.
+type SubagentLocator interface {
+	SubagentFiles(transcriptPath string) []SubagentFile
+}
+
 // Transcripts is how a harness's session record is parsed and located: its line
 // format and its on-disk layout. Everything above this (walking a chain, citing,
 // the identity of a conversation) is harness-neutral and lives in internal/transcript.

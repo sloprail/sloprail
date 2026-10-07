@@ -243,7 +243,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	}
 
 	if !noArchive {
-		if archiveDir, archErr := archiveRun(rec, transcriptPath, sr.Stdout, sr.Stderr, sr.Verdict); archErr != nil {
+		if archiveDir, archErr := archiveRun(rec, transcriptPath, subagentFiles(h.Transcripts(), transcriptPath), sr.Stdout, sr.Stderr, sr.Verdict); archErr != nil {
 			// Archiving failure is reported, not fatal — the scorer's own
 			// verdict already ran and is the thing exit status carries.
 			// Losing the archive of a run is a worse day than losing the
@@ -318,6 +318,15 @@ func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, b
 	c.Stderr = stderr
 	c.Env = env
 	return c.Run()
+}
+
+// subagentFiles are the files of the sub-agents the session spawned, asked of the
+// harness (nil for one that cannot tie them to their parent).
+func subagentFiles(t harness.Transcripts, transcriptPath string) []harness.SubagentFile {
+	if l, ok := t.(harness.SubagentLocator); ok {
+		return l.SubagentFiles(transcriptPath)
+	}
+	return nil
 }
 
 // defaultHarness is the harness a run uses when neither --harness nor SLOPRAIL_HARNESS names one.

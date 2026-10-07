@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // AppName is the directory sr-eval keeps its run archive under, matching the
@@ -51,7 +52,7 @@ func archiveRoot() (string, error) {
 // project directory (a real user's ordinary session history), and sr-eval
 // has no business relocating it out from under whatever else might read it
 // from there.
-func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr []byte, verdict *Verdict) (string, error) {
+func archiveRun(rec runRecord, transcriptPath string, subagents []harness.SubagentFile, scoreStdout, scoreStderr []byte, verdict *Verdict) (string, error) {
 	root, err := archiveRoot()
 	if err != nil {
 		return "", err
@@ -73,11 +74,16 @@ func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr [
 		if err := copyFile(transcriptPath, filepath.Join(dir, "transcript.jsonl")); err != nil {
 			return "", fmt.Errorf("archive transcript: %w", err)
 		}
-		subDir := filepath.Join(strings.TrimSuffix(transcriptPath, ".jsonl"), "subagents")
-		if entries, err := os.ReadDir(subDir); err == nil && len(entries) > 0 {
+		if len(subagents) > 0 {
 			rec.HasSubagents = true
-			if err := copyTree(subDir, filepath.Join(dir, "subagents")); err != nil {
-				return "", fmt.Errorf("archive subagent transcripts: %w", err)
+			for _, f := range subagents {
+				dst := filepath.Join(dir, "subagents", f.Rel)
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+					return "", fmt.Errorf("archive subagent transcripts: %w", err)
+				}
+				if err := copyFile(f.Path, dst); err != nil {
+					return "", fmt.Errorf("archive subagent transcripts: %w", err)
+				}
 			}
 		}
 	}
