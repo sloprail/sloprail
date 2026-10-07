@@ -93,3 +93,11 @@ func splitLines(b []byte) [][]byte {
 	}
 	return out
 }
+
+// cursor-agent runs a plugin's hook from the plugin's directory, so a pending command's
+// relative paths are resolved against the folder the payload names.
+func TestCommandDirIsTheFolderOfThePayload(t *testing.T) {
+	d, ok := New().(harness.HookDir)
+	require.True(t, ok)
+	assert.Equal(t, "/ws", d.CommandDir(harness.HookInput{Cwd: "/ws"}))
+}

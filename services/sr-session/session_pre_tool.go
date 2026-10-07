@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -56,6 +57,13 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	}
 	if skipWithoutTranscript(cmd, p, false) {
 		return nil
+	}
+	// A harness whose hooks run elsewhere than its commands: a relative path in the pending
+	// command is the workspace's, so the dispatch works from there.
+	if d, ok := harness.Current().(harness.HookDir); ok {
+		if dir := d.CommandDir(p); filepath.IsAbs(dir) {
+			_ = os.Chdir(dir)
+		}
 	}
 	touchAgent(cmd, p) // a sub-agent's own call: it is alive (the registry's last_seen_at)
 
