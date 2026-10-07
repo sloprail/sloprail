@@ -1,0 +1,400 @@
+package harness
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// cursorDriver is the Driver for Cursor's agent, run through a10n-cursor-mock (the
+// version pinned in CURSOR_MOCK_VERSION, installed by `make mock`): a scripted
+// `cursor-agent -p` whose scenario script prints one assistant step per line (the
+// stream-json the other mocks read) and which fires the hooks of the plugins named
+// with --plugin-dir and of <workspace>/.cursor/hooks.json.
+//
+//   - The tools are Shell (Bash), Write, StrReplace (Edit), Read, Grep, Delete and
+//     Task (a sub-agent, with no worktree option). A step with no such tool (Skill,
+//     background commands, raw results) is unsupported.
+//   - The transcript has no tool-call ids, so a step cannot mark itself done by its
+//     id as on the other harnesses: the script counts the records the transcript holds
+//     (a tool call, a prompt, which a compaction writes again) and plays the step
+//     that count names.
+//   - Sessions are named by the mock (the id its first frame prints), so a test's
+//     session id is an alias of it (Env.harnessIDs), as for Codex.
+//   - In `-p` the stop hook never fires: nothing refuses the end of a turn, so the
+//     Stop readers find nothing.
+//   - The sloprail plugin is loaded with --plugin-dir; extra plugins are the user's
+//     local plugins, <home>/.cursor/plugins/local/<name>.
+type cursorDriver struct{}
+
+func (cursorDriver) Name() string { return "cursor" }
+
+// Caps: no skill tool, no ask-user-question, no worktree isolation, no stop hook in
+// `-p`, no receipt naming a background task (spec/capabilities, providers.cursor of
+// harness-mocks).
+func (cursorDriver) Caps() []string {
+	return []string{CapSubagents, CapPlugins, CapForkResumeCompact, CapTranscript}
+}
+
+func (cursorDriver) FindMock(repoRoot string) (string, string) {
+	hint := "run `make mock` to install the pinned version (tests/e2e/harness/CURSOR_MOCK_VERSION) into .bin/"
+	if p := os.Getenv("A10N_CURSOR_MOCK"); p != "" {
+		return p, hint
+	}
+	if p := filepath.Join(repoRoot, ".bin", "a10n-cursor-mock"); fileExists(p) {
+		return p, hint
+	}
+	if p, err := exec.LookPath("a10n-cursor-mock"); err == nil {
+		return p, hint
+	}
+	return "", hint
+}
+
+func (cursorDriver) unsupported(a Action, why string) error {
+	return &UnsupportedError{Harness: "cursor", Step: fmt.Sprintf("%s (kind %d): %s", a.ID, a.Kind, why)}
+}
+
+// cursorTool is the assistant line of one tool call, with the call's id.
+func cursorLine(content ...map[string]any) string {
+	return codexLine(content...) // the scenario protocol is the same on every harness
+}
+
+// cursorPassthrough are the tools a generic ToolUse may name: those the mock runs with string inputs.
+var cursorPassthrough = map[string]bool{"Read": true, "Grep": true, "Delete": true, "Shell": true}
+
+func (c cursorDriver) render(a Action) (string, error) {
+	switch a.Kind {
+	case ActWrite:
+		return cursorLine(codexTool(a.ID, "Write", map[string]any{"file_path": a.Path, "content": a.Content})), nil
+	case ActEdit:
+		return cursorLine(codexTool(a.ID, "Edit", map[string]any{"file_path": a.Path, "old_string": a.Old, "new_string": a.New})), nil
+	case ActBash:
+		return cursorLine(codexTool(a.ID, "Bash", map[string]any{"command": a.Command})), nil
+	case ActSay:
+		return cursorLine(codexText(a.Text)), nil
+	case ActSayWrite:
+		return cursorLine(codexText(a.Text), codexTool(a.ID, "Write", map[string]any{"file_path": a.Path, "content": a.Content})), nil
+	case ActSayBash:
+		return cursorLine(codexText(a.Text), codexTool(a.ID, "Bash", map[string]any{"command": a.Command})), nil
+	case ActDispatch:
+		if a.Isolation != "" {
+			return "", c.unsupported(a, "a Task has no worktree option (subagent-worktree-isolation)")
+		}
+		return cursorLine(codexTool(a.ID, "Task", map[string]any{
+			"description": "delegated work", "prompt": a.Text, "subagent_type": "generalPurpose", "script": a.Script})), nil
+	case ActCompact:
+		if a.UnwrittenParent {
+			return "", c.unsupported(a, "a compaction naming an unwritten parent is Claude's")
+		}
+		return `{"type":"compact","trigger":"manual"}`, nil
+	case ActToolUse:
+		if a.Background {
+			return "", c.unsupported(a, "a background command's receipt names no task")
+		}
+		if !cursorPassthrough[a.Tool] {
+			return "", c.unsupported(a, "the mock runs no "+a.Tool+" tool")
+		}
+		in := map[string]any{}
+		for k, v := range a.Input {
+			in[k] = v
+		}
+		return cursorLine(codexTool(a.ID, a.Tool, in)), nil
+	case ActSkill:
+		return "", c.unsupported(a, "Cursor has no skill tool")
+	case ActBashBatch:
+		return "", c.unsupported(a, "several calls in one message are not modelled")
+	}
+	return "", c.unsupported(a, "a Claude Code record with no Cursor counterpart")
+}
+
+// RenderScript renders the scenario as the shell the mock runs. Each step is one unit of
+// progress: a tool call or a prompt written to the transcript (a compaction writes it
+// again). The script plays the step its progress, counted from where this run began
+// (SLOP_BASE, set for a resumed session), names.
+func (c cursorDriver) RenderScript(s Scenario) (string, error) {
+	var b strings.Builder
+	b.WriteString(`set -u
+SF="${A10N_MOCK_SESSION_FILE:-/dev/null}"
+cnt() { n=$(grep -c "$1" "$SF" 2>/dev/null); echo "${n:-0}"; }
+PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - ${SLOP_BASE:-0} - 1 ))
+`)
+	for i, t := range s.turns {
+		line, err := c.render(t.act)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "if [ \"$PROG\" -eq %d ]; then\n  printf '%%s\\n' %s\n  exit 0\nfi\n", i, shQuote(line))
+	}
+	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"result":%s}`, jsonStr(s.result))))
+	return b.String(), nil
+}
+
+// pluginDirs are the directories the run loads with --plugin-dir.
+//
+// The plugin's hooks name their commands relative to the plugin ("./hooks/x.sh"); the mock
+// runs every hook with the workspace as its directory and does not resolve a plugin's
+// relative command against the plugin (the run is then a silent no-op: nothing refuses
+// anything). So the directory loaded is a stand-in manifest whose hooks are the plugin's
+// own, each command made absolute — the same commands, found from wherever the mock runs them.
+func (cursorDriver) pluginDirs(e *Env) []string {
+	root := filepath.Join(e.repoRoot, "marketplace", "plugins", pluginName)
+	raw, err := os.ReadFile(filepath.Join(root, "hooks", "cursor-hooks.json"))
+	if err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	abs := strings.ReplaceAll(string(raw), `"./hooks/`, `"`+filepath.Join(root, "hooks")+`/`)
+	dir := filepath.Join(e.tmpDir, "cursor-plugin")
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor-plugin"), 0o755); err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	manifest := `{"name":"` + pluginName + `","hooks":"./hooks.json"}`
+	for p, body := range map[string]string{".cursor-plugin/plugin.json": manifest, "hooks.json": abs} {
+		if err := os.WriteFile(filepath.Join(dir, p), []byte(body), 0o644); err != nil {
+			e.t.Fatalf("harness: %v", err)
+		}
+	}
+	return []string{dir}
+}
+
+// Command builds the cursor-mock invocation for one run.
+func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
+	args := []string{"-p", "--force", "--trust", "--output-format", "stream-json",
+		"--script", l.ScriptPath, "--workspace", l.WorkDir}
+	for _, d := range c.pluginDirs(e) {
+		args = append(args, "--plugin-dir", d)
+	}
+	switch l.Mode {
+	case SessionResume:
+		args = append(args, "--resume", e.harnessID(l.SessionID))
+	case SessionFork:
+		e.t.Skipf("harness cursor: a fork of a conversation is not modelled")
+	}
+	args = append(args, l.Prompt)
+	cmd := exec.Command(e.mock, args...)
+	cmd.Dir = l.WorkDir
+	cmd.Env = append(cursorHostEnv(), e.autoWatchEnv()...)
+	cmd.Env = append(cmd.Env,
+		"HOME="+e.home,
+		"TMPDIR="+e.tmpDir,
+		"PATH="+e.shimDir+string(os.PathListSeparator)+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	if e.checkTimeout != "" {
+		cmd.Env = append(cmd.Env, "SLOPRAIL_CHECK_TIMEOUT="+e.checkTimeout)
+	}
+	if l.Mode == SessionResume {
+		if p := c.TranscriptPath(e, l.ProjDir, l.SessionID); fileExists(p) {
+			if b, err := os.ReadFile(p); err == nil {
+				n := strings.Count(string(b), `"type":"tool_use"`) + strings.Count(string(b), `"role":"user"`)
+				cmd.Env = append(cmd.Env, fmt.Sprintf("SLOP_BASE=%d", n))
+			}
+		}
+	}
+	return cmd
+}
+
+// cursorHostEnv is HostEnv without the enclosing Cursor session's identity.
+func cursorHostEnv() []string {
+	var out []string
+	for _, kv := range HostEnv() {
+		if strings.HasPrefix(kv, "CURSOR_") || strings.HasPrefix(kv, "CLAUDE_PROJECT_DIR=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// Observe records the session id the mock's first frame names.
+func (cursorDriver) Observe(e *Env, l Launch, output string) {
+	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
+		return
+	}
+	for _, line := range strings.Split(output, "\n") {
+		var f struct {
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal([]byte(line), &f) == nil && f.Type == "system" && f.SessionID != "" {
+			e.setHarnessID(l.SessionID, f.SessionID)
+			return
+		}
+	}
+}
+
+func (cursorDriver) RealCommand(e *Env, projDir, prompt string) (*exec.Cmd, error) {
+	bin, err := exec.LookPath("cursor-agent")
+	if err != nil {
+		return nil, fmt.Errorf("no `cursor-agent` on PATH: %v", err)
+	}
+	cmd := exec.Command(bin, "-p", "--trust", "--", prompt)
+	cmd.Dir = projDir
+	cmd.Env = append(os.Environ(), "PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return cmd, nil
+}
+
+// InstallPlugins: the plugin under test is passed with --plugin-dir on every run, so
+// only the Env's extra plugins are installed here, as the user's local plugins
+// (<home>/.cursor/plugins/local/<name>, a symlink to the plugin's root), each given the
+// .cursor-plugin manifest Cursor reads.
+func (cursorDriver) InstallPlugins(e *Env, dir string) {
+	e.t.Helper()
+	local := filepath.Join(e.home, ".cursor", "plugins", "local")
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir %s: %v", local, err)
+	}
+	for _, p := range e.extraPlugins {
+		manifest := filepath.Join(p.root, ".cursor-plugin", "plugin.json")
+		if !fileExists(manifest) {
+			if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+				e.t.Fatalf("harness: %v", err)
+			}
+			body, _ := json.Marshal(map[string]string{"name": p.name})
+			if err := os.WriteFile(manifest, body, 0o644); err != nil {
+				e.t.Fatalf("harness: %v", err)
+			}
+		}
+		link := filepath.Join(local, p.name)
+		_ = os.Remove(link)
+		if err := os.Symlink(p.root, link); err != nil {
+			e.t.Fatalf("harness: link plugin %s: %v", p.name, err)
+		}
+	}
+}
+
+// HookEnv names the harness outright, as the plugin's own hook wrapper does.
+func (cursorDriver) HookEnv(e *Env, sessionID string) []string {
+	return []string{"SLOPRAIL_HARNESS=cursor",
+		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+}
+
+func (cursorDriver) ConfigEnv(e *Env) []string { return []string{"SLOPRAIL_HARNESS=cursor"} }
+
+func (cursorDriver) ShellEnv() string { return "" }
+
+func (cursorDriver) SessionExport(string) string { return "" }
+
+func (cursorDriver) SubagentSessionExport() string { return "" }
+
+// StopPayload is the stop event's payload (a recorded shape: the common fields, and the
+// status and loop count of the stop event).
+func (c cursorDriver) StopPayload(e *Env, projDir, sessionID string, active bool) string {
+	id := e.harnessID(sessionID)
+	loop := 0
+	if active {
+		loop = 1
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"conversation_id": id, "generation_id": id, "session_id": id, "model": "default",
+		"hook_event_name": "stop", "cursor_version": "2026.09.28-64d2043",
+		"workspace_roots": []string{resolveWorkDir(projDir)}, "user_email": nil,
+		"transcript_path": c.TranscriptPath(e, projDir, sessionID), "status": "completed", "loop_count": loop,
+	})
+	return string(payload)
+}
+
+func (cursorDriver) StopBlocked(output string) bool {
+	return strings.Contains(output, `"followup_message"`)
+}
+
+func (cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
+	script := "#!/bin/sh\n" +
+		"[ -t 0 ] || cat >/dev/null\n" +
+		"exec " + shellQuote(e.mock) + " -p --force --trust --output-format stream-json \\\n" +
+		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
+		"  --workspace " + shellQuote(projDir) + " \\\n" +
+		"  \"launched agent\" </dev/null\n"
+	return "cursor-agent", script
+}
+
+func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {
+	_, body := claudeDriver{}.JudgeShim(s)
+	return "cursor-agent", body
+}
+
+var cursorNonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
+
+// TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
+func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
+	id := e.harnessID(sessionID)
+	if id == "" {
+		id = "not-yet-run-" + sessionID
+	}
+	project := cursorNonAlnum.ReplaceAllString(strings.TrimPrefix(resolveWorkDir(projDir), "/"), "-")
+	return filepath.Join(e.home, ".cursor", "projects", project, "agent-transcripts", id, id+".jsonl")
+}
+
+// SubagentRecordPaths: Cursor's sub-agent transcripts sit beside the session's with
+// nothing that names their parent (subagent-transcripts), so none can be attributed.
+func (cursorDriver) SubagentRecordPaths(*Env, string, string) []string { return nil }
+
+func (cursorDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
+	e.t.Skipf("harness cursor: a fork of a conversation is not modelled")
+}
+
+// rejected walks a completed tool frame for the reason a hook gave when it refused the call.
+func cursorRejections(output string) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		var f struct {
+			Type     string         `json:"type"`
+			Subtype  string         `json:"subtype"`
+			ToolCall map[string]any `json:"tool_call"`
+		}
+		if json.Unmarshal([]byte(line), &f) != nil || f.Type != "tool_call" || f.Subtype != "completed" {
+			continue
+		}
+		for _, b := range f.ToolCall {
+			body, _ := b.(map[string]any)
+			res, _ := body["result"].(map[string]any)
+			rej, _ := res["rejected"].(map[string]any)
+			reason, ok := rej["reason"].(string)
+			if !ok {
+				// a refused file edit is an error result, not a rejection
+				ee, _ := res["error"].(map[string]any)
+				reason, ok = ee["modelVisibleError"].(string)
+			}
+			if ok {
+				reason, _, _ = strings.Cut(reason, "\n\nAgent note:")
+				out = append(out, reason)
+			}
+		}
+	}
+	return out
+}
+
+func (cursorDriver) Refusals(output string) []string { return cursorRejections(output) }
+
+// ToolResults are the standard output of the shell commands the stream shows ran.
+func (cursorDriver) ToolResults(output string) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		var f struct {
+			Type     string         `json:"type"`
+			Subtype  string         `json:"subtype"`
+			ToolCall map[string]any `json:"tool_call"`
+		}
+		if json.Unmarshal([]byte(line), &f) != nil || f.Type != "tool_call" || f.Subtype != "completed" {
+			continue
+		}
+		for _, b := range f.ToolCall {
+			body, _ := b.(map[string]any)
+			res, _ := body["result"].(map[string]any)
+			ok, _ := res["success"].(map[string]any)
+			if so, has := ok["stdout"].(string); has {
+				out = append(out, so)
+			}
+		}
+	}
+	return out
+}
+
+// The stop hook never fires in `-p`, so there is no Stop refusal to read.
+func (cursorDriver) BlockingErrors(string, string, bool) []string { return nil }
+func (cursorDriver) StopContinuations(string) []string            { return nil }
+func (cursorDriver) SubagentBlockingErrors([]string) []string     { return nil }
+func (cursorDriver) AnySubagentBlockingErrors([]string) []string  { return nil }
+func (cursorDriver) SubagentFeedbackCount([]string) int           { return 0 }
