@@ -64,7 +64,11 @@ jobs:
     # An [e2e-only: ...] commit runs ONLY the e2e-adhoc job below (every other
     # job's steps skip) — see the adhoc step.
     outputs:
-      code-changed: ${{ steps.adhoc.outputs.adhoc == 'true' && 'false' || steps.diff.outputs.code-changed }}
+      # The full suite runs on main and integration/* only. A branch merged into an
+      # integration branch is reviewed and tested locally (targeted packages), and
+      # uses [e2e-only: ...] commits for CI repros; the integration branch's own PR
+      # runs everything once for the whole stack instead of once per sub-branch.
+      code-changed: ${{ (steps.adhoc.outputs.adhoc == 'true' || (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/integration/'))) && 'false' || steps.diff.outputs.code-changed }}
       adhoc: ${{ steps.adhoc.outputs.adhoc }}
       adhoc-harness: ${{ steps.adhoc.outputs.harness }}
       adhoc-pkgs: ${{ steps.adhoc.outputs.pkgs }}
@@ -302,6 +306,9 @@ jobs:
   # or fail on what Codex support does today. `plugins` is left out: those modules
   # drive the Claude mock. The shards must stay a subset of the Makefile's (the
   # guard in tests/repo checks it).
+  # Runs on main and integration/* only (each step's if:). On a branch, drive Codex or Cursor with an
+  # [e2e-only: harness=codex|cursor pkgs=... run=...] commit (e2e-adhoc), which runs
+  # just the chosen packages instead of 14 full shards on every push.
   e2e-codex:
     name: e2e codex (${{ matrix.codex-shard }})
     needs: changes
@@ -313,17 +320,17 @@ jobs:
         codex-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         name: e2e (codex)
         shell: bash
         env:
@@ -353,17 +360,17 @@ jobs:
         cursor-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
         name: e2e (cursor)
         shell: bash
         env:
@@ -447,6 +454,29 @@ jobs:
         run: |
           "$RUNNER_TEMP/sloprail-installed/sr-session" start </dev/null >/dev/null
           echo "sr-session runs after install.sh"
+
+      # --harness: the flag picks what gets set up beyond the binaries. cursor-agent needs a
+      # login, so CI cannot run it; what it can prove is that the plugin lands where Cursor
+      # loads local plugins from, whole and executable, and that its hook runs against the
+      # installed binaries and answers in the JSON Cursor requires.
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install.sh --harness cursor
+        run: |
+          export SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-cursor-bin"
+          export SLOPRAIL_HARNESS_MOCK_URL="http://127.0.0.1:8931/none"
+          if HOME="$RUNNER_TEMP/bogus-home" /tmp/install-under-test.sh --harness bogus; then echo "an unknown harness id was accepted"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/binonly-home" "$RUNNER_TEMP/cursor-home"
+          HOME="$RUNNER_TEMP/binonly-home" /tmp/install-under-test.sh --binaries-only
+          if [ -e "$RUNNER_TEMP/binonly-home/.cursor" ]; then echo "--binaries-only touched ~/.cursor"; exit 1; fi
+          HOME="$RUNNER_TEMP/cursor-home" /tmp/install-under-test.sh --harness cursor
+          plugin="$RUNNER_TEMP/cursor-home/.cursor/plugins/local/sloprail"
+          test -f "$plugin/.cursor-plugin/plugin.json"
+          test -x "$plugin/hooks/sr-session-hook-cursor.sh"
+          test -f "$plugin/.claude-plugin/plugin.json"
+          # Cursor runs a plugin hook from the plugin's directory with CURSOR_PLUGIN_ROOT set.
+          out="$(cd "$plugin" && CURSOR_PLUGIN_ROOT="$plugin" PATH="$RUNNER_TEMP/sloprail-cursor-bin:$PATH" SLOPRAIL_NO_AUTO_INSTALL=1 ./hooks/sr-session-hook-cursor.sh start </dev/null)"
+          printf '%s\n' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["additional_context"]'
+          echo "cursor plugin installed and its sessionStart hook answers"
 
       - if: needs.changes.outputs.code-changed == 'true'
         name: tampered download is rejected
