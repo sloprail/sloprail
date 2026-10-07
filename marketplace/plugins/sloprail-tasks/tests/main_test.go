@@ -1,7 +1,7 @@
 // Package e2e is the sloprail-tasks plugin's OWN end-to-end suite — the first
 // instance of the "each use-case plugin self-tests" model. It drives the
-// a10n-claude-mock through the SHARED harness (the same one tests/e2e/session/*
-// and tests/e2e/examples/* use), ENABLING this plugin as a real, discovered
+// a10n-claude-mock through the SHARED harness (the same one tests/e2e/harness/session/*
+// and tests/e2e/harness/examples/* use), ENABLING this plugin as a real, discovered
 // plugin (installPluginTree -> harness.EnableRealPlugin) and asserting its
 // guardrails refuse and permit the right writes and turn-ends.
 //

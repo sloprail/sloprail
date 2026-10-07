@@ -14,7 +14,7 @@ import (
 // These cover the killed-by-signal diagnosis in the script path: runShell must
 // recover the signal that ExitCode() flattens to -1, and scriptRefusalReason must
 // turn it into a "killed" message rather than the "exit -1 … no reason" the code
-// alone would yield. The e2e sibling (tests/e2e/fileguard/036_killed_by_signal)
+// alone would yield. The e2e sibling (tests/e2e/harness/fileguard/036_killed_by_signal)
 // proves the same fact end to end through the real dispatch and the agent stream;
 // this pins the two engine seams directly and cheaply.
 

@@ -30,14 +30,14 @@ func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 			// everything, writing to a path containing a trigger word.
 			name: "permitted write to a path containing deny",
 			output: `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"deny/notes.md","content":"hello"}}]}}
-{"message":{"content":[{"content":"File written successfully to deny/notes.md","is_error":false,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
+{"message":{"content":[{"content":"File created successfully at: deny/notes.md (file state is current in your context — no need to Read it back)","is_error":false,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
 			refused: false,
 		},
 		{
 			// The same trap from the content side rather than the path.
 			name: "permitted write whose content says blocked",
 			output: `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"a/notes.md","content":"the request was blocked"}}]}}
-{"message":{"content":[{"content":"File written successfully to a/notes.md","is_error":false,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
+{"message":{"content":[{"content":"File created successfully at: a/notes.md (file state is current in your context — no need to Read it back)","is_error":false,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
 			refused: false,
 		},
 		{
@@ -59,7 +59,7 @@ func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 			// refusal.
 			name: "the agent writes the refusal text into a file",
 			output: `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"a.md","content":"PreToolUse:Write hook error: nope"}}]}}
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"File written successfully to a.md","is_error":false}]}}`,
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"File created successfully at: a.md (file state is current in your context — no need to Read it back)","is_error":false}]}}`,
 			refused: false,
 		},
 		{
@@ -77,7 +77,7 @@ func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 		},
 		{
 			name:    "a clean permitted write",
-			output:  `{"message":{"content":[{"content":"File written successfully to a/notes.md","is_error":false,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
+			output:  `{"message":{"content":[{"content":"File created successfully at: a/notes.md (file state is current in your context — no need to Read it back)","is_error":false,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
 			refused: false,
 		},
 	}

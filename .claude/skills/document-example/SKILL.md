@@ -10,7 +10,7 @@ guardrail — proof this repo ships, not a scratch demo. Four things make one
 complete, and each is checked separately:
 
 1. **The shipped config** — `examples/<name>/.sloprail/` (+ `README.md`)
-2. **E2e coverage** — `tests/e2e/examples/0NN_<name>/`, proving the shipped
+2. **E2e coverage** — `tests/e2e/harness/examples/0NN_<name>/`, proving the shipped
    config actually fires against a scripted mock
 3. **An eval fixture** — `examples/<name>/eval/<case>/`, proving it holds up
    against a REAL agent (see [run-eval](../run-eval/SKILL.md) for the
@@ -55,7 +55,7 @@ Loading is not proof, same as [authoring-guardrails](../authoring-guardrails/SKI
 own rule for a single guardrail:
 
 ```
-go test -tags fts5 ./tests/e2e/examples/...
+go test -tags fts5 ./tests/e2e/harness/examples/...
 ```
 
 proves the shipped config fires against the mock. Only a real

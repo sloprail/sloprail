@@ -12,7 +12,7 @@ import (
 
 // These pin what a file-guard's `deletions:` value and its markers do to how the
 // guard is bound. (How `deletions:` filters a changeset is pinned in
-// internal/changeset, and end to end in tests/e2e/changeset.)
+// internal/changeset, and end to end in tests/e2e/harness/changeset.)
 
 // deletionModes is every value a guard's `deletions:` can take, the absent key
 // (the default) included.

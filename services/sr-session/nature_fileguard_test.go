@@ -66,7 +66,7 @@ func TestFileGuardSelects_Marker(t *testing.T) {
 
 // A file-guard match that COMPILES but cannot be EVALUATED against the file
 // surfaces the error rather than answering false — the fail-closed seam behind
-// tests/e2e/session/027 (post_matcher_error), pinned at the dispatch level.
+// tests/e2e/harness/session/027 (post_matcher_error), pinned at the dispatch level.
 //
 // The distinction is the whole point: a match returning (false, nil) says "this
 // file does not concern me"; a match returning (_, err) says the engine could not

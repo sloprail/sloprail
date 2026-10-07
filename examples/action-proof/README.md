@@ -41,7 +41,8 @@ lifecycle to enter and exit. Just one checkpoint, one decision.
 - **`gate/screenshot-proves-fields/gate.yaml`** — `on: [{event: Stop}]`, one
   check: `prepare` + `judge`.
 - **`find-action-and-proof.sh`** (`prepare`) — reads the trajectory: did a
-  `fill_form`/`download_file` happen, and is there a `screenshot` output to go
+  `fill_form`/`download_file` happen (a browser MCP tool, named
+  `mcp__<server>__fill_form` and so on), and is there a `screenshot` output to go
   with it? Hands the judge `{action_taken, action, action_input, proof}` so
   the template never parses a transcript itself. If no action happened, says
   so — and the judge passes trivially.

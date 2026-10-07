@@ -294,31 +294,32 @@ $(MOCK_STAMP): tests/e2e/harness/MOCK_VERSION
 test-e2e: mock
 	go test -p 1 -count=1 -timeout 30m ./tests/...
 
-# Every e2e package outside the dedicated shards, split in two by
-# scripts/e2e-shard.sh. A new tests/e2e/<dir> must be added here (or get its own
-# case): the guard in tests/repo fails otherwise.
+# Every e2e package outside the dedicated shards, split by scripts/e2e-shard.sh.
+# tests/e2e has two layers: cli/ (packages that never start the mock agent) and
+# harness/ (packages that do; harness/*.go is the shared helper package itself).
+# A new tests/e2e/<layer>/<area> must be added here (or get its own case): the
+# guard in tests/repo fails otherwise.
 REST_PKGS := \
-  ./tests/e2e/subagent/... \
-  ./tests/e2e/gate/... \
-  ./tests/e2e/context/... \
-  ./tests/e2e/fileguard/... \
-  ./tests/e2e/changeset/... \
-  ./tests/e2e/check/... \
-  ./tests/e2e/checks/... \
-  ./tests/e2e/grounding/... \
-  ./tests/e2e/structure/... \
-  ./tests/e2e/proxy/... \
-  ./tests/e2e/engine_repo_judges/... \
-  ./tests/e2e/declarations/... \
-  ./tests/e2e/authoring/... \
-  ./tests/e2e/harness/...
+  ./tests/e2e/cli/... \
+  ./tests/e2e/harness \
+  ./tests/e2e/harness/subagent/... \
+  ./tests/e2e/harness/gate/... \
+  ./tests/e2e/harness/context/... \
+  ./tests/e2e/harness/fileguard/... \
+  ./tests/e2e/harness/changeset/... \
+  ./tests/e2e/harness/check/... \
+  ./tests/e2e/harness/checks/... \
+  ./tests/e2e/harness/grounding/... \
+  ./tests/e2e/harness/structure/... \
+  ./tests/e2e/harness/engine_repo_judges/... \
+  ./tests/e2e/harness/authoring/...
 
 # Sharded e2e for CI. The whole suite run with -p 1 (the disk constraint above)
 # grew past the CI runner's per-job wall-clock as the corpus of use-case e2e
 # expanded, so CI runs it as a matrix: several jobs, each -p 1 (disk stays low),
 # each a disjoint slice of ./tests/... . SHARD names the slice; the union of the
 # slices below is exactly `go list ./tests/...`, so nothing is dropped.
-# examples..examples6 split ./tests/e2e/examples/... by scripts/e2e-shard.sh,
+# examples..examples6 split ./tests/e2e/harness/examples/... by scripts/e2e-shard.sh,
 # which DISCOVERS the packages with `go list` (and the tests of the few packages
 # it slices with -run), so nothing new is ever dropped, and balances them by
 # greedy bin packing. Keep this list and the workflow matrix in lockstep; the
@@ -328,19 +329,19 @@ REST_PKGS := \
 #   make test-e2e-shard SHARD=session
 test-e2e-shard: mock
 	@case "$(SHARD)" in \
-	  session)  go test -p 1 -count=1 -timeout 30m $$(go list ./tests/e2e/session/... | grep -vE '/session/(025_subdirectory_hooks|028_trajectory_describe|029_trajectory_cite|031_trajectory_normalize)$$') ;; \
+	  session)  go test -p 1 -count=1 -timeout 30m $$(go list ./tests/e2e/harness/session/... | grep -vE '/session/(025_subdirectory_hooks|028_trajectory_describe|029_trajectory_cite|031_trajectory_normalize)$$') ;; \
 	  session2) go test -p 1 -count=1 -timeout 30m \
-	              ./tests/e2e/session/025_subdirectory_hooks/... \
-	              ./tests/e2e/session/028_trajectory_describe/... \
-	              ./tests/e2e/session/029_trajectory_cite/... \
-	              ./tests/e2e/session/031_trajectory_normalize/... ;; \
-	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/pre_tool/... ;; \
-	  examples) scripts/e2e-shard.sh 1 6 run ./tests/e2e/examples/... ;; \
-	  examples2) scripts/e2e-shard.sh 2 6 run ./tests/e2e/examples/... ;; \
-	  examples3) scripts/e2e-shard.sh 3 6 run ./tests/e2e/examples/... ;; \
-	  examples4) scripts/e2e-shard.sh 4 6 run ./tests/e2e/examples/... ;; \
-	  examples5) scripts/e2e-shard.sh 5 6 run ./tests/e2e/examples/... ;; \
-	  examples6) scripts/e2e-shard.sh 6 6 run ./tests/e2e/examples/... ;; \
+	              ./tests/e2e/harness/session/025_subdirectory_hooks/... \
+	              ./tests/e2e/harness/session/028_trajectory_describe/... \
+	              ./tests/e2e/harness/session/029_trajectory_cite/... \
+	              ./tests/e2e/harness/session/031_trajectory_normalize/... ;; \
+	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/harness/pre_tool/... ;; \
+	  examples) scripts/e2e-shard.sh 1 6 run ./tests/e2e/harness/examples/... ;; \
+	  examples2) scripts/e2e-shard.sh 2 6 run ./tests/e2e/harness/examples/... ;; \
+	  examples3) scripts/e2e-shard.sh 3 6 run ./tests/e2e/harness/examples/... ;; \
+	  examples4) scripts/e2e-shard.sh 4 6 run ./tests/e2e/harness/examples/... ;; \
+	  examples5) scripts/e2e-shard.sh 5 6 run ./tests/e2e/harness/examples/... ;; \
+	  examples6) scripts/e2e-shard.sh 6 6 run ./tests/e2e/harness/examples/... ;; \
 	  rest)     scripts/e2e-shard.sh 1 4 run $(REST_PKGS) ;; \
 	  rest2)    scripts/e2e-shard.sh 2 4 run $(REST_PKGS) ;; \
 	  rest3)    scripts/e2e-shard.sh 3 4 run $(REST_PKGS) ;; \

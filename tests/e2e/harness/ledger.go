@@ -15,7 +15,7 @@ import (
 // every run: a rule's watermark would be voided between cycles, and a "re-reported on
 // the next cycle" assertion would pass for that reason alone, whatever the engine does
 // with a refusal. A ledger under the test's own temp dir is neither in the tree the
-// engine diffs nor in any commit. (tests/e2e/fileguard/034's T034_19 is the test that
+// engine diffs nor in any commit. (tests/e2e/harness/fileguard/034's T034_19 is the test that
 // documents the trap itself; it writes into its folder on purpose.)
 
 // Ledger is one such file. The check's script appends to Path (Sh gives it quoted for a
