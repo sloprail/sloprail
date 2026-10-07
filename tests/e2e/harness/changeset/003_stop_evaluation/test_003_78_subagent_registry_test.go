@@ -41,16 +41,42 @@ func TestT003_78_ADispatchedSubagentIsInTheRegistryAcrossACompaction(t *testing.
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "fine words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
 	rows := registryOf(t, e, proj, sess)
+	if !harness.HasCap(t, harness.CapSubagentLifecycleHooks) {
+		// The registry is fed by the harness's sub-agent start and stop hooks. Where they never
+		// fire there is nothing to record: the registry stays empty, a compaction leaves it so,
+		// and the sub-agent's branch is the root's own range.
+		if len(rows) != 0 {
+			t.Fatalf("a harness that fires no sub-agent hooks has a registry row: %+v", rows)
+		}
+		if !trackedIn(sessionRanges(t, e, proj, sess), proj, "sub-a") {
+			t.Fatalf("the sub-agent's branch is not answered for in the root's folder")
+		}
+		e.Run(proj, sess, "go on", Turns("again", harness.Compact("k1")))
+		if again := registryOf(t, e, proj, sess); len(again) != 0 {
+			t.Fatalf("a compaction put a row in the registry: %+v", again)
+		}
+		return
+	}
 	if len(rows) != 1 {
 		t.Fatalf("want the one dispatched sub-agent in the registry, got %+v", rows)
 	}
 	if rows[0].Status != "completed" || rows[0].Background {
 		t.Fatalf("a foreground sub-agent that finished is completed and not background: %+v", rows[0])
 	}
-	if !strings.Contains(strings.Join(rows[0].Ranges, "\n"), " sub-a") {
-		t.Fatalf("the registry names the range the agent owns (sub-a): %+v", rows[0])
+	if harness.HasCap(t, harness.CapWorktrees) {
+		if !strings.Contains(strings.Join(rows[0].Ranges, "\n"), " sub-a") {
+			t.Fatalf("the registry names the range the agent owns (sub-a): %+v", rows[0])
+		}
+	} else {
+		// A sub-agent in the root's tree owns no folder, so no range: its branch is the root's.
+		if len(rows[0].Ranges) != 0 {
+			t.Fatalf("a sub-agent sharing the root's tree owns no range of its own: %+v", rows[0])
+		}
+		if !trackedIn(sessionRanges(t, e, proj, sess), proj, "sub-a") {
+			t.Fatalf("the sub-agent's branch is not answered for in the root's folder")
+		}
 	}
 	id := rows[0].AgentID
 
