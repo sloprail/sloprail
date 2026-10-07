@@ -99,7 +99,7 @@ own call.
   under `unresolvedCitations`). The current session's transcript is searched
   first, then the project's other sessions newest to oldest; the first session
   containing the quote must match it exactly once. Outside a session (no
-  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. `sr-checks verify` (Stop shows its failures; CI)
+  harness session identity: `CLAUDE_CODE_SESSION_ID` on Claude Code, `CURSOR_CONVERSATION_ID` on Cursor) `citations` is empty. `sr-checks verify` (Stop shows its failures; CI)
   has no transcript: there a `require: citation` counts the trailer on the commit
   that last changed the file, and the quote was resolved when `sr-checks run`
   judged it. Each entry also says which

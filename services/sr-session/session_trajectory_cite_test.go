@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -117,7 +118,7 @@ func TestCurrentSessionTranscript_ResolvesTheRealFile(t *testing.T) {
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
-	t.Setenv(transcript.SessionIDEnv, sessionID)
+	t.Setenv(claudecode.SessionIDEnv, sessionID)
 
 	got := transcript.CurrentSessionPath(cwd)
 	if got != want {
@@ -154,7 +155,7 @@ func TestCurrentSessionTranscript_UsesTheProjectsDirScheme(t *testing.T) {
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
-	t.Setenv(transcript.SessionIDEnv, sessionID)
+	t.Setenv(claudecode.SessionIDEnv, sessionID)
 
 	got := transcript.CurrentSessionPath(cwd)
 	if got != want {
@@ -179,10 +180,10 @@ func TestCurrentSessionTranscript_NoSessionID(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	// t.Setenv registers restoration of the ambient value (this test process runs
 	// inside a real session that sets it); unset AFTER, so the cleanup still restores.
-	t.Setenv(transcript.SessionIDEnv, "placeholder")
-	os.Unsetenv(transcript.SessionIDEnv)
+	t.Setenv(claudecode.SessionIDEnv, "placeholder")
+	os.Unsetenv(claudecode.SessionIDEnv)
 	if got := transcript.CurrentSessionPath(t.TempDir()); got != "" {
-		t.Fatalf("with no %s set, want \"\"; got %q", transcript.SessionIDEnv, got)
+		t.Fatalf("with no %s set, want \"\"; got %q", claudecode.SessionIDEnv, got)
 	}
 }
 
@@ -193,7 +194,7 @@ func TestCurrentSessionTranscript_NoSessionID(t *testing.T) {
 func TestCurrentSessionTranscript_SessionIDIsNotAName(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	for _, bad := range []string{"../../etc/passwd", `a\b`, ".", ".."} {
-		t.Setenv(transcript.SessionIDEnv, bad)
+		t.Setenv(claudecode.SessionIDEnv, bad)
 		if got := transcript.CurrentSessionPath(t.TempDir()); got != "" {
 			t.Fatalf("a session id %q that is not a name must yield \"\"; got %q", bad, got)
 		}
@@ -220,7 +221,7 @@ func TestCurrentSessionTranscript_WrongSessionRefused(t *testing.T) {
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
-	t.Setenv(transcript.SessionIDEnv, sessionID)
+	t.Setenv(claudecode.SessionIDEnv, sessionID)
 
 	if got := transcript.CurrentSessionPath(cwd); got != "" {
 		t.Fatalf("a file belonging to another session must yield \"\"; got %q", got)
