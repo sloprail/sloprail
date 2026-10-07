@@ -30,5 +30,10 @@ cmds=(
   "r1ok|go test -run TestA1 ./tests/e2e/a"
   "r2|go test ./tests/e2e/big"
   "r2ok|go test -run '^TestBig0[1-5]$' ./tests/e2e/big"
+  "a1|cd $PWD && go test -run TestA1 ./tests/e2e/a"
+  "g1|go test ./internal/x -run \"\$NAME\""
+  "g2|go test -timeout \"\$T\" ./internal/x"
+  "g3|go test \$(go list ./...)"
+  "g4|go test \$PKGS"
 )
 if [ "$n" -lt ${#cmds[@]} ]; then c="${cmds[$n]}"; bash_ "${c%%|*}" "${c#*|}"; else finish; fi

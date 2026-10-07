@@ -41,3 +41,10 @@ refused r1 "Rewrite it into a resolvable form"
 permitted r1ok
 refused r2 "would run 12 e2e tests"
 permitted r2ok
+# an absolute cd to the workspace, and a single named test: permitted
+permitted a1
+# a lost word in a flag value beside literal unit packages is permitted; one that could be a package is not
+permitted g1
+permitted g2
+refused g3 "Rewrite it into a resolvable form"
+refused g4 "Rewrite it into a resolvable form"

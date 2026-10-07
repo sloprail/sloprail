@@ -18,7 +18,9 @@ if ! invs="$(printf '%s' "$payload" | jq -c '
   .event.invocations[]? | (.bin | split("/") | last) as $b
   | if $b == "make" and any(.argv // [] | .[]; . == "test-e2e" or . == "test-e2e-shard") then {make: true}
     elif $b == "go" and ((.argv // []) | index("test")) != null
-    then {argv: ((.argv // [])[((.argv | index("test")) + 1):]), gaps: (.gaps // []), cwd: (.cwd // "")}
+    then (.argv // []) as $v | ($v | index("test")) as $t | (.gaps // []) as $g
+      | {argv: [range($t + 1; ($v | length) + 1) as $i | (if ($g | index($i)) != null then "<<GAP>>" else empty end), ($v[$i] // empty)],
+         headgap: any($g[]; . >= 1 and . <= $t), cwd: (.cwd // "")}
     else empty end')"; then
   refuse "no-local-e2e-suite could not read the command; refusing rather than letting a possible local e2e run through. $advice"
 fi
@@ -32,29 +34,37 @@ while IFS= read -r inv; do
     refuse "Don't run the e2e suite locally (sequential, ~1h). $advice"
   fi
   argv=(); while IFS= read -r w; do argv+=("$w"); done < <(printf '%s' "$inv" | jq -r '.argv[]')
-  gaps="$(printf '%s' "$inv" | jq -r '.gaps | length')"
+  headgap="$(printf '%s' "$inv" | jq -r '.headgap')"
   cwd="$(printf '%s' "$inv" | jq -r '.cwd')"
 
-  # a word the line lost (a variable, a substitution) may have been the package or the -run value
-  # that tells us what runs, so the count is unknowable
-  [ "$gaps" -eq 0 ] || unresolvable "a word of the command comes from a variable or substitution"
-  pkgs=(); run=""; hasrun=0; skip_or_list=0; i=0
+  # a word lost between `go` and `test` may be `-C dir`: the directory is unknowable
+  [ "$headgap" = false ] || unresolvable "a word before the test subcommand comes from a variable or substitution"
+  pkgs=(); run=""; hasrun=0; skip_or_list=0; unknownpkg=0; i=0
   while [ $i -lt ${#argv[@]} ]; do
     a="${argv[$i]}"
     case "$a" in
       -run=*|--run=*|-test.run=*|--test.run=*) run="${a#*=}"; hasrun=1 ;;
       -run|--run|-test.run|--test.run) i=$((i+1)); run="${argv[$i]-}"; hasrun=1 ;;
-      -skip|--skip|-skip=*|--skip=*|-test.skip|-test.skip=*|--test.skip|--test.skip=*|-list|--list|-list=*|--list=*|-test.list|-test.list=*|--test.list|--test.list=*) skip_or_list=1 ;;
+      -skip=*|--skip=*|-test.skip=*|--test.skip=*|-list=*|--list=*|-test.list=*|--test.list=*) skip_or_list=1 ;;
+      -skip|--skip|-test.skip|--test.skip|-list|--list|-test.list|--test.list) skip_or_list=1; i=$((i+1)) ;;
+      -args|--args) break ;;
+      -timeout|--timeout|-count|--count|-tags|--tags|-p|--p|-parallel|--parallel|-cpu|--cpu|-bench|--bench|-benchtime|--benchtime|-coverprofile|--coverprofile|-covermode|--covermode|-coverpkg|--coverpkg|-o|--o|-exec|--exec|-ldflags|--ldflags|-gcflags|--gcflags|-asmflags|--asmflags|-mod|--mod|-modfile|--modfile|-overlay|--overlay|-pkgdir|--pkgdir|-vet|--vet|-C|--C|-fuzz|--fuzz|-fuzztime|--fuzztime|-shuffle|--shuffle|-outputdir|--outputdir|-blockprofile|--blockprofile|-cpuprofile|--cpuprofile|-memprofile|--memprofile|-mutexprofile|--mutexprofile|-trace|--trace|-gcflags|-toolexec|--toolexec|-buildvcs|--buildvcs) i=$((i+1)) ;;
       -*) ;;
+      "<<GAP>>") unknownpkg=1 ;;
       *) if printf '%s' "$a" | grep -Eq '^(\./|\.\./)*tests(/|$)'; then pkgs+=("$a"); fi ;;
     esac
     i=$((i+1))
   done
-  # unit packages only: always permitted
+  # a lost word standing where a package goes (`go test $PKGS`, `$(go list ./...)`) may be any package
+  [ "$unknownpkg" -eq 0 ] || unresolvable "a package argument comes from a variable or substitution"
+  # unit packages only: always permitted, whatever a lost flag value was
   [ ${#pkgs[@]} -gt 0 ] || continue
 
   [ -n "$cwd" ] || unresolvable "the directory it runs in is not known"
+  # .cwd is "." / relative to the workspace, or absolute
+  case "$cwd" in /*) dir="$cwd" ;; *) dir="$root/$cwd" ;; esac
   [ "$skip_or_list" -eq 0 ] || unresolvable "-skip and -list change what runs"
+  [ "$run" != "<<GAP>>" ] || unresolvable "the -run value comes from a variable or substitution"
   if [ "$hasrun" -eq 1 ] && printf '%s' "$run" | grep -Eq '\$[A-Za-z_{(]|`'; then
     unresolvable "the -run value comes from a variable or substitution"
   fi
@@ -65,11 +75,11 @@ while IFS= read -r inv; do
       *"..."*)
         case "$p" in */...) ;; *) unresolvable "the package pattern $p is not a plain dir/..." ;; esac
         base="${p%/...}"
-        [ -d "$root/$cwd/$base" ] || unresolvable "$base does not exist"
-        while IFS= read -r d; do dirs+=("$d"); done < <(cd "$root/$cwd" && find "$base" \( -name testdata -o -name '.*' -o -name '_*' \) -prune -o -name '*_test.go' -type f -print 2>/dev/null | sed 's|/[^/]*$||' | sort -u)
+        [ -d "$dir/$base" ] || unresolvable "$base does not exist"
+        while IFS= read -r d; do dirs+=("$d"); done < <(cd "$dir" && find "$base" \( -name testdata -o -name '.*' -o -name '_*' \) -prune -o -name '*_test.go' -type f -print 2>/dev/null | sed 's|/[^/]*$||' | sort -u)
         ;;
       *)
-        [ -d "$root/$cwd/$p" ] || unresolvable "$p does not exist"
+        [ -d "$dir/$p" ] || unresolvable "$p does not exist"
         dirs+=("$p")
         ;;
     esac
@@ -77,7 +87,7 @@ while IFS= read -r inv; do
 
   # top-level test functions of every distinct dir
   names="$(for d in $(printf '%s\n' "${dirs[@]:-}" | sed 's|/*$||; s|^\./||' | sort -u); do
-    for f in "$root/$cwd/$d"/*_test.go; do
+    for f in "$dir/$d"/*_test.go; do
       [ -f "$f" ] && grep -hEo '^func (Test[A-Za-z0-9_]*)\(' "$f" | sed -E 's/^func //; s/\($//' | grep -vx 'TestMain'
     done
   done)"
