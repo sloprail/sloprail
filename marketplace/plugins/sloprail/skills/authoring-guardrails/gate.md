@@ -144,10 +144,14 @@ still breaks the rule is refused again, so the loop runs until a reply passes.
 The project caps how many refusals in a row it will take, in `.sloprail/config.yaml`:
 
 ```yaml
-stop_hook_block_cap: 8   # the default, matching Claude Code's own cap
+stop_hook_block_cap: 8   # the default
 # 1 — refuse once, then let the retry end un-judged
-# 0 — no engine cap (Claude Code's CLAUDE_CODE_STOP_HOOK_BLOCK_CAP still applies)
+# 0 — no engine cap (a harness may still impose its own)
 ```
+
+Per harness: Claude Code has its own cap on consecutive Stop-hook blocks (8 by
+default, `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), which applies even with the engine
+cap at 0. Other harnesses' own limits, if any, apply the same way.
 
 When the cap is reached the turn ends with the refusal still standing, and the
 engine says so on stderr. Nothing is marked judged, so the next cycle sees the same
