@@ -25,7 +25,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText}
+		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapProseWithCallInOneEntry}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -629,6 +629,17 @@ func resultTexts(raw json.RawMessage) []string {
 
 // Refusals reads the PreToolUse refusals out of the stream's tool_result records (see Result.Refusals).
 func (claudeDriver) WrittenBytes(content string) string { return content }
+
+// ResultRecord: a tool_result block names the call it answers by tool_use_id.
+func (claudeDriver) ResultRecord(record, id string) string {
+	found := ""
+	for _, l := range strings.Split(record, "\n") {
+		if strings.Contains(l, `"tool_use_id":"`+id) {
+			found = l
+		}
+	}
+	return found
+}
 
 // RefusalOutput is the tool_result real Claude Code answers a refused call with.
 func (claudeDriver) RefusalOutput(reason string) string {

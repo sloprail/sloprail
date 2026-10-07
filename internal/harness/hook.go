@@ -114,6 +114,17 @@ const (
 	FileDelete FileEffectKind = "delete"
 )
 
+// FileEffecter is what a Harness MAY implement when a write tool of its own cannot be
+// read from the canonical argument shapes (Codex's apply_patch names several files in
+// one patch): it states the effects of one call of that tool, from the tool's name and
+// arguments as the harness spells them and the directory the call runs in. It is the one
+// seam for the question, asked both of a live hook (ParseHook fills HookInput.Files from
+// it) and of a recorded call (trajectory normalize re-derives the events of one). A tool
+// it does not know yields none.
+type FileEffecter interface {
+	FileEffects(tool string, input json.RawMessage, cwd string) []FileEffect
+}
+
 // FileEffect is one file a pending tool call would change.
 type FileEffect struct {
 	Kind FileEffectKind

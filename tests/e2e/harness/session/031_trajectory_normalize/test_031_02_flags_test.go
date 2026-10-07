@@ -104,15 +104,30 @@ func TestT031_07_EventsFlagNarrows(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-031-07")
 
-	// Unfiltered: the one entry carries both the command and the tag. Found by its
-	// events rather than a fixed index — the mock's tool_result record sits after it.
+	// Unfiltered. Where a turn's prose and its call are one entry, that entry carries both
+	// the command and the tag; where the record writes them as two (Codex's rollout), the
+	// command is on the call's entry and the tag on the message's, one event each. Found by
+	// the events rather than a fixed index: a tool_result record sits after them.
 	all := decodeEntries(t, mustRun(t, normalize(e, proj, path, "--whole-session")))
 	both := theEntryWith(t, all, "PreCommandInvoke")
-	if got := eventsOf(both); len(got) != 2 {
-		t.Fatalf("unfiltered, the entry should carry both a command and a tag, got %v", got)
-	}
-	if bothTag := theEntryWith(t, all, "PostTagWrite"); bothTag.UUID != both.UUID {
-		t.Fatalf("the command and the tag should be on the SAME entry (%s vs %s)", both.UUID, bothTag.UUID)
+	bothTag := theEntryWith(t, all, "PostTagWrite")
+	if harness.HasCap(t, harness.CapProseWithCallInOneEntry) {
+		if got := eventsOf(both); len(got) != 2 {
+			t.Fatalf("unfiltered, the entry should carry both a command and a tag, got %v", got)
+		}
+		if bothTag.Line != both.Line {
+			t.Fatalf("the command and the tag should be on the SAME entry (line %d vs %d)", both.Line, bothTag.Line)
+		}
+	} else {
+		if got := eventsOf(both); len(got) != 1 {
+			t.Fatalf("the call's entry should carry just the command, got %v", got)
+		}
+		if got := eventsOf(bothTag); len(got) != 1 {
+			t.Fatalf("the message's entry should carry just the tag, got %v", got)
+		}
+		if bothTag.Line == both.Line {
+			t.Fatalf("the record writes the prose and the call as two entries, but both events are on line %d", both.Line)
+		}
 	}
 
 	// Only PreCommandInvoke: the tag module is not run, so that entry carries just

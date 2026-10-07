@@ -92,6 +92,11 @@ const (
 	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
 	CapScopedToolRules = "scoped-tool-rules"
 
+	// CapProseWithCallInOneEntry: a turn that says something and calls a tool is ONE entry
+	// of the record (a text block beside the tool_use). Codex's rollout writes the message
+	// and the call as separate records, so the prose and the call are two entries.
+	CapProseWithCallInOneEntry = "prose-with-call-in-one-entry"
+
 	// CapShellDenyBesideGrant: a judge can be granted a shell command and denied a form of it
 	// in the same run. Cursor does not enforce a shell deny beside a shell grant (measured), so
 	// sr-agent refuses such a run rather than promise a confinement it cannot give.
@@ -268,6 +273,9 @@ type Driver interface {
 	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
 	// ends every non-empty file with a newline).
 	WrittenBytes(content string) string
+	// ResultRecord is the line of a session record (the text of its file) that holds the
+	// result of the tool call the scenario named id, "" when it holds none.
+	ResultRecord(record, id string) string
 	// Refusals are the PreToolUse refusal reasons in a run's output stream.
 	Refusals(output string) []string
 	// RefusalOutput is the output stream of a run in which a PreToolUse hook refused the

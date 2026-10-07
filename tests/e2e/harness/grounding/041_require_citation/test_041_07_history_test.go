@@ -41,7 +41,7 @@ func TestT041_37_TheRemedySettlesAnUncitedChange(t *testing.T) {
 	e.Run(proj, "s-041-37", "carry on", Turns("done",
 		Write("w2", "memories/a.md", "v2 as asked"),
 	).ThenCommit("as asked", harness.CitesUser("adopt a decision log")))
-	if got := readProj(t, proj, "memories/a.md"); got != "v2 as asked" {
+	if got := readProj(t, proj, "memories/a.md"); got != e.Written("v2 as asked") {
 		t.Fatalf("the remedy did not land: %q", got)
 	}
 	if n := len(e.BlockingErrorsFrom(proj, "s-041-37", "Stop")); n != seen {
@@ -58,7 +58,7 @@ func TestT041_38_AChangeCitedInAnotherPoolIsUncited(t *testing.T) {
 		Bash("b0", `echo ECHOED-7781`),
 		Write("w1", "memories/a.md", "EVIL REWRITE"),
 	).ThenCommit("rewrite the note", harness.CitesTool("ECHOED-7781")))
-	if got := readProj(t, proj, "memories/a.md"); got != "EVIL REWRITE" {
+	if got := readProj(t, proj, "memories/a.md"); got != e.Written("EVIL REWRITE") {
 		t.Fatalf("the rewrite did not land, so this tests nothing: %q", got)
 	}
 	if blocks := stopRefusal(e, proj, "s-041-38"); !strings.Contains(blocks, noCitation) {

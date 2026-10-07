@@ -80,8 +80,8 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 	default:
 		in.TranscriptPath = transcript
 	}
-	if p.HookEventName == "PreToolUse" && patchTools[p.ToolName] {
-		in.Files = patchEffects(p.ToolInput, p.Cwd)
+	if p.HookEventName == "PreToolUse" {
+		in.Files = Harness{}.FileEffects(p.ToolName, p.ToolInput, p.Cwd)
 	}
 	return in
 }
@@ -97,6 +97,15 @@ var toolAliases = map[string]harness.ToolAlias{
 // patchTools are the names a hook reports Codex's patch tool under; its matcher
 // documentation lists apply_patch, Edit and Write as aliases.
 var patchTools = map[string]bool{"apply_patch": true, "Edit": true, "Write": true}
+
+// FileEffects implements harness.FileEffecter: what a call of Codex's patch tool would
+// do to each file it names.
+func (Harness) FileEffects(tool string, input json.RawMessage, cwd string) []harness.FileEffect {
+	if !patchTools[tool] {
+		return nil
+	}
+	return patchEffects(input, cwd)
+}
 
 // maxPatchRead bounds the file a patch is applied to in a hook the agent waits on.
 const maxPatchRead = 4 << 20
