@@ -1,0 +1,5 @@
+statement: >-
+  Branches are attached to a session automatically only when
+  SR_AUTO_WATCH_GIT_REFS is set to something other than empty, 0, false, no or
+  off; otherwise only the ranges the agent tracks itself are verified at Stop,
+  and automatic rows an earlier run left stop being verified.

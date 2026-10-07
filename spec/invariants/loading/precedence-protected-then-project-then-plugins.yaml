@@ -1,0 +1,5 @@
+statement: >-
+  When two rules share a nature and name, the plugin's protected rule wins
+  over everything, the project's own rule wins over any plugin's, and between
+  plugins the earlier-listed wins. The displaced rule is not loaded and is
+  reported as shadowed, naming both sides.

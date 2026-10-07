@@ -1,0 +1,4 @@
+statement: >-
+  Every event is a kind and a `fields` object. An event with no fields (the
+  end of a turn) carries an empty object, never null, so a script reading a
+  field gets a clean miss instead of an error that would read as a refusal.

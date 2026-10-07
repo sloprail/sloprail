@@ -1,0 +1,5 @@
+statement: >-
+  A sub-agent is its own session: its record, stored state and baseline are
+  its own, never pooled with its parent's or a sibling's, even when it works
+  in the parent's tree.
+needs: [subagent-transcripts, hook-common-payload]

@@ -1,0 +1,5 @@
+statement: >-
+  A path no plugin's scope owns is decided by the project's own structure;
+  with no project structure it is permitted, so a plugin can lock down only
+  its own scope.
+needs: [pretooluse-refusal]

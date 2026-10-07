@@ -1,0 +1,3 @@
+statement: >-
+  The answer a person picks to a question the agent asked counts as the user's own words in the user pool, never as a tool result, and a quote resolves to the answer only, never to the question text; a tool that merely prints something shaped like an answer is not one.
+needs: [session-transcript-file, transcript-record-envelope]

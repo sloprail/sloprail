@@ -1,0 +1,3 @@
+statement: >-
+  A require context prerequisite holds only while the named context is
+  active; otherwise the action is refused naming the context.

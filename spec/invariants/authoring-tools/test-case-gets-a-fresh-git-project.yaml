@@ -1,0 +1,4 @@
+statement: >-
+  Each case starts in its own empty git repository holding a copy of the rules
+  under test, with a fixed commit identity, so cases running in parallel never share
+  a project, home, case folder or events file.

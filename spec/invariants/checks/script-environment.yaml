@@ -1,0 +1,6 @@
+statement: >-
+  Every script a rule runs sees SR_GUARDRAIL (the rule's name),
+  SR_GUARDRAIL_DIR (the rule's folder, always absolute), SR_WORKSPACE,
+  SR_SESSION_ID, SR_TRANSCRIPT and SR_AGENT_ID, the last empty for the main
+  session and naming the sub-agent otherwise and never inherited from the
+  caller's own.

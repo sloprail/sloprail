@@ -1,0 +1,5 @@
+statement: >-
+  sr-agent takes its model as a list of preferences, first match wins: a size
+  alias (size-xs to size-xxl) resolves under every harness so entries after
+  it are unreachable, and a list matching nothing under the running harness
+  is refused rather than run on a default model.

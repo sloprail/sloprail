@@ -1,0 +1,5 @@
+statement: >-
+  The plugin hooks sloprail into the moments a session begins, an action
+  is about to run, a turn ends, a sub-agent starts and stops, and a worktree is
+  removed, and each hook runs the engine's matching command.
+needs: [plugin-hooks, session-start-hook, pretooluse-refusal, stop-hook-payload, subagent-lifecycle-hooks, worktree-hooks]

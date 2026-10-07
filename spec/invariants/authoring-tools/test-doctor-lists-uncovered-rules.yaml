@@ -1,0 +1,3 @@
+statement: >-
+  `sr test doctor` lists every rule (and the structure gate) that has no test case,
+  runs nothing, and exits non-zero when any is uncovered.

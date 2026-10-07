@@ -1,0 +1,5 @@
+statement: >-
+  An edit the tool would refuse (an old string that is absent, one that is
+  ambiguous without replace-all, a later edit of a batch that cannot apply, or
+  an empty edit list) yields no file event, since no bytes will change and a
+  rule must not fire on work that will not happen.

@@ -1,0 +1,3 @@
+statement: >-
+  Reading a state key that was never set gives empty output and a success
+  status, not an error.

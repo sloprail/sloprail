@@ -1,0 +1,6 @@
+statement: >-
+  A check's prepare script runs first on the same payload as the check, and
+  what it prints as additionalContext reaches the check under that one key
+  (the script's payload, the judge's template variables) beside the standard
+  fields, never merged into them. A prepare that prints nothing adds no
+  context and does not stop the check.

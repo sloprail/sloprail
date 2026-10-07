@@ -1,0 +1,6 @@
+statement: >-
+  At session start the person sees the engine's load report, and the agent is
+  additionally told which rules did not load and so are not in force; bookkeeping
+  lines (which plugin owns which folders, how many rules loaded) are never presented
+  as such a problem.
+needs: [plugin-hooks, session-start-hook, hook-additional-context]

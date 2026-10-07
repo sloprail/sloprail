@@ -1,0 +1,6 @@
+statement: >-
+  A declared field that an event leaves out, or carries as null, reads as its
+  type's zero value all the way down (empty string, false, 0, an empty list, a
+  map with its declared keys zeroed), so a match such as `newContent == ""` or
+  `len(x) == 0` evaluates instead of erroring. A field the kind does not
+  declare is given none.

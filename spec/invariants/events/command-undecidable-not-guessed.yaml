@@ -1,0 +1,7 @@
+statement: >-
+  A word of a command line whose value depends on running something, or on an
+  environment the line does not set (`$VAR`, `$(cmd)`, a program named by a
+  variable, a non-literal `eval` or `sh -c` payload), is never guessed at: no
+  program is invented from it and its position is recorded in `gaps` (with
+  `gitGapEarly` flagging an early gap in a git line). A line that does not
+  parse yields no invocations but keeps its raw text.

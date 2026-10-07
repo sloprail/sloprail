@@ -1,0 +1,7 @@
+statement: >-
+  A call to a file-writing tool that names a path yields one file event before
+  it runs: a create when the file does not exist, an update when it does. A
+  tool that only reads, a call that names a path without a write, and a write
+  aimed at a directory or other non-regular file yield no file event; the tool
+  is left to fail on its own.
+needs: [file-tools]

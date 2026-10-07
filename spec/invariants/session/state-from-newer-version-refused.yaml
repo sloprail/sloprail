@@ -1,0 +1,4 @@
+statement: >-
+  Session state written by a newer sloprail than the one running is refused,
+  never read or altered, and the refusal says the schema is newer than the
+  binary.

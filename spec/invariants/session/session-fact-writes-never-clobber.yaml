@@ -1,0 +1,4 @@
+statement: >-
+  When concurrent hook runs update one session fact, a write that decided on
+  an outdated value is refused rather than overwriting the newer one, so no
+  run's update is lost.

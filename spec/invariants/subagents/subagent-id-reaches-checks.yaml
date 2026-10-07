@@ -1,0 +1,5 @@
+statement: >-
+  Every check run for a hook is told which sub-agent the hook fired in, empty
+  but present in the main session, so a rule can tell a sub-agent's action
+  from the main session's.
+needs: [hook-common-payload]

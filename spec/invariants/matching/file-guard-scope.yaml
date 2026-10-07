@@ -1,0 +1,5 @@
+statement: >-
+  A file-guard's `match` reads facts about one file of the changeset: `path`,
+  `status` (A, M, D or R), `markers` and `oldMarkers` (each with kind, fqn and
+  line), and `trailers` (commit-message trailer values by key). It has no
+  `context`, so a condition on session state belongs in a gate.

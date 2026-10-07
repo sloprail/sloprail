@@ -1,0 +1,3 @@
+statement: >-
+  A grounded edit fails and changes nothing when the old string is absent, when it occurs more than once without an explicit replace-all, or when the target does not exist; a delete of a missing target also fails.
+needs: [file-tools]

@@ -1,0 +1,5 @@
+statement: >-
+  `sr file validate` exits 0 when the document satisfies the schema, 1 when it is
+  refused or cannot be checked (a document or schema that does not parse), and 64 for
+  a usage error such as an unknown flag or wrong argument count, so a caller can tell
+  an answer about the document from a misuse of the command.

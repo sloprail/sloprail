@@ -1,0 +1,4 @@
+statement: >-
+  A refusal reached by a run that had no session transcript is not stored as
+  the key's verdict, because a check may read the session; passes reached that
+  way are stored.

@@ -1,0 +1,6 @@
+statement: >-
+  Every field an event kind declares is present on every event of that kind,
+  with its empty value when there is nothing to carry: an empty file has
+  `newContent` of "", an unmarked file an empty markers list, a call with no
+  arguments an empty `input`, a turn with no tags an empty tags list. A field
+  the kind does not declare is not carried.

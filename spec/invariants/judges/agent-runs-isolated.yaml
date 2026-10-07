@@ -1,0 +1,5 @@
+statement: >-
+  The agent a judge launches carries none of the caller's hooks, and none of
+  the caller's session identity, so it cannot nest a judge inside a judge or
+  be mistaken for the session it judges.
+needs: [noninteractive-run]

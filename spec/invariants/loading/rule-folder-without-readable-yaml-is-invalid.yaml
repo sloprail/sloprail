@@ -1,0 +1,3 @@
+statement: >-
+  A rule folder whose nature YAML is missing, unreadable or does not parse is
+  reported as an invalid rule under its name, rather than silently skipped.

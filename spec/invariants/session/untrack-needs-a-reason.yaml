@@ -1,0 +1,3 @@
+statement: >-
+  Untracking a range requires a reason, which is kept with the range; an
+  untrack without one is refused and the range stays verified.

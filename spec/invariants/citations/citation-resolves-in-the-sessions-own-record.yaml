@@ -1,0 +1,3 @@
+statement: >-
+  Citations always resolve against the session's own record: a trajectory path or a record file the agent names cannot stand in for it, and with no record available there are no citations.
+needs: [session-transcript-file]

@@ -1,0 +1,5 @@
+statement: >-
+  A judge reaches a model only through sr-agent run with --verify: the
+  rendered rubric and material go in as the prompt, and the verdict is
+  whatever the verifier script accepts from the answer the agent wrote.
+needs: [noninteractive-run]

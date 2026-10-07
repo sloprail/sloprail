@@ -1,0 +1,4 @@
+statement: >-
+  Every declared context is present in the context map from the start,
+  inactive with an empty payload, so a rule reading an untriggered context
+  sees it inactive instead of failing.

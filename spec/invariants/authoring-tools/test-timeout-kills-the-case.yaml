@@ -1,0 +1,3 @@
+statement: >-
+  A case that outlives its timeout, and a run that is interrupted, take every
+  process the case started down with them.

@@ -1,0 +1,3 @@
+statement: >-
+  A check script runs with the rule's own folder as its working directory and
+  receives the event or changeset it is asked about as JSON on standard input.

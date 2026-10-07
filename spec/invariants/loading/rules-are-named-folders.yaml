@@ -1,0 +1,6 @@
+statement: >-
+  A rule is a folder under .sloprail/file-guard/, .sloprail/gate/ or
+  .sloprail/context/ holding the nature's YAML (file-guard.yaml, gate.yaml,
+  context.yaml), and the folder name is the rule's name. Stray files in a
+  nature folder are not rules; structure.yaml in file-guard/ is the structure
+  gate, not a file-guard.

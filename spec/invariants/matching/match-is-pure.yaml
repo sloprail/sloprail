@@ -1,0 +1,4 @@
+statement: >-
+  A match is a pure function of the event and contexts it is handed: the same
+  input always gives the same answer, the event is not altered, and nothing
+  ambient (the kind, the process environment) is in reach.

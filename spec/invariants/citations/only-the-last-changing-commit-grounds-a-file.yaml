@@ -1,0 +1,2 @@
+statement: >-
+  A commit's citation grounds a file only when that commit is the one that last substantively changed it, or when the file is restored byte-for-byte to a state a cited commit made; an uncited change on top of a cited one is uncited, and a whitespace-only commit grounds nothing.

@@ -1,0 +1,3 @@
+statement: >-
+  If the record of which sub-agents are running cannot be read, the Stop waits
+  for no sub-agent and judges every range.

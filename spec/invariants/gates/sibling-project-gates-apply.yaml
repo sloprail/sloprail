@@ -1,0 +1,5 @@
+statement: >-
+  A write, edit, delete or command that targets another git project is also
+  judged by that project's own gates and structure; a project without
+  sloprail rules is not judged.
+needs: [pretooluse-refusal]

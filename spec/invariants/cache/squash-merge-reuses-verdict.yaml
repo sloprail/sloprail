@@ -1,0 +1,3 @@
+statement: >-
+  `verify` reuses a verdict judged over the same base and head trees even when
+  the commits differ, so a squash merge of a judged branch counts as judged.

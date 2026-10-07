@@ -1,0 +1,5 @@
+statement: >-
+  While SR_CHECKS_JUDGE_MOCKS is set, no judge is sent to a model: each judge
+  id maps to a script that receives the rendered prompt and payload on stdin
+  and answers the verdict object, and a judge with no entry, or a script that
+  fails or answers no boolean, is an error and never a pass.

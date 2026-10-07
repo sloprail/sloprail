@@ -1,0 +1,4 @@
+statement: >-
+  The Stop reports only failures (a recorded failing verdict, a rule that does
+  not load, an error): a range whose judges have not been asked is not
+  reported there, and is refused by CI verification and the push gate instead.

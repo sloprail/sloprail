@@ -1,0 +1,4 @@
+statement: >-
+  Heavy `sr-checks run` invocations on a machine queue for a bounded number of
+  run slots (SLOPRAIL_RUN_SLOTS), and a second run of the same worktree and
+  range waits for the first and reuses its verdicts.

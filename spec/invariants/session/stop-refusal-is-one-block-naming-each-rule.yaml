@@ -1,0 +1,5 @@
+statement: >-
+  When several rules refuse at one Stop the agent receives a single block that
+  names every refusing rule, not one refusal per turn, and a rule that passed
+  is not named.
+needs: [stop-block-continuation]

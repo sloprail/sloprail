@@ -1,0 +1,3 @@
+statement: >-
+  A quote must match the cited words exactly and in order, but runs of whitespace and line breaks are interchangeable, so a quote survives re-wrapping of the original message.
+needs: [session-transcript-file]

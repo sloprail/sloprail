@@ -1,0 +1,7 @@
+statement: >-
+  A recursive removal of a directory yields a delete event for every file
+  inside it (links are not followed), up to 1000 files, and reads file
+  contents up to an 8 MiB budget: a file past the budget is still predicted
+  but with `oldContentKnown` false. A directory holding more than 1000 files
+  is predicted as nothing, so its removal appears only as deletes at the end
+  of the turn.

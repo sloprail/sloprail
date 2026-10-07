@@ -1,0 +1,5 @@
+statement: >-
+  sr-agent exits 2 for a refusal of its own (no prompt, unknown harness, a
+  model set matching nothing, bad flags); when the agent's harness fails it
+  passes the harness's exit status through and names the cause on its own
+  line of stderr.

@@ -1,0 +1,5 @@
+statement: >-
+  A verdict key never holds the rule's definition, a commit SHA, the session,
+  the agent or the branch, so identical content reached by an amend, a rebase,
+  a revert or another branch reuses the stored verdict, and editing a rule
+  does not void what was judged before.

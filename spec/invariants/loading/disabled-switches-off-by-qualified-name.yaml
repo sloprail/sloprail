@@ -1,0 +1,5 @@
+statement: >-
+  A name in config.yaml's disabled: list, written <nature>/<name> for the
+  project's own rule or <plugin>/<nature>/<name> for a plugin's, switches
+  that one rule off, including a rule that fails to load, and leaves a
+  same-named rule of another origin or nature in force.

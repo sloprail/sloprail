@@ -1,0 +1,6 @@
+statement: >-
+  Only uncommitted paths that a rule actually selects owe a commit: unguarded
+  and scratch paths never do, a deletion does only when the rule admits
+  deletions, a rename counts by its new or old path, and an untracked nested
+  repository does not.
+needs: [stop-block-continuation]

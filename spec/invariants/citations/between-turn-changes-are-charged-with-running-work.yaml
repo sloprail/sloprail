@@ -1,0 +1,3 @@
+statement: >-
+  A change that lands between turns is charged to the agent, uncited, only when work it started may still be running (a detached process or a reported background task); otherwise it is set aside as not the agent's own.
+needs: [stop-hook-payload, background-agent]

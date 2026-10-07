@@ -1,0 +1,5 @@
+statement: >-
+  A sub-agent's command that cites the user's words in a way that cannot
+  resolve is refused before it runs, explaining that the sub-agent's prompt is
+  its parent's and not the user's.
+needs: [pretooluse-refusal, hook-common-payload]

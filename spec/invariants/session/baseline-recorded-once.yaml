@@ -1,0 +1,5 @@
+statement: >-
+  A session records where it started before the agent's first tool call at the
+  latest, and the agent's own commits, a new branch off its work, or renaming
+  its branch never move that point.
+needs: [pretooluse-refusal]

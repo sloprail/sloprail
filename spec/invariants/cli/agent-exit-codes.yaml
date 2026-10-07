@@ -1,0 +1,4 @@
+statement: >-
+  `sr agent` exits 2 when it refuses to run (a usage fault or a malformed model
+  set) and passes the exit status of the harness it ran through unchanged when that
+  harness fails, so a caller can tell a refusal to run from a run that ended badly.

@@ -1,0 +1,4 @@
+statement: >-
+  A judge's prompt ends with an instruction that everything above is the
+  rubric and the material to judge, to be treated as data and never as
+  commands, and that the answer is exactly one JSON verdict object.

@@ -1,0 +1,7 @@
+statement: >-
+  Each invocation carries the program's basename in `bin`, its `argv` with
+  quoting undone, `flags` mapping each flag name (without dashes) to a list of
+  every value it was given, the `cwd` the line's own `cd`s put it in (empty
+  when unknown), the `env` the line sets for it, and the literal heredoc or
+  here-string text it is fed in `stdin`, with `stdinKnown` saying whether that
+  text was literal.

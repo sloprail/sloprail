@@ -1,0 +1,4 @@
+statement: >-
+  A session in a directory that is not a repository, or in a repository with
+  no commit yet, starts without failing; in a repository with no commit its
+  start is the empty tree, so the commits of its first turn are judged.

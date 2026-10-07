@@ -1,0 +1,4 @@
+statement: >-
+  A structure gate must allow at least one path, and every allow, deny or
+  scope entry sets exactly one of glob or regex and compiles; a glob's `*`
+  stays within one path segment.

@@ -1,0 +1,5 @@
+statement: >-
+  A judge answer with no JSON object, or whose pass is not a boolean, is not
+  a verdict: the agent is told what was wrong and asked again (two asks by
+  default), and when still malformed the check refuses without having
+  reached a verdict.

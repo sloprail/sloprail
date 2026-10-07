@@ -1,0 +1,4 @@
+statement: >-
+  Within a rule, requirements and script checks that precede its first judge
+  run before any judge of any rule, in declared order, and a refusal ends the
+  rule at its first refusing check.

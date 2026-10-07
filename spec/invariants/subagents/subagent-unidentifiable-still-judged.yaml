@@ -1,0 +1,5 @@
+statement: >-
+  A sub-agent whose session cannot be identified is still judged on its own
+  folder without stored state, so its commits do not pass unexamined for want
+  of an identity.
+needs: [subagent-lifecycle-hooks]

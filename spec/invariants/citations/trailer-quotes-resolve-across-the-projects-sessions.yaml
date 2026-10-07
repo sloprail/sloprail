@@ -1,0 +1,3 @@
+statement: >-
+  A commit's trailer quote resolves in the current session first and then in the project's other sessions from newest to oldest; the first session containing the quote answers and must hold it exactly once, an unreadable record is reported without stopping the search, and a quote found nowhere is unresolved.
+needs: [session-transcript-file]

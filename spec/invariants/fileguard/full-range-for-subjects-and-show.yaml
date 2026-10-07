@@ -1,0 +1,4 @@
+statement: >-
+  A rule with a subjects script, and the commands that only display
+  (`changeset`, `show`), use the whole floor-raised range rather than a range
+  shortened by earlier passes.

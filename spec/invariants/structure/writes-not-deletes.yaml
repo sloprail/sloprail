@@ -1,0 +1,4 @@
+statement: >-
+  Only creating or changing a file is checked against a structure; deleting a
+  file is not a write and is never refused by it.
+needs: [pretooluse-refusal]

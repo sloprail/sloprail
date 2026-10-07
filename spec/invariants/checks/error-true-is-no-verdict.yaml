@@ -1,0 +1,5 @@
+statement: >-
+  A check that exits non-zero with {"error": true} on stdout, like one that
+  could not be run, refuses fail-closed but reaches no verdict on the
+  content: it is no answer the rule has given, and the next evaluation tries
+  the check again.

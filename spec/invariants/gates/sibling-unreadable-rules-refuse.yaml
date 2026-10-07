@@ -1,0 +1,4 @@
+statement: >-
+  A call that targets another project whose rules cannot be checked, read or
+  loaded is refused, because gates that may exist were not consulted.
+needs: [pretooluse-refusal]

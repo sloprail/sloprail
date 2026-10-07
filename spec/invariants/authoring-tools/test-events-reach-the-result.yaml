@@ -1,0 +1,3 @@
+statement: >-
+  The JSON lines a case appends to its events file are the events of its result, in
+  order, and a line that is not JSON is left out.

@@ -1,0 +1,4 @@
+statement: >-
+  A finished fail stored under a key is replayed with its reasons, not judged
+  again, until the input changes; content edited back to a refused state is
+  refused again.

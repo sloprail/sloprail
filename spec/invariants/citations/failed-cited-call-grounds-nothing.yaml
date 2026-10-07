@@ -1,0 +1,3 @@
+statement: >-
+  A cited change that was denied, failed or never ran grounds nothing, and a cited change counts only if the file holds exactly what it produces.
+needs: [posttooluse-payload]

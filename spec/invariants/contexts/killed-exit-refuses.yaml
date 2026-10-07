@@ -1,0 +1,4 @@
+statement: >-
+  An `exit` that cannot finish (killed on its timeout) leaves its context
+  active and refuses the turn end until the exit answers.
+needs: [stop-block-continuation]

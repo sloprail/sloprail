@@ -1,0 +1,6 @@
+statement: >-
+  When the state of the working tree or a rule's match cannot be read,
+  commit-required refuses saying it could not tell, rather than treating the
+  tree as clean; a path that is a pipe or device is still owed and never
+  blocks the check.
+needs: [stop-block-continuation]

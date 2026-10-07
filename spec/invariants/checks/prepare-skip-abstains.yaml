@@ -1,0 +1,5 @@
+statement: >-
+  A prepare that prints skip: true makes its check abstain: the check (a
+  judge's model call included) is not run, it counts neither as a pass nor as
+  a refusal, and a later check in the same rule still runs and can still
+  refuse; a rule whose checks all abstain permits.

@@ -1,0 +1,3 @@
+statement: >-
+  A context trigger whose match cannot be evaluated does not enter the
+  context on that occurrence, and is reported on every pass.

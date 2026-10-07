@@ -1,0 +1,4 @@
+statement: >-
+  A gate that refuses when the agent is about to finish hands its reason back
+  and the turn goes on instead of ending.
+needs: [stop-block-continuation]

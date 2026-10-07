@@ -1,0 +1,3 @@
+statement: >-
+  Each marketplace plugin is fetched at the release tag matching its version, so the
+  plugin's files and the commands installed for it come from the same release.

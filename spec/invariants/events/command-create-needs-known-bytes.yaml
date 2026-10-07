@@ -1,0 +1,5 @@
+statement: >-
+  A shell command that would create a file yields a pre-create event only when
+  the line determines the bytes (a literal redirection, a copy of a readable
+  file); a creation whose bytes cannot be known is not predicted and is seen
+  only as a create at the end of the turn.

@@ -1,0 +1,4 @@
+statement: >-
+  A `deny` entry carves paths back out of what `allow` permitted; a `deny`
+  entry that matches nothing allowed changes nothing.
+needs: [pretooluse-refusal]

@@ -1,0 +1,5 @@
+statement: >-
+  A session resumed from a different working directory finds its own record
+  and state where the session began, not an empty record under the new
+  directory, and never accepts another conversation's file in its place.
+needs: [session-resume]

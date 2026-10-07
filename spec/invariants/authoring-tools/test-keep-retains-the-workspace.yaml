@@ -1,0 +1,3 @@
+statement: >-
+  `sr test run --keep` leaves each case's temp directory in place and prints its path
+  on stderr; without it the directory is removed.

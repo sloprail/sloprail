@@ -1,0 +1,2 @@
+statement: >-
+  Every file-change and command event carries its citations as a list, empty when none was given, each entry holding the quote, the pools it landed in, where it sits, the full text of the cited message (capped) and, for tool output, the call that produced it.

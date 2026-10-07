@@ -1,0 +1,5 @@
+statement: >-
+  When a session starts and the installed engine is older than the plugin's own
+  version, the plugin installs the matching release and says so; an unreleased `dev`
+  build is never treated as older, and `SLOPRAIL_NO_AUTO_INSTALL=1` skips the upgrade.
+needs: [plugin-hooks, session-start-hook]

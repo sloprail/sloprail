@@ -1,0 +1,5 @@
+statement: >-
+  A case passes when its script exits 0, errors when it exits 2 or outlives the
+  per-case timeout, and fails on any other status, and `sr test run` exits non-zero
+  unless every case passed; a failing case's result carries its output and a passing
+  one carries none.

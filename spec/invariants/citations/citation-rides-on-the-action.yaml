@@ -1,0 +1,3 @@
+statement: >-
+  A citation is carried by the action it grounds, as a cite flag on a file-changing command or as a cite command chained before another command, and never written into the file or message content.
+needs: [pretooluse-refusal]

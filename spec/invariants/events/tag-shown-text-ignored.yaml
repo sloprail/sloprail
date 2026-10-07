@@ -1,0 +1,6 @@
+statement: >-
+  A `#tag` inside text the agent shows rather than says (a fenced code block,
+  an inline code span or a quoted line) is not a tag, and a tag re-sent in
+  text an earlier stop of the same turn already showed is marked `seen` unless
+  the agent wrote it again since.
+needs: [stop-hook-payload]

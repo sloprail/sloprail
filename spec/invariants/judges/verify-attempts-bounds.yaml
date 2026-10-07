@@ -1,0 +1,3 @@
+statement: >-
+  sr-agent's --verify-attempts accepts 1 to 20 (default 2) and refuses a
+  value outside that range before running any agent.

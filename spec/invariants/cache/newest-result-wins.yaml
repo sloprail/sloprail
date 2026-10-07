@@ -1,0 +1,3 @@
+statement: >-
+  When several stored results hold one key, the most recent run's result is
+  the one read, with ties broken deterministically.

@@ -1,0 +1,5 @@
+statement: >-
+  `sr <service> ...` behaves exactly as the service's own command run directly:
+  every argument (flags and `--help` included) and stdin reach it unchanged, its
+  stdout and stderr come back unchanged, and `sr` exits with the service's exact
+  exit status.

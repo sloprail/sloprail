@@ -1,0 +1,5 @@
+statement: >-
+  A guardrail's remembered state belongs to one session and to that guardrail:
+  its reads and writes reach only its own entries, never another guardrail's
+  single key and never another session's, and outside a running guardrail
+  there is no state to reach.

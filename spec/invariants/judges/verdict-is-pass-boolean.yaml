@@ -1,0 +1,5 @@
+statement: >-
+  A judge's verdict is one JSON object {"pass": boolean, "reasoning":
+  string}, read even when fenced or surrounded by prose or when its reasoning
+  quotes braces. True permits; false refuses with the reasoning as the
+  reason, or with fixed words when it gave none.

@@ -1,0 +1,4 @@
+statement: >-
+  A prepare that exits non-zero, cannot be run, or prints output that is not
+  the additionalContext and skip object refuses the check with prepare's own
+  words, and the check itself is not run.

@@ -1,0 +1,5 @@
+statement: >-
+  A file-guard judges one net change: the difference between the merge base of
+  the stated base and head and the head, however many commits it spans, with
+  every commit of the range listed. A base that is behind head's history only
+  widens the range.

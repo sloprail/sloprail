@@ -1,0 +1,5 @@
+statement: >-
+  The position up to which a session's record has been judged advances only to
+  the end of the record as it stood when a query handed it out, and only when
+  the cycle completes without a refusal; turns appended later, and the turns
+  of a refused or interrupted cycle, are offered again to the next cycle.

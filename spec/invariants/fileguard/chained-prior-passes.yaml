@@ -1,0 +1,6 @@
+statement: >-
+  A rule's range starts where its latest chain of complete passing evaluations
+  ends, so what passed once is not re-examined and only the change since is
+  judged; a failure, a pass over a narrower range that leaves a gap, or a pass
+  outside the range's history never advances it, and run and verify find the
+  same start.

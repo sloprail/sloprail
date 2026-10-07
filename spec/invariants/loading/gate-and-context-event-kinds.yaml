@@ -1,0 +1,5 @@
+statement: >-
+  A gate may wake on pre-action event kinds and Stop, never on a Post kind; a
+  context may wake on pre-action kinds and the Post file and tag-write kinds,
+  never on Stop. PreFileWrite expands to file create plus update for both,
+  PostFileWrite only for a context, and any other name is refused at load.

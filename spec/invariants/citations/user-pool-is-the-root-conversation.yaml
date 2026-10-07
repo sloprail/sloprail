@@ -1,0 +1,3 @@
+statement: >-
+  The user pool is searched in the root session's conversation alone, even when a sub-agent cites: a sub-agent's prompt is its parent's words, so a sub-agent quotes the user's exact words as relayed by its parent, and when the root session cannot be found the user pool is refused outright rather than answered from the sub-agent's own record.
+needs: [subagent-transcripts, session-transcript-file]

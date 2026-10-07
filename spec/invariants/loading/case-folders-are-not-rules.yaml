@@ -1,0 +1,4 @@
+statement: >-
+  Nothing under a rule's tests/ folder and nothing under
+  file-guard/structure.tests/ is read as a declaration, even when a test case
+  contains declaration-named files or invalid YAML.

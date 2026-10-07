@@ -1,0 +1,4 @@
+statement: >-
+  Each check sets exactly one of script or judge, with prepare allowed only
+  alongside one of them; model, timeout, allowed_tools and disallowed_tools
+  are accepted only on a judge check.

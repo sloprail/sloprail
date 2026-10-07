@@ -1,0 +1,5 @@
+statement: >-
+  `sr checks run` and `sr checks verify` exit 0 only when no file-guard refuses
+  the range and none fails to load, and 1 otherwise (a refusal, a subject with no
+  stored verdict for `verify`, or a rule that cannot be read); `show` lists stored
+  results and exits 0 whatever they are.

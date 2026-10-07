@@ -1,0 +1,4 @@
+statement: >-
+  A file-guard reads file contents and diffs from the committed range and
+  never from the working tree, so an uncommitted edit is invisible to it; its
+  checks run against a read-only snapshot of head.

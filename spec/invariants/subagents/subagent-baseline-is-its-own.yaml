@@ -1,0 +1,5 @@
+statement: >-
+  A sub-agent's baseline is taken at its own first tool call, so what its
+  commits produce is measured from where it began, and a baseline first taken
+  only at its end is not used to measure its file-guard range.
+needs: [subagent-lifecycle-hooks]

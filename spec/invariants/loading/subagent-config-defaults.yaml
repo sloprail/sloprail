@@ -1,0 +1,5 @@
+statement: >-
+  enable_subagent_stop_check is off unless config.yaml sets it true. A
+  background sub-agent counts as silent after 10 minutes and stale after 60
+  by default, and a silent threshold of 0 or less, or a stale one not above
+  it, is an error that falls back to those defaults.

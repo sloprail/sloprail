@@ -1,0 +1,5 @@
+statement: >-
+  A check script's exit status is its verdict: zero permits and non-zero
+  refuses. Anything the script prints at exit zero, an objection or a claim
+  of refusal included, neither refuses nor reaches the agent, and no printed
+  claim of approval survives a non-zero exit.

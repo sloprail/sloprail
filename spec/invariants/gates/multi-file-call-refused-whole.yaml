@@ -1,0 +1,5 @@
+statement: >-
+  An action that changes several files runs whole or not at all: if any file
+  is refused the call is refused, and the one refusal names every refused
+  file with its reason, a reason shared by several files said once.
+needs: [pretooluse-refusal]

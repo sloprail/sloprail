@@ -1,0 +1,3 @@
+statement: >-
+  An `enter` that exits non-zero declines to activate: the context keeps the
+  state and payload it had, and nothing is refused.

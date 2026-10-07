@@ -1,0 +1,6 @@
+statement: >-
+  A require skill prerequisite holds only when the session's own record,
+  sub-agents excluded, shows the skill invoked (under its bare or
+  plugin-qualified name) or its SKILL.md read directly; stating that it was
+  read is not evidence. A record that cannot be located or read refuses,
+  because a precondition that could not be checked has not passed.

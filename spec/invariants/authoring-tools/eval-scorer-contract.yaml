@@ -1,0 +1,5 @@
+statement: >-
+  The fixture's scorer passes the run by exiting 0 and fails it otherwise, its reason
+  read from JSON `reason` on stdout, else stdout, else stderr; it is handed the
+  transcript, the project and the fixture and may write a structured verdict that is
+  archived whatever its exit status.

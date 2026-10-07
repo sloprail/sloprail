@@ -1,0 +1,5 @@
+statement: >-
+  An `enter` that cannot run (missing, not executable, killed, or printing no
+  flat JSON object) refuses the action that triggered it, because a context
+  left off would silently disarm every rule that reads it.
+needs: [pretooluse-refusal]

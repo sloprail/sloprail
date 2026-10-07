@@ -1,0 +1,3 @@
+statement: >-
+  A citation trailer whose quote does not resolve is never silently dropped: it is recorded as failed and the refusal lists it with its commit, its trailer and why it did not resolve, such as the words not being in the record, being ambiguous, or sitting in text the pool excludes.
+needs: [session-transcript-file]

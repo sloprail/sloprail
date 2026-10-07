@@ -1,0 +1,4 @@
+statement: >-
+  A rule's prerequisites (require) are evaluated, in order, before any of its
+  checks is run or paid for; the first unmet prerequisite refuses the action
+  and names what would satisfy it, and no check runs.

@@ -1,0 +1,4 @@
+statement: >-
+  A file-guard still carrying preventive:, or requiring a skill or a context,
+  or whose match reads context, is refused at load with a message saying to
+  move that part to a gate; require: citation stays legal on a file-guard.

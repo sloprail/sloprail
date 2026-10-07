@@ -1,0 +1,4 @@
+statement: >-
+  A file-guard must say which files it covers with a non-empty match, and
+  carries at least one of require or checks; a guard with neither would
+  select a file and decide nothing.

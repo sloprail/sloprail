@@ -1,0 +1,4 @@
+statement: >-
+  `sr-checks changeset` prints the range and the payload a rule's checks would
+  be handed, as JSON, and runs no check, judge or script verdict and stores
+  nothing; an unknown or ambiguous rule name is an error.

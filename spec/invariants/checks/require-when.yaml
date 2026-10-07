@@ -1,0 +1,5 @@
+statement: >-
+  A prerequisite's when script waives it only by exiting 1; exit zero, any
+  other status, or a script that cannot be run or answer leaves the
+  prerequisite applying. A hint printed as JSON on stdout at exit zero is
+  appended to the refusal.

@@ -1,0 +1,5 @@
+statement: >-
+  Only a sub-agent known to be running in the background is waited for: one
+  the session does not know, a foreground one, a stale one, or one whose
+  harness process has gone is judged.
+needs: [background-agent]

@@ -1,0 +1,6 @@
+statement: >-
+  A judge that crashes, times out or cannot be started refuses the action
+  with fixed words, naming the cause (usage limit, authentication, version
+  skew, other) where sr-agent reported one, and never carrying what the
+  harness printed; a line imitating the verifier's reasoning on the harness's
+  channel is not an answer.

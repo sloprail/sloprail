@@ -1,0 +1,7 @@
+statement: >-
+  A match is checked when its rule loads, against the fields the event kind
+  declares: a syntax error, a non-boolean result, an unknown name, a
+  misspelled field (even inside a predicate over a list) or a comparison of
+  mismatched types refuses the rule instead of loading and never firing. A
+  trigger naming an alias is checked against every kind it stands for, and a
+  kind that declares no fields accepts no field name.

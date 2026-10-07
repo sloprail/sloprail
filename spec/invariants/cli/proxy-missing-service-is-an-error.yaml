@@ -1,0 +1,4 @@
+statement: >-
+  When the service a word names is not installed beside `sr`, on the override
+  directory or on the path, `sr` fails with a non-zero status and an error naming
+  every place it looked.

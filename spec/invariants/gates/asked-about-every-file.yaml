@@ -1,0 +1,4 @@
+statement: >-
+  A gate is run once for each file a single action would change that its
+  trigger matches, so a gate that is fine with the first file is still asked
+  about the second.

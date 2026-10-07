@@ -1,0 +1,4 @@
+statement: >-
+  A gate or context trigger's `match` reads the fired event's own fields under
+  `event`, typed to the kind the trigger names, and the contexts under
+  `context`; the contexts are open, so any context name may be indexed.

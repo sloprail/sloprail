@@ -1,0 +1,3 @@
+statement: >-
+  A judge check inside a case is never sent to a model: it takes the verdict of the
+  mock the case names for it, and with no mock it refuses naming the missing entry.

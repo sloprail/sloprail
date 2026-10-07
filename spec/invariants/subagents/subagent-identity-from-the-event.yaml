@@ -1,0 +1,5 @@
+statement: >-
+  Whether an agent is a sub-agent, and which, is taken from the event that
+  fired, never inferred from what a transcript contains or from the working
+  directory.
+needs: [hook-common-payload, subagent-lifecycle-hooks]

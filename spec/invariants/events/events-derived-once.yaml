@@ -1,0 +1,4 @@
+statement: >-
+  A tool call is turned into events once, and every rule bound to an event
+  kind of that call is handed the same event, so a rule's match and its checks
+  never see two different readings of one action.

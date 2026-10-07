@@ -1,0 +1,6 @@
+statement: >-
+  A require citation prerequisite holds only when the action carries a quote
+  that resolved against the session in an accepted pool (the user's words,
+  tool output, or both); otherwise the action is refused with a command the
+  agent can run to cite, and a sub-agent refused for want of the user's words
+  is told it never saw them.

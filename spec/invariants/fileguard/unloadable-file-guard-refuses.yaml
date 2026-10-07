@@ -1,0 +1,4 @@
+statement: >-
+  A file-guard that fails to load counts as a refusal: `sr-checks run` and
+  `verify` name it with the reason and exit 1, even when no other file-guard
+  is loaded.

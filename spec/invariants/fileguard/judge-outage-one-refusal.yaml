@@ -1,0 +1,4 @@
+statement: >-
+  When the judges are unavailable for several subjects or rules, the outage is
+  reported as one refusal naming its cause, the rules left undecided and the
+  first failure, and it still refuses because no judge ran.

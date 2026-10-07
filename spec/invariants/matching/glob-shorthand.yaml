@@ -1,0 +1,6 @@
+statement: >-
+  A file-guard `match` with no whitespace or quote characters is a path glob
+  over the whole path: `*` is one segment, `**` any depth, `?` one character,
+  `[..]` a class, a dot is literal and braces are not expanded. A malformed
+  glob is refused at load, and any `match` containing whitespace or a quote is
+  read as an expression instead.

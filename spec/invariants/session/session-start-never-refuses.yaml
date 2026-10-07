@@ -1,0 +1,5 @@
+statement: >-
+  Starting a session never refuses it: a baseline that cannot be recorded or a
+  declaration that does not load is reported to the person, and the session
+  starts anyway.
+needs: [session-start-hook]

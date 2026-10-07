@@ -1,0 +1,7 @@
+statement: >-
+  A check script that cannot be run (missing, not executable, no shebang, a
+  shebang outside the standard interpreter directories, or failing to start)
+  refuses the action naming the script and the fix, because a check that
+  cannot run must not be read as approval. This holds for every script a rule
+  declares: checks, prepare, subjects, a prerequisite's when, and a context's
+  enter and exit.

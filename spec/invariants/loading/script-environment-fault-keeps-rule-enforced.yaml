@@ -1,0 +1,6 @@
+statement: >-
+  A declared script that exists but cannot be run directly (no shebang, not
+  executable, unsupported interpreter) is an environment fault: the rule
+  stays loaded, is reported as unable to run, and refuses what it guards
+  until the file is fixed. A declared script that does not exist does not
+  stop the rule loading either.

@@ -1,0 +1,3 @@
+statement: >-
+  An `exit` that exits non-zero leaves its context active for the next turn,
+  quietly.

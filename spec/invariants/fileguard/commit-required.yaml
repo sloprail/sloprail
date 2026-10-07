@@ -1,0 +1,6 @@
+statement: >-
+  At the end of a turn, an uncommitted change to a path some file-guard
+  selects refuses the end of the turn, naming each path (at most twenty, with
+  a count of the rest), its status and the rules selecting it, and asks for a
+  commit; the work is never committed on the agent's behalf.
+needs: [stop-block-continuation]

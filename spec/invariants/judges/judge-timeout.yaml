@@ -1,0 +1,5 @@
+statement: >-
+  A judge that has not answered within its time limit (the rule's timeout on
+  that judge, else the check timeout of 600 seconds) is killed with
+  everything it started and the action is refused saying the judge did not
+  answer. The timeout key is valid only on judge checks.

@@ -1,0 +1,5 @@
+statement: >-
+  In a session whose harness keeps no transcript, guardrails are switched off
+  and the person is told so, once on screen, because the rules that read the
+  record cannot run and a refusal could not be fixed.
+needs: [session-transcript-file]

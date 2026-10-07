@@ -1,0 +1,4 @@
+statement: >-
+  A gate that cannot reach a verdict (its check fails to run, its trigger
+  match cannot be evaluated, the runner errors) refuses, naming the gate and
+  why, and is never read as approval.

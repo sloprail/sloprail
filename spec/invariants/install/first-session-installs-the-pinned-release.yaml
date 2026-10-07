@@ -1,0 +1,6 @@
+statement: >-
+  When a session starts and no engine is installed, the plugin installs the release
+  matching its own version, checksum-verified and announced to the session, and runs
+  the freshly installed engine for that same start; setting `SLOPRAIL_NO_AUTO_INSTALL=1`
+  skips the install.
+needs: [plugin-hooks, session-start-hook]

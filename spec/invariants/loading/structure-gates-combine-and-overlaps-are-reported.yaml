@@ -1,0 +1,4 @@
+statement: >-
+  Every sound structure gate (the project's and each plugin's) loads together
+  without shadowing, and plugins whose literal scopes overlap are reported
+  naming both plugins and how to disable one.

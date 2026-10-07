@@ -1,0 +1,4 @@
+statement: >-
+  A fixture with a simulated user feeds the agent further user messages in the same
+  session, in real separate turns, until the user says it is done or the fixture's
+  turn cap (at most 10) is reached.

@@ -1,0 +1,6 @@
+statement: >-
+  A shell command that writes, appends to, copies, moves or removes files
+  yields a file event per file it changes (a move also deletes its source),
+  one event per file however its path is spelled and however the command is
+  wrapped. A command that only reads, merely names a file, or removes a file
+  that is not there yields none.

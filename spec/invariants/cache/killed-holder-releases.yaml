@@ -1,0 +1,3 @@
+statement: >-
+  A run killed while holding a judge slot, a key's in-flight lock or a run
+  slot releases it at once, leaving nothing to clean up.

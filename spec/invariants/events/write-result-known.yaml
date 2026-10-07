@@ -1,0 +1,7 @@
+statement: >-
+  A pre-write create or update event carries the bytes the write would leave
+  in `newContent`, worked out from the call (the whole body it states, or its
+  edits applied in order to the file as it stands), and says in `resultKnown`
+  whether it knew them. A result it cannot work out, such as a notebook cell
+  edit or an in-place stream edit, is flagged unknown and never presented as
+  an empty file.

@@ -1,0 +1,6 @@
+statement: >-
+  A Stop that cannot name its session, read the session's range registry, or
+  observe the repository's branches refuses instead of passing, because what
+  could not be examined must not be read as nothing to judge; a project with
+  no file-guards is never blocked for it.
+needs: [stop-block-continuation]

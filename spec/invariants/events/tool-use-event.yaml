@@ -1,0 +1,5 @@
+statement: >-
+  Any tool call yields one pre-action event carrying the tool's name in `tool`
+  and its arguments in `input` (an empty object when it has none or they are
+  not an object), whatever the tool, so a rule can gate a tool no file or
+  command event describes. There is no post-action counterpart.

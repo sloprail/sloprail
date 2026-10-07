@@ -1,0 +1,4 @@
+statement: >-
+  A file-guard's refusal always names the files it is about: a reason that
+  mentions none of them is followed by the list of files judged, at most ten,
+  with the count of the rest.

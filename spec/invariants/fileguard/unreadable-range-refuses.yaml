@@ -1,0 +1,4 @@
+statement: >-
+  When git cannot read the range, or a rule's match cannot be compiled or
+  cannot decide, the file-guard refuses and says so; a failure to read is
+  never treated as an empty selection.

@@ -1,0 +1,4 @@
+statement: >-
+  Every sloprail command reports its version with `--version` as a bare semantic
+  version when built for a release, and as `dev` (never a valid version) when built
+  any other way.

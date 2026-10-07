@@ -1,0 +1,5 @@
+statement: >-
+  When the engine is not installed, the session start, the end of a turn and a
+  sub-agent's end each warn loudly that guardrails are not enforcing and then let the
+  session go on, never blocking it; at session start the agent hears the warning too.
+needs: [plugin-hooks, session-start-hook, hook-additional-context, hook-exit-code-semantics]

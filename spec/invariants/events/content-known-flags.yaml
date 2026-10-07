@@ -1,0 +1,6 @@
+statement: >-
+  `oldContentKnown` on a pre-delete event and `newContentKnown` on a post
+  create or update event say whether the bytes were read. A file that is not a
+  regular file once links are followed, or is too large to read, carries empty
+  content with the flag false, so a rule can tell unread from empty; an unread
+  delete still carries the markers of its committed copy.

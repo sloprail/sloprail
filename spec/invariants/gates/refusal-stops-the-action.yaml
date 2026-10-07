@@ -1,0 +1,5 @@
+statement: >-
+  A gate that refuses a pending action stops it before it runs, and the agent
+  is told the gate's reason; a gate that does not refuse lets the action go
+  ahead.
+needs: [pretooluse-refusal]

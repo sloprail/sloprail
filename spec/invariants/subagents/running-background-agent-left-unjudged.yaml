@@ -1,0 +1,5 @@
+statement: >-
+  While a background sub-agent is still running, its commit ranges are left
+  unjudged at the parent's Stop, which says so without refusing, and they are
+  judged at the first Stop after the agent's terminal notification.
+needs: [background-agent, task-notifications]

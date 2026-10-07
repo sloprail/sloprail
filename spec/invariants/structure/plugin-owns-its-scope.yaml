@@ -1,0 +1,5 @@
+statement: >-
+  A plugin's structure decides only paths under its declared scope: there its
+  own `allow` must match and its own `deny` must not, and the project's
+  `allow` does not widen it.
+needs: [pretooluse-refusal]

@@ -1,0 +1,3 @@
+statement: >-
+  A trailer grounds only in its own pool: a user trailer whose quote exists only in tool output, or a tool trailer quoting the user, is not a citation.
+needs: [session-transcript-file]

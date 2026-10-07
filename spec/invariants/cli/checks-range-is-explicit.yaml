@@ -1,0 +1,5 @@
+statement: >-
+  `sr checks run`, `verify` and `show` require both a base and a head revision, and
+  a revision that does not resolve, a directory outside a git repository or an
+  unreadable rule store is an error naming the problem, never an empty range or a
+  pass.

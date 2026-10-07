@@ -1,0 +1,5 @@
+statement: >-
+  A write into another git project is decided by that project's own
+  structure, not the session project's, and the refusal says which project
+  governs the path.
+needs: [pretooluse-refusal]
