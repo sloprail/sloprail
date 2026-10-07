@@ -76,11 +76,22 @@ func (c config) isEnabled(qualified string) bool {
 	return false
 }
 
+// FallbackStopHookBlockCap is the finite cap of a harness with none of its own.
+// The engine's cap is the loop breaker for a Stop gate that cannot be satisfied
+// (a limit of 0 means it never lets go), so the default must never be 0: a
+// harness that would block forever (Codex kept going through 30) still gets this.
+const FallbackStopHookBlockCap = 8
+
 // DefaultStopHookBlockCap is the cap a project that sets none gets: the current
-// harness's own cap on consecutive Stop blocks (harness.StopBlockCap), since a cap
-// the engine sets any higher is one the harness never lets it reach. 0, no engine
-// cap, for a harness with none of its own.
-func DefaultStopHookBlockCap() int { return harness.StopBlockCap(harness.Current()) }
+// harness's own cap on consecutive Stop blocks (harness.StopBlockCap) when that is
+// smaller than FallbackStopHookBlockCap, since a higher engine cap is one the
+// harness never lets it reach; otherwise FallbackStopHookBlockCap.
+func DefaultStopHookBlockCap() int {
+	if n := harness.StopBlockCap(harness.Current()); n > 0 && n < FallbackStopHookBlockCap {
+		return n
+	}
+	return FallbackStopHookBlockCap
+}
 
 // StopHookBlockCap reads the project's `stop_hook_block_cap` from the config in
 // root (a `.sloprail` directory): how many consecutive refusals a Stop may take
@@ -95,8 +106,8 @@ func DefaultStopHookBlockCap() int { return harness.StopBlockCap(harness.Current
 //	stop_hook_block_cap: 1   # refuse once, then let the retry end un-judged
 //	stop_hook_block_cap: 0   # no engine cap (the harness's own cap still applies)
 //
-// Absent means DefaultStopHookBlockCap (the current harness's own cap). A negative value is an error, and so is a
-// config that exists and cannot be read; the caller decides what an error costs.
+// Absent means DefaultStopHookBlockCap (the harness's own cap when smaller than 8, else 8).
+// A negative value is an error, and so is a config that exists and cannot be read; the caller decides what an error costs.
 func StopHookBlockCap(root string) (int, error) {
 	c, err := loadConfig(root)
 	if err != nil {
