@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T031_01: a Bash command yields a PreCommandInvoke carrying the parsed
@@ -207,6 +209,7 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 // number of preamble records: an entry's physical line is its ordinal position among the
 // physical lines, and the first entry sits exactly `preamble+1` in.
 func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
+	harness.RequireCap(t, harness.CapRecordPreamble)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
