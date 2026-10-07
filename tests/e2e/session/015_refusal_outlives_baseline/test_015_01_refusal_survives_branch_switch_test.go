@@ -433,9 +433,15 @@ func TestT015_04_ARefusedFileOnAnotherBranchIsStillReported(t *testing.T) {
 	if !changesetkit.Saw(second, "unrelated.md") {
 		t.Fatalf("the cycle's own work is missing from %v — the claim below would be vacuous", second)
 	}
-	// The rule here is a SCRIPT check: a stored script refusal is asked again when the range is
-	// verified (only a pass, or a judge's refusal, is replayed), so main's unchanged range may
-	// reach the script once more. What must hold is the Stop below: the broken file stays in view.
+	// The rule here is a SCRIPT check. A stored pass is a hit and runs nothing: the passing
+	// unrelated.md reaches the script exactly once, however many times the cycle verifies its
+	// range. A stored script refusal is asked again: main's refused bad-file.md reaches it once.
+	if n := countPath(second, "unrelated.md"); n != 1 {
+		t.Fatalf("the passing unrelated.md reached the script %d times (%v): a hit must run nothing", n, second)
+	}
+	if n := countPath(second, "bad-file.md"); n != 1 {
+		t.Fatalf("the refused bad-file.md reached the script %d times (%v): a script refusal is asked again, once", n, second)
+	}
 	later := e.AllBlockingErrorsFrom(proj, sess, "Stop")[stops:]
 	if got := strings.Join(later, "\n"); !strings.Contains(got, "this file is not acceptable") || !strings.Contains(got, "(main") {
 		t.Fatalf("the Stop after the switch did not refuse main's unfixed range:\n%s", got)
