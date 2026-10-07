@@ -174,7 +174,7 @@ func (c codexDriver) RenderScript(s Scenario) (string, error) {
 	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
 	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
 	compacts := 0
-	for i, t := range s.turns {
+	for i, t := range foldCallOutput(s.turns) {
 		blocks, err := c.render(t.act)
 		if err != nil {
 			return "", err

@@ -43,15 +43,30 @@ func provenanceProject(t *testing.T) (*harness.Env, string) {
 // sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestT041_28_ResultOfUnknownProvenanceIsNotCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
-	e.Run(proj, "s-041-28", prompt, Turns("done", harness.ToolResult("elsewhere", "ORPHAN-E2E-5521 all green")))
-	if !strings.Contains(readFile(t, e.TranscriptPath(proj, "s-041-28")), "ORPHAN-E2E-5521") {
+	// A harness whose record cannot hold a result without its call (Codex and Cursor record
+	// the output of a command they ran) has no result of unknown provenance to refuse: the
+	// same output WITH its call is what a tool_result citation grounds on, and the write lands.
+	orphan := harness.HasCap(t, harness.CapOrphanToolResult)
+	result := []harness.Turn{harness.ToolResult("elsewhere", "ORPHAN-E2E-5521 all green")}
+	if !orphan {
+		call, out := harness.CallWithOutput("elsewhere", "Bash", map[string]string{"command": "true"}, "ORPHAN-E2E-5521 all green")
+		result = []harness.Turn{call, out}
+	}
+	e.Run(proj, "s-041-28", prompt, Turns("done", result...))
+	if orphan && !strings.Contains(readFile(t, e.TranscriptPath(proj, "s-041-28")), "ORPHAN-E2E-5521") {
 		t.Fatalf("the orphan result is not in the record, so this would not test it")
 	}
 	res := e.Run(proj, "s-041-28", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'ORPHAN-E2E-5521 all green' --content '# results'`),
 	))
-	if !res.Saw("b1") {
+	if !res.Saw("sr-file write memories/results.md") {
 		t.Fatalf("the citing call never ran:\n%s", res.Output)
+	}
+	if !orphan {
+		if !e.Exists(proj, "memories/results.md") {
+			t.Fatalf("a result with its call in the record did not ground a write:\n%s", res.Output)
+		}
+		return
 	}
 	if e.Exists(proj, "memories/results.md") {
 		t.Fatalf("a result whose call is not in the record grounded a write:\n%s", res.Output)
