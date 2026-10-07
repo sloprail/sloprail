@@ -13,10 +13,9 @@ set -euo pipefail
 git init -q .
 # one agent run with no turn sets up the plugin (config dir and plugin cache) so the rule's scripts are on disk
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
-export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
-export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
-# the sandbox links the plugin under test beside its config dir
-SUBJECTS="$(dirname "$CLAUDE_CONFIG_DIR")/marketplace/plugins/sloprail/.sloprail/file-guard/rule-tests-pass/subjects.sh"
+while IFS= read -r kv; do export "$kv"; done < <(echo "$SETUP" | jq -er ".env[]")
+# the sandbox links the plugin under test under its root
+SUBJECTS="$(echo "$SETUP" | jq -er .sandbox)/marketplace/plugins/sloprail/.sloprail/file-guard/rule-tests-pass/subjects.sh"
 if [ ! -f "$SUBJECTS" ]; then
   echo "no rule-tests-pass/subjects.sh at $SUBJECTS" >&2
   exit 1
