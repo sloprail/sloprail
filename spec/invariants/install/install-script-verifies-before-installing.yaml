@@ -1,5 +1,0 @@
-statement: >-
-  The install script downloads the release archive for the machine's platform, refuses
-  to install it when its checksum does not match the release's, and installs the
-  whole set of commands together into one directory, installing nothing when the
-  release lacks one of them.

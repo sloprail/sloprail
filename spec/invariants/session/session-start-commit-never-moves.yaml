@@ -1,3 +1,0 @@
-statement: >-
-  The commit a session first began at is kept for the whole session and is not
-  moved when the baseline is re-taken.

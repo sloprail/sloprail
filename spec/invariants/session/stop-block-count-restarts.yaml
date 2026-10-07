@@ -1,5 +1,0 @@
-statement: >-
-  The count of consecutive Stop refusals starts over when a Stop is not a
-  retry and when a Stop completes, so one turn's refusals never count against
-  the next.
-needs: [stop-hook-payload]

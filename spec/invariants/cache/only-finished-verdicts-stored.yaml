@@ -1,5 +1,0 @@
-statement: >-
-  Only a finished pass or fail is stored as a verdict: an engine error, an
-  interrupted run, a skipped check, or a judge that returned no verdict is
-  never stored, so the next run asks again and verify reads it as not judged
-  yet.

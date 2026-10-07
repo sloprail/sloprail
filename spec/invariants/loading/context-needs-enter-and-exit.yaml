@@ -1,3 +1,0 @@
-statement: >-
-  A context must name at least one event to wake on, a non-empty enter script
-  and a non-empty exit script.

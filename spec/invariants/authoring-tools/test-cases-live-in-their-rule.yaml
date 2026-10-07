@@ -1,5 +1,0 @@
-statement: >-
-  `sr test run` finds each case at `.sloprail/<nature>/<rule>/tests/<case>/test.sh`
-  (or `file-guard/structure.tests/<case>/test.sh`), including in nested and plugin
-  `.sloprail/` folders, and reports one result per case naming the one rule that owns
-  it; `--rule` and `--only` select cases and a retired top-level `tests/` is ignored.

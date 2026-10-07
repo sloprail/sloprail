@@ -1,3 +1,0 @@
-statement: >-
-  When a rule refuses a change that a citation-carrying file command would have made but could not compute, the refusal quotes that command's own failure beside the file it concerns.
-needs: [pretooluse-refusal]

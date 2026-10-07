@@ -1,4 +1,0 @@
-statement: >-
-  A session's first cycle, and any cycle whose position cannot be read, is
-  offered the whole record, because re-reading a turn costs a second look
-  while skipping one would lose a violation for good.

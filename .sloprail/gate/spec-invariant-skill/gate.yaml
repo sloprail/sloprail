@@ -1,0 +1,8 @@
+# Writing a spec invariant is refused until the document-invariant skill was loaded this
+# session: it holds what a good invariant is (copied verbatim from a10n). Covers every
+# file under spec/<domain>/invariants/, written by a file tool or a command.
+on:
+  - event: PreFileWrite
+    match: event.path matches "^spec/[a-z0-9-]+/invariants/"
+require:
+  - skill: document-invariant

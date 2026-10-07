@@ -1,3 +1,0 @@
-statement: >-
-  A gate whose declaration does not load is reported by name on every pass
-  and denies nothing, and the gates beside it keep running.

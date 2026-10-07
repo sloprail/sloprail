@@ -1,3 +1,0 @@
-statement: >-
-  A file-guard whose match selects no file of the range, or whose range holds
-  no change, passes with nothing to judge.

@@ -1,3 +1,0 @@
-statement: >-
-  Setting a state key replaces the whole stored value exactly as given, never
-  merging it with what was there.

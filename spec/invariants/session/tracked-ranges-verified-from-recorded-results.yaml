@@ -1,4 +1,0 @@
-statement: >-
-  At Stop, each commit range the session answers for is verified against
-  already-recorded check results, with the same logic as the standalone verify
-  command: no model is asked and nothing is written.

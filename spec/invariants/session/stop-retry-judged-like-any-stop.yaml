@@ -1,4 +1,0 @@
-statement: >-
-  A Stop the harness sends again after a refusal is judged exactly like the
-  first one, so an agent does not pass a rule by replying twice.
-needs: [stop-hook-payload, stop-block-continuation]

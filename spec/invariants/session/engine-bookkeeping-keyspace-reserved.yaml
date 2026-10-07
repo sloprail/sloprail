@@ -1,3 +1,0 @@
-statement: >-
-  The engine keeps its own per-session bookkeeping (gate verdicts, context
-  states) under names no rule can have, so no rule's own keys collide with it.

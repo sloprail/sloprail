@@ -1,4 +1,0 @@
-statement: >-
-  An action that repairs a context's own broken script (making it executable,
-  or editing it inside its folder) is never refused for that fault.
-needs: [pretooluse-refusal]

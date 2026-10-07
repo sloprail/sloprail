@@ -1,6 +1,0 @@
-statement: >-
-  A rule's check that launches an agent is not enforced again inside that
-  agent or anything it spawns, so a judge's own writes cannot recurse into
-  the rule that launched it, while every other rule still applies to that
-  agent's actions.
-needs: [noninteractive-run]

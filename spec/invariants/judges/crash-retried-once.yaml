@@ -1,6 +1,0 @@
-statement: >-
-  A judge whose model run dies for a transient cause (a usage limit or
-  another failure) is run once more after a short pause; one that fails to
-  authenticate or does not match the engine's flags is not retried, and a
-  judge that answered is never re-run.
-needs: [noninteractive-run]

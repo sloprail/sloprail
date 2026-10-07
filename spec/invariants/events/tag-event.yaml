@@ -1,7 +1,0 @@
-statement: >-
-  At the end of a turn one event carries every `#tag` the agent wrote in its
-  own prose since the turn began, in order of first appearance and without
-  duplicates. A tag starts with a letter or underscore, so headings, issue
-  numbers and mid-word `#` are not tags, and a turn with no tag still yields
-  the event with an empty list.
-needs: [stop-hook-payload, session-transcript-file]

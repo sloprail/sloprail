@@ -1,6 +1,0 @@
-statement: >-
-  sr-agent with a verifier hands it the agent's answer: exit zero accepts and
-  prints it, exit 3 rejects as final, and any other non-zero asks the agent
-  again with the verifier's complaint, up to the attempt limit; the answer
-  file is empty at the start of each attempt, and a verifier that cannot run
-  ends the run unretried.

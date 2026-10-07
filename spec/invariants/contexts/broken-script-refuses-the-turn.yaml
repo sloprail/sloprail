@@ -1,5 +1,0 @@
-statement: >-
-  While any declared `enter` or `exit` script cannot run, every turn end is
-  refused with the fix, even for a context that was never triggered; a Stop
-  whose Post trigger's enter could not run is refused too.
-needs: [stop-block-continuation]

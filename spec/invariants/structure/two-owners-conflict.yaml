@@ -1,5 +1,0 @@
-statement: >-
-  A path inside the scope of more than one plugin's structure is refused as
-  an ownership conflict that names every owner and the way to disable all but
-  one.
-needs: [pretooluse-refusal]

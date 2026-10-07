@@ -1,4 +1,0 @@
-statement: >-
-  Across all runs on one machine at most SLOPRAIL_JUDGE_SLOTS judges (default
-  8) run at once; a run that finds no free slot waits and says so, and never
-  fails for want of one.

@@ -1,5 +1,0 @@
-statement: >-
-  A subjectless event fires at the end of every turn, whether or not anything
-  changed. It carries no fields, so a match naming a field of it is refused at
-  load and the rule never runs against nothing.
-needs: [stop-hook-payload]

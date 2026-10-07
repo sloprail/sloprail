@@ -1,4 +1,0 @@
-statement: >-
-  Only `sr-checks run` pushes results; `verify` and `show` fetch what others
-  stored and read it, never pushing, migrating or writing, and an unreachable
-  remote falls back to the local copy with a message.

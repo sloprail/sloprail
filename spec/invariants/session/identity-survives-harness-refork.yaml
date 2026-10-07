@@ -1,6 +1,0 @@
-statement: >-
-  A conversation keeps one identity when the harness re-issues its session id
-  after a retry, a compaction or a resume into a new transcript, so state
-  recorded earlier is still found, while unrelated conversations keep separate
-  identities.
-needs: [session-fork, compaction-transcript-continuity]

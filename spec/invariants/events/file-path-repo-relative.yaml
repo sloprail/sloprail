@@ -1,6 +1,0 @@
-statement: >-
-  The `path` of a file event is repository-relative, cleaned and slash-
-  separated: an absolute path inside the repository, `./a.md` and `a.md` all
-  report as `a.md`, including when the repository is reached through a
-  symlinked spelling of its root. A path outside the repository keeps its
-  absolute spelling, so no repository-relative scope admits it.

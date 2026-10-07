@@ -1,4 +1,0 @@
-statement: >-
-  `sr mark apply <kind> --<fqn>=<path>:<line> ...` validates the kind and every
-  fqn and `path:line` pair before writing, so one malformed argument fails the
-  whole call with a non-zero status and no file has been changed.

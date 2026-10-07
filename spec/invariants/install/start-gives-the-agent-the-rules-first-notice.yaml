@@ -1,5 +1,0 @@
-statement: >-
-  At session start the agent is told, in its context, to give repeated work its
-  structure and rules before the work, whether or not the engine is installed; no
-  other moment carries that notice.
-needs: [plugin-hooks, session-start-hook, hook-additional-context]

@@ -1,3 +1,0 @@
-statement: >-
-  A stored segment that does not match its content address or cannot be
-  decoded is an error, never a miss.

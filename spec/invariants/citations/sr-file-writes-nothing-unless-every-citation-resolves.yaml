@@ -1,3 +1,0 @@
-statement: >-
-  A citation-carrying file write, edit or delete changes nothing, and reports why, when any of its quotes fails to resolve.
-needs: [file-tools]

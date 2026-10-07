@@ -1,4 +1,0 @@
-statement: >-
-  The agent under test runs in a home and project of its own that are removed with
-  the workspace, never the operator's real home, with the sloprail binaries built
-  from this checkout rather than whatever is installed.

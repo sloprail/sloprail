@@ -1,5 +1,0 @@
-statement: >-
-  A rule's subjects script must print a non-empty list of subjects with
-  unique, non-empty ids, each naming only files the rule selected or carrying
-  a fingerprint; anything else is a refusal, never an empty or partly-keyed
-  list.

@@ -1,5 +1,0 @@
-statement: >-
-  Processes sloprail launches for a test or an evaluation do not inherit the identity
-  of an enclosing agent session (its session id, entry point, plugin and project
-  locations), while credentials and proxy settings are kept so a real agent can
-  still authenticate.

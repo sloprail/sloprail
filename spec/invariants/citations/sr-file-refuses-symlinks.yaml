@@ -1,3 +1,0 @@
-statement: >-
-  A grounded file change whose path goes through a symbolic link is refused and changes nothing, since it would land where the link points rather than at the path a rule judges.
-needs: [file-tools]

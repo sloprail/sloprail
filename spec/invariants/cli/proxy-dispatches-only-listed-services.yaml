@@ -1,4 +1,0 @@
-statement: >-
-  The `sr` command forwards `session`, `file`, `mark`, `agent`, `eval`, `checks`
-  and `test` to the service of the same name; any other word is an error naming
-  the real commands, never an attempt to run a program of that guessed name.

@@ -1,4 +1,0 @@
-statement: >-
-  A shell command that writes a file is checked against the structure like a
-  direct write, resolving relative paths where the command actually runs.
-needs: [pretooluse-refusal]

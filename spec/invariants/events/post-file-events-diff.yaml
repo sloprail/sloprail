@@ -1,9 +1,0 @@
-statement: >-
-  At the end of a turn the file events are the difference between the tree and
-  the session's baseline, not what any tool announced: a file absent at the
-  baseline and present now is a create, present at both an update carrying the
-  baseline bytes as `oldContent`, present at the baseline and gone now a
-  delete. An untouched file, a file restored to its original, and a file
-  created and removed within the turn yield none, and each file yields one
-  event.
-needs: [stop-hook-payload]

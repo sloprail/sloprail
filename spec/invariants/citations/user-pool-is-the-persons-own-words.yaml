@@ -1,3 +1,0 @@
-statement: >-
-  The user pool resolves only in what the person wrote: typed messages, including ones sent while a turn was already running; the harness's own injected messages, hook feedback, skill bodies and compaction summaries are never in it, and neither is anything the agent said.
-needs: [session-transcript-file, transcript-record-envelope, compaction-transcript-continuity]

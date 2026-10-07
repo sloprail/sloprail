@@ -1,4 +1,0 @@
-statement: >-
-  A file-guard's deletions: is one of skip, include or only, absent means
-  skip, and any other value (including a boolean) is refused rather than read
-  as the default.

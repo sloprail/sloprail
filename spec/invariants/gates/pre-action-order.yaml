@@ -1,5 +1,0 @@
-statement: >-
-  Before an action runs, contexts that trigger on it enter first, then the
-  structure gate decides where a write may land, then the gates run; a
-  structure refusal ends the check, so no gate is consulted for it.
-needs: [pretooluse-refusal]

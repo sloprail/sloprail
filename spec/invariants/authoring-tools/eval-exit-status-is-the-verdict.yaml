@@ -1,5 +1,0 @@
-statement: >-
-  `sr eval run` exits 0 when the fixture's scorer passes, 1 when it fails, and 2
-  when the run could not be completed (the fixture does not load, not enough disk,
-  no transcript, a scorer that cannot run), and says why on stdout and stderr, so an
-  unrunnable eval never reads as an ordinary failure.

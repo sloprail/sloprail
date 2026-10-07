@@ -1,5 +1,0 @@
-statement: >-
-  A verdict is kept under a key made of the rule's name, the subject, the
-  paths and content of the subject's files, the quotes of the citations that
-  ground that subject, the subject's own fingerprint from its subjects script,
-  and the key-schema version; any one of them changing is another key.

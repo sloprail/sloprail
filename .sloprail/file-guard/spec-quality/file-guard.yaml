@@ -1,0 +1,15 @@
+# Every changed spec invariant and entity is judged against the document-invariant /
+# document-entity skills (.claude/skills/, copied verbatim from a10n). The changed files
+# are split into buckets of at most 25 (subjects.py, the union-find + size-cap
+# bucketing of a10n's invariant-buckets): invariants citing the same entity, and that
+# entity when it changed too, land in one bucket, so each judge sees a cluster with the
+# entities it anchors on. A bucket's fingerprint covers the skills and the cited entities
+# that are not in it, so a change to either re-judges only the buckets that read it.
+match: path matches "^spec/[a-z0-9-]+/(invariants|entities)/[^/]+\\.yaml$"
+subjects: ./subjects.py
+checks:
+  - script: ./shape.py
+  - script: ./mentions-resolve.py
+  - prepare: ./prepare.py
+    judge: ./judge.md.j2
+    model: size-md

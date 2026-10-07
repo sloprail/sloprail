@@ -1,5 +1,0 @@
-statement: >-
-  A sub-agent's commit ranges are verified at the root session's Stop; the
-  sub-agent's own end verifies them only when the project opts in with
-  enable_subagent_stop_check.
-needs: [subagent-lifecycle-hooks]

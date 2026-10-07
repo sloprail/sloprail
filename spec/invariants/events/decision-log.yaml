@@ -1,6 +1,0 @@
-statement: >-
-  When `SR_EVENTS_FILE` names a file, each decision a rule makes (a gate or
-  structure rule permitting or refusing, a file-guard passing or refusing, a
-  context entering or leaving) appends one JSON line naming the rule, the
-  outcome and the event it was about. A failure to write the log warns on
-  stderr and never changes a verdict.

@@ -1,4 +1,0 @@
-statement: >-
-  A rule that fails validation is reported and not loaded, while every sound
-  rule alongside it loads and is enforced. All faults found in the broken
-  rule are reported together, not only the first.

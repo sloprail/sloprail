@@ -1,5 +1,0 @@
-statement: >-
-  A guardrail can list another guardrail's entries in the same session by
-  naming it as owner, and that is its only access across guardrails: it cannot
-  read another's single key or write into its keyspace, and it reaches nothing
-  of another session or workspace.

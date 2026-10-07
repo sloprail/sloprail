@@ -1,7 +1,0 @@
-statement: >-
-  A call to a shell tool yields one event carrying the raw line and every
-  program it invokes, flattened out of pipelines, chains, subshells,
-  substitutions, control flow and wrappers such as `sudo` or `env`, in the
-  order they appear. A wrapper and the program it wraps are both reported, and
-  a literal `sh -c` or `eval` payload is unwrapped to a bounded depth with the
-  interpreter itself still reported.

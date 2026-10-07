@@ -1,4 +1,0 @@
-statement: >-
-  A results branch written under a newer schema than the running binary
-  understands is refused with a message to upgrade, and older keyings are
-  re-keyed once by a run rather than called corrupt.

@@ -1,3 +1,0 @@
-statement: >-
-  An `enter` that exits cleanly makes its context active and replaces the
-  context's payload with what it printed.

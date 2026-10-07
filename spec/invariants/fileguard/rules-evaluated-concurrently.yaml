@@ -1,4 +1,0 @@
-statement: >-
-  All file-guards are evaluated concurrently over the same range and
-  independently of one another, so many rules refuse with exactly the words
-  each would give alone, reported in declaration order.

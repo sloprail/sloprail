@@ -1,5 +1,0 @@
-statement: >-
-  A renamed file is selected when the rule's match holds on its new path or on
-  the path it came from, and the old path is asked about with the markers the
-  file carried there, so moving a file out of a guarded path is still a change
-  to it.

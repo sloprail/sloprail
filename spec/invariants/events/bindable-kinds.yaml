@@ -1,6 +1,0 @@
-statement: >-
-  A gate can wake on the pre-action events (file create, update and delete,
-  command, tool use) and on the end-of-turn event, never on a post event; a
-  context can wake on the pre-action events, the post file events and the tag
-  event, but not on the end of a turn. `PreFileWrite` stands for create and
-  update together.

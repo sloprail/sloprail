@@ -1,5 +1,0 @@
-statement: >-
-  A rule's checks run one at a time in the order the rule lists them, and the
-  first refusal ends the run: no later check is run and its reason is the one
-  the agent hears. A rule whose every check passes (or abstains) permits the
-  action.

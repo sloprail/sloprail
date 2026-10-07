@@ -1,4 +1,0 @@
-statement: >-
-  Verdicts live on an orphan branch of the repository itself, written through
-  git plumbing without checking anything out, so any clone, CI included, can
-  read what another machine judged.

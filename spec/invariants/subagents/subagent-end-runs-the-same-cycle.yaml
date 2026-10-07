@@ -1,7 +1,0 @@
-statement: >-
-  A sub-agent's end runs the same end-of-cycle as a main-session Stop, against
-  its own record: the tree is compared with where it began, the guardrails
-  bound to what it changed run, the read mark is held or advanced, and
-  refusals are counted under the stop-block cap in its own state; a refusal
-  blocks the sub-agent's stop so it works on and retries.
-needs: [subagent-lifecycle-hooks, subagent-stop-block-loop]

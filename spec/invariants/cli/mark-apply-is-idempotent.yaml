@@ -1,4 +1,0 @@
-statement: >-
-  Applying a marker that is already present at its place writes nothing, so
-  repeating `sr mark apply` with the same pairs leaves the files as the first call
-  left them.

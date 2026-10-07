@@ -1,6 +1,0 @@
-statement: >-
-  A running background sub-agent silent for 10 minutes is named at the Stop
-  while its ranges stay unjudged, and one silent for 60 minutes is no longer
-  waited for and its ranges are judged; the project can set both limits, and
-  any sign of life from the agent restarts the silence.
-needs: [background-agent]

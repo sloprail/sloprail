@@ -1,5 +1,0 @@
-statement: >-
-  Values rendered into a judge's template cannot close the tag they sit in: a
-  closing-tag opener is broken in every string, and a value inside a tag's
-  quoted attribute also has its quotes and ampersands escaped; a structured
-  value renders as JSON.

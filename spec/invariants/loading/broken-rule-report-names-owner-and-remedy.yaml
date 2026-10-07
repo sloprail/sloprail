@@ -1,6 +1,0 @@
-statement: >-
-  A report on a rule that did not load names the rule with its nature and,
-  for a plugin's rule, the plugin. For the project's own rule the remedy is
-  to fix it (or remove its folder if unparseable) or disable it; for a
-  plugin's rule it says the rule is not the project's to fix and names the
-  exact disabled: entry to switch it off.

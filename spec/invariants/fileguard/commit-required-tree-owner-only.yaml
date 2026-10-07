@@ -1,5 +1,0 @@
-statement: >-
-  Only an agent that owns its working tree is refused for uncommitted work: a
-  sub-agent working in the session's own tree is not, and one in a worktree of
-  its own is.
-needs: [subagent-worktree-isolation, subagent-stop-block-loop]

@@ -1,3 +1,0 @@
-statement: >-
-  `sr mark` refuses a marker name containing whitespace, because a marker is one
-  line and a name with a space would be written but never read back as a marker.

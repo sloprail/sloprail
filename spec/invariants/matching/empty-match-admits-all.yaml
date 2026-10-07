@@ -1,3 +1,0 @@
-statement: >-
-  A gate or context trigger with no `match`, or an empty one, admits every
-  occurrence of the event it names.

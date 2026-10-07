@@ -1,6 +1,0 @@
-statement: >-
-  A refusing check's words reach the agent in this order: the reason of a
-  JSON object on stdout, then a fixed diagnosis when the script was killed by
-  a signal, is not executable or was not found, then plain text on stdout,
-  then plain text on stderr, and last a fixed line naming the check and its
-  exit status. JSON without a reason is never shown as text.

@@ -1,5 +1,0 @@
-statement: >-
-  A judge whose prompt template cannot be read, parsed or rendered (an
-  unreadable file, a syntax error, a filter or test the engine lacks, a
-  render that hangs past five seconds) refuses naming the template, and the
-  model is not asked.

@@ -1,4 +1,0 @@
-statement: >-
-  When sloprail's own session bookkeeping fails (the state store will not
-  open, a verdict or baseline cannot be written), it says so and carries on
-  judging; the failure is never itself a refusal.

@@ -1,3 +1,0 @@
-statement: >-
-  A citation requirement judged at the end of a turn is met only when every part of the file's change the agent made is covered by a cited change in an accepted pool: a citation grounds only the change it rode on, a cited whole-file write grounds the file as it stands, and an uncited edit or one cited in another pool is refused with the command that settles it.
-needs: [stop-hook-payload]

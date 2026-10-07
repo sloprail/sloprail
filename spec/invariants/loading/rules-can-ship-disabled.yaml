@@ -1,4 +1,0 @@
-statement: >-
-  A gate declared with enabled: false is inert until the project lists its
-  qualified name under enabled: in config.yaml; a gate that does not ship
-  disabled is unaffected by enabled:.

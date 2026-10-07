@@ -1,7 +1,0 @@
-statement: >-
-  When a sub-agent's change needs the user's own words as a citation, the
-  refusal tells it that it cannot ask the user and to hand the change back:
-  save it as a patch outside the repository, revert it on its own branch, and
-  report to its parent, who asks the user and re-applies it cited; the main
-  session is told only to cite.
-needs: [subagent-lifecycle-hooks]

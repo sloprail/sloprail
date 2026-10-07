@@ -1,3 +1,0 @@
-statement: >-
-  The tool_result pool resolves only in text a tool produced: not the user's words, not a sub-agent's or background task's reply, not a result whose originating call is absent from the record, not a record of an agent transcript read back, and not a command that merely prints text the agent wrote itself (such as a commit message or its own log).
-needs: [session-transcript-file, transcript-record-envelope, subagent-transcripts, bash-tool-result]

@@ -1,6 +1,0 @@
-statement: >-
-  The agent a judge launches can read the project tree under judgment (the
-  snapshot of the tip when the change is a changeset) and cannot change it;
-  the one place it can write is its own answer file, outside the project. The
-  tools a rule allows or denies reach the agent, and a deny beats any allow.
-needs: [noninteractive-run]

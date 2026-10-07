@@ -1,4 +1,0 @@
-statement: >-
-  A finished pass stored under a key is reused by any later run of that key,
-  whatever session, branch or commit range made it, so no script, judge or
-  requirement runs again for unchanged input.

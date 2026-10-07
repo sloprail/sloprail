@@ -1,4 +1,0 @@
-statement: >-
-  An untracked range is left unverified only while its branch tip stays where
-  it was untracked; once the tip moves the range is tracked again, and the
-  agent can also take it back explicitly.

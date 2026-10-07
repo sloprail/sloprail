@@ -1,4 +1,0 @@
-statement: >-
-  A declared field that an event carries with the wrong type makes the match
-  error, naming the field and the types, instead of being coerced or guessed
-  at; the error is the same at any depth of a list or map.

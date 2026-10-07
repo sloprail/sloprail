@@ -1,6 +1,0 @@
-statement: >-
-  After the project's configured block cap of consecutive refusals for the
-  same set of uncommitted paths, commit-required says so and lets the turn
-  end; committing part of the set, or a clean tree, starts the count again,
-  and a cap of zero never releases.
-needs: [stop-block-continuation]

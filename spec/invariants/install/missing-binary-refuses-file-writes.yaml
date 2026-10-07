@@ -1,5 +1,0 @@
-statement: >-
-  When the engine is not installed, the plugin refuses every attempt to write or
-  edit a file, telling the agent that sloprail cannot check the write and giving the
-  install command, instead of letting the write through unguarded.
-needs: [plugin-hooks, pretooluse-refusal, hook-exit-code-semantics]

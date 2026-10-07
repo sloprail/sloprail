@@ -1,3 +1,0 @@
-statement: >-
-  When several gates refuse the same file, the agent hears only the first
-  refusal for it, but every gate is still asked about every file it selects.

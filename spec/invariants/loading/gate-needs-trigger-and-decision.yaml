@@ -1,3 +1,0 @@
-statement: >-
-  A gate must name at least one event to wake on, every trigger must name an
-  event, and the gate carries at least one of require or checks.

@@ -1,4 +1,0 @@
-statement: >-
-  Unless `--no-archive` is given, every run is recorded as one commit in a local
-  archive holding its run record, the agent's transcripts and the scorer's output;
-  a failure to archive is a warning and does not change the verdict.

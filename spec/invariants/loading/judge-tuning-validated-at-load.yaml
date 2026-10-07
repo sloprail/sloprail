@@ -1,6 +1,0 @@
-statement: >-
-  On a judge check, model must be a non-empty comma-separated set with no
-  empty entry, timeout a positive duration, and allowed_tools and
-  disallowed_tools lists of well-formed single tool rules; a disallowed_tools
-  entry denying Write or Edit is refused because the judge writes its verdict
-  with them.

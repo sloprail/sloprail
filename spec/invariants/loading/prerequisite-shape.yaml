@@ -1,6 +1,0 @@
-statement: >-
-  Each require entry sets exactly one of skill, context or citation; files is
-  accepted only with skill and only as plain relative paths inside the skill;
-  a context must be declared by some rule root; a citation names source_types
-  from the known pools and is accepted only on gates and contexts waking on
-  events that carry citations.

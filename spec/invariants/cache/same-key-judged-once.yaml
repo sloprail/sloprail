@@ -1,3 +1,0 @@
-statement: >-
-  When two runs on a machine are about to judge the same key, the second waits
-  for the first and reads its stored verdict instead of judging again.

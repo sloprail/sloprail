@@ -1,5 +1,0 @@
-statement: >-
-  Disabling the plugin's grounded-rule-changes rule is honoured only if the
-  config committed at the commit the session began at lists it; an entry in
-  the working tree, in an agent commit, or with no known start commit or
-  repository is ignored and the rule stays on.

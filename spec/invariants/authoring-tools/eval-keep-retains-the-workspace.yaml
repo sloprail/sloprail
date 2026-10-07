@@ -1,3 +1,0 @@
-statement: >-
-  `sr eval run --keep` leaves the isolated workspace in place and prints its path;
-  without it the workspace is removed after scoring.

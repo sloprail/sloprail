@@ -1,5 +1,0 @@
-statement: >-
-  A file-guard's deletions setting filters files by their status in the range:
-  by default deleted files are left out, `include` adds them to the others,
-  and `only` keeps just the deleted ones; a file added and deleted within one
-  range is a net no-change and is not judged.

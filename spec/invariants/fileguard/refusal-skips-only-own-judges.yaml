@@ -1,3 +1,0 @@
-statement: >-
-  When a rule refuses on a cheap check its own judges are skipped, with the
-  reason recorded, while every other rule's judges still run and report.

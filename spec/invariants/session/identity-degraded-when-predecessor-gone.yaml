@@ -1,6 +1,0 @@
-statement: >-
-  When the earlier transcript a continuation depends on is gone or unreadable,
-  the session keeps working under the continuation's own identity and tells
-  the agent once per harness session, at start, that what was recorded before
-  is not carried over.
-needs: [session-start-hook, hook-additional-context]

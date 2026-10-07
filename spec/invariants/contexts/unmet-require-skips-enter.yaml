@@ -1,3 +1,0 @@
-statement: >-
-  A context whose `require` is unmet does not enter on that occurrence, and
-  nothing is refused.

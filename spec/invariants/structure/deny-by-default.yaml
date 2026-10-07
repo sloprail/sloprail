@@ -1,4 +1,0 @@
-statement: >-
-  A write to a path that no `allow` entry of the structure matches is
-  refused, and the refusal names the path.
-needs: [pretooluse-refusal]

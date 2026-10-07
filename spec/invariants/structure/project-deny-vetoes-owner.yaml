@@ -1,4 +1,0 @@
-statement: >-
-  A `deny` entry of the project's structure refuses a path even when a
-  plugin's scope owns it and the plugin would allow it.
-needs: [pretooluse-refusal]

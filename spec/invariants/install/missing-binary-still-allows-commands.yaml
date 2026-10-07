@@ -1,4 +1,0 @@
-statement: >-
-  When the engine is not installed, running a command or using any tool other than
-  a file write is not refused, so the session can install the engine itself.
-needs: [plugin-hooks, hook-exit-code-semantics]

@@ -1,5 +1,0 @@
-statement: >-
-  Processes sloprail launches in a sandbox also drop every `SLOPRAIL_*` and `SR_*`
-  variable, the harness's own config and temp locations and the platform's data and
-  config locations, so nothing the operator has set reaches them unless the launcher
-  sets it itself.

@@ -1,5 +1,0 @@
-statement: >-
-  Listing a guardrail's state under a prefix returns, one entry per line
-  ordered by key, every entry whose key begins with that prefix, matching the
-  prefix literally whatever characters it holds; with no prefix it returns
-  everything the guardrail stored.

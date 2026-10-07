@@ -1,2 +1,0 @@
-statement: >-
-  A context's last payload is kept for the session after it goes inactive.

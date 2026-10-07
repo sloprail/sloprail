@@ -1,5 +1,0 @@
-statement: >-
-  A write to a path outside the project's tree is not the project's structure
-  to decide and is left alone; a path inside the tree, however spelled, is
-  still decided.
-needs: [pretooluse-refusal]

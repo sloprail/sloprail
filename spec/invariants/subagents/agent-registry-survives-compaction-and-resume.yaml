@@ -1,5 +1,0 @@
-statement: >-
-  Which sub-agents a session dispatched, and whether each is still running, is
-  remembered across compaction, a cleared conversation and a resume into a new
-  transcript, because it does not depend on the transcript file.
-needs: [compaction-transcript-continuity, session-resume]

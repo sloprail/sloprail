@@ -1,5 +1,0 @@
-statement: >-
-  With a subjects script, each subject receives its own payload and gets its
-  own verdict, so a change to one subject leaves the others' verdicts
-  untouched; the script is given the same input, with no session, in run and
-  in verify.

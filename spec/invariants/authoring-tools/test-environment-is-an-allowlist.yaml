@@ -1,5 +1,0 @@
-statement: >-
-  A case runs in an environment built from scratch (a fake empty home, its own temp
-  directory, a path of the sloprail binaries and a few system tools, git reading only
-  the case's own configuration) and nothing else from the caller, credentials and
-  proxy settings included, so a case does not pass on one machine and fail on another.

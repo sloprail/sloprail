@@ -1,5 +1,0 @@
-statement: >-
-  When one path of a call or a turn cannot be classified (it will not stat,
-  lies outside the repository, or is not a regular file), the problem is
-  reported on stderr and the events for the other paths are still produced and
-  judged, so one bad path cannot let the rest through.

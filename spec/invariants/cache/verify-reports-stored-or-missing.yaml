@@ -1,4 +1,0 @@
-statement: >-
-  For each subject, `verify` reports the stored pass, the stored fail with its
-  reasons, or, when no verdict is stored for its key, a red `not judged yet`
-  that says how to run it.

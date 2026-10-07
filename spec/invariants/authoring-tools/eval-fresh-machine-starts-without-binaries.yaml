@@ -1,4 +1,0 @@
-statement: >-
-  A fixture marked as a fresh machine runs the agent with the plugin installed and no
-  sloprail commands on its path, so the plugin's own first-session install, from a
-  release built from this checkout, is what puts them there.

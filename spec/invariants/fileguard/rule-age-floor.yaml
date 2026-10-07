@@ -1,5 +1,0 @@
-statement: >-
-  A rule judges only work made after it came into force: the range starts no
-  earlier than the parent of the commit that last changed the rule's folder,
-  so a rule added mid-branch applies from its own add commit and earlier work
-  is not its debt.

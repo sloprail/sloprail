@@ -1,3 +1,0 @@
-statement: >-
-  A context's `enter` runs on every matching occurrence of its triggers,
-  whether or not the context is already active.

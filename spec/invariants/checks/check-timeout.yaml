@@ -1,5 +1,0 @@
-statement: >-
-  A check script that has not answered within 600 seconds (or the duration in
-  SLOPRAIL_CHECK_TIMEOUT when set to a positive duration) is killed together
-  with every process it spawned and the action is refused, saying the check
-  did not answer. A script that answers inside the bound decides as usual.

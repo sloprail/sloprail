@@ -1,5 +1,0 @@
-statement: >-
-  `sr mark find <kind>` lists the markers of that kind in the committed tree at a
-  revision (HEAD by default), never the working tree, and exits 0 when it found one,
-  1 when there is none, and 2 when the tree could not be read, which is never
-  "none".

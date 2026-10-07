@@ -1,4 +1,0 @@
-statement: >-
-  An absent config.yaml means the project made no overrides, but one that
-  exists and cannot be read or parsed makes the whole load fail, so a broken
-  config never silently re-enables rules the project switched off.

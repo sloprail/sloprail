@@ -1,5 +1,0 @@
-statement: >-
-  A project's own structure gate declares no scope, while a plugin's must
-  declare scope entries that are relative folder globs ending in / and not
-  covering the whole tree; when all scopes are literal folders, each of the
-  plugin's allow and deny entries must lie inside one.

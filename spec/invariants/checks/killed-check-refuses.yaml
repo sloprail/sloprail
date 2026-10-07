@@ -1,3 +1,0 @@
-statement: >-
-  A check script the operating system kills by a signal refuses the action
-  with words saying it was killed, never as a pass and never as a timeout.

@@ -1,5 +1,0 @@
-statement: >-
-  A session's baseline is re-taken only when the working tree leaves the
-  history it was recorded in, such as a switch to an unrelated branch or a
-  finished rebase that replaced it; the move is announced, and violations
-  already recorded still stand.

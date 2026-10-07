@@ -1,3 +1,0 @@
-statement: >-
-  A commit's Sloprail-Cites-User and Sloprail-Cites-Tool trailers resolve exactly as a cite flag would, in the user and tool_result pools respectively, wherever in the message they sit, and one quote cited on several commits is one citation carried by all of them.
-needs: [session-transcript-file]

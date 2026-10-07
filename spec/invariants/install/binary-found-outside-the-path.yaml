@@ -1,6 +1,0 @@
-statement: >-
-  The plugin finds the engine in the install script's default directory, in a
-  directory the user named for it, or in the Go install directory even when none is on
-  the hook's path, and puts that directory first on the path of the engine it runs
-  so the engine reaches its sibling commands by name.
-needs: [plugin-hooks]

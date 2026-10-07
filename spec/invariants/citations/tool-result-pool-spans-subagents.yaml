@@ -1,3 +1,0 @@
-statement: >-
-  The tool_result pool is searched in the caller's own record first and, only when that holds no match, in the root session and every sub-agent beneath it, so a sub-agent can cite what its own tools printed and an identical output seen by two agents does not become ambiguous.
-needs: [subagent-transcripts, session-transcript-file]

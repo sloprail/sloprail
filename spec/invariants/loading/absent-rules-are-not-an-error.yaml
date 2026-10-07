@@ -1,4 +1,0 @@
-statement: >-
-  A project or plugin with no .sloprail directory, or with none of a nature's
-  folders, simply has no rules of that nature; loading succeeds and reports
-  nothing.

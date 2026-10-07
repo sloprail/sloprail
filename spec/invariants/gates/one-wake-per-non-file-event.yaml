@@ -1,4 +1,0 @@
-statement: >-
-  A gate whose trigger matches a command, a tool use or the end of the turn
-  is run once for that action, however many occurrences of it the action
-  contains.

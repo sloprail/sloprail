@@ -1,6 +1,0 @@
-statement: >-
-  A project's stop_hook_block_cap bounds how many times in a row one Stop may
-  be refused: once that many refusals stand, the next retry ends the turn
-  un-judged and says so. It is 8 when unset, negative or unreadable, and 0
-  means no cap.
-needs: [stop-hook-payload]

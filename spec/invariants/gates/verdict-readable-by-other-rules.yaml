@@ -1,3 +1,0 @@
-statement: >-
-  The most recent verdict of each gate (pass or fail) is kept for the session
-  and can be read by contexts and other rules.

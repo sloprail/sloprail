@@ -1,6 +1,0 @@
-statement: >-
-  At the end of a turn contexts enter on the turn's events first, then
-  commit-required and the tracked-range checks run, then the Stop gates, and
-  context exits run last, so every rule reads the contexts as the turn left
-  them and still open.
-needs: [stop-block-continuation]

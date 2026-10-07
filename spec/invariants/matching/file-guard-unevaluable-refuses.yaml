@@ -1,5 +1,0 @@
-statement: >-
-  A file-guard whose match cannot be compiled, or cannot be decided for some
-  file of the changeset, refuses with a reason saying the guard could not be
-  evaluated and must not be read as approval, instead of treating the file as
-  outside its scope.

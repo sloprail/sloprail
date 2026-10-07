@@ -1,6 +1,0 @@
-statement: >-
-  A path that reaches outside the repository through a symlink is never
-  reported as a repository-relative path, in any spelling and whether it comes
-  from a write tool or a shell command; at the end of a turn such a path is
-  reported as a problem and yields no event. A symlink that stays inside the
-  repository stays inside.

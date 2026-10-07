@@ -1,4 +1,0 @@
-statement: >-
-  `sr-checks verify` and `show` only read: they never run a script, a judge or
-  a requirement and never write a result, and their keys are computed without
-  a session.

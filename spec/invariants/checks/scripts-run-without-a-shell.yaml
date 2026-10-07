@@ -1,5 +1,0 @@
-statement: >-
-  A declared script is a path (relative to the rule's folder) plus plain
-  arguments, run directly and never through a shell: a string with shell
-  syntax (a pipe, &&, ;, quotes, expansions, a leading assignment) is refused
-  without running any part of it.

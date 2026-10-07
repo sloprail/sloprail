@@ -1,5 +1,0 @@
-statement: >-
-  A command invocation's `flags` is open: any flag name may be read, each
-  value is a list of strings, and an absent flag reads as an empty list, so
-  `"x" in .flags.name` is false rather than an error. Comparing a flag to a
-  string or to nil is refused at load, with advice to use `in`.

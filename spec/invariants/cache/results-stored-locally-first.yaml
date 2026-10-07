@@ -1,5 +1,0 @@
-statement: >-
-  A run stores its verdicts locally first and pushes them to the remote
-  best-effort, retrying later and merging with whatever the remote gained
-  meanwhile; a failed push loses nothing and is reported as results stored
-  locally but not pushed.
