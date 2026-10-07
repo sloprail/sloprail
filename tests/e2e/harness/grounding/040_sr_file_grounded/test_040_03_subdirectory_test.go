@@ -26,11 +26,7 @@ func TestT040_10_CitesFromASubdirectory(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{
-		"CLAUDE_CODE_SESSION_ID=" + id,
-		"CLAUDE_CONFIG_DIR=" + e.ConfigDir(),
-		"SR_TRANSCRIPT=",
-	}
+	env := append(e.SessionEnv(id), "SR_TRANSCRIPT=")
 	res := e.CLIDirectEnv(sub, env, "sr-file", "write", "notes.md",
 		"--cite:user", "keep a CHANGELOG entry", "--content", "noted\n")
 	if res.Code != 0 {
@@ -46,7 +42,7 @@ func TestT040_10_CitesFromASubdirectory(t *testing.T) {
 	// The same walk finds nothing for a session that is not this tree's: a
 	// session id with no record above the directory still refuses, and writes
 	// nothing.
-	env[0] = "CLAUDE_CODE_SESSION_ID=not-this-session"
+	env = append(e.SessionEnv("not-this-session"), "SR_TRANSCRIPT=")
 	res = e.CLIDirectEnv(sub, env, "sr-file", "write", "other.md",
 		"--cite:user", "keep a CHANGELOG entry", "--content", "x\n")
 	if res.Code == 0 {

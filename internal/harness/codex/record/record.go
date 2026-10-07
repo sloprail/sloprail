@@ -32,18 +32,22 @@
 // # Identity
 //
 // The first session_meta line is the conversation's root: UUID is the session id and
-// the parent is absent. A forked rollout starts with the ancestor's lines, so its
-// first session_meta is the ancestor's and the whole family resolves to one
-// identity; every other line names a (non-nil) parent, which is all the identity
-// walk asks of it.
+// the parent is absent. A fork is a rollout of its own (its own thread id) whose
+// session_meta names the thread it branched from (forked_from_id; recorded: harness-mocks
+// codex-mock session-fork, which holds none of the ancestor's lines): that is the record
+// the fork continues, so the identity walk crosses into the ancestor's rollout and the
+// whole family resolves to one identity. Every other line names a (non-nil) parent,
+// which is all the identity walk asks of it.
 package record
 
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/harness"
@@ -72,6 +76,9 @@ type payload struct {
 	Output    json.RawMessage `json:"output"`
 	Content   json.RawMessage `json:"content"`
 	Item      json.RawMessage `json:"item"`
+
+	// ThreadSource is "subagent" on a sub-agent's session_meta, "user" on a root's.
+	ThreadSource string `json:"thread_source"`
 }
 
 // ParseRecord parses one line of a Codex rollout.
@@ -92,8 +99,12 @@ func (Transcripts) ParseRecord(raw []byte) (harness.Record, error) {
 
 	switch l.Type {
 	case "session_meta":
-		id := firstNonEmpty(p.SessionID, p.ID)
+		// The thread's OWN id: a sub-agent's rollout names the root session in session_id
+		// (recorded: harness-mocks codex-mock nested-subagents), so keying on that would
+		// give the sub-agent its parent's identity and state.
+		id := firstNonEmpty(p.ID, p.SessionID)
 		rec.UUID, rec.ParentUUID, rec.SessionID, rec.Cwd = id, nil, id, p.Cwd
+		rec.IsSidechain = p.ThreadSource == "subagent"
 	case "turn_context":
 		rec.Cwd = p.Cwd
 	case "response_item":
@@ -101,7 +112,24 @@ func (Transcripts) ParseRecord(raw []byte) (harness.Record, error) {
 	case "event_msg":
 		rec = eventMsg(rec, l, p)
 	}
+	if l.Type == "session_meta" {
+		rec.LogicalParentUUID = forkedFrom(l.Payload)
+	}
 	return rec, nil
+}
+
+// forkedFrom is the thread a fork's session_meta says it branched from (forked_from_id), nil
+// for any other thread. A fork is a rollout of its own that continues the conversation of
+// that thread, whose session_meta opens on that id (recorded: harness-mocks codex-mock
+// session-fork).
+func forkedFrom(meta json.RawMessage) *string {
+	var m struct {
+		ForkedFromID string `json:"forked_from_id"`
+	}
+	if json.Unmarshal(meta, &m) != nil || m.ForkedFromID == "" {
+		return nil
+	}
+	return &m.ForkedFromID
 }
 
 func eventMsg(rec harness.Record, l line, p payload) harness.Record {
@@ -343,6 +371,21 @@ func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
 	return out
 }
 
+// ParentRecord implements harness.ParentLocator: the rollout of the thread the sub-agent's
+// session_meta names as its parent (recorded: harness-mocks codex-mock nested-subagents),
+// found beside it in the sessions tree. "" for a root, or when that rollout is not there.
+func (Transcripts) ParentRecord(transcriptPath string) string {
+	parent := rolloutParent(transcriptPath)
+	if parent == "" {
+		return ""
+	}
+	sessions := filepath.Dir(transcriptPath)
+	for i := 0; i < 3; i++ { // sessions/YYYY/MM/DD/<rollout>
+		sessions = filepath.Dir(sessions)
+	}
+	return FindRollout(filepath.Dir(sessions), parent)
+}
+
 // rolloutThreadID is the thread id a rollout's file name ends with.
 func rolloutThreadID(path string) string {
 	base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
@@ -411,4 +454,17 @@ func FindRollout(configDir, sessionID string) string {
 		return ""
 	}
 	return matches[len(matches)-1]
+}
+
+// ListRecords implements harness.RecordLister: every rollout of the sessions tree.
+func (Transcripts) ListRecords(projectDir string) []string {
+	var out []string
+	_ = filepath.WalkDir(projectDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "rollout-") && strings.HasSuffix(d.Name(), ".jsonl") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
 }

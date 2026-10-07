@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
@@ -161,17 +162,25 @@ func (p HookInput) FileEffects() []FileEffect { return p.Files }
 // gitrepo.Root), and a hook invoked below the top of the tree would otherwise make
 // the two phases report different spellings of one file, so a rule binding
 // PreFileCreate and PostFileCreate with a single matcher would match on one and not
-// the other. An unresolvable root yields "", which filemod reads as "no workspace
+// the other.
+//
+// A folder that is no repository has no top to be below, so the folder the hook fired
+// in (Cwd, the project folder every adapter reports) is the workspace: otherwise a
+// harness that reports absolute paths (every one does for a write tool) would have each
+// project-relative matcher miss there, and a deny-by-default structure gate refuse
+// everything. Only an unusable Cwd yields "", which filemod reads as "no workspace
 // named" and leaves the path as the harness spelled it.
 func (p HookInput) Root() string {
 	if p.Cwd == "" {
 		return ""
 	}
-	root, err := gitrepo.Root(p.Cwd)
-	if err != nil {
-		return ""
+	if root, err := gitrepo.Root(p.Cwd); err == nil {
+		return root
 	}
-	return root
+	if filepath.IsAbs(p.Cwd) {
+		return filepath.Clean(p.Cwd)
+	}
+	return ""
 }
 
 // HeadContent implements filemod.HeadReader: a workspace-relative file's bytes in

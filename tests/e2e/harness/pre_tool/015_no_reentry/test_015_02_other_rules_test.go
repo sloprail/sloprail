@@ -21,13 +21,18 @@ echo '{"reason":"secrets/ is off limits"}'
 exit 1
 `
 
+// The agent is launched with --agent-run: an agent working in the project, its hooks live and
+// free to write it. A judge is not that on every harness (Cursor's is confined by the engine to
+// its answer file, so its writes never reach the other rules), and what these tests are about is
+// the rules' reach into an agent a check launched.
+//
 // judgeOnlyScript launches an agent and does nothing else. No counter: with the
 // guard in place there is no recursion to bound, and T015_01 is where the
 // runaway is measured.
 const judgeOnlyScript = `#!/bin/sh
 cat >/dev/null
 echo ran >> ledger.txt
-sr-agent --harness claude-code --model size-xs "judge this note" >/dev/null 2>&1
+sr-agent --harness {{harness}} --agent-run --model size-xs "judge this note" >/dev/null 2>&1
 exit 0
 `
 
@@ -47,7 +52,7 @@ exit 0
 func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": e.ForHarness(judgeOnlyScript)})
 	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// The launched agent reaches for a path the OTHER rule guards.
@@ -84,7 +89,7 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 func TestT015_03_LaunchedAgentCanStillDoItsWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": e.ForHarness(judgeOnlyScript)})
 	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// A path judge-notes guards (notes/) and no-secrets does not.

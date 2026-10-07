@@ -115,6 +115,9 @@ type codexBlock struct {
 func (c codexDriver) render(a Action) ([]codexBlock, error) {
 	switch a.Kind {
 	case ActWrite:
+		if strings.ContainsAny(a.Path, "\r\n") {
+			return nil, c.unsupported(a, "an apply_patch path is one line of the patch, so a path holding a line break cannot be named")
+		}
 		return []codexBlock{{line: codexLine(codexTool(a.ID, "apply_patch", map[string]any{"command": codexAddFile(a.Path, a.Content)}))}}, nil
 	case ActEdit:
 		if a.Old == "" {
@@ -142,6 +145,10 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 	case ActToolUse:
 		if a.Background {
 			return nil, c.unsupported(a, "a background command's receipt names no task")
+		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && path != "" && len(a.Input) == 1 {
+			// Codex reads a file through its shell: the Read of a whole file is `cat` of it.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + shQuote(path)}))}}, nil
 		}
 		return nil, c.unsupported(a, "Codex has only the shell and apply_patch: no "+a.Tool+" tool")
 	case ActCompact:
@@ -204,7 +211,9 @@ fi
 `, marker, shQuote(line))
 		}
 	}
-	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
+	// The scenario's end is the agent's final answer: Codex prints no result frame, its
+	// stream (and its rollout) end on the last agent message.
+	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(codexLine(codexText(s.result))))
 	return b.String(), nil
 }
 
@@ -364,7 +373,9 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 // hook no session variable (the session is in its payload); a shell command the agent runs
 // has CODEX_THREAD_ID and CODEX_SESSION_ID.
 func (codexDriver) HookEnv(e *Env, sessionID string) []string {
-	env := []string{"CODEX_HOME=" + e.configDir,
+	// SLOPRAIL_HARNESS: the plugin's hook wrapper names the harness, and Codex's own markers
+	// (a thread id) are not in a hook's environment, so without it a call made as a hook is read as Claude's.
+	env := []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir,
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
 		id := e.harnessID(sessionID)
@@ -374,6 +385,14 @@ func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 }
 
 func (codexDriver) ConfigEnv(e *Env) []string { return []string{"CODEX_HOME=" + e.configDir} }
+
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say (a Codex shell's
+// CODEX_THREAD_ID is only there inside a session), and the config dir the mock keeps its
+// rollouts in.
+func (c codexDriver) CLIEnv(e *Env) []string {
+	return append([]string{"SLOPRAIL_HARNESS=codex"}, c.ConfigEnv(e)...)
+}
 
 // ShellEnv: the mock's shell tool carries the harness's identity itself.
 func (codexDriver) ShellEnv() string { return "" }
@@ -406,12 +425,15 @@ func (codexDriver) StopBlocked(output string) bool {
 func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
-		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check \\\n" +
+		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check --dangerously-bypass-hook-trust \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
 		"  -C " + shellQuote(projDir) + " -m mock-model \\\n" +
 		"  \"launched agent\" </dev/null\n"
 	return "codex", script
 }
+
+// LargeJudgeModelArgs: size-lg is gpt-6.1-sol, named by Codex's short -m.
+func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
 
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
@@ -482,7 +504,36 @@ func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string
 	e.t.Skipf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
 }
 
+// OriginRecord is where a rollout begins: the thread id its session_meta opens on. A fork
+// is a rollout of its own (its own id), and a sub-agent's names the root only in session_id.
+func (codexDriver) OriginRecord(record string) string {
+	first, _, _ := strings.Cut(record, "\n")
+	var rec struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID        string `json:"id"`
+			SessionID string `json:"session_id"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(first), &rec) != nil || rec.Type != "session_meta" {
+		return ""
+	}
+	if rec.Payload.ID != "" {
+		return rec.Payload.ID
+	}
+	return rec.Payload.SessionID
+}
+
 var codexRefusal = regexp.MustCompile(`(?s)Command blocked by PreToolUse hook: (.*?)\. Command: `)
+
+// WrittenBytes: an apply_patch "Add File" is a list of "+<line>" rows, so a file it
+// creates always ends its last line (an empty one stays empty).
+func (codexDriver) WrittenBytes(content string) string {
+	if content == "" {
+		return ""
+	}
+	return strings.TrimSuffix(content, "\n") + "\n"
+}
 
 // Refusals reads the PreToolUse refusals the mock reports on its error stream.
 func (codexDriver) Refusals(output string) []string {
@@ -567,12 +618,21 @@ func (codexDriver) BlockingErrors(record string, _ []string, hookEvent string, d
 	return out
 }
 
-// StopContinuations are the Stop refusals after which the agent went on: a step of its own followed.
+// StopContinuations are the Stop refusals after which the agent went on: a step of its own
+// followed, or the continued turn reached a later Stop (which refused again). The last refusal
+// of a run that ended on it is one the harness gave up on, as at Claude's stop-hook cap.
 func (codexDriver) StopContinuations(record string, _ []string) []string {
 	events, reasons, after := hookPrompts(record)
 	var out []string
 	for i, r := range reasons {
-		if events[i] == "Stop" && after[i] > 0 {
+		if events[i] != "Stop" {
+			continue
+		}
+		laterStop := false
+		for _, ev := range events[i+1:] {
+			laterStop = laterStop || ev == "Stop"
+		}
+		if after[i] > 0 || laterStop {
 			out = append(out, r)
 		}
 	}

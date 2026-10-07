@@ -78,10 +78,6 @@ func launchBackground(t *testing.T, record, agent string) {
 }
 
 func TestT002_09_ARunningBackgroundSubagentsFolderIsNamedNotRefusedAndOwedOnceItStops(t *testing.T) {
-	// The step this harness cannot take: launching a sub-agent in the background and having its
-	// record show the launch and the end (an Agent call with run_in_background, a task
-	// notification). No recorded transcript of this harness holds that shape.
-	harness.RequireCap(t, harness.CapBackgroundTasks)
 	const sess = "s-002-09"
 	e, proj, other, record, agent := busyFolder(t, sess)
 
@@ -92,6 +88,15 @@ func TestT002_09_ARunningBackgroundSubagentsFolderIsNamedNotRefusedAndOwedOnceIt
 
 	// The dispatcher resumes it in the background: it runs again.
 	startAgent(t, e, proj, sess, record, agent)
+	if !harness.HasCap(t, harness.CapBackgroundTasks) {
+		// This harness's record cannot show a background launch (no recorded transcript of it
+		// holds an Agent call with run_in_background), so a running sub-agent is never known
+		// to be a background one: its folder stays the root's debt and is refused.
+		if r := e.StopNow(proj, sess, false); !harness.Blocked(r) || !strings.Contains(r.Output, "docs/wip.md") {
+			t.Fatalf("a running sub-agent not recorded as a background launch excused its folder:\n%s", r.Output)
+		}
+		return
+	}
 	launchBackground(t, record, agent)
 	r := e.StopNow(proj, sess, false)
 	if harness.Blocked(r) {

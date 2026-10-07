@@ -732,6 +732,9 @@ func uncitedRemedy(fields map[string]any, pools []transcript.SourceType, u Uncit
 // that it never saw them: its prompt is the parent agent's. Empty for the root,
 // and for a requirement that does not accept the user pool.
 func subagentCitationNote(transcriptPath string, pools []transcript.SourceType) string {
+	if transcriptPath != "" && transcript.CitationsUnavailable(transcriptPath, false) != nil {
+		return "\n" + transcript.ErrSubagentUnlinked.Error()
+	}
 	if transcriptPath == "" || !slices.Contains(pools, transcript.SourceUser) || !transcript.IsSubagentTranscript(transcriptPath) {
 		return ""
 	}

@@ -119,3 +119,24 @@ func (Transcripts) EncodeProjectDir(dir string) string { return EncodeProjectDir
 
 // ProjectDir implements harness.Transcripts.
 func (Transcripts) ProjectDir(configDir, dir string) string { return ProjectDir(configDir, dir) }
+
+// SubagentsUnlinkable implements harness.SubagentsUnlinkable. Cursor writes a sub-agent as
+// a conversation of its own beside the session's and names its parent nowhere: not in the
+// transcript, not in the layout, and not in a hook. The hooks that would, subagentStart's
+// parent_conversation_id and subagentStop's agent_transcript_path, are documented but
+// confirmed broken: parent_conversation_id always equals conversation_id and a sub-agent's
+// conversation has no link back (reported, unresolved:
+// https://forum.cursor.com/t/subagentstart-hook-parent-conversation-id-always-equals-conversation-id-and-subagent-conversations-have-no-link-back-to-their-parent/163054),
+// and neither fires in print mode in any recording (harness-mocks cursor-mock
+// subagent-transcripts, subagent-lifecycle-hooks). The Task call's result carries the
+// sub-agent's id (taskToolCall.result.success.agentId) only in the output stream, which
+// hooks never see; no hook payload for the Task call has it either (a Task has only a
+// preToolUse). Matching a dispatch prompt to a sub-agent's first message would be a
+// heuristic, so there is no link.
+//
+// A sub-agent is still told from the root: the root alone has its sessionStart marker
+// (KindRoot; sessionStart fires once per session, for the root, also when the hook is the
+// project's own .cursor/hooks.json: recordings with three conversations, one sessionStart).
+// Re-record with subagentStart / subagentStop once they carry the link, then implement
+// harness.SubagentLocator from them and drop this.
+func (Transcripts) SubagentsUnlinkable() bool { return true }

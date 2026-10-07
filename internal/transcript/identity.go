@@ -157,7 +157,7 @@ func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %s continues %s: %w",
 			path, root.LogicalParentUUID, ErrNoProjectDir)
 	}
-	w := &walk{dir: projectDir}
+	w := &walk{dir: projectDir, records: harness.ForTranscript(path).Transcripts()}
 	id, err := w.from(path, root, map[string]bool{}, 0)
 	if err != nil {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %w", err)
@@ -169,6 +169,7 @@ func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 // walk is one resolution's search back through a project directory.
 type walk struct {
 	dir     string
+	records harness.Transcripts // how the harness lists the project directory's transcripts
 	visits  int
 	listing []candidate
 	listed  bool
