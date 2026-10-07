@@ -157,6 +157,7 @@ func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
 		e.t.Skipf("harness cursor: a fork of a conversation is not modelled")
 	}
 	args = append(args, l.Prompt)
+	c.syncPlugins(e)
 	cmd := exec.Command(e.mock, args...)
 	cmd.Dir = l.WorkDir
 	cmd.Env = append(cursorHostEnv(), e.autoWatchEnv()...)
@@ -192,7 +193,8 @@ func cursorHostEnv() []string {
 }
 
 // Observe records the session id the mock's first frame names.
-func (cursorDriver) Observe(e *Env, l Launch, output string) {
+func (c cursorDriver) Observe(e *Env, l Launch, output string) {
+	c.syncPluginsBack(e)
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
 		return
 	}
@@ -221,9 +223,9 @@ func (cursorDriver) RealCommand(e *Env, projDir, prompt string) (*exec.Cmd, erro
 
 // InstallPlugins: the plugin under test is passed with --plugin-dir on every run, so
 // only the Env's extra plugins are installed here, as the user's local plugins
-// (<home>/.cursor/plugins/local/<name>, a symlink to the plugin's root), each given the
+// (<home>/.cursor/plugins/local/<name>, a copy of the plugin's root, refreshed before each run), each given the
 // .cursor-plugin manifest Cursor reads.
-func (cursorDriver) InstallPlugins(e *Env, dir string) {
+func (c cursorDriver) InstallPlugins(e *Env, dir string) {
 	e.t.Helper()
 	local := filepath.Join(e.home, ".cursor", "plugins", "local")
 	if err := os.MkdirAll(local, 0o755); err != nil {
@@ -240,21 +242,51 @@ func (cursorDriver) InstallPlugins(e *Env, dir string) {
 				e.t.Fatalf("harness: %v", err)
 			}
 		}
-		link := filepath.Join(local, p.name)
-		_ = os.Remove(link)
-		if err := os.Symlink(p.root, link); err != nil {
-			e.t.Fatalf("harness: link plugin %s: %v", p.name, err)
+	}
+	c.syncPlugins(e)
+}
+
+// syncPlugins copies each extra plugin into <home>/.cursor/plugins/local/<name>, anew. Cursor
+// loads a local plugin only from a real directory or a link that stays inside that directory
+// (a link pointing elsewhere is rejected, and internal/harness/cursor.Resolve mirrors that), so
+// the plugin cannot be linked to the test's temp directory. A test writes into its plugin
+// after installing it (EnablePluginShippingStructure), so the copy is refreshed before every run.
+func (cursorDriver) syncPlugins(e *Env) {
+	e.t.Helper()
+	local := filepath.Join(e.home, ".cursor", "plugins", "local")
+	for _, p := range e.extraPlugins {
+		dst := filepath.Join(local, p.name)
+		if err := os.RemoveAll(dst); err != nil {
+			e.t.Fatalf("harness: %v", err)
+		}
+		err := copyTree(p.root, dst)
+		if err != nil {
+			e.t.Fatalf("harness: copy plugin %s: %v", p.name, err)
 		}
 	}
 }
 
 // HookEnv names the harness outright, as the plugin's own hook wrapper does.
-func (cursorDriver) HookEnv(e *Env, sessionID string) []string {
+func (c cursorDriver) HookEnv(e *Env, sessionID string) []string {
+	c.syncPlugins(e)
 	return []string{"SLOPRAIL_HARNESS=cursor",
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 }
 
-func (cursorDriver) ConfigEnv(e *Env) []string { return []string{"SLOPRAIL_HARNESS=cursor"} }
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say, and the plugin
+// copies it reads.
+func (c cursorDriver) CLIEnv(e *Env) []string {
+	c.syncPlugins(e)
+	return []string{"SLOPRAIL_HARNESS=cursor"}
+}
+
+// ConfigEnv also refreshes the plugin copies: the sloprail commands a test runs itself
+// (session start, a check) read the plugins from there too.
+func (c cursorDriver) ConfigEnv(e *Env) []string {
+	c.syncPlugins(e)
+	return []string{"SLOPRAIL_HARNESS=cursor"}
+}
 
 func (cursorDriver) ShellEnv() string { return "" }
 
@@ -381,3 +413,30 @@ func (cursorDriver) StopContinuations(string) []string            { return nil }
 func (cursorDriver) SubagentBlockingErrors([]string) []string     { return nil }
 func (cursorDriver) AnySubagentBlockingErrors([]string) []string  { return nil }
 func (cursorDriver) SubagentFeedbackCount([]string) int           { return 0 }
+
+// copyTree copies the files under src into dst, creating directories, replacing files.
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, info.Mode().Perm())
+	})
+}
+
+// syncPluginsBack copies what the run wrote inside the loaded plugins (a check's ledger in
+// its plugin's own folder) back to the plugin's root, where the test reads it.
+func (cursorDriver) syncPluginsBack(e *Env) {
+	for _, p := range e.extraPlugins {
+		_ = copyTree(filepath.Join(e.home, ".cursor", "plugins", "local", p.name), p.root)
+	}
+}
