@@ -43,6 +43,11 @@ func TestCurrentTranscriptFromTheShellToolsEnvironment(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, want, got)
 
+	// A command run outside the workspace's tree still resolves the conversation by its id.
+	got, ok = l.CurrentTranscript(env(map[string]string{"CURSOR_CONVERSATION_ID": id}), t.TempDir())
+	assert.True(t, ok)
+	assert.Equal(t, want, got)
+
 	// A Cursor session whose record is not found: handled, and empty, never another harness's answer.
 	got, ok = l.CurrentTranscript(env(map[string]string{"CURSOR_CONVERSATION_ID": "no-such"}), sub)
 	assert.True(t, ok)
