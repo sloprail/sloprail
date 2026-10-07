@@ -13,8 +13,11 @@ import (
 // whose shape it cannot know, and this module has no use for a map when it is
 // the one putting the values in.
 type ToolEvent struct {
-	// Tool is the tool's name, as the harness reports it.
+	// Tool is the tool's canonical name (see FieldTool).
 	Tool string
+
+	// NativeTool is the name the harness reported; empty means the same as Tool.
+	NativeTool string
 
 	// Input is the tool's own arguments, decoded to a map. Nil when the harness
 	// named none or they were not an object; on the wire that becomes an empty
@@ -34,11 +37,16 @@ func (t ToolEvent) Event() event.Event {
 	if input == nil {
 		input = map[string]any{}
 	}
+	native := t.NativeTool
+	if native == "" {
+		native = t.Tool
+	}
 	return event.Event{
 		Kind: KindPreToolUse,
 		Fields: map[string]any{
-			FieldTool:  t.Tool,
-			FieldInput: input,
+			FieldTool:       t.Tool,
+			FieldNativeTool: native,
+			FieldInput:      input,
 		},
 	}
 }

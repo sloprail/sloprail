@@ -164,12 +164,12 @@ func TestAgentArgs_NameTheHarness(t *testing.T) {
 		argv := agentArgs("haiku", "fix it", "sid-1", resume, nil)
 		named := false
 		for i, a := range argv {
-			if a == "--harness" && i+1 < len(argv) && argv[i+1] == "claude-code" {
+			if a == "--harness" && i+1 < len(argv) && argv[i+1] == "claude" {
 				named = true
 			}
 		}
 		if !named {
-			t.Errorf("resume=%v: argv %v does not name --harness claude-code; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
+			t.Errorf("resume=%v: argv %v does not name --harness claude; with the session env stripped, sr-agent refuses with \"no supported harness detected\"", resume, argv)
 		}
 	}
 }

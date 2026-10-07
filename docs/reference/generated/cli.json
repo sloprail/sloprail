@@ -53,7 +53,7 @@
     "path": "sr-session",
     "use": "sr-session",
     "short": "Session lifecycle — the hook points a harness calls",
-    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session post-tool      a tool has run (its output is kept where the harness's record lacks it)\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session plugins        the plugins the harness resolves for this project (JSON lines)\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session post-tool      a tool has run (its output is kept where the harness's record lacks it)\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session plugins        the plugins the harness resolves for this project (JSON lines)\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n  sr-session codex-trust           trust sloprail's plugin hooks in Codex (it skips untrusted ones silently)\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
     "children": [
       {
         "path": "sr-session agents",
@@ -74,6 +74,33 @@
             ]
           }
         ]
+      },
+      {
+        "path": "sr-session codex-trust",
+        "use": "codex-trust",
+        "short": "Trust sloprail's plugin hooks in Codex (Codex skips untrusted hooks silently)",
+        "long": "Codex runs a plugin's hooks only after they are trusted, and skips the others\nwithout a message: an enabled sloprail plugin whose hooks are untrusted guards nothing.\n\nThis asks Codex (codex app-server, the same calls its review dialog makes) which of\nsloprail's hooks it would skip, and records trust for them. Enabling or upgrading the\nplugin does not do it; changing a hook's definition in hooks.json drops its trust\nagain, and editing the hook's script does not.\n\n  sr-session codex-trust            trust sloprail's untrusted or modified hooks\n  sr-session codex-trust --check    only report; exit 1 when Codex would skip any\n\nRun it where the project is (--dir) so project-layer hooks resolve the same way. With\nno sloprail plugin enabled in Codex it finds nothing and changes nothing.",
+        "flags": [
+          {
+            "name": "check",
+            "default": "false",
+            "usage": "only report the hooks Codex would skip; change nothing"
+          },
+          {
+            "name": "codex",
+            "default": "codex",
+            "usage": "the codex binary"
+          },
+          {
+            "name": "dir",
+            "usage": "the project directory (default: the current one)"
+          }
+        ]
+      },
+      {
+        "path": "sr-session emit-context",
+        "use": "emit-context",
+        "short": "Write stdin as the running harness's SessionStart context (used by the plugin hook)"
       },
       {
         "path": "sr-session id",
@@ -473,6 +500,10 @@
         "usage": "Claude Code's own settings as a JSON object, passed through untouched (e.g. '{\"permission-mode\":\"plan\"}')"
       },
       {
+        "name": "codex-args",
+        "usage": "Codex's own settings as a JSON object, passed through untouched (e.g. '{\"config\":\"model_reasoning_effort=low\"}')"
+      },
+      {
         "name": "disallowed-tools",
         "usage": "Tool rules the agent is denied, in the same form; a deny beats every allow (e.g. \"Bash(curl * -o *)\")"
       },
@@ -483,7 +514,7 @@
       },
       {
         "name": "harness",
-        "usage": "Run this harness instead of the one the environment names (claude-code, cursor)"
+        "usage": "Run this harness instead of the one the environment names (claude, codex, cursor)"
       },
       {
         "name": "model",

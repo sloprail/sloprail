@@ -71,7 +71,7 @@ func TestDetectHarness_UnknownEnvironmentIsRefused(t *testing.T) {
 			_, err := DetectHarness(envOf(tc.vars))
 			require.ErrorIs(t, err, ErrNoHarness)
 			// A refusal must say what would have counted and how to proceed.
-			assert.Contains(t, err.Error(), "claude-code")
+			assert.Contains(t, err.Error(), "claude")
 			assert.Contains(t, err.Error(), "--harness")
 		})
 	}
@@ -95,7 +95,7 @@ func TestResolveHarness_OverrideWinsWithNoEnvironmentAtAll(t *testing.T) {
 	_, err := ResolveHarness("", empty)
 	require.ErrorIs(t, err, ErrNoHarness, "detection must fail here, or the override proves nothing")
 
-	spec, err := ResolveHarness("claude-code", empty)
+	spec, err := ResolveHarness("claude", empty)
 	require.NoError(t, err)
 	assert.Equal(t, ClaudeCode, spec.name)
 }
@@ -132,23 +132,23 @@ func TestResolveHarness_OverrideBeatsAContradictingEnvironment(t *testing.T) {
 func TestResolveHarness_UnsupportedOverrideIsRefusedEvenWhenDetectionWouldWork(t *testing.T) {
 	claudeEnv := envOf(map[string]string{"CLAUDECODE": "1"})
 
-	spec, err := ResolveHarness("codex", claudeEnv)
+	spec, err := ResolveHarness("no-such-harness", claudeEnv)
 	require.ErrorIs(t, err, ErrUnknownHarness)
 	assert.Empty(t, string(spec.name), "no harness may be chosen when the override is unsupported")
-	assert.Contains(t, err.Error(), "codex", "the refusal must echo the name that was typed")
-	assert.Contains(t, err.Error(), "claude-code", "and name what is supported")
+	assert.Contains(t, err.Error(), "no-such-harness", "the refusal must echo the name that was typed")
+	assert.Contains(t, err.Error(), "claude", "and name what is supported")
 }
 
 func TestResolveHarness_OverrideIsCaseSensitiveAndExact(t *testing.T) {
 	env := envOf(map[string]string{"CLAUDECODE": "1"})
-	for _, name := range []string{"Claude-Code", "CLAUDE-CODE", "claude", "claudecode", " claude-code"} {
+	for _, name := range []string{"Claude", "CLAUDE", "Claude-Code", " claude"} {
 		_, err := ResolveHarness(name, env)
 		assert.ErrorIs(t, err, ErrUnknownHarness, "%q must not be accepted as a harness name", name)
 	}
 }
 
 func TestSupportedNames_ListsTheRegistry(t *testing.T) {
-	assert.Equal(t, []string{"claude-code", "cursor"}, supportedNames())
+	assert.Equal(t, []string{"claude", "codex", "cursor"}, supportedNames())
 }
 
 func TestLookupSpec(t *testing.T) {

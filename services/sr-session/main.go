@@ -71,6 +71,7 @@ about to happen.
   sr-session agents list    the sub-agents the session dispatched, and which still run
   sr-session plugins        the plugins the harness resolves for this project (JSON lines)
   sr-session trajectory ...        read a trajectory — describe it, cite into it
+  sr-session codex-trust           trust sloprail's plugin hooks in Codex (it skips untrusted ones silently)
 
 There is no setup command. The guardrails directory is created by whatever
 writes the first declaration, and a project with none is an ordinary project —
@@ -89,7 +90,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionPostToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStartCmd(), newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(), newSessionRefsCmd(), newSessionAgentsCmd(), newSessionWorktreeRemoveCmd(),
-		newSessionTrajectoryCmd(), newSessionPluginsCmd(),
+		newSessionTrajectoryCmd(), newSessionPluginsCmd(), newCodexTrustCmd(), newEmitContextCmd(),
 	)
 	return root
 }

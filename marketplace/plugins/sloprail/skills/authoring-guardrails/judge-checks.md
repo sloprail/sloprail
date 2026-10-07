@@ -200,6 +200,33 @@ run commands that start with `curl -sL` and no other shell command, and
 `"WebFetch(domain:example.com)"` limits fetches to one host. Quote such an
 entry in YAML, because its colon would otherwise start a mapping.
 
+### One vocabulary, every harness
+
+`allowed_tools` and `disallowed_tools` use the **canonical tool names** (Claude Code's
+spelling), whichever harness runs the judge: `Read`, `Grep`, `Glob`, `Write`, `Edit`,
+`MultiEdit`, `NotebookEdit`, `Bash`, `Bash(<prefix>:*)`, `WebFetch`, `WebSearch`,
+`Agent`, and `mcp__<server>__<tool>`. Claude Code takes the rules verbatim (scoped forms
+like `WebFetch(domain:x)` included). Another harness maps them onto what it has, and
+**refuses to start the judge** for a rule it cannot honour as tightly as written,
+rather than running it with more. Codex, whose permission model is a sandbox, not a
+tool list:
+
+| rule | on Codex |
+|---|---|
+| `Read`, `Grep`, `Glob` | nothing to add: the sandbox reads the disk |
+| `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | the writable directories the judge is given (the verdict folder, `--add-dir`); refused when it has none |
+| `Bash` | nothing to add: Codex always has a sandboxed shell, which is how it reads |
+| `Bash(<prefix>:*)`, any `Name(<scope>)`, `mcp__*`, an unknown tool | refused |
+| `WebFetch` | network access for the sandbox (wider than a fetch: the shell can reach the network too); needs a writable judge |
+| `WebSearch` | `web_search = "live"` (off otherwise) |
+| `Agent` | sub-agents stay on (off otherwise) |
+
+In `disallowed_tools`, Codex can only switch off `WebFetch`, `WebSearch` and `Agent`
+(and an `mcp__` tool, none is loaded); denying the shell, a file tool or a scoped
+rule is refused. A Codex judge's file access is the sandbox: its working directory is
+the verdict folder and the only writable root, `/tmp` and `$TMPDIR` are not, and the
+project is read by absolute path and cannot be written.
+
 ## `disallowed_tools` — what the judge's agent may not do
 
 `disallowed_tools:` lists rules the judge is **denied**, threaded to `sr-agent`'s

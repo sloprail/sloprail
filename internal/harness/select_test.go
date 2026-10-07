@@ -36,6 +36,20 @@ func reset(t *testing.T, hs ...Harness) {
 	t.Cleanup(func() { mu.Lock(); registry = old; mu.Unlock() })
 }
 
+// One identifier per harness; the spellings an earlier release used still select it.
+// The alias table is this package's alone (Canonical).
+func TestSelect_DeprecatedSpellingsSelectTheIdentifier(t *testing.T) {
+	reset(t, fakeHarness{name: Default}, fakeHarness{name: "alpha"})
+	for _, spelling := range []string{"claude", "claude-code", "claudecode"} {
+		if got := Select([]string{SelectEnv + "=" + spelling}).Name(); got != "claude" {
+			t.Errorf("%s selected %q, want claude", spelling, got)
+		}
+	}
+	if Canonical("claude-code") != "claude" || Canonical("claudecode") != "claude" || Canonical("codex") != "codex" {
+		t.Error("Canonical does not map the deprecated spellings")
+	}
+}
+
 func TestSelect_ExplicitNameWinsOverDetectionAndDefault(t *testing.T) {
 	reset(t, fakeHarness{name: Default}, detectingHarness{fakeHarness{name: "alpha", detect: "ALPHA"}}, fakeHarness{name: "beta"})
 	if got := Select([]string{"ALPHA=1", SelectEnv + "=beta"}).Name(); got != "beta" {

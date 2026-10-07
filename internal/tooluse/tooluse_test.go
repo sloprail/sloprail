@@ -42,9 +42,10 @@ func TestModule_DeclaresPreToolUseWithToolAndInput(t *testing.T) {
 		byName[f.Name] = f.Type
 	}
 	assert.Equal(t, map[string]module.FieldType{
-		FieldTool:  module.TypeString,
-		FieldInput: module.TypeMap,
-	}, byName, "PreToolUse carries the tool name and its input")
+		FieldTool:       module.TypeString,
+		FieldNativeTool: module.TypeString,
+		FieldInput:      module.TypeMap,
+	}, byName, "PreToolUse carries the canonical tool name, the native one and the input")
 }
 
 // TestModule_InputIsAnOpenMap: `input` must be a map with NO enumerated keys, so

@@ -101,8 +101,9 @@ func skillCandidatePaths(workspace, name, rel string) []string {
 		return nil
 	}
 
-	paths := []string{
-		filepath.Join(workspace, ".claude", "skills", name, rel),
+	var paths []string
+	for _, dir := range harness.ProjectSkillDirs(harness.Current()) {
+		paths = append(paths, filepath.Join(workspace, filepath.FromSlash(dir), name, rel))
 	}
 
 	home, err := os.UserHomeDir()

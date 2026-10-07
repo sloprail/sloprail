@@ -63,6 +63,10 @@ type HookInput struct {
 	// ToolName is the canonical name of the tool a tool hook is about.
 	ToolName string `json:"tool_name"`
 
+	// NativeToolName is the name the harness itself reported for it (Codex's
+	// spawn_agent, Cursor's Task, Claude's older Task): empty when ToolName is it.
+	NativeToolName string `json:"native_tool_name,omitempty"`
+
 	// ToolUseID names the tool call, for the decision log.
 	ToolUseID string `json:"tool_use_id"`
 
@@ -134,8 +138,20 @@ func (p HookInput) IsSubagent() bool {
 // to run, in the canonical vocabulary.
 func (p HookInput) Tool() string { return p.ToolName }
 
+// NativeTool implements tooluse.NativePending: the name the harness reported.
+func (p HookInput) NativeTool() string {
+	if p.NativeToolName != "" {
+		return p.NativeToolName
+	}
+	return p.ToolName
+}
+
 // Arguments implements filemod.Pending: the tool's own arguments, undecoded.
 func (p HookInput) Arguments() json.RawMessage { return p.ToolInput }
+
+// FileEffects implements filemod.EffectPending: the file effects a harness reported
+// for a tool whose arguments do not state them (HookInput.Files).
+func (p HookInput) FileEffects() []FileEffect { return p.Files }
 
 // Root implements filemod.Pending: the workspace an absolute `file_path` is
 // reported relative to.
@@ -212,4 +228,47 @@ type HookWire interface {
 
 	// RenderHook writes the response in the harness's own output format.
 	RenderHook(w io.Writer, resp HookResponse) error
+}
+
+// RenderHookJSON writes a response in the hook output contract Claude Code and
+// Codex share (each documents it; recorded for Codex in harness-mocks
+// codex-mock/internal/hooks/decide.go): a Deny is a PreToolUse permissionDecision, a
+// Block is the top-level decision:"block" that Stop and SubagentStop read, a system
+// message is a top-level systemMessage, and additional context is
+// hookSpecificOutput.additionalContext under the event's name. An Allow with nothing
+// to say writes nothing. It is here so each adapter that speaks this contract calls
+// one renderer rather than copying it.
+// sr:invariant gates/refusal-stops-the-action
+// sr:invariant gates/stop-refusal-continues-the-turn
+func RenderHookJSON(w io.Writer, resp HookResponse) error {
+	var out map[string]any
+	switch resp.Decision {
+	case Deny:
+		out = map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName":            "PreToolUse",
+				"permissionDecision":       "deny",
+				"permissionDecisionReason": resp.Reason,
+			},
+		}
+	case Block:
+		out = map[string]any{"decision": "block", "reason": resp.Reason}
+	default:
+		out = map[string]any{}
+	}
+	if resp.SystemMessage != "" {
+		out["systemMessage"] = resp.SystemMessage
+	}
+	if resp.AdditionalContext != "" {
+		specific, _ := out["hookSpecificOutput"].(map[string]any)
+		if specific == nil {
+			specific = map[string]any{"hookEventName": resp.Event}
+			out["hookSpecificOutput"] = specific
+		}
+		specific["additionalContext"] = resp.AdditionalContext
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return json.NewEncoder(w).Encode(out)
 }

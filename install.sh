@@ -331,6 +331,13 @@ done
 
 install_harness_mock "${INSTALL_DIR}"
 
+# Codex skips a plugin's hooks, silently, until they are trusted. If Codex is here and
+# sloprail's plugin is enabled in it, trust its hooks now (a no-op otherwise); run
+# `sr-session codex-trust` again after a plugin upgrade that changes a hook.
+if command -v codex >/dev/null 2>&1; then
+  "${INSTALL_DIR}/sr-session" codex-trust >/dev/null 2>&1 || say "sloprail install: could not record Codex's trust in sloprail's hooks; run: sr-session codex-trust"
+fi
+
 say "sloprail install: installed ${tag} (sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks) into ${INSTALL_DIR}"
 
 # --- harnesses -----------------------------------------------------------------

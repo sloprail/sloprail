@@ -53,8 +53,50 @@
 # silently not enforcing something.
 set -eu
 
+# NAME THE HARNESS, DO NOT LET sr-session GUESS IT. This one wrapper is the hook
+# command of every harness that loads this plugin (hooks.json is shared), and an
+# environment can hold the markers of more than one: a Claude session started from a
+# Codex shell inherits Codex's variables. An explicit SLOPRAIL_HARNESS (the caller's
+# own wins) beats every marker, so hook-time selection never depends on detection.
+# What tells the two apart HERE is the plugin runtime: Codex sets PLUGIN_ROOT for a
+# plugin's hook commands (beside the CLAUDE_PLUGIN_ROOT it sets for compatibility);
+# Claude Code sets only CLAUDE_PLUGIN_ROOT, and a tool shell never carries PLUGIN_ROOT,
+# so it is not inherited into a Claude session started from Codex.
+if [ -z "${SLOPRAIL_HARNESS:-}" ]; then
+  if [ -n "${PLUGIN_ROOT:-}" ]; then
+    SLOPRAIL_HARNESS=codex
+  else
+    SLOPRAIL_HARNESS=claude
+  fi
+fi
+export SLOPRAIL_HARNESS
+
 subcommand="$1"
 shift
+
+# AT SESSION START, WHAT THE AGENT IS TOLD IS RENDERED BY THE HARNESS, NOT BY THIS
+# SCRIPT. Everything below prints the agent's start-up context as plain text
+# (rules-first.md, install notices, the load report). Whether plain stdout reaches
+# the model is the harness's contract, not a given: Claude Code and Codex inject
+# it, Cursor ignores it and reads {"additional_context"} (recorded runs in
+# harness-mocks). So this script runs itself once more with that text captured,
+# then hands the text to `sr-session emit-context`, which writes it in the running
+# harness's own form (harness.RenderHook): one place decides the form, per harness,
+# and this script never branches on which harness it is under. Only when
+# sr-session cannot be found does the text go out plain, as before.
+if [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_START_CAPTURE:-}" ]; then
+  binfile="$(mktemp)"
+  status=0
+  out="$(SLOPRAIL_START_CAPTURE=1 SLOPRAIL_START_BINFILE="$binfile" sh "$0" "$subcommand" "$@")" || status=$?
+  bin="$(cat "$binfile" 2>/dev/null || true)"
+  rm -f "$binfile"
+  if [ -n "$out" ]; then
+    if [ -z "$bin" ] || ! printf '%s\n' "$out" | "$bin" emit-context; then
+      printf '%s\n' "$out"
+    fi
+  fi
+  exit "$status"
+fi
 
 install_hint='curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh'
 
@@ -192,6 +234,10 @@ fi
 # where the plugin's own authoring-slop refused every rule write until the agent
 # disabled it. So the directory the set was found in goes first on $PATH for
 # the engine — only that directory, which holds nothing but sloprail's binaries.
+# The outer start invocation renders this run's text with the binary found here.
+if [ -n "${SLOPRAIL_START_BINFILE:-}" ] && [ -n "$sr_session_bin" ]; then
+  printf '%s' "$sr_session_bin" > "$SLOPRAIL_START_BINFILE"
+fi
 saved_path="$PATH"
 if [ -n "$sr_session_bin" ]; then
   # sr:invariant install/engine-found-outside-the-path
@@ -246,7 +292,7 @@ Then start a new session — this one will keep warning until sr-session is foun
     tool="$(printf '%s' "$payload" | tr -d '\n' | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     case "$tool" in
     # sr:invariant install/missing-engine-refuses-file-writes
-    Write | Edit | MultiEdit | NotebookEdit | Delete)
+    Write | Edit | MultiEdit | NotebookEdit | Delete | apply_patch)
       echo "BLOCKED: sloprail cannot check this write because its sr-session binary is not installed. Install it (from a shell), then retry:" >&2
       echo "  ${install_hint}" >&2
       echo "(sloprail/sloprail may be private: if that URL 404s, fetch install.sh with your git/gh access and run it.)" >&2

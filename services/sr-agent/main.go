@@ -156,6 +156,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
 	cmd.Flags().String("claude-args", "",
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
+	cmd.Flags().String("codex-args", "",
+		`Codex's own settings as a JSON object, passed through untouched (e.g. '{"config":"model_reasoning_effort=low"}')`)
 	cmd.Flags().String("allowed-tools", "",
 		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
 	cmd.Flags().String("disallowed-tools", "",
@@ -185,6 +187,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	promptFlag, _ := cmd.Flags().GetString("prompt")
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
+	codexArgs, _ := cmd.Flags().GetString("codex-args")
 	allowedToolsFlag, _ := cmd.Flags().GetString("allowed-tools")
 	disallowedToolsFlag, _ := cmd.Flags().GetString("disallowed-tools")
 	// Read through the flag's own slice, not GetStringArray: that one round-trips
@@ -243,6 +246,12 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cmd.Flags().Changed("codex-args") {
+		if err := CheckHarnessArgs("--codex-args", Codex, spec); err != nil {
+			return err
+		}
+	}
+
 	prefs, err := ParseModelSet(modelSet)
 	if err != nil {
 		return err
@@ -253,7 +262,11 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	harnessArgs, err := ParseHarnessArgs(claudeArgs)
+	argsJSON := claudeArgs
+	if spec.name == Codex {
+		argsJSON = codexArgs
+	}
+	harnessArgs, err := ParseHarnessArgs(argsJSON)
 	if err != nil {
 		return err
 	}

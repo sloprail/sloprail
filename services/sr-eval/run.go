@@ -204,7 +204,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 		Fixture:    filepath.Base(fx.Dir),
 		FixtureDir: fx.Dir,
 		Model:      fx.Model,
-		Harness:    "claude-code",
+		Harness:    "claude",
 		Passed:     sr.Passed,
 		Reason:     sr.Reason,
 		AgentError: agentErrText,

@@ -55,6 +55,32 @@ func TestRenderHook_IsByteIdenticalToWhatClaudeCodeHasAlwaysBeenGiven(t *testing
 	assert.Empty(t, render(t, harness.HookResponse{}), "an allow with nothing to say writes nothing")
 }
 
+// Claude Code's names are the canonical ones (payloads recorded in harness-mocks
+// claude-mock/snapshots); only the sub-agent tool's older name, Task, is renamed.
+func TestParseHook_ToolsAreCanonical(t *testing.T) {
+	parse := func(tool, input string) harness.HookInput {
+		return New().ParseHook(strings.NewReader(`{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"` + tool + `","tool_input":` + input + `}`))
+	}
+	for _, tc := range []struct{ tool, input string }{
+		{"Agent", `{"description":"helper","prompt":"Reply only HELPED","subagent_type":"general-purpose","run_in_background":false}`},
+		{"WebSearch", `{"query":"example.com IANA reserved domain","mode":"standard"}`},
+		{"WebFetch", `{"url":"https://example.com","prompt":"p"}`},
+		{"Bash", `{"command":"ls"}`},
+		{"mcp__browser__fill_form", `{"fields":[{"name":"email","value":"x"}]}`},
+	} {
+		got := parse(tc.tool, tc.input)
+		assert.Equal(t, tc.tool, got.ToolName)
+		assert.Equal(t, tc.tool, got.NativeTool(), "nothing renamed: the native name is the canonical one")
+		assert.Empty(t, got.NativeToolName)
+		assert.JSONEq(t, tc.input, string(got.ToolInput), "input untouched")
+	}
+
+	task := parse("Task", `{"description":"d","prompt":"p","subagent_type":"general-purpose"}`)
+	assert.Equal(t, "Agent", task.ToolName)
+	assert.Equal(t, "Task", task.NativeTool())
+	assert.JSONEq(t, `{"description":"d","prompt":"p","subagent_type":"general-purpose"}`, string(task.ToolInput))
+}
+
 func TestRenderHook_AdditionalContextNamesTheEvent(t *testing.T) {
 	assert.Equal(t,
 		`{"hookSpecificOutput":{"additionalContext":"ctx","hookEventName":"SessionStart"}}`+"\n",

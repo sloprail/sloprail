@@ -109,6 +109,7 @@ distribute-local: build
 		echo "  $(INSTALL_DIR)/$$s"; \
 	done
 	@sh install.sh --harness-mock-only "$(INSTALL_DIR)"
+	@if command -v codex >/dev/null 2>&1; then "$(INSTALL_DIR)/sr-session" codex-trust || true; fi
 	@case ":$$PATH:" in \
 		*":$(INSTALL_DIR):"*) ;; \
 		*) echo; echo "NOTE: $(INSTALL_DIR) is not on your \$$PATH — add it, or the hooks will not find sr-session.";; \

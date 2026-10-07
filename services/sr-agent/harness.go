@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"path/filepath"
 	"sort"
@@ -17,10 +18,13 @@ import (
 // zero value and lose it.
 type Harness string
 
-// ClaudeCode is the first harness this binary supported; Cursor follows it. What
-// makes another cheap is that everything harness-shaped in this binary is reached
-// through the registry below rather than written inline.
-const ClaudeCode Harness = "claude-code"
+// ClaudeCode and Codex are the first harnesses this binary supported; Cursor follows
+// (cursor_harness.go). What makes another cheap is that everything harness-shaped in
+// this binary is reached through the registry below rather than written inline.
+const (
+	ClaudeCode Harness = "claude"
+	Codex      Harness = "codex"
+)
 
 // Cursor is Cursor's CLI agent, `cursor-agent`.
 const Cursor Harness = "cursor"
@@ -103,6 +107,18 @@ type harnessSpec struct {
 	// every harness takes it.
 	stdinPromptAbove int
 
+	// execArgs are the arguments that put the binary in one-shot mode, before
+	// the model flag: `-p` for Claude Code, the `exec` subcommand for Codex. nil
+	// means ["-p"], which every spec literal that predates Codex relied on.
+	execArgs []string
+
+	// modelFlag is the flag naming the model; "" means `--model`.
+	modelFlag string
+
+	// stdinPromptArgs are appended when the prompt is fed on stdin: Codex needs
+	// the explicit `-` placeholder, Claude Code reads stdin when given no prompt.
+	stdinPromptArgs []string
+
 	// grant returns the arguments that give the agent exactly the file access a
 	// run needs: each added directory in its mode — writable or readonly — (the
 	// caller's `--add-dir[:<mode>]`s, and the --verify answer file's folder, which
@@ -115,6 +131,15 @@ type harnessSpec struct {
 	// seam for saying so per-harness rather than assuming every harness has
 	// Claude Code's permission model.
 	grant func(g accessGrant) []string
+
+	// checkGrant, when set, refuses an access grant this harness cannot express as
+	// tightly as asked (before anything runs). nil accepts every grant.
+	checkGrant func(g accessGrant) error
+
+	// tools, when set, translates the allowed/denied tools (the canonical vocabulary,
+	// internal/harness/toolrules.go) into this harness's run settings, instead of the
+	// rules riding through verbatim in grant. nil means verbatim (Claude Code).
+	tools harness.ToolPolicy
 
 	// grantEnv is grant for a harness whose permissions are not command-line flags
 	// but a configuration the process reads: it returns the environment that points
@@ -525,8 +550,25 @@ func within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
-// harnesses is the registry. Adding a harness is adding an entry here.
-var harnesses = []harnessSpec{claudeCodeSpec, cursorSpec}
+func (s harnessSpec) execArgsOrDefault() []string {
+	if s.execArgs != nil {
+		return s.execArgs
+	}
+	return []string{"-p"}
+}
+
+func (s harnessSpec) modelFlagOrDefault() string {
+	if s.modelFlag != "" {
+		return s.modelFlag
+	}
+	return "--model"
+}
+
+// harnesses is the registry. Adding a harness is adding an entry here. The order
+// is the order environment detection tries them. SLOPRAIL_HARNESS, when set, is read
+// first (DetectHarness); the specs' own markers decide otherwise, and Codex's yields to
+// Claude Code's when an environment holds both.
+var harnesses = []harnessSpec{codexSpec, claudeCodeSpec, cursorSpec}
 
 // ErrNoHarness is returned when the environment names no harness this binary
 // knows.
@@ -538,6 +580,7 @@ var ErrUnknownHarness = errors.New("unsupported harness")
 
 // lookupSpec finds the registry entry for a named harness.
 func lookupSpec(name Harness) (harnessSpec, bool) {
+	name = Harness(harness.Canonical(string(name))) // deprecated spellings: internal/harness
 	for _, spec := range harnesses {
 		if spec.name == name {
 			return spec, true

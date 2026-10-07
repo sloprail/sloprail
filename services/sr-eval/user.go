@@ -54,7 +54,7 @@ func agentArgs(model, prompt, sessionID string, resume bool, disallowed []string
 	// --harness is named, never detected: sr-eval strips the operator's own Claude
 	// Code session from the agent's environment (ambientenv.Session), and harness
 	// detection reads exactly those variables, so it would find none.
-	return []string{"--harness", "claude-code", "--model", model, "--claude-args", string(harness), "--prompt", prompt}
+	return []string{"--harness", "claude", "--model", model, "--claude-args", string(harness), "--prompt", prompt}
 }
 
 // newSessionID is a random RFC 4122 v4 UUID — the form Claude Code requires
@@ -156,7 +156,7 @@ func simulateUser(ctx context.Context, binDir, model, brief string, dialogue []e
 	defer os.RemoveAll(cwd)
 
 	c := exec.CommandContext(ctx, filepath.Join(binDir, "sr-agent"),
-		"--harness", "claude-code",
+		"--harness", "claude",
 		"--model", model,
 		"--allowed-tools", "WebSearch",
 		"--prompt", buildUserPrompt(brief, dialogue),
