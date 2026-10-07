@@ -176,6 +176,9 @@ type Driver interface {
 	AnySubagentBlockingErrors(records []string) []string
 	// SubagentFeedbackCount counts the refusal-feedback turns in sub-agent transcripts.
 	SubagentFeedbackCount(records []string) int
+	// SubagentReply is the text the root record at path holds of the reply the
+	// sub-agent dispatched by the call whose id starts with callID handed back.
+	SubagentReply(path, callID string) (string, error)
 }
 
 // harnessEnvVar selects the Driver.

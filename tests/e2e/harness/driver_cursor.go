@@ -562,6 +562,12 @@ func (cursorDriver) SubagentBlockingErrors([]string) []string    { return nil }
 func (cursorDriver) AnySubagentBlockingErrors([]string) []string { return nil }
 func (cursorDriver) SubagentFeedbackCount([]string) int          { return 0 }
 
+// SubagentReply: a Cursor sub-agent's conversation is not tied to its parent's record
+// (see CapSubagentParentLink), so the root record holds no reply to read.
+func (cursorDriver) SubagentReply(string, string) (string, error) {
+	return "", fmt.Errorf("a Cursor sub-agent's reply is not in the root record")
+}
+
 // copyTree copies the files under src into dst, creating directories, replacing files.
 func copyTree(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {

@@ -204,6 +204,12 @@ fi
 `, marker, shQuote(line))
 		}
 	}
+	// The scenario's closing words are the agent's last message: what Codex hands a
+	// parent that waited for a sub-agent (its <subagent_notification>) is that message,
+	// not a result record.
+	if s.result != "" {
+		fmt.Fprintf(&b, "printf '%%s\\n' %s\n", shQuote(codexLine(codexText(s.result))))
+	}
 	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
 	return b.String(), nil
 }
@@ -587,4 +593,44 @@ func (c codexDriver) SubagentFeedbackCount(records []string) int {
 		n += len(c.BlockingErrors(r, nil, "SubagentStop", false))
 	}
 	return n
+}
+
+// SubagentReply is what Codex's root record holds of a sub-agent's reply: the
+// sub-agent's final answer inside the <subagent_notification> the harness tells the
+// parent (recorded: harness-mocks codex-mock subagent-transcripts-v2), and the
+// output of the wait_agent call that waited for the call's agent.
+func (codexDriver) SubagentReply(path, callID string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var reply strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		var rec struct {
+			Payload struct {
+				Type    string          `json:"type"`
+				Role    string          `json:"role"`
+				CallID  string          `json:"call_id"`
+				Output  json.RawMessage `json:"output"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		p := rec.Payload
+		switch {
+		case p.Type == "message" && p.Role == "user":
+			for _, c := range p.Content {
+				if strings.Contains(c.Text, "<subagent_notification>") {
+					reply.WriteString(c.Text)
+				}
+			}
+		case p.Type == "function_call_output" && strings.HasPrefix(p.CallID, callID+"-"):
+			reply.Write(p.Output)
+		}
+	}
+	return reply.String(), nil
 }

@@ -160,3 +160,12 @@ type UserAnswerer interface {
 	// not an answer envelope.
 	ExtractAnswers(resultText string) []string
 }
+
+// SubagentParent is what a Transcripts MAY implement when a sub-agent's record names
+// the session that spawned it in the record itself rather than by where it is filed
+// (Codex: the first line of a rollout names the parent thread). parent is the record
+// of the session that spawned the sub-agent whose record is at path, "" when it is not
+// on disk; isSubagent is false for a record that is a session's own.
+type SubagentParent interface {
+	ParentRecord(path string) (parent string, isSubagent bool)
+}

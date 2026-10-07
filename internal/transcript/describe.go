@@ -194,6 +194,11 @@ func SubagentPaths(path string) ([]string, error) {
 // first record is not written yet: that would make the parent's dispatch
 // prompt citable as the end user's words.
 func isSubagentRecord(path string) bool {
+	if p, ok := harness.Current().Transcripts().(harness.SubagentParent); ok {
+		if _, sub := p.ParentRecord(path); sub {
+			return true
+		}
+	}
 	name := filepath.Base(path)
 	if strings.HasPrefix(name, subagentFilePrefix) && strings.HasSuffix(name, jsonlSuffix) && SessionDirOfSubagent(path) != "" {
 		return true
@@ -217,6 +222,15 @@ func isSubagentRecord(path string) bool {
 func SessionRootOf(path string) string {
 	cur := path
 	for isSubagentRecord(cur) {
+		if p, ok := harness.Current().Transcripts().(harness.SubagentParent); ok {
+			if parent, sub := p.ParentRecord(cur); sub {
+				if parent == "" || parent == cur {
+					return ""
+				}
+				cur = parent
+				continue
+			}
+		}
 		dir := SessionDirOfSubagent(cur)
 		if dir == "" {
 			return ""
@@ -240,6 +254,16 @@ func SessionRootOf(path string) string {
 // read is an error: a caller deciding that a quote lands on exactly one entry
 // must not decide it over records it silently skipped.
 func DescendantSubagentPaths(path string) ([]string, error) {
+	if l, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
+		var paths []string
+		for _, f := range l.SubagentFiles(path) {
+			if strings.HasSuffix(f.Path, jsonlSuffix) {
+				paths = append(paths, f.Path)
+			}
+		}
+		sort.Strings(paths)
+		return paths, nil
+	}
 	dir := subagentDirOf(path)
 	if dir == "" {
 		return nil, nil

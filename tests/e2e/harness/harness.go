@@ -1260,6 +1260,18 @@ func (e *Env) TranscriptPath(projDir, sessionID string) string {
 	return e.transcriptPath(projDir, sessionID)
 }
 
+// SubagentReply is the text the root record at path holds of the reply the sub-agent
+// dispatched by the call whose id starts with callID handed back, as the harness
+// records it.
+func (e *Env) SubagentReply(path, callID string) string {
+	e.t.Helper()
+	reply, err := e.driver.SubagentReply(path, callID)
+	if err != nil {
+		e.t.Fatalf("read the sub-agent's reply from %s: %v", path, err)
+	}
+	return reply
+}
+
 // ConfigDir is the isolated stand-in for ~/.claude the mock wrote this run's
 // transcripts under. A test that drives a `trajectory` command through cite's
 // ENVIRONMENT fallback (no --path, no payload) hands this to the binary as
