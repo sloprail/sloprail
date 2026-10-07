@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -39,7 +42,7 @@ import (
 // The rule then keeps judging, and the harness's own cap is still there if the
 // loop never ends.
 // sr:invariant session/turn-end-retry-judged-until-cap
-func stopHookBlockCapReached(cmd *cobra.Command, store sessionstate.Store, p HookPayload) bool {
+func stopHookBlockCapReached(cmd *cobra.Command, store refusalMeta, p HookPayload) bool {
 	if !p.StopHookActive {
 		resetStopRefusals(cmd, store)
 		return false
@@ -67,7 +70,7 @@ func stopHookBlockCapReached(cmd *cobra.Command, store sessionstate.Store, p Hoo
 }
 
 // stopRefusals is the current sequence's count, 0 when unset or unreadable.
-func stopRefusals(cmd *cobra.Command, store sessionstate.Store) int {
+func stopRefusals(cmd *cobra.Command, store refusalMeta) int {
 	v, ok, err := store.Meta(sessionstate.MetaStopRefusals)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: refusal count not read:", err)
@@ -85,7 +88,7 @@ func stopRefusals(cmd *cobra.Command, store sessionstate.Store) int {
 
 // countStopRefusal records one more refusal in the current sequence.
 // sr:invariant session/turn-end-retry-judged-until-cap
-func countStopRefusal(cmd *cobra.Command, store sessionstate.Store) {
+func countStopRefusal(cmd *cobra.Command, store refusalMeta) {
 	n := stopRefusals(cmd, store) + 1
 	if err := store.SetMeta(sessionstate.MetaStopRefusals, strconv.Itoa(n)); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: refusal count not recorded:", err)
@@ -94,8 +97,53 @@ func countStopRefusal(cmd *cobra.Command, store sessionstate.Store) {
 
 // resetStopRefusals ends the current sequence.
 // sr:invariant session/turn-end-retry-judged-until-cap
-func resetStopRefusals(cmd *cobra.Command, store sessionstate.Store) {
+func resetStopRefusals(cmd *cobra.Command, store refusalMeta) {
 	if err := store.SetMeta(sessionstate.MetaStopRefusals, "0"); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: refusal count not reset:", err)
 	}
+}
+
+// refusalMeta is where the refusal count is kept: the session's store, or, when
+// that store cannot be opened, the counter file beside it.
+type refusalMeta interface {
+	Meta(key string) (string, bool, error)
+	SetMeta(key, value string) error
+}
+
+// refusalCounterFile keeps the refusal count when the session's store is
+// unavailable (damaged, unopenable). The loop it bounds does not stop for a
+// store that cannot be read: a harness with no cap of its own (Codex) sends the
+// agent round again for as long as the Stop refuses, and a refusal caused by the
+// unreadable state refuses every time. The count therefore lives in a file next
+// to the store, which needs only the same directory.
+type refusalCounterFile string
+
+func (f refusalCounterFile) Meta(key string) (string, bool, error) {
+	b, err := os.ReadFile(string(f))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(string(b)), true, nil
+}
+
+func (f refusalCounterFile) SetMeta(key, value string) error {
+	return os.WriteFile(string(f), []byte(value+"\n"), 0o644)
+}
+
+// storelessRefusalCounter is the counter file for the session a payload belongs
+// to, and false when even the store's location cannot be derived (then nothing
+// keys a count, and the harness's own cap is all there is).
+func storelessRefusalCounter(p HookPayload) (refusalMeta, bool) {
+	id, err := stableID(p)
+	if err != nil {
+		return nil, false
+	}
+	path, err := sessionDBPath(stateCwdOf(p), id)
+	if err != nil {
+		return nil, false
+	}
+	return refusalCounterFile(path + ".stop-refusals"), true
 }
