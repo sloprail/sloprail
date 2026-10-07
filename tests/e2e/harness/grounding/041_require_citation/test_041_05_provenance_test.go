@@ -59,7 +59,7 @@ func TestT041_28_ResultOfUnknownProvenanceIsNotCitable(t *testing.T) {
 	res := e.Run(proj, "s-041-28", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'ORPHAN-E2E-5521 all green' --content '# results'`),
 	))
-	if !res.Saw("sr-file write memories/results.md") {
+	if !res.Saw("memories/results.md") {
 		t.Fatalf("the citing call never ran:\n%s", res.Output)
 	}
 	if !orphan {
@@ -156,7 +156,7 @@ func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 	res := e.Run(proj, "s-041-30", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/agent.md --cite:tool_result 'TASKAGENT-7702 all 40 tests pass' --content '# results'`),
 	))
-	if !res.Saw("b1") {
+	if !res.Saw("memories/agent.md") {
 		t.Fatalf("the citing call never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/agent.md") {
@@ -287,7 +287,7 @@ func TestT041_48_ATranscriptReadBackIsRecognisedByItsText(t *testing.T) {
 		Bash("b3", `sr-file write memories/data.md --cite:tool_result 'DATAVALUE-6603' --content '# x'`),
 		Bash("b4", `sr-file write memories/echo.md --cite:tool_result 'BUILD-OK-5512' --content '# x'`),
 	))
-	if !res.Saw("b4") {
+	if !res.Saw("memories/echo.md") {
 		t.Fatalf("the citing calls never ran:\n%s", res.Output)
 	}
 	for _, f := range []string{"memories/gone.md", "memories/rel.md"} {
