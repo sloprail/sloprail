@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -101,7 +102,9 @@ func Say(id, text string) Turn {
 // state, exactly the violation such a rule catches.
 //
 // input values are strings, which is what these representative tools take; a
-// check reading the input as JSON (`.input.email`) reads them as such.
+// check reading the input as JSON (`.input.email`) reads them as such. (For the
+// tools the mock models, inputs real Claude Code types as booleans or numbers are
+// written typed: see typedInputs.)
 //
 // The mock's own synthesised result for the tool carries no `toolUseResult`, so a
 // tool WITH a produced artifact a check reads back — a screenshot whose image an
@@ -496,11 +499,40 @@ func toolUse(id, name string, input map[string]string) string {
 			ib.WriteByte(',')
 		}
 		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
+		fmt.Fprintf(&ib, "%q:%s", k, inputValue(name, k, v))
 	}
 	ib.WriteByte('}')
 	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
 		"e2e-turn-"+id, id, name, ib.String())
+}
+
+// typedInputs lists, for the tools the mock models, the inputs real Claude Code
+// sends as JSON booleans or numbers rather than strings. A scenario still gives
+// every input as a string; toolUse writes these as the typed JSON a real agent
+// sends, so a hook or the mock sees `"run_in_background": true`, not `"true"`.
+// Tools the mock does not model yet are left as strings.
+var typedInputs = map[string]map[string]string{
+	"Bash":  {"run_in_background": "bool", "timeout": "number", "dangerouslyDisableSandbox": "bool"},
+	"Read":  {"limit": "number", "offset": "number"},
+	"Edit":  {"replace_all": "bool"},
+	"Agent": {"run_in_background": "bool"},
+	"Task":  {"run_in_background": "bool"},
+}
+
+// inputValue is v as the JSON value of the named input of tool: typed when
+// typedInputs says so and v parses as that type, a string otherwise.
+func inputValue(tool, key, v string) string {
+	switch typedInputs[tool][key] {
+	case "bool":
+		if b, err := strconv.ParseBool(v); err == nil {
+			return strconv.FormatBool(b)
+		}
+	case "number":
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return strconv.FormatInt(n, 10)
+		}
+	}
+	return jsonStr(v)
 }
 
 func result(text string) string {
@@ -664,7 +696,7 @@ func CompactNamingUnwrittenParent(id string) Turn {
 // own CLAUDE_CODE_TMPDIR, so the task's output file is inside the test's
 // sandbox, not the shared /tmp.
 func Background(id, name string, input map[string]string) Turn {
-	in := map[string]string{"run_in_background": "true"}
+	in := map[string]string{"run_in_background": "true"} // written as the JSON boolean, see typedInputs
 	for k, v := range input {
 		in[k] = v
 	}
