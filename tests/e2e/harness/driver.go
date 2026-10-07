@@ -23,6 +23,10 @@ const (
 	CapBackgroundTasks   = "background-tasks"
 	CapTranscript        = "transcript"
 
+	// CapScopedToolRules: a judge can be limited to a command, path or domain scope
+	// (`Bash(curl -sL https://…/*)`). Codex's sandbox has none: sr-agent refuses such a rule there.
+	CapScopedToolRules = "scoped-tool-rules"
+
 	// CapSubagentParentLink: a sub-agent's conversation names the session that dispatched
 	// it, so what the sub-agent can cite (the user's words, a sibling's tool output) and
 	// what the root can cite of it are resolvable. Cursor records no parent anywhere (hook

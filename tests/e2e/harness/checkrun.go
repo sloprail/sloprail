@@ -303,6 +303,14 @@ func (e *Env) ensureTranscript(projDir, sessionID string) {
 	if sessionID == "" {
 		return
 	}
+	if s, ok := e.driver.(interface {
+		SeedTranscript(e *Env, projDir, sessionID string)
+	}); ok {
+		// A harness that names its own sessions (Codex) has no path to write at before a
+		// turn ran: it seeds the record under an id of its own.
+		s.SeedTranscript(e, projDir, sessionID)
+		return
+	}
 	tp := e.transcriptPath(projDir, sessionID)
 	if _, err := os.Stat(tp); err == nil {
 		return

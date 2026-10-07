@@ -112,7 +112,7 @@ func TestT006_03_TheJudgeSessionRunsWithHooksDisabled(t *testing.T) {
 		t.Fatalf("the judge was never launched: %v", err)
 	}
 	body := string(raw)
-	if !strings.Contains(body, `"disableAllHooks":true`) {
-		t.Fatalf("the judge's claude was launched without disableAllHooks; argv:\n%s", body)
+	if !harness.JudgeHooksDisabled(body) {
+		t.Fatalf("the judge was launched with its hooks on; argv:\n%s", body)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -122,6 +123,11 @@ func (s session) close() {
 func openSession(root string) session {
 	s := session{workspace: sessionpath.WorkspaceAnchor(root)}
 	s.record = transcript.CurrentSessionPath(root)
+	if s.record == "" {
+		// A check the engine runs is told its session's record (SR_TRANSCRIPT) whatever the
+		// harness exports to its hooks: Codex's hooks carry no session variable, only the payload.
+		s.record = os.Getenv(grounding.EnvTranscript)
+	}
 	if s.record == "" {
 		return s
 	}

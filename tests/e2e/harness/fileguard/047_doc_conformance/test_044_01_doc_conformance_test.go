@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470's mock grows
@@ -73,6 +75,8 @@ func TestT044_03_UnmarkedOrWrongKindIsNeverJudged(t *testing.T) {
 // and the test asserts the marker's OWN URL and the file's body appear in it — and
 // that a DIFFERENT URL in a fresh session renders a DIFFERENT prompt.
 func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
+	// The example's judge is limited to `Bash(curl -sL https://…/*)`, a scoped rule.
+	harness.RequireCap(t, harness.CapScopedToolRules)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

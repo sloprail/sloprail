@@ -1837,6 +1837,15 @@ const MockPreambleLines = 3
 // first of them, not the prompt, is the session's origin.
 const SessionStartAttachments = 2
 
+// SessionStartRecords is how many records the session's SessionStart leaves ahead of a
+// prompt, a resumed one included: SessionStartAttachments unless the harness records fewer.
+func (e *Env) SessionStartRecords() int {
+	if d, ok := e.driver.(interface{ SessionStartRecords() int }); ok {
+		return d.SessionStartRecords()
+	}
+	return SessionStartAttachments
+}
+
 // RootMessageLine is the 1-based PHYSICAL line the prompt record sits on in a
 // session's transcript: after the preamble and the SessionStart attachment.
 //
@@ -1847,6 +1856,9 @@ const SessionStartAttachments = 2
 // citation's own output — read it from the file the mock wrote instead; this is the
 // up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
+	if d, ok := e.driver.(interface{ RootMessageLine() int }); ok {
+		return d.RootMessageLine()
+	}
 	return MockPreambleLines + SessionStartAttachments + 1
 }
 
@@ -2486,4 +2498,14 @@ func EngineErrored(answer string) bool {
 		}
 	}
 	return false
+}
+
+// JudgeHooksDisabled says whether the argv a recording judge shim captured (InstallJudgeClaudeRecordingArgv)
+// switched the judge's own session's hooks off, in the harness's own spelling: Claude Code's
+// `disableAllHooks` setting unless the driver spells it otherwise.
+func JudgeHooksDisabled(argv string) bool {
+	if d, ok := mustDriver().(interface{ JudgeHooksDisabled(argv string) bool }); ok {
+		return d.JudgeHooksDisabled(argv)
+	}
+	return strings.Contains(argv, `"disableAllHooks":true`)
 }
