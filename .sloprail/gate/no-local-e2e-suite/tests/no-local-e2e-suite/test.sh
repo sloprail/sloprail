@@ -12,9 +12,9 @@ gen tests/e2e/big/big_test.go $(printf 'TestBig%02d ' $(seq 1 12))
 gen tests/e2e/many/many_test.go $(printf 'TestMany%02d ' $(seq 1 11))
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m init
 RESULT=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "run the e2e tests")
-G='.events[]|select(.kind=="GateChecked" and .rule=="no-local-e2e-suite")'
-refused() { echo "$RESULT" | jq -e --arg id "$1" --arg t "$2" "[$G | select(.tool_use_id==\$id)] | length==1 and .[0].outcome==\"refused\" and (.[0].reason|contains(\$t))" >/dev/null || { echo "FAIL refused $1: $(echo "$RESULT" | jq -c "[$G | select(.tool_use_id==\"$1\")]")" >&2; return 1; }; }
-permitted() { echo "$RESULT" | jq -e --arg id "$1" "[$G | select(.tool_use_id==\$id)] | map(select(.outcome==\"permitted\")) | length==1" >/dev/null || { echo "FAIL permitted $1: $(echo "$RESULT" | jq -c "[$G | select(.tool_use_id==\"$1\")]")" >&2; return 1; }; }
+# every assertion is one jq -e over this rule's own GateChecked events, selected by tool_use_id
+refused() { echo "$RESULT" | jq -e --arg id "$1" --arg t "$2" '[.events[]|select(.kind=="GateChecked" and .rule=="no-local-e2e-suite" and .tool_use_id==$id)] | length==1 and .[0].outcome=="refused" and (.[0].reason|contains($t))' >/dev/null || { echo "FAIL refused $1: $(echo "$RESULT" | jq -c --arg id "$1" '[.events[]|select(.kind=="GateChecked" and .rule=="no-local-e2e-suite" and .tool_use_id==$id)]')" >&2; return 1; }; }
+permitted() { echo "$RESULT" | jq -e --arg id "$1" '[.events[]|select(.kind=="GateChecked" and .rule=="no-local-e2e-suite" and .tool_use_id==$id)] | length==1 and .[0].outcome=="permitted"' >/dev/null || { echo "FAIL permitted $1: $(echo "$RESULT" | jq -c --arg id "$1" '[.events[]|select(.kind=="GateChecked" and .rule=="no-local-e2e-suite" and .tool_use_id==$id)]')" >&2; return 1; }; }
 # too many tests: a `...` over everything (15), no -run over a 12-test package, a -run matching 11
 refused c1 "would run 26 e2e tests"
 refused c2 "would run 12 e2e tests"
