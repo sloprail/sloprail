@@ -844,9 +844,9 @@ func genuineToolResults(raw json.RawMessage, citable map[string]bool) []genuineT
 }
 
 // IsHookRefusal reports whether a tool_result body is a hook blocking the call
-// rather than anything the tool produced. Claude Code writes a PreToolUse
-// refusal as the tool_result "PreToolUse:<Tool> hook error: <reason>" with
-// is_error — the reason being "[<command>]: <stderr>" for an exit 2 and the
+// rather than anything the tool produced. Only Claude Code's spelling is
+// recognised here: it writes a PreToolUse refusal as the tool_result
+// "PreToolUse:<Tool> hook error: <reason>" with is_error — the reason being "[<command>]: <stderr>" for an exit 2 and the
 // permissionDecisionReason for a JSON deny.
 func IsHookRefusal(body string) bool {
 	_, ok := HookRefusalReason(body)

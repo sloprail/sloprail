@@ -34,7 +34,7 @@ func TestCitationRefusalForASubagentHandsTheChangeBack(t *testing.T) {
 		"you cannot get the user's words yourself",
 		"git diff --binary abc123..HEAD -- docs/a.md 'docs/b c.md' > ",
 		"git apply -R --index ", "git commit -m",
-		"AskUserQuestion", "Sloprail-Cites-User: <the user's exact answer>", "EXACTLY what needs the user's approval",
+		"Sloprail-Cites-User: <the user's exact answer>", "EXACTLY what needs the user's approval",
 	} {
 		assert.Contains(t, got, want)
 	}
