@@ -30,12 +30,12 @@ func TestT003_28_AJudgePromptBeyondArgMaxIsJudged(t *testing.T) {
 	// The claude stand-in reads its prompt from STDIN (it is given none as an
 	// argument), records how large the prompt and its own argv were, and answers.
 	record := filepath.Join(t.TempDir(), "claude-record")
-	e.InstallShim("claude", `#!/bin/sh
+	e.InstallJudgeScript(`#!/bin/sh
 tmp="$(mktemp)"
 cat > "$tmp"
 argv=0
 for arg in "$@"; do argv=$((argv + ${#arg})); done
-printf 'stdin=%s argv=%s\n' "$(wc -c < "$tmp" | tr -d ' ')" "$argv" >> `+shellQ(record)+`
+printf 'stdin=%s argv=%s\n' "$(wc -c < "$tmp" | tr -d ' ')" "$argv" >> ` + shellQ(record) + `
 out="$(sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' "$tmp" | tail -1)"
 rm -f "$tmp"
 if [ -n "$out" ]; then

@@ -134,7 +134,7 @@ func TestT001_34_SIGTERMLeavesNoJudgeModelCallRunning(t *testing.T) {
 	base := e.CommitAll(proj, "the rule")
 	e.WriteFile(proj, "docs/a.md", "the release is Friday\n")
 	e.CommitAll(proj, "add a")
-	e.InstallShim("claude", sleepyClaude)
+	e.InstallJudgeScript(sleepyClaude)
 
 	cmd := startRun(t, e, proj, base, "PIDS="+pids)
 	running := waitPids(t, pids, 2)

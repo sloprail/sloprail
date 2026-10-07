@@ -207,6 +207,14 @@ fi
 `, marker, shQuote(line))
 		}
 	}
+	// The scenario's closing words are the agent's last message: what Codex hands a
+	// parent that waited for a sub-agent (its <subagent_notification>) is that message,
+	// not a result record. It is also what the agent says after every Stop refusal it
+	// goes on past (recorded: harness-mocks codex-mock stop-block-cap-30, an assistant
+	// message after each hook_prompt), the evidence StopContinuations reads.
+	if s.result != "" {
+		fmt.Fprintf(&b, "printf '%%s\\n' %s\n", shQuote(codexLine(codexText(s.result))))
+	}
 	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
 	return b.String(), nil
 }
@@ -361,7 +369,7 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 // hook no session variable (the session is in its payload); a shell command the agent runs
 // has CODEX_THREAD_ID and CODEX_SESSION_ID.
 func (codexDriver) HookEnv(e *Env, sessionID string) []string {
-	env := []string{"CODEX_HOME=" + e.configDir,
+	env := []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir,
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
 		id := e.harnessID(sessionID)
@@ -369,6 +377,11 @@ func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 	}
 	return env
 }
+
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say (a command run
+// outside a session has none of Codex's markers), and so which agent binary a judge launches.
+func (codexDriver) CLIEnv(e *Env) []string { return []string{"SLOPRAIL_HARNESS=codex"} }
 
 func (codexDriver) ConfigEnv(e *Env) []string { return []string{"CODEX_HOME=" + e.configDir} }
 
@@ -413,6 +426,16 @@ func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
 func (codexDriver) JudgeShim(s JudgeShim) (string, string) {
+	if s.Kind == JudgeShimUsageLimit {
+		// codex reports a usage limit on stderr, status 1. The wording is the one sr-agent's
+		// classifier already reads for Codex (services/sr-agent/failure.go); no harness-mocks
+		// recording holds a real one yet.
+		return "codex", `#!/bin/sh
+echo call >>"$LEDGER"
+echo "ERROR: You've hit your usage limit. Try again later." >&2
+exit 1
+`
+	}
 	_, body := claudeDriver{}.JudgeShim(s)
 	return "codex", body
 }

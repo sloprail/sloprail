@@ -77,10 +77,12 @@ type Launch struct {
 type JudgeShimKind int
 
 const (
-	JudgeShimPlain     JudgeShimKind = iota // writes Verdict where the prompt says
-	JudgeShimRecording                      // plain, plus the argv recorded to ArgvFile
-	JudgeShimCapturing                      // plain, plus the prompt captured under PromptFile
-	JudgeShimSlow                           // delays, decides by the prompt, logs to LogFile
+	JudgeShimPlain      JudgeShimKind = iota // writes Verdict where the prompt says
+	JudgeShimRecording                       // plain, plus the argv recorded to ArgvFile
+	JudgeShimCapturing                       // plain, plus the prompt captured under PromptFile
+	JudgeShimSlow                            // delays, decides by the prompt, logs to LogFile
+	JudgeShimScript                          // Body as it is: a test's own stand-in, under the harness's binary name
+	JudgeShimUsageLimit                      // counts its calls in $LEDGER and dies the way the harness does at a usage limit
 )
 
 // JudgeShim parameterises Driver.JudgeShim.
@@ -91,6 +93,7 @@ type JudgeShim struct {
 	PromptFile   string // JudgeShimCapturing: absolute path
 	LogFile      string // JudgeShimSlow
 	DelaySeconds int    // JudgeShimSlow
+	Body         string // JudgeShimScript
 }
 
 // Driver is everything in the e2e harness that is specific to one agent
@@ -235,6 +238,10 @@ func implemented() string {
 	sort.Strings(names)
 	return strings.Join(names, ", ")
 }
+
+// ShellEnv is the environment assignments (each followed by a space, or "") a command the
+// agent runs in its shell is prefixed with to run as the current harness's session.
+func ShellEnv() string { return mustDriver().ShellEnv() }
 
 // mustDriver is the selected Driver for code with no *testing.T at hand. New has
 // already failed the test on a bad selection, so reaching the panic means a
