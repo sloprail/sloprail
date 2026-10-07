@@ -5,12 +5,34 @@ package record
 
 import (
 	"encoding/json"
+	"io/fs"
+	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Transcripts is Claude Code's harness.Transcripts.
 type Transcripts struct{}
+
+// SubagentFiles implements harness.SubagentLocator: every file under
+// <session>/subagents/, nested workflow directories included, records and meta files.
+func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
+	if !strings.HasSuffix(transcriptPath, ".jsonl") {
+		return nil
+	}
+	root := filepath.Join(strings.TrimSuffix(transcriptPath, ".jsonl"), "subagents")
+	var out []harness.SubagentFile
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		out = append(out, harness.SubagentFile{Path: path, Rel: rel})
+		return nil
+	})
+	return out
+}
 
 // claudeRecord is one line of Claude Code's JSONL, in the fields we keep.
 //

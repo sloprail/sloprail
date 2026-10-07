@@ -76,7 +76,7 @@ func TestArchiveRun_WritesAndCommitsTheRun(t *testing.T) {
 	}
 	verdict := &Verdict{Subject: "s", Status: "pass", Rows: []VerdictRow{{CheckID: "c1", Status: "pass", Reasoning: "fine"}}}
 
-	dir, err := archiveRun(rec, transcript, []byte("score out\n"), []byte("score err\n"), verdict)
+	dir, err := archiveRun(rec, transcript, subagentFiles(testHarness(t, "claude").Transcripts(), transcript), []byte("score out\n"), []byte("score err\n"), verdict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestArchiveRun_FailureWithoutTranscriptOrVerdict(t *testing.T) {
 	root, _ := archiveRunWorld(t)
 	rec := runRecord{Fixture: "f", Model: "opus", Passed: false, Reason: "scorer said no", AgentError: "exit 1", StartedAt: time.Now(), FinishedAt: time.Now()}
 
-	dir, err := archiveRun(rec, "", nil, nil, nil)
+	dir, err := archiveRun(rec, "", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestArchiveRun_FailureWithoutTranscriptOrVerdict(t *testing.T) {
 func TestArchiveRun_CommitsOnlyTheRunsOwnDirectoryAsTheArchivesOwnIdentity(t *testing.T) {
 	root, transcript := archiveRunWorld(t)
 	rec := runRecord{Fixture: "f", Model: "m", Passed: true, StartedAt: time.Now()}
-	first, err := archiveRun(rec, transcript, nil, nil, nil)
+	first, err := archiveRun(rec, transcript, subagentFiles(testHarness(t, "claude").Transcripts(), transcript), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestArchiveRun_CommitsOnlyTheRunsOwnDirectoryAsTheArchivesOwnIdentity(t *te
 	}
 	archGit(t, root, "add", "stray.txt")
 
-	second, err := archiveRun(rec, transcript, []byte("o"), nil, nil)
+	second, err := archiveRun(rec, transcript, subagentFiles(testHarness(t, "claude").Transcripts(), transcript), []byte("o"), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestArchiveRun_CommitsOnlyTheRunsOwnDirectoryAsTheArchivesOwnIdentity(t *te
 func TestArchiveRun_ATranscriptThatCannotBeReadIsAnError(t *testing.T) {
 	archiveRunWorld(t)
 	rec := runRecord{Fixture: "f", Model: "m", StartedAt: time.Now()}
-	if _, err := archiveRun(rec, filepath.Join(t.TempDir(), "gone.jsonl"), nil, nil, nil); err == nil || !strings.Contains(err.Error(), "archive transcript") {
+	if _, err := archiveRun(rec, filepath.Join(t.TempDir(), "gone.jsonl"), nil, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "archive transcript") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -235,7 +235,7 @@ func TestArchiveRun_ATranscriptThatCannotBeReadIsAnError(t *testing.T) {
 func TestArchiveRun_CommittingTheSameRunTwiceIsNotAnError(t *testing.T) {
 	root, transcript := archiveRunWorld(t)
 	rec := runRecord{Fixture: "f", Model: "m", Passed: true, StartedAt: time.Now()}
-	dir, err := archiveRun(rec, transcript, nil, nil, nil)
+	dir, err := archiveRun(rec, transcript, subagentFiles(testHarness(t, "claude").Transcripts(), transcript), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -309,6 +309,67 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
+// SubagentFiles implements harness.SubagentLocator. A Codex sub-agent is a rollout of
+// its own beside every other (sessions/YYYY/MM/DD/), whose first line, session_meta,
+// names the thread that spawned it (source.subagent.thread_spawn.parent_thread_id;
+// recorded: harness-mocks codex-mock subagent-transcripts-v2). So the sub-agents of a
+// rollout are found by reading the first line of the others, and a sub-agent's own
+// children the same way.
+func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
+	sessions := filepath.Dir(transcriptPath)
+	for i := 0; i < 3; i++ { // sessions/YYYY/MM/DD/<rollout>
+		sessions = filepath.Dir(sessions)
+	}
+	all, _ := filepath.Glob(filepath.Join(sessions, "*", "*", "*", "rollout-*.jsonl"))
+	parentOf := map[string]string{} // rollout path -> parent thread id
+	idOf := map[string]string{}
+	for _, p := range all {
+		idOf[p] = rolloutThreadID(p)
+		parentOf[p] = rolloutParent(p)
+	}
+	want := map[string]bool{rolloutThreadID(transcriptPath): true}
+	var out []harness.SubagentFile
+	for grew := true; grew; {
+		grew = false
+		for _, p := range all {
+			if p == transcriptPath || !want[parentOf[p]] || want[idOf[p]] {
+				continue
+			}
+			want[idOf[p]] = true
+			grew = true
+			out = append(out, harness.SubagentFile{Path: p, Rel: filepath.Base(p)})
+		}
+	}
+	return out
+}
+
+// rolloutThreadID is the thread id a rollout's file name ends with.
+func rolloutThreadID(path string) string {
+	base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	if len(base) < 36 {
+		return ""
+	}
+	return base[len(base)-36:]
+}
+
+// rolloutParent is the parent thread a rollout's session_meta names, "" for a root.
+func rolloutParent(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var l struct {
+		Payload struct {
+			ParentThreadID string `json:"parent_thread_id"`
+		} `json:"payload"`
+	}
+	if json.NewDecoder(f).Decode(&l) != nil {
+		return ""
+	}
+	return l.Payload.ParentThreadID
+}
+
 // ConfigDir implements harness.Transcripts: $CODEX_HOME, else ~/.codex.
 func (Transcripts) ConfigDir() string { return ConfigDir() }
 
