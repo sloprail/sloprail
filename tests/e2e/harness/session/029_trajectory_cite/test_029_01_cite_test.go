@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T029_01: a quote in the user's own words resolves to <path>:<line>, exit 0.
@@ -180,9 +182,16 @@ func TestT029_04_CiteMatchesAnAskUserQuestionAnswer(t *testing.T) {
 	// The agent asked a question; the person CHOSE "go with the second option",
 	// which the mock writes as the answer envelope after the seeded prompt.
 	e.Run(proj, "s-029-04", "here is the task", Turns("done",
-		AnswerQuestion("q1", [2]string{"which approach?", "go with the second option"}),
+		harness.AnswerIfAsked(t, "q1", [2]string{"which approach?", "go with the second option"})...,
 	))
 	path := e.TranscriptPath(proj, "s-029-04")
+
+	// Without an answer record (no question tool) the words were never said: they are
+	// not citable, while the person's prompt, in the same record, is.
+	if !harness.HasCap(t, harness.CapAskUserQuestion) {
+		requireNotSaid(t, e, proj, path, "here is the task", "second option")
+		return
+	}
 
 	// The envelope's physical line, read from the file the mock wrote — it follows the
 	// mock's no-uuid preamble block and the root prompt, so it is not a hard-coded line.
@@ -224,12 +233,19 @@ func TestT029_05_CiteDoesNotMatchAnyQuestion(t *testing.T) {
 	e.GitInit(proj)
 
 	e.Run(proj, "s-029-05", "here is the task", Turns("done",
-		AnswerQuestion("q1",
+		harness.AnswerIfAsked(t, "q1",
 			[2]string{"should I use the FROBNICATE strategy?", "no, keep it simple"},
 			[2]string{"and which BAZQUX mode?", "the fast one"},
-		),
+		)...,
 	))
 	path := e.TranscriptPath(proj, "s-029-05")
+
+	// Without an answer record neither the questions nor the answers are in the record
+	// at all: nothing of them is citable, and the prompt still is.
+	if !harness.HasCap(t, harness.CapAskUserQuestion) {
+		requireNotSaid(t, e, proj, path, "here is the task", "FROBNICATE", "BAZQUX", "keep it simple", "the fast one")
+		return
+	}
 
 	// The envelope's physical line, read from the file the mock wrote (it follows the
 	// mock's no-uuid preamble block and the root prompt).
@@ -278,13 +294,19 @@ func TestT029_07_CiteMatchesEachAnswerInAMultiQuestion(t *testing.T) {
 
 	// A three-question envelope, written by the mock after the seeded prompt.
 	e.Run(proj, "s-029-07", "kick it off", Turns("done",
-		AnswerQuestion("q1",
+		harness.AnswerIfAsked(t, "q1",
 			[2]string{"where should it live?", "under the dotdir store"},
 			[2]string{"required or optional?", "make it required"},
 			[2]string{"backfill existing?", "yes backfill everything"},
-		),
+		)...,
 	))
 	path := e.TranscriptPath(proj, "s-029-07")
+
+	// Without an answer record none of the answers was given: none is citable.
+	if !harness.HasCap(t, harness.CapAskUserQuestion) {
+		requireNotSaid(t, e, proj, path, "kick it off", "under the dotdir store", "make it required", "yes backfill everything")
+		return
+	}
 
 	// The envelope's physical line, read from the file the mock wrote (it follows the
 	// mock's no-uuid preamble block and the root prompt).
@@ -322,12 +344,18 @@ func TestT029_08_CiteAnswerWithInnerQuoteInMultiQuestion(t *testing.T) {
 	e.GitInit(proj)
 
 	e.Run(proj, "s-029-08", "start", Turns("done",
-		AnswerQuestion("q1",
+		harness.AnswerIfAsked(t, "q1",
 			[2]string{"first thing?", "keep it plain"},
 			[2]string{"what label?", `call it "draft" for now`},
-		),
+		)...,
 	))
 	path := e.TranscriptPath(proj, "s-029-08")
+
+	// Without an answer record the inner-quoted answer was never given: not citable.
+	if !harness.HasCap(t, harness.CapAskUserQuestion) {
+		requireNotSaid(t, e, proj, path, "start", `call it "draft" for now`, "keep it plain")
+		return
+	}
 
 	// The envelope's physical line, read from the file the mock wrote.
 	envLine := physicalLine(t, path, `keep it plain`)
