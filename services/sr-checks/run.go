@@ -13,6 +13,7 @@ import (
 	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/judgelimit"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -122,6 +123,12 @@ func (s session) close() {
 func openSession(root string) session {
 	s := session{workspace: sessionpath.WorkspaceAnchor(root)}
 	s.record = transcript.CurrentSessionPath(root)
+	if s.record == "" {
+		// A gate's script runs in the engine's hook, whose environment the harness may
+		// give no session variable (Codex gives none): the engine names the record it
+		// resolved from the hook's payload.
+		s.record = os.Getenv(grounding.EnvTranscript)
+	}
 	if s.record == "" {
 		return s
 	}
