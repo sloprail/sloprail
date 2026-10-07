@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // `seen` through the wiring a user gets: a Stop refused once, and the retry.
@@ -45,6 +47,7 @@ checks:
 `
 
 func TestT030_03_ARetrysPostEventsMarkWhatTheRefusedStopWasShown(t *testing.T) {
+	harness.RequireCap(t, harness.CapScriptedRetryText)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

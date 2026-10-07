@@ -233,6 +233,7 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 // the same tree, so the same store.
 // sr:proves session/resume-from-another-directory
 func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
+	harness.RequireCap(t, harness.CapResumeFromOtherDirectory)
 	e, proj, _ := project(t)
 	sub := proj + "/sub"
 	e.WriteFile(proj, "sub/.keep", "")

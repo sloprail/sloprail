@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T060_01: the plugin's standing instruction (rules-first.md) reaches the agent at
@@ -17,6 +19,7 @@ import (
 // so the observable here is the session's own record of what the agent was handed (the
 // mock files it as the real harness does), not the hook's exit status.
 func TestT060_01_RulesFirstTextReachesTheAgent(t *testing.T) {
+	harness.RequireCap(t, harness.CapRecordHoldsHookContext)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

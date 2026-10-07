@@ -24,7 +24,9 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults,
+		CapAllowNotice, CapNullTranscriptPath, CapSessionStartAttachment,
+		CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapSessionArchive}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -417,6 +419,13 @@ exit 0
 }
 
 // TranscriptPath is where claude keeps a session's transcript: <config>/projects/<encoded project dir>/<session>.jsonl.
+func (claudeDriver) RecordLayout() (int, int) { return MockPreambleLines, SessionStartAttachments }
+
+// NextPromptLine: the resume's SessionStart attachments are written first, the prompt after.
+func (claudeDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + SessionStartAttachments + 1
+}
+
 func (claudeDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")

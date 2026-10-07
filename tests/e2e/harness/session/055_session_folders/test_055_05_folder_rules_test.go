@@ -151,6 +151,7 @@ func TestT055_08_ASubagentWithoutAnIdentityStillOwesItsCommits(t *testing.T) {
 // here". The other repository's rule refuses; the sub-agent judged its range (`sr-checks run`
 // at its own turn end), and the root's Stop reports that stored verdict.
 func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e, proj, other := two(t)
 	declareNothing(t, e, proj)
 	const sess = "s-055-09"

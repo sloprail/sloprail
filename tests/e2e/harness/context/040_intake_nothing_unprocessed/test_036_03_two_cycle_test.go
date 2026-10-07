@@ -1,12 +1,8 @@
 package e2e
 
 import (
-	"os"
 	"strconv"
-	"strings"
 	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T036_06: a skip DECLARED IN A LATER CYCLE still excuses an EARLIER cycle's
@@ -54,7 +50,7 @@ func TestT036_06_SkipDeclaredLaterCycleExcusesEarlierMessage(t *testing.T) {
 	// it is read from the transcript the mock already wrote for cycle 1. The
 	// resume's SessionStart attachment is written first, as real Claude Code
 	// writes it, and the prompt after it.
-	nextLine := transcriptLineCount(t, e.TranscriptPath(proj, sess)) + harness.SessionStartAttachments + 1
+	nextLine := e.NextPromptLine(proj, sess)
 
 	// ---- Cycle 2: skip the FIRST message's line AND this cycle's own resumed
 	// prompt, declaring no new work of its own. ----
@@ -77,16 +73,4 @@ func TestT036_06_SkipDeclaredLaterCycleExcusesEarlierMessage(t *testing.T) {
 	if res2.Refused() {
 		t.Errorf("cycle 2: unexpected refusal:\n%s", res2.Output)
 	}
-}
-
-// transcriptLineCount reads how many lines the transcript currently holds, so a
-// test can predict the physical line a --resume's appended prompt will land on
-// BEFORE that append happens (it lands on count+1).
-func transcriptLineCount(t *testing.T, path string) int {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read transcript %s: %v", path, err)
-	}
-	return strings.Count(string(body), "\n")
 }

@@ -37,7 +37,8 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapAllowNotice, CapNullTranscriptPath,
+		CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapSessionArchive}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -425,6 +426,13 @@ func rolloutPath(e *Env, threadID string) string {
 
 // TranscriptPath is the session's rollout; before the session has run there is none, and
 // the path where it would be named after the session.
+// RecordLayout: unmeasured for Codex, kept as it was before the layout was the driver's.
+func (codexDriver) RecordLayout() (int, int) { return MockPreambleLines, SessionStartAttachments }
+
+func (codexDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + SessionStartAttachments + 1
+}
+
 func (codexDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	if p := rolloutPath(e, e.harnessID(sessionID)); p != "" {
 		return p

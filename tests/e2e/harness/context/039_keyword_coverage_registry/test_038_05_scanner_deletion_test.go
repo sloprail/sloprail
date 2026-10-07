@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // Deleting a declared scanner drops every keyword it declared. Found on a real
@@ -19,18 +21,14 @@ import (
 // context stays open while coverage is refused, and the gate refuses from its
 // registry whether or not the file survives.
 
-// coverageRefusals counts the coverage gate's Stop refusals in the record — every
-// attempt, not deduplicated, so a later turn's refusal is told apart from an
-// earlier turn's identical one.
-func coverageRefusals(t *testing.T, path string) int {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read the record: %v", err)
-	}
+// coverageRefusals counts the coverage gate's refusals recorded for the session — every
+// attempt, not deduplicated, so a later turn's refusal is told apart from an earlier
+// turn's identical one. Read through the harness's own reader of its record, which is
+// where this harness keeps a refusal.
+func coverageRefusals(e *harness.Env, proj, sess string) int {
 	n := 0
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.Contains(line, `"hook_blocking_error"`) && strings.Contains(line, coverageRefusal) {
+	for _, b := range e.AllBlockingErrorsFrom(proj, sess, "") {
+		if strings.Contains(b, coverageRefusal) {
 			n++
 		}
 	}
@@ -49,7 +47,7 @@ func TestT038_24_ObligationSurvivesAnUnseenDelete(t *testing.T) {
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`gh search repos guardrail`)),
 	).ThenCommit("write the files"))
-	after1 := coverageRefusals(t, e.TranscriptPath(proj, sess))
+	after1 := coverageRefusals(e, proj, sess)
 	if after1 == 0 {
 		t.Fatalf("precondition: turn 1 should be refused for the uncovered scanner")
 	}
@@ -65,7 +63,7 @@ func TestT038_24_ObligationSurvivesAnUnseenDelete(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, "scanners", "mine", "scanner.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: the unseen delete should have removed the file: %v", err)
 	}
-	if after2 := coverageRefusals(t, e.TranscriptPath(proj, sess)); after2 <= after1 {
+	if after2 := coverageRefusals(e, proj, sess); after2 <= after1 {
 		t.Fatalf("the coverage refusal stopped once the scanner's file was gone (refusals %d -> %d)", after1, after2)
 	}
 }

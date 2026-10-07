@@ -53,6 +53,7 @@ func TestT039_09_ShallowDelegatedResearchRefused(t *testing.T) {
 // T039_10: the same dispatch, whose sub-agent clones and reads two source files,
 // admits: the sub-agent's work counts as this run's research.
 func TestT039_10_DeepDelegatedResearchAdmits(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")
@@ -70,6 +71,7 @@ func TestT039_10_DeepDelegatedResearchAdmits(t *testing.T) {
 // research split across two trajectories still admits, because the gate judges
 // the clones and the reads of every trajectory together.
 func TestT039_11_SubAgentCloneDispatcherReadsAdmits(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")

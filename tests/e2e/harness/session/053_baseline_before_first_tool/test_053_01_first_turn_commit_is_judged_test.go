@@ -44,6 +44,12 @@ exit 0
 // anything; this makes them fail instead.
 func requireRecordUnwrittenAtSessionStart(t *testing.T, e *Env, proj, sess string) {
 	t.Helper()
+	if !harness.HasCap(t, harness.CapSessionStartAttachment) {
+		// The record of this harness holds no SessionStart entry to read the order off;
+		// its hook payloads name no transcript at SessionStart instead (recorded in
+		// harness-mocks).
+		return
+	}
 	body, err := os.ReadFile(e.TranscriptPath(proj, sess))
 	if err != nil {
 		t.Fatalf("read the session's record: %v", err)
