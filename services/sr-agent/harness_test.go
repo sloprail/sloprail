@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -376,6 +377,15 @@ func TestCursorRules_ToolMapping(t *testing.T) {
 
 	_, _, err = cursorRules(accessGrant{Tools: []string{"Bash"}, DenyTools: []string{"Bash(rm:*)"}})
 	assert.ErrorIs(t, err, ErrModeUnsupported, "a shell deny beside a shell grant was not enforced by cursor-agent (measured)")
+}
+
+func TestCursorRules_ScopedBashIsRefused(t *testing.T) {
+	for _, rule := range []string{"Bash(git show:*)", "Bash(curl * -o *)"} {
+		_, _, err := cursorRules(accessGrant{Tools: []string{rule}})
+		assert.ErrorIs(t, err, harness.ErrToolUnsupported, rule)
+		_, _, err = cursorRules(accessGrant{DenyTools: []string{rule}})
+		assert.ErrorIs(t, err, harness.ErrToolUnsupported, rule)
+	}
 }
 
 func TestCursorSizesAreCatalogueModels(t *testing.T) {

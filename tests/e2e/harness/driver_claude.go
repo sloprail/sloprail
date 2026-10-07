@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"github.com/sloprail/sloprail/internal/harnessmock"
 )
@@ -306,6 +307,9 @@ func (claudeDriver) AgentShim(e *Env, projDir string) (string, string) {
 		"  \"launched agent\" </dev/null\n"
 	return "claude", script
 }
+
+// SkillDir: Claude Code's project skills.
+func (claudeDriver) SkillDir() string { return harness.ProjectSkillDirs(claudecode.New())[0] }
 
 // LargeJudgeModelArgs: size-lg is Claude Code's `opus` alias.
 func (claudeDriver) LargeJudgeModelArgs() (string, string) { return "--model", "opus" }
