@@ -229,6 +229,8 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'"'"
 // or the citation does not hold; with no `when`, no such part may exist. A
 // cited write states the whole file and grounds everything before it; a
 // change the agent never made (Foreign) is never charged.
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
+// sr:proves citations/between-turn-changes-are-charged-only-with-running-work
 func TestRequireCitationOnTheUncitedPartsOfAChange(t *testing.T) {
 	dir := t.TempDir()
 	// Applies unless the part leaves everything after the first line alone.
@@ -317,6 +319,7 @@ func TestUncitedPartCarriesNoCitations(t *testing.T) {
 
 // A change that landed between turns while work the agent had started may have
 // been running is charged, and the refusal says so and names the work.
+// sr:proves citations/between-turn-changes-are-charged-only-with-running-work
 func TestBetweenTurnsChangeIsChargedAndExplained(t *testing.T) {
 	contents := map[string]string{"c": "cited", "u": "user edit"}
 	cited := HistoryState{Exists: true, Hash: "c"}
