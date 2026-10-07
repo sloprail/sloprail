@@ -1,7 +1,7 @@
 {
   "name": "sloprail",
   "version": "0.4.1",
-  "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
+  "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Guardrails for Claude Code, Codex and Cursor, with a Stop gate.",
   "keywords": [
     "claude-code",
     "claude-code-plugin",
