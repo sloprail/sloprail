@@ -27,4 +27,4 @@ The code each domain was last read from. When sloprail moves past a baseline,
 
 | domains | sloprail | harness-mocks registry |
 |---|---|---|
-| all (first draft) | `b40aa4c` (2026-10-07) | `54784f0` |
+| all (first draft) | `142dd45` (2026-10-07) | `54784f0` |
