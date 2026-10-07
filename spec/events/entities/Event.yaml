@@ -6,8 +6,8 @@ fields:
     enum: [PreFileCreate, PreFileUpdate, PreFileDelete, PreCommandInvoke, PreToolUse, PostFileCreate, PostFileUpdate, PostFileDelete, PostTagWrite, Stop]
   - name: fields
     type: Record<string>
-    doc: The values the kind declares; every declared field is present, carrying its empty value when there is nothing to carry.
-    constraint_expr: always an object, never null; empty for Stop
+    doc: The values the kind declares.
+    constraint_expr: always an object, never null; every declared field present, holding its empty value when there is nothing to carry; empty for a turn end
   - name: tool
     type: string
     doc: The tool a pre-action call is about to run, on a tool-use event.

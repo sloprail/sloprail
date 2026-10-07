@@ -7,4 +7,4 @@ fields:
   - name: exit_code
     type: int32
     doc: "Process exit status."
-    enum: [0, 1]
+    constraint_expr: "0 or 1"

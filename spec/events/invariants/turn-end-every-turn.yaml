@@ -1,0 +1,6 @@
+predicate: >-
+  A turn-end {@ent:events:Event} with no fields occurs at the end of every
+  turn, whether or not anything changed, and a rule cannot narrow it on a
+  field of a file or command.
+why: An end-of-turn gate silently never runs on a turn that changed nothing.
+needs: [stop-hook-payload]

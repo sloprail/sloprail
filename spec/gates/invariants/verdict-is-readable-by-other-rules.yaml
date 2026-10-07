@@ -1,4 +1,0 @@
-predicate: >-
-  A {@fld:gates:Gate.status} holds the gate's latest verdict for the session,
-  so a context or another rule can read it.
-why: Rules that depend on whether a gate passed would see stale or no state.
