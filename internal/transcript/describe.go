@@ -216,18 +216,36 @@ func isSubagentRecord(path string) bool {
 // another's.
 func SessionRootOf(path string) string {
 	cur := path
+	seen := map[string]bool{}
 	for isSubagentRecord(cur) {
-		dir := SessionDirOfSubagent(cur)
-		if dir == "" {
+		if seen[cur] {
+			return "" // a dispatch cycle reaches no root
+		}
+		seen[cur] = true
+		next := dispatcherOf(cur)
+		if next == "" {
 			return ""
 		}
-		next := dir + jsonlSuffix
 		if fi, err := os.Stat(next); err != nil || fi.IsDir() || next == cur {
 			return ""
 		}
 		cur = next
 	}
 	return cur
+}
+
+// dispatcherOf is the record that dispatched the sub-agent record at path, "" when it
+// cannot be named: the harness's own link where it has one (harness.SubagentParenter),
+// else the Claude Code layout, where it is the record the sub-agent is nested under.
+func dispatcherOf(path string) string {
+	if t, ok := harness.Current().Transcripts().(harness.SubagentParenter); ok {
+		return t.ParentOf(path)
+	}
+	dir := SessionDirOfSubagent(path)
+	if dir == "" {
+		return ""
+	}
+	return dir + jsonlSuffix
 }
 
 // DescendantSubagentPaths returns every sub-agent record beneath the trajectory
@@ -240,6 +258,16 @@ func SessionRootOf(path string) string {
 // read is an error: a caller deciding that a quote lands on exactly one entry
 // must not decide it over records it silently skipped.
 func DescendantSubagentPaths(path string) ([]string, error) {
+	if t, ok := harness.Current().Transcripts().(harness.SubagentParenter); ok {
+		var paths []string
+		for _, f := range t.SubagentFiles(path) {
+			if strings.HasSuffix(f.Path, jsonlSuffix) {
+				paths = append(paths, f.Path)
+			}
+		}
+		sort.Strings(paths)
+		return paths, nil
+	}
 	dir := subagentDirOf(path)
 	if dir == "" {
 		return nil, nil
@@ -301,6 +329,9 @@ func subagentDirOf(path string) string {
 // link. The one hard error is an unreadable search directory, which is a broken
 // environment rather than a trajectory without a parent.
 func ParentPath(path, searchDir string) (string, error) {
+	if t, ok := harness.Current().Transcripts().(harness.SubagentParenter); ok {
+		return t.ParentOf(path), nil
+	}
 	meta, ok, err := ReadSubagentMeta(path)
 	if err != nil {
 		return "", err

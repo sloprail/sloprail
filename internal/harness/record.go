@@ -95,11 +95,27 @@ type SubagentFile struct {
 // and companions), however the harness lays them out: Claude Code nests them under
 // <session>/subagents/, Codex writes each as a rollout of its own naming its parent
 // thread in its first line. A harness whose sub-agent records cannot be tied to their
-// parent from what it writes does not implement it (Cursor: a sub-agent is a sibling
-// conversation directory and the parent link is only in hook payloads, recorded in
-// harness-mocks cursor-mock subagent-transcripts), and has none to find.
+// parent from what it writes does not implement it, and has none to find.
 type SubagentLocator interface {
 	SubagentFiles(transcriptPath string) []SubagentFile
+}
+
+// SubagentParenter is implemented by a Transcripts whose sub-agent records are tied to
+// their dispatcher by something other than Claude Code's directory layout (a sub-agent's
+// record nested under the record that dispatched it). It names the link both ways, so the
+// readers that climb from a sub-agent to the session's root (cite's user pool) and descend
+// from a root to every sub-agent (cite's tool_result pool, describe) need no layout.
+//
+// Cursor: a sub-agent is a sibling conversation directory and nothing names its parent
+// (harness-mocks cursor-mock subagent-transcripts), so the link is the dispatch itself.
+type SubagentParenter interface {
+	SubagentLocator
+
+	// ParentOf is the record of the session that dispatched the sub-agent whose record
+	// is at transcriptPath, "" when it is a root or its dispatcher cannot be named
+	// unambiguously (never a guess: a wrong parent would cite one conversation's words
+	// as another's).
+	ParentOf(transcriptPath string) string
 }
 
 // Transcripts is how a harness's session record is parsed and located: its line
