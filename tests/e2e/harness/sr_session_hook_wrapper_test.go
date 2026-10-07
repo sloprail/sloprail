@@ -344,6 +344,11 @@ func TestSrSessionHookWrapper_StartWarnsButDoesNotBlock(t *testing.T) {
 	}
 }
 
+// stubEmitContext is the part of a stub sr-session that answers `emit-context`, which
+// `start` hands its text to (the harness renders what the agent is told): under Claude
+// Code that is the text itself, so the stub passes its input through.
+const stubEmitContext = "if [ \"$1\" = emit-context ]; then exec cat; fi\n"
+
 // TestSrSessionHookWrapper_DispatchesNormallyWhenBinaryPresent is the negative
 // control: once sr-session is genuinely on PATH, the wrapper is invisible —
 // it dispatches straight through rather than adding its own opinion about a
@@ -354,7 +359,7 @@ func TestSrSessionHookWrapper_DispatchesNormallyWhenBinaryPresent(t *testing.T) 
 	// A stub that proves it was really invoked, with the subcommand forwarded,
 	// and echoes something recognizable rather than sloprail's own "missing"
 	// wording.
-	script := "#!/bin/sh\necho \"real sr-session ran: $1\"\nexit 0\n"
+	script := "#!/bin/sh\n" + stubEmitContext + "echo \"real sr-session ran: $1\"\nexit 0\n"
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatalf("write stub sr-session: %v", err)
 	}
@@ -454,7 +459,7 @@ func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
 // stdout stays clean: stop and pre-tool answer the harness there.
 func TestSrSessionHookWrapper_StartTellsTheAgentRulesFirst(t *testing.T) {
 	stubDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(stubDir, "sr-session"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(stubDir, "sr-session"), []byte("#!/bin/sh\n"+stubEmitContext+"exit 0\n"), 0o755); err != nil {
 		t.Fatalf("write stub sr-session: %v", err)
 	}
 
@@ -517,7 +522,7 @@ func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
 	for _, bin := range []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval", "sr-checks"} {
 		body := "#!/bin/sh\nexit 0\n"
 		if bin == "sr-session" {
-			body = "#!/bin/sh\necho \"installed sr-session ran: $1\"\n"
+			body = "#!/bin/sh\n" + stubEmitContext + "echo \"installed sr-session ran: $1\"\n"
 		}
 		if err := os.WriteFile(filepath.Join(stage, bin), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
@@ -579,7 +584,7 @@ func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
 func TestSrSessionHookWrapper_StartRepeatsOnlyProblems(t *testing.T) {
 	stubWith := func(t *testing.T, stderrLines string) string {
 		dir := t.TempDir()
-		script := "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" + stderrLines + "' >&2\nexit 0\n"
+		script := "#!/bin/sh\n" + stubEmitContext + "cat >/dev/null\nprintf '%s' '" + stderrLines + "' >&2\nexit 0\n"
 		if err := os.WriteFile(filepath.Join(dir, "sr-session"), []byte(script), 0o755); err != nil {
 			t.Fatalf("write stub sr-session: %v", err)
 		}

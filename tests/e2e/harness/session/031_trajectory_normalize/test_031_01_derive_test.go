@@ -230,19 +230,21 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
 	entries := decodeEntries(t, res.Output)
-	// Four entries, in the order real Claude Code writes a fresh session: the
-	// SessionStart hook's attachment (the plugin's start hook prints, and a hook
-	// that prints leaves a hook_success record — the session's origin), the
-	// prompt chained to it, the Say turn, and the stop_hook_summary every Stop
-	// that ran a hook ends with (harness-mocks EVIDENCE.md: 8,272 real records).
-	if len(entries) != 4 {
-		t.Fatalf("only the four uuid-carrying lines are entries (SessionStart attachment, prompt, "+
+	// Five entries, in the order real Claude Code writes a fresh session: the
+	// SessionStart hook's attachments (the plugin's start hook prints, and a hook
+	// that prints leaves a hook_success record — the session's origin — and, as
+	// the start text is handed over as hookSpecificOutput.additionalContext, a
+	// hook_additional_context record), the prompt chained to them, the Say turn,
+	// and the stop_hook_summary every Stop that ran a hook ends with
+	// (harness-mocks EVIDENCE.md: 8,272 real records).
+	if len(entries) != 5 {
+		t.Fatalf("only the five uuid-carrying lines are entries (two SessionStart attachments, prompt, "+
 			"Say turn, stop_hook_summary), got %d:\n%s", len(entries), res.Output)
 	}
 	// The first entry does not sit on physical line 1 — the preamble records
 	// occupy the opening lines, so it sits on line preamble+1. That its line is
 	// past its ordinal (1) is exactly "physical line != entry ordinal".
-	for i, want := range []string{"attachment", "user", "assistant", "system"} {
+	for i, want := range []string{"attachment", "attachment", "user", "assistant", "system"} {
 		if string(entries[i].Type) != want || entries[i].Line != preamble+1+i {
 			t.Fatalf("entry %d should be the %s record on physical line %d, got type %q line %d:\n%s",
 				i, want, preamble+1+i, entries[i].Type, entries[i].Line, res.Output)
@@ -263,12 +265,12 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 		Level                 string   `json:"level"`
 		ToolUseID             string   `json:"toolUseID"`
 	}
-	if err := json.Unmarshal([]byte(lines[entries[3].Line-1]), &summary); err != nil {
+	if err := json.Unmarshal([]byte(lines[entries[4].Line-1]), &summary); err != nil {
 		t.Fatalf("the system entry is not JSON: %v", err)
 	}
 	if summary.Subtype != "stop_hook_summary" || summary.Level != "suggestion" || summary.ToolUseID == "" ||
 		summary.PreventedContinuation == nil || summary.HookCount != len(summary.HookInfos) || summary.HookCount < 1 {
-		t.Fatalf("the system entry is not a stop_hook_summary in the real shape: %s", lines[entries[3].Line-1])
+		t.Fatalf("the system entry is not a stop_hook_summary in the real shape: %s", lines[entries[4].Line-1])
 	}
 	stopHook := false
 	for _, h := range summary.HookInfos {
@@ -277,7 +279,7 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 		}
 	}
 	if !stopHook {
-		t.Errorf("the summary does not list the plugin's Stop hook: %s", lines[entries[3].Line-1])
+		t.Errorf("the summary does not list the plugin's Stop hook: %s", lines[entries[4].Line-1])
 	}
 	if len(summary.HookErrors) != 0 {
 		t.Errorf("nothing refused, yet the summary lists hook errors: %v", summary.HookErrors)
