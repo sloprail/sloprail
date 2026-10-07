@@ -26,7 +26,7 @@ func TestPendingPushIsWarnedAndPushedByTheNextOpen(t *testing.T) {
 	gitT(t, repo, "remote", "add", "origin", remote)
 
 	var w bytes.Buffer
-	store, err := OpenCache(&w, repo, true)
+	store, err := OpenCache(&w, repo, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestPendingPushIsWarnedAndPushedByTheNextOpen(t *testing.T) {
 
 	gitT(t, filepath.Dir(remote), "init", "-q", "--bare", remote) // back online
 	w.Reset()
-	again, err := OpenCache(&w, repo, true)
+	again, err := OpenCache(&w, repo, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestReadOnlyOpenNeverPushesOrWrites(t *testing.T) {
 	gitT(t, repo, "remote", "add", "origin", remote)
 
 	var w bytes.Buffer
-	store, err := OpenCache(&w, repo, true)
+	store, err := OpenCache(&w, repo, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestReadOnlyOpenNeverPushesOrWrites(t *testing.T) {
 	before := ref()
 
 	gitT(t, filepath.Dir(remote), "init", "-q", "--bare", remote) // back online
-	ro, err := OpenCache(&w, repo, false)
+	ro, err := OpenCache(&w, repo, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestReadOnlyOpenNeverPushesOrWrites(t *testing.T) {
 	if out := gitOut(t, remote, "for-each-ref", "refs/heads"); strings.TrimSpace(out) != "" {
 		t.Fatalf("a read-only open pushed to the remote: %s", out)
 	}
-	if _, err := OpenCache(&w, repo, true); err != nil {
+	if _, err := OpenCache(&w, repo, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if out := gitOut(t, remote, "for-each-ref", "refs/heads"); !strings.Contains(out, "sloprail/checks") {

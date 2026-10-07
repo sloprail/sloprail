@@ -44,12 +44,10 @@ func keyRule(t *testing.T, citation bool) (declaration.FileGuard, declaration.Ch
 // key is the guard's key over a payload; tree and prepFP are accepted only so the cases below
 // read as before: neither may matter (the snapshot's path and prepare's context are not input;
 // the subject's fingerprint is, and is set on the payload's subject).
-func key(t *testing.T, g declaration.FileGuard, _ declaration.Check, p changeset.Payload, _, subjectFP string) string {
+func key(t *testing.T, _ declaration.FileGuard, _ declaration.Check, p changeset.Payload, _, subjectFP string) string {
 	t.Helper()
 	p.Subject.Fingerprint = subjectFP
-	fp, err := guardKey(g, p)
-	require.NoError(t, err)
-	return fp
+	return guardKey(p)
 }
 
 func TestGuardKey_SameCheckInTwoSnapshotDirsKeysTheSame(t *testing.T) {
@@ -85,9 +83,10 @@ func TestGuardKey_ChangingTheSliceChangesTheKey(t *testing.T) {
 	assert.NotEqual(t, key(t, g, c, keyPayload(), "/t1", ""), key(t, g, c, other, "/t1", ""))
 }
 
-// A citation reword is an input for every rule (any check can read the range's citations). The volatile
-// Call field and SHAs never are.
-func TestGuardKey_ACitationRewordChangesTheKey(t *testing.T) {
+// A citation is no input for any rule: a stored pass is about the content, and the citation
+// requirements are checked afresh on every run. Nor are the volatile Call field, SHAs or a
+// commit's message.
+func TestGuardKey_ACitationRewordDoesNotChangeTheKey(t *testing.T) {
 	reword := func(p *changeset.Payload) {
 		p.Changeset.Commits[0].Trailers[changeset.TrailerCitesUser] = []string{"another"}
 		p.Changeset.Citations[0].Citation.Quote = "another"
@@ -107,14 +106,12 @@ func TestGuardKey_ACitationRewordChangesTheKey(t *testing.T) {
 		msg := keyPayload()
 		msg.Changeset.Commits[0].Subject, msg.Changeset.Commits[0].Body = "reworded", "and a body"
 		assert.Equal(t, base, key(t, g, c, msg, "/t1", ""), "a commit's subject and body are never input")
-		// The subject's own grounding quote is what its checks receive, so a reword moves its key.
-		assert.NotEqual(t, base, key(t, g, c, r, "/t1", ""))
+		assert.Equal(t, base, key(t, g, c, r, "/t1", ""), "a reworded citation is not input")
 	}
 }
 
-// The key is the template, the matched files' content, prepare's fingerprint and (citation
-// rules) the quotes. Not the rendered prompt, not prepare's context, not the transcript, not
-// the history.
+// The key is the matched files' content and the subject's fingerprint. Not the template, not the
+// rendered prompt, not prepare's context, not the transcript, not the citations, not the history.
 func TestGuardKey_AFileChangeTheTemplateDoesNotRenderChangesTheKey(t *testing.T) {
 	g, c, dir := keyRule(t, false)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "j.md.j2"), []byte("Judge the file at {{ subject.id }}.\n"), 0o644))

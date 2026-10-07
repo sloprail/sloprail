@@ -239,7 +239,7 @@ func execute(cmd *cobra.Command, m mode) error {
 		}
 		reap.Temp("", t.root) // what killed runs left in the temp dir, and their dead worktrees
 	}
-	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun)
+	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), t.root, m == modeRun, t.loaded.FileGuards)
 	if err != nil {
 		return err
 	}

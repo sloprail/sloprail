@@ -277,7 +277,8 @@ type ruleRun struct {
 
 	// key is the guard's verdict key over its subject ("" when it cannot be keyed).
 	key string
-	// volatile: the refusal is "no session available to judge", so it is not stored.
+	// volatile: the refusal is "no session available to judge", or the citation gate's, so it
+	// is not stored under the key.
 	volatile bool
 	replayed bool // the verdict is a stored one, already recorded
 
@@ -1363,28 +1364,24 @@ func withoutSession(req dispatchcore.Request) dispatchcore.Request {
 }
 
 // guardKey is the fingerprint a guard's verdict over its subject is kept under. The rule's
-// name and the subject id are the key's own, and the rule's definition is not part of it; this adds what the verdict is about: the content of
-// the subject's files, its fingerprint from the `subjects:` script (when it gave one), and,
-// the quotes of the citations that ground the subject (the only ones its checks receive). No commit
-// SHA, branch, session or snapshot path is in it, so two branches with identical content share
-// their verdicts and the run that stored one and the verify that reads it compute one key.
-func guardKey(g declaration.FileGuard, payload changeset.Payload) (string, error) {
-	// The key is over the trailers' quotes as `verify` reads them (trusted, each in its own
-	// pool), never over how a transcript resolved them: a quote `run` could not resolve
-	// (ambiguous, or said in no session) is still a quote of the range, and a key that left it
-	// out would never be the one `verify` computes.
-	trusted := payload
-	cs := trusted.Changeset
-	TrustTrailers(&cs)
-	trusted.Changeset = cs
-	// Only the citations that ground THIS subject (CitationPart) are in the key: they are all
-	// a check receives of the range's citations. A commit touching none of the subject's
-	// files, and the quote it carries, never moves it.
-	citations, err := changeset.CitationPart(trusted)
-	if err != nil {
-		return "", err
+// name and the subject id are the key's own; this adds what the verdict is about: the content of
+// the subject's files and its fingerprint from the `subjects:` script (when it gave one). No
+// commit SHA, branch, session, snapshot path or citation is in it, so two branches with
+// identical content share their verdicts, and the run that stored one and the verify that reads
+// it compute one key. A citation is only a gate: it is checked afresh on every run
+// (citationGate), never stored with the verdict.
+func guardKey(payload changeset.Payload) string {
+	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint)
+}
+
+// failedByJudge says a judge check is among the failed steps of a stored verdict.
+func failedByJudge(steps []stepRow) bool {
+	for _, st := range steps {
+		if st.Status == checkstore.StatusFail && strings.Contains(st.Kind, ":judge:") {
+			return true
+		}
 	}
-	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint, citations), nil
+	return false
 }
 
 // stepRow is one step of a guard's stored verdict.
@@ -1431,10 +1428,7 @@ func stepStatus(s string) string {
 // settled says the rule's verdict is v (and err an engine failure).
 func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err error, settled bool) {
 	g := rr.g
-	rr.key, err = guardKey(g, rr.payload)
-	if err != nil {
-		return dispatchcore.Verdict{}, engineError(g, err), true
-	}
+	rr.key = guardKey(rr.payload)
 	missing := func(why string) (dispatchcore.Verdict, error, bool) {
 		o := CheckOutcome{Rule: g.Qualified(), Subject: rr.subject.ID, Kind: guardKind, Status: "missing", Source: "stored", Reason: why}
 		ev.note(o)
@@ -1450,10 +1444,17 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if err != nil {
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
+	if !ev.verify && have && cached.Status == checkstore.StatusFail && !failedByJudge(storedSteps(cached.Metadata)) {
+		// A refusal by a judge is replayed: asking again would pay for the same judge. One by a
+		// citation requirement or a script is cheap and may have read the citations, which are not
+		// in the key (one was added, a quote now resolves): those steps run again, and the judge,
+		// which never ran for it, only if they pass.
+		have = false
+	}
 	reused := ""
 	if ev.verify && !have {
-		// A squash merge carries the judged branch's net change in a commit of another message
-		// (so another citation key): the same two trees are the same change, judged already.
+		// A squash merge carries the judged branch's net change in a commit of another message:
+		// the same two trees are the same change, judged already.
 		if byTrees, ok, err := ev.store.CachedByTrees(g.Qualified(), rr.subject.ID, guardKind, rr.baseTree, rr.headTree); err != nil {
 			return dispatchcore.Verdict{}, engineError(g, err), true
 		} else if ok {
@@ -1472,19 +1473,6 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	}
 	if !have {
 		return dispatchcore.Verdict{}, nil, false
-	}
-	if !ev.verify && cached.Status == checkstore.StatusFail {
-		if len(rr.unresolved) == 0 && marked(cached.Metadata["unresolvedCitations"]) {
-			// The stored refusal was "these quotes are not in the session"; they all resolve
-			// now, so it is no longer the verdict on this key: judge again.
-			return dispatchcore.Verdict{}, nil, false
-		}
-		if cached.Run.HeadRef != rr.head && onlyCitationFailed(storedSteps(cached.Metadata)) {
-			// A citation requirement is cheap, and its reason names the commits of the range it
-			// was judged in (possibly another branch's, with the same content and quotes):
-			// from another head it is judged again so the reason is about THIS range.
-			return dispatchcore.Verdict{}, nil, false
-		}
 	}
 	steps := storedSteps(cached.Metadata)
 	reasoning, _ := cached.Metadata["reasoning"].(string)
@@ -1558,13 +1546,6 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 			return
 		}
 		rec.Status, meta["reasoning"] = checkstore.StatusFail, verdict.Reason
-		if len(rr.unresolved) > 0 && onlyCitationFailed(meta["steps"].([]stepRow)) {
-			// The key is over the quotes, not over how the session resolved them: say that
-			// this refusal is the citation requirement's, resting on quotes the session did
-			// not hold, so `run` asks again once they resolve (a tool printed them since). A
-			// content judge's or script's refusal is never marked: it is replayed as is.
-			meta["unresolvedCitations"] = len(rr.unresolved)
-		}
 	default:
 		rec.Status = checkstore.StatusPass
 		if verdict.Reason != "" {
@@ -1881,9 +1862,8 @@ func (ev *changesetEvaluation) releaseInflight(rr *ruleRun) {
 // subjectChangeset is the changeset one subject's checks receive: the range, with
 // only the citations of commits that changed the subject's files (every step's
 // proof, so a reviewer sees each). The key covers what a check receives
-// (CitationPart keys on that evidence and on what grounds each file), so a commit
-// that touches none of its files, and the quotes it carries, is no input of it
-// (#291). The list is never null: a check may iterate it.
+// (a commit that touches none of its files, and the quotes it carries, is no input of
+// its checks: #291). The list is never null: a check may iterate it.
 func subjectChangeset(cs changeset.Changeset, sub changeset.Subject) changeset.Changeset {
 	cs.Citations = append([]changeset.Citation{}, cs.EvidenceForSubject(sub)...)
 	return cs
