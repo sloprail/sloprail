@@ -14,7 +14,6 @@ import (
 func TestCurrentSessionPathAsksTheRunningHarness(t *testing.T) {
 	t.Setenv(harness.SelectEnv, "cursor")
 	t.Setenv("CURSOR_TRANSCRIPT_PATH", "/cursor/agent-transcripts/a/a.jsonl")
-	t.Setenv(SessionIDEnv, "")
 	assert.Equal(t, "/cursor/agent-transcripts/a/a.jsonl", CurrentSessionPath(t.TempDir()))
 
 	t.Setenv(harness.SelectEnv, "claudecode")

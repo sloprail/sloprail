@@ -1,16 +1,14 @@
 #!/bin/sh
 # Cursor's entrypoint for the same lifecycle points hooks.json gives Claude Code:
 # it delegates to sr-session-hook.sh (install checks, auto-install, PATH, the
-# missing-engine refusal — all shared), adapting only what differs in Cursor's hook
-# contract (harness-mocks cursor-mock recordings, capability hook-exit-code-semantics):
+# missing-engine refusal — all shared), only naming the harness first.
 #
-#   - sessionStart: stdout is not agent context. Cursor reads a JSON document and
-#     treats output that is not valid JSON as invalid; the agent's context is
-#     {"additional_context": "..."}. The shared wrapper prints rules-first.md and
-#     the load report as plain text, so it is wrapped here.
-#   - every other point: exec'd unchanged. A refusal is exit status 2 (Cursor blocks
-#     on it too, recorded) or {"permission":"deny"} JSON; what sr-session itself
-#     writes to stdout is the engine's concern, not this wrapper's.
+# Nothing here adapts Cursor's hook contract: what sr-session writes for a refusal
+# or for the session's start-up context is the running harness's own form
+# (harness.RenderHook — Cursor's sessionStart context is {"additional_context"},
+# a refusal is {"permission":"deny"} or exit status 2; harness-mocks cursor-mock
+# recordings), and the shared wrapper hands its start-up text to
+# `sr-session emit-context` for exactly that.
 set -eu
 
 # Name the harness outright: the engine's hook parser and responses are the running
@@ -19,15 +17,4 @@ set -eu
 SLOPRAIL_HARNESS=cursor
 export SLOPRAIL_HARNESS
 
-subcommand="$1"
-here="$(dirname "$0")"
-
-if [ "$subcommand" = "start" ]; then
-  out="$(sh "$here/sr-session-hook.sh" "$@" || true)"
-  # JSON-escape the text with awk (jq is not guaranteed on a machine Cursor runs on).
-  body="$(printf '%s' "$out" | awk 'BEGIN { ORS = "" } { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, ""); if (NR > 1) print "\\n"; print }')"
-  printf '{"additional_context":"%s"}\n' "$body"
-  exit 0
-fi
-
-exec sh "$here/sr-session-hook.sh" "$@"
+exec sh "$(dirname "$0")/sr-session-hook.sh" "$@"

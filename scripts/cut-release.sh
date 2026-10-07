@@ -103,7 +103,12 @@ tag)
   # going to point at that remote commit, so that is the plugin.json/
   # marketplace.json this has to agree with, not whatever happens to be
   # checked out here right now.
-  got="$(git show "origin/$default_branch:marketplace/plugins/sloprail/.claude-plugin/plugin.json" | jq -r .version)"
+  . "$(dirname "$0")/plugin-manifest-dirs.sh"
+  got=""
+  for d in $plugin_manifest_dirs; do
+    got="$(git show "origin/$default_branch:marketplace/plugins/sloprail/$d/plugin.json" 2>/dev/null | jq -r .version || true)"
+    [ -n "$got" ] && break
+  done
   if [ "$got" != "$version" ]; then
     echo "cut-release.sh: origin/$default_branch's plugin.json says $got, not $version — has the bump PR (release/v${version}) actually been merged yet?" >&2
     exit 1

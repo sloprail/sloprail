@@ -7,6 +7,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sloprail/sloprail/internal/harness"
+	_ "github.com/sloprail/sloprail/internal/harness/claudecode"
+	_ "github.com/sloprail/sloprail/internal/harness/cursor"
 )
 
 func TestStopHookBlockCap(t *testing.T) {
@@ -15,12 +19,12 @@ func TestStopHookBlockCap(t *testing.T) {
 		want       int
 		wantErr    bool
 	}{
-		{"absent file", "", DefaultStopHookBlockCap, false},
-		{"absent key", "disabled: [gate/x]\n", DefaultStopHookBlockCap, false},
+		{"absent file", "", DefaultStopHookBlockCap(), false},
+		{"absent key", "disabled: [gate/x]\n", DefaultStopHookBlockCap(), false},
 		{"zero is no cap", "stop_hook_block_cap: 0\n", 0, false},
 		{"explicit", "stop_hook_block_cap: 3\n", 3, false},
-		{"negative", "stop_hook_block_cap: -2\n", DefaultStopHookBlockCap, true},
-		{"not a number", "stop_hook_block_cap: lots\n", DefaultStopHookBlockCap, true},
+		{"negative", "stop_hook_block_cap: -2\n", DefaultStopHookBlockCap(), true},
+		{"not a number", "stop_hook_block_cap: lots\n", DefaultStopHookBlockCap(), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -37,5 +41,13 @@ func TestStopHookBlockCap(t *testing.T) {
 			}
 		})
 	}
-	assert.Equal(t, 8, DefaultStopHookBlockCap, "mirrors Claude Code's CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default")
+	assert.Equal(t, 8, DefaultStopHookBlockCap(), "mirrors Claude Code's CLAUDE_CODE_STOP_HOOK_BLOCK_CAP default")
+}
+
+// A harness with no cap of its own (Codex, Cursor) must not make the default 0:
+// 0 is "never stop blocking", so an unsatisfiable Stop gate would loop forever.
+func TestDefaultStopHookBlockCap_FiniteWithoutHarnessCap(t *testing.T) {
+	t.Setenv(harness.SelectEnv, "cursor")
+	assert.Equal(t, 0, harness.StopBlockCap(harness.Current()))
+	assert.Equal(t, FallbackStopHookBlockCap, DefaultStopHookBlockCap())
 }

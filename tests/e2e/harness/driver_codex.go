@@ -37,7 +37,7 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -337,14 +337,17 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 	if err := os.MkdirAll(filepath.Join(dir, ".agents", "plugins"), 0o755); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "plugins"), 0o755); err != nil {
-		e.t.Fatalf("harness: %v", err)
-	}
-	if err := os.Symlink(root, filepath.Join(dir, "plugins", plugin)); err != nil {
-		e.t.Fatalf("harness: link plugin %s: %v", plugin, err)
+	// The entry's path reaches the plugin's own directory (relative to the marketplace,
+	// so it resolves to the real directory, not through a link): the mock installs a
+	// plugin by copying the directory and does not copy a symbolic link, so a link here
+	// installed nothing and the plugin's hooks never ran. Resolved when the mock runs, so
+	// files a test adds to the plugin first are installed too.
+	rel, err := filepath.Rel(dir, root)
+	if err != nil {
+		e.t.Fatalf("harness: plugin %s path: %v", plugin, err)
 	}
 	body, _ := json.Marshal(map[string]any{"name": name, "plugins": []any{map[string]any{
-		"name": plugin, "source": map[string]any{"source": "local", "path": "./plugins/" + plugin}}}})
+		"name": plugin, "source": map[string]any{"source": "local", "path": rel}}}})
 	if err := os.WriteFile(filepath.Join(dir, ".agents", "plugins", "marketplace.json"), body, 0o644); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}

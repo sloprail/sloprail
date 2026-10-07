@@ -49,7 +49,7 @@ func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(
 	told := strings.Join(e.SubagentBlockingErrors(proj, sess), "\n")
 	for _, want := range []string{
 		"You are a sub-agent", "cannot get the user's words yourself", "docs/release.md",
-		"AskUserQuestion", "Sloprail-Cites-User: <the user's exact answer>", "EXACTLY what needs the user's approval",
+		"Sloprail-Cites-User: <the user's exact answer>", "EXACTLY what needs the user's approval",
 	} {
 		if !strings.Contains(told, want) {
 			t.Fatalf("the sub-agent's refusal lacks %q:\n%s", want, told)

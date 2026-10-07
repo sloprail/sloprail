@@ -60,6 +60,7 @@ about to happen.
 
   sr-session start          a session is beginning
   sr-session pre-tool       a tool is about to run — the refusable moment
+  sr-session post-tool      a tool has run (its output is kept where the harness's record lacks it)
   sr-session stop           a turn has ended
   sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)
   sr-session subagent-stop  a subagent's turn has ended
@@ -68,6 +69,7 @@ about to happen.
   sr-session id | query | state   what a hook asks about the session so far
   sr-session refs list|track|untrack   the ranges of commits the session answers for
   sr-session agents list    the sub-agents the session dispatched, and which still run
+  sr-session plugins        the plugins the harness resolves for this project (JSON lines)
   sr-session trajectory ...        read a trajectory — describe it, cite into it
   sr-session codex-trust           trust sloprail's plugin hooks in Codex (it skips untrusted ones silently)
 
@@ -85,10 +87,10 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		SilenceErrors: true,
 	}
 	root.AddCommand(
-		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
+		newSessionStartCmd(), newSessionPreToolCmd(), newSessionPostToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStartCmd(), newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(), newSessionRefsCmd(), newSessionAgentsCmd(), newSessionWorktreeRemoveCmd(),
-		newSessionTrajectoryCmd(), newCodexTrustCmd(),
+		newSessionTrajectoryCmd(), newSessionPluginsCmd(), newCodexTrustCmd(), newEmitContextCmd(),
 	)
 	return root
 }

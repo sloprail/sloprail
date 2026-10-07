@@ -25,8 +25,7 @@ printf 'package src\n\nfunc TestOther(t *testing.T) {}\n' > src/other_test.go
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m base
 BASE=$(git rev-parse HEAD)
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
-export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
-export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
+while IFS= read -r kv; do export "$kv"; done < <(echo "$SETUP" | jq -er ".env[]")
 
 commit() { git add -A && git -c user.name=t -c user.email=t@t commit -q -m "$1"; }
 run() { : > "$SR_EVENTS_FILE"; sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1; }

@@ -33,6 +33,7 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 	in := harness.HookInput{
 		Event:               string(p.HookEventName),
 		SessionID:           firstNonEmpty(p.SessionID, p.ConversationID),
+		GenerationID:        p.GenerationID,
 		TranscriptPath:      p.Transcript(),
 		AgentTranscriptPath: p.AgentTranscriptPath,
 		AgentType:           p.SubagentType,
@@ -53,7 +54,90 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 			in.Files = []harness.FileEffect{{Kind: harness.FileDelete, Path: d.FilePath}}
 		}
 	}
+	switch p.HookEventName {
+	case PostToolUse:
+		in.Result = &harness.ToolResult{Output: toolOutputText(p.ToolName, p.ToolOutput)}
+	case PostToolUseFailure:
+		in.Result = &harness.ToolResult{Output: p.ErrorMessage, IsError: true}
+	case BeforeReadFile:
+		// A Read's postToolUse output is only {file_path, content_length}; the bytes are in
+		// this hook. It is reported as the Read's result and RecordToolResult tells it apart
+		// by the event.
+		in.ToolName = harness.ToolRead
+		in.ToolInput, _ = json.Marshal(map[string]string{"file_path": p.FilePath})
+		in.Result = &harness.ToolResult{Output: p.Content}
+	}
 	return in
+}
+
+// toolOutputText is a postToolUse's output as the text the tool printed. A Shell's is
+// {"output","exitCode"} (recorded) and the text is "output"; every other tool's is its
+// own JSON document (Write {"file_path","success"}, Read {"file_path","content_length"}),
+// kept as it came.
+func toolOutputText(tool, raw string) string {
+	if tool != toolShell {
+		return raw
+	}
+	var o struct {
+		Output *string `json:"output"`
+	}
+	if json.Unmarshal([]byte(raw), &o) != nil || o.Output == nil {
+		return raw
+	}
+	return *o.Output
+}
+
+// RecordToolResult implements harness.ToolResultRecorder: Cursor's transcript holds no
+// tool_result, so what its hooks report of each call is kept in sloprail's own store, from
+// which the record the engine reads is merged (record.OpenRecord, which says how a result
+// is paired with its call).
+//
+//   - preToolUse: the call's slot (its tool_use_id and Identity), for every tool.
+//   - postToolUse / postToolUseFailure: the call's outcome, by tool_use_id.
+//   - beforeReadFile: the bytes of a file a Read is about to return.
+func (Harness) RecordToolResult(in harness.HookInput) error {
+	switch in.Event {
+	case string(SessionStart):
+		// the session's own conversation (see record.KindRoot): never fired for a sub-agent's
+		return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindRoot})
+	case string(PreToolUse):
+		if in.ToolUseID == "" || in.ToolName == "" {
+			return nil
+		}
+		l := record.StoredLine{
+			Kind: record.KindPre, ToolUseID: in.ToolUseID, Tool: in.ToolName,
+			Key: record.Identity(in.ToolName, in.ToolInput), Generation: in.GenerationID,
+		}
+		if in.ToolName == harness.ToolRead {
+			l.Path = filePathOf(in.ToolInput)
+		}
+		return record.AppendLine(in.SessionID, l)
+	case string(PostToolUse), string(PostToolUseFailure):
+		if in.Result == nil || in.ToolUseID == "" {
+			return nil
+		}
+		return record.AppendLine(in.SessionID, record.StoredLine{
+			Kind: record.KindPost, ToolUseID: in.ToolUseID, Tool: in.ToolName,
+			Generation: in.GenerationID, Output: in.Result.Output, IsError: in.Result.IsError,
+		})
+	case string(BeforeReadFile):
+		if in.Result == nil {
+			return nil
+		}
+		return record.AppendLine(in.SessionID, record.StoredLine{
+			Kind: record.KindContent, Path: filePathOf(in.ToolInput),
+			Generation: in.GenerationID, Output: in.Result.Output,
+		})
+	}
+	return nil
+}
+
+func filePathOf(input json.RawMessage) string {
+	var in struct {
+		FilePath string `json:"file_path"`
+	}
+	_ = json.Unmarshal(input, &in)
+	return in.FilePath
 }
 
 // RenderHook implements harness.HookWire: Cursor's hook output.
