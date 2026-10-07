@@ -133,6 +133,13 @@ func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 	if path == "" {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %w", ErrNoTranscriptPath)
 	}
+	// A harness that names its conversation in the file's path (harness.ConversationNamer)
+	// has its identity there: nothing is read, and nothing need exist yet.
+	if n, ok := harness.Current().Transcripts().(harness.ConversationNamer); ok {
+		if id := n.ConversationID(path); id != "" {
+			return Identity{ID: id}, nil
+		}
+	}
 	root, err := rootRecord(path)
 	if err != nil {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %w", err)
