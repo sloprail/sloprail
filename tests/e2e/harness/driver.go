@@ -46,6 +46,11 @@ const (
 	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
 	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
 	CapRecordPreamble = "record-preamble"
+	// CapRecordPerDirectory: a session's record lives in a folder keyed by the directory
+	// the session ran in, so a turn resumed from another directory is told a path under
+	// that directory's folder, where no file exists. Codex keeps every rollout in one
+	// date-sharded tree, whichever directory the thread runs from.
+	CapRecordPerDirectory = "record-per-directory"
 )
 
 // SessionMode is how a launch relates to the session id it names.

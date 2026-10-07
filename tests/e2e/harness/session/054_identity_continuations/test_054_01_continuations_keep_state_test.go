@@ -233,6 +233,9 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 // the same tree, so the same store.
 // sr:proves session/resume-from-another-directory
 func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
+	// The step this test needs, a record told from a folder it is not in, only exists
+	// where the record's folder is keyed by the directory (Codex has no such folder).
+	harness.RequireCap(t, harness.CapRecordPerDirectory)
 	e, proj, _ := project(t)
 	sub := proj + "/sub"
 	e.WriteFile(proj, "sub/.keep", "")
