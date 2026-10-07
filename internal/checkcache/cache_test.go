@@ -31,6 +31,7 @@ func TestKey_EveryPartIsPartOfTheIdentity(t *testing.T) {
 	} {
 		assert.NotEqual(t, base.ID(), k.ID(), name)
 	}
+	assert.NotEqual(t, base.ID(), base.idUnder("sr-other"), "schema_version")
 	// Parts cannot be re-cut into one another.
 	assert.NotEqual(t, Key{Rule: "ab", Kind: "c"}.ID(), Key{Rule: "a", Kind: "bc"}.ID())
 }
