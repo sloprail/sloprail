@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 
@@ -38,7 +37,7 @@ const maxRecordBytes = 16 * 1024 * 1024
 // refuse to answer at all. A file that cannot be opened or read IS fatal: see
 // the fail-loudly reasoning on StableSessionID.
 func Read(path string) ([]Entry, error) {
-	f, err := os.Open(path)
+	f, err := openRecord(path)
 	if err != nil {
 		return nil, fmt.Errorf("transcript: open %s: %w", path, err)
 	}
@@ -90,7 +89,7 @@ func scanRecords(r io.Reader, path string, visit func(harness.Record) bool) erro
 
 // scanFile is scanRecords over a path.
 func scanFile(path string, visit func(harness.Record) bool) error {
-	f, err := os.Open(path)
+	f, err := openRecord(path)
 	if err != nil {
 		// Not re-stating the path: the wrapped error already names it, and a
 		// path repeated at every level of a message tells the reader nothing
@@ -105,7 +104,7 @@ func scanFile(path string, visit func(harness.Record) bool) error {
 // not parse is an error, not skipped (a skipped line could be the very notification that ends
 // an agent's run), and a record without a uuid is kept.
 func readStrict(path string) ([]Entry, error) {
-	f, err := os.Open(path)
+	f, err := openRecord(path)
 	if err != nil {
 		return nil, fmt.Errorf("transcript: open %s: %w", path, err)
 	}

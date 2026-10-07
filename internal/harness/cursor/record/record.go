@@ -31,6 +31,14 @@ type cursorLine struct {
 	Role    string          `json:"role"`
 	Type    string          `json:"type"`
 	Message json.RawMessage `json:"message"`
+
+	// Timestamp is not written by Cursor: only the tool_result lines sloprail merges in
+	// (opener.go) carry one, when the hook recorded the outcome.
+	Timestamp string `json:"timestamp"`
+
+	// SloprailLine is the number a merged tool_result line is cited under (opener.go);
+	// Cursor's own lines have none.
+	SloprailLine int `json:"sloprail_line"`
 }
 
 // ErrNotARecord: the line is JSON but neither a conversation message nor a
@@ -53,7 +61,7 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 		return harness.Record{}, err
 	}
 	sum := sha256.Sum256(line)
-	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message)}
+	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message), Timestamp: l.Timestamp, Line: l.SloprailLine}
 	switch {
 	case l.Role == "user":
 		r.Type = string(harness.EntryUser)

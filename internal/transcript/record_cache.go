@@ -2,7 +2,6 @@ package transcript
 
 import (
 	"encoding/json"
-	"os"
 	"sync"
 	"time"
 )
@@ -94,18 +93,18 @@ var recordCache = struct {
 // unchanged (same size and modification time). Concurrent callers of one path
 // share a single parse.
 func loadRecord(path string) (*parsedRecord, error) {
-	fi, err := os.Stat(path)
-	if err != nil || fi.Size() > recordCacheBudget {
+	size, mod, err := recordVersion(path)
+	if err != nil || size > recordCacheBudget {
 		return parseRecord(path)
 	}
 
 	recordCache.Lock()
 	cell := recordCache.cells[path]
-	if cell == nil || cell.size != fi.Size() || !cell.mod.Equal(fi.ModTime()) {
+	if cell == nil || cell.size != size || !cell.mod.Equal(mod) {
 		if cell != nil {
 			dropLocked(path, cell.size)
 		}
-		cell = &recordCell{size: fi.Size(), mod: fi.ModTime()}
+		cell = &recordCell{size: size, mod: mod}
 		recordCache.cells[path] = cell
 		recordCache.order = append(recordCache.order, path)
 		recordCache.bytes += cell.size
