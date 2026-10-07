@@ -190,7 +190,7 @@ verify-version:
 		exit 1; \
 	fi
 	@want="$${TAG#v}"; \
-	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json -path '*/.claude-plugin/*'); do \
+	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json \( -path '*/.claude-plugin/*' -o -path '*/.codex-plugin/*' \)); do \
 		got="$$(jq -r .version "$$f")"; \
 		if [ "$$got" != "$$want" ]; then \
 			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run make cut-release VERSION='$$want' instead of tagging by hand" >&2; \

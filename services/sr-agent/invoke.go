@@ -480,11 +480,12 @@ func (inv Invocation) String() string {
 // "claude" to find the SAME build that is asking for it.
 func BuildInvocation(spec harnessSpec, model string, harnessArgs []string, prompt string, getenv func(string) string) Invocation {
 	args := make([]string, 0, len(spec.baseArgs)+len(harnessArgs)+5)
-	args = append(args, "-p", "--model", model)
+	args = append(args, spec.execArgsOrDefault()...)
+	args = append(args, spec.modelFlagOrDefault(), model)
 	args = append(args, spec.baseArgs...)
 	args = append(args, harnessArgs...)
 	if spec.stdinPromptAbove > 0 && len(prompt) > spec.stdinPromptAbove {
-		return Invocation{Binary: resolveBinary(spec, getenv), Args: args, Stdin: prompt}
+		return Invocation{Binary: resolveBinary(spec, getenv), Args: append(args, spec.stdinPromptArgs...), Stdin: prompt}
 	}
 	args = append(args, "--", prompt)
 	return Invocation{Binary: resolveBinary(spec, getenv), Args: args}

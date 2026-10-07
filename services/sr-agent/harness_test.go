@@ -130,10 +130,10 @@ func TestResolveHarness_OverrideBeatsAContradictingEnvironment(t *testing.T) {
 func TestResolveHarness_UnsupportedOverrideIsRefusedEvenWhenDetectionWouldWork(t *testing.T) {
 	claudeEnv := envOf(map[string]string{"CLAUDECODE": "1"})
 
-	spec, err := ResolveHarness("codex", claudeEnv)
+	spec, err := ResolveHarness("no-such-harness", claudeEnv)
 	require.ErrorIs(t, err, ErrUnknownHarness)
 	assert.Empty(t, string(spec.name), "no harness may be chosen when the override is unsupported")
-	assert.Contains(t, err.Error(), "codex", "the refusal must echo the name that was typed")
+	assert.Contains(t, err.Error(), "no-such-harness", "the refusal must echo the name that was typed")
 	assert.Contains(t, err.Error(), "claude-code", "and name what is supported")
 }
 
@@ -146,7 +146,7 @@ func TestResolveHarness_OverrideIsCaseSensitiveAndExact(t *testing.T) {
 }
 
 func TestSupportedNames_ListsTheRegistry(t *testing.T) {
-	assert.Equal(t, []string{"claude-code"}, supportedNames())
+	assert.Equal(t, []string{"claude-code", "codex"}, supportedNames())
 }
 
 func TestLookupSpec(t *testing.T) {

@@ -17,10 +17,13 @@ import (
 // zero value and lose it.
 type Harness string
 
-// ClaudeCode is the only harness supported today. Codex and Cursor are separate
-// tasks; what makes them cheap is that everything harness-shaped in this binary
-// is reached through the registry below rather than written inline.
-const ClaudeCode Harness = "claude-code"
+// ClaudeCode and Codex are the harnesses supported today; everything
+// harness-shaped in this binary is reached through the registry below rather
+// than written inline.
+const (
+	ClaudeCode Harness = "claude-code"
+	Codex      Harness = "codex"
+)
 
 // SizeAlias is one of the harness-agnostic sizes a model set may name.
 //
@@ -99,6 +102,18 @@ type harnessSpec struct {
 	// never handed one that way. Below the bound the prompt stays positional, as
 	// every harness takes it.
 	stdinPromptAbove int
+
+	// execArgs are the arguments that put the binary in one-shot mode, before
+	// the model flag: `-p` for Claude Code, the `exec` subcommand for Codex. nil
+	// means ["-p"], which every spec literal that predates Codex relied on.
+	execArgs []string
+
+	// modelFlag is the flag naming the model; "" means `--model`.
+	modelFlag string
+
+	// stdinPromptArgs are appended when the prompt is fed on stdin: Codex needs
+	// the explicit `-` placeholder, Claude Code reads stdin when given no prompt.
+	stdinPromptArgs []string
 
 	// grant returns the arguments that give the agent exactly the file access a
 	// run needs: each added directory in its mode — writable or readonly — (the
@@ -450,8 +465,26 @@ func within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
-// harnesses is the registry. Adding a harness is adding an entry here.
-var harnesses = []harnessSpec{claudeCodeSpec}
+func (s harnessSpec) execArgsOrDefault() []string {
+	if s.execArgs != nil {
+		return s.execArgs
+	}
+	return []string{"-p"}
+}
+
+func (s harnessSpec) modelFlagOrDefault() string {
+	if s.modelFlag != "" {
+		return s.modelFlag
+	}
+	return "--model"
+}
+
+// harnesses is the registry. Adding a harness is adding an entry here. The order
+// is the order environment detection tries them: Codex first, because its markers
+// (CODEX_THREAD_ID and friends) are set afresh by every Codex, while CLAUDECODE can
+// be inherited by a Codex started from inside a Claude Code shell, and the innermost
+// harness is the one running.
+var harnesses = []harnessSpec{codexSpec, claudeCodeSpec}
 
 // ErrNoHarness is returned when the environment names no harness this binary
 // knows.
@@ -491,6 +524,15 @@ func supportedNames() []string {
 //
 // The environment is read through a lookup so a test can supply one directly.
 func DetectHarness(getenv func(string) string) (harnessSpec, error) {
+	// An explicit SLOPRAIL_HARNESS names the session's harness: a judge runs on the
+	// harness that triggered it.
+	if name := getenv("SLOPRAIL_HARNESS"); name != "" {
+		if spec, ok := lookupSpec(Harness(name)); ok {
+			return spec, nil
+		}
+		return harnessSpec{}, fmt.Errorf("%w: SLOPRAIL_HARNESS=%q. Supported: %s",
+			ErrUnknownHarness, name, strings.Join(supportedNames(), ", "))
+	}
 	for _, spec := range harnesses {
 		if spec.detect(getenv) {
 			return spec, nil

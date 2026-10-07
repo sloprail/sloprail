@@ -245,7 +245,7 @@ Then start a new session — this one will keep warning until sr-session is foun
     tool="$(printf '%s' "$payload" | tr -d '\n' | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     case "$tool" in
     # sr:invariant install/missing-engine-refuses-file-writes
-    Write | Edit | MultiEdit | NotebookEdit)
+    Write | Edit | MultiEdit | NotebookEdit | apply_patch)
       echo "BLOCKED: sloprail cannot check this write because its sr-session binary is not installed. Install it (from a shell), then retry:" >&2
       echo "  ${install_hint}" >&2
       echo "(sloprail/sloprail may be private: if that URL 404s, fetch install.sh with your git/gh access and run it.)" >&2

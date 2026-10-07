@@ -213,6 +213,14 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	// the shell tool), and nothing here assumes otherwise.
 	tool := pending.Tool()
 
+	// A harness that states the call's file effects outright (a multi-file patch)
+	// is read from those, whatever the tool is called: see EffectPending.
+	if ep, ok := pending.(EffectPending); ok {
+		if effects := ep.FileEffects(); len(effects) > 0 {
+			return m.extractEffects(ep, effects)
+		}
+	}
+
 	if commandmod.HarnessCommandTools[tool] {
 		// A recognised shell tool. Its arguments are a command line, read by
 		// extractCommand below — never by the write-tool branch, because a

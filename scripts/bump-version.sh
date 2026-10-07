@@ -34,7 +34,7 @@ esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
-plugin_jsons=$(find "$root/marketplace/plugins" -maxdepth 3 -name plugin.json -path '*/.claude-plugin/*')
+plugin_jsons=$(find "$root/marketplace/plugins" -maxdepth 3 -name plugin.json \( -path '*/.claude-plugin/*' -o -path '*/.codex-plugin/*' \))
 marketplace_json="$root/.claude-plugin/marketplace.json"
 
 for f in $plugin_jsons; do

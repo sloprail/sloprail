@@ -86,43 +86,8 @@ func ReadHook(r io.Reader) harness.HookInput {
 	}
 }
 
-// RenderHook implements harness.HookWire: Claude Code's hook output.
-//
-// A Deny is a PreToolUse permissionDecision, a Block is the top-level
-// decision:"block" Stop and SubagentStop read, a system message is a top-level
-// systemMessage, and additional context is hookSpecificOutput.additionalContext
-// under the event's name. An Allow with nothing to say writes nothing.
-// sr:invariant gates/refusal-stops-the-action
-// sr:invariant gates/stop-refusal-continues-the-turn
+// RenderHook implements harness.HookWire: Claude Code's hook output, which
+// harness.RenderHookJSON spells (Codex's is the same contract).
 func (Harness) RenderHook(w io.Writer, resp harness.HookResponse) error {
-	var out map[string]any
-	switch resp.Decision {
-	case harness.Deny:
-		out = map[string]any{
-			"hookSpecificOutput": map[string]any{
-				"hookEventName":            "PreToolUse",
-				"permissionDecision":       "deny",
-				"permissionDecisionReason": resp.Reason,
-			},
-		}
-	case harness.Block:
-		out = map[string]any{"decision": "block", "reason": resp.Reason}
-	default:
-		out = map[string]any{}
-	}
-	if resp.SystemMessage != "" {
-		out["systemMessage"] = resp.SystemMessage
-	}
-	if resp.AdditionalContext != "" {
-		specific, _ := out["hookSpecificOutput"].(map[string]any)
-		if specific == nil {
-			specific = map[string]any{"hookEventName": resp.Event}
-			out["hookSpecificOutput"] = specific
-		}
-		specific["additionalContext"] = resp.AdditionalContext
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return json.NewEncoder(w).Encode(out)
+	return harness.RenderHookJSON(w, resp)
 }

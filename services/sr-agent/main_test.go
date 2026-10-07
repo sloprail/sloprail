@@ -152,7 +152,7 @@ func TestCLI_DashLeadingPromptWorksViaBothEscapes(t *testing.T) {
 }
 
 func TestCLI_UnknownHarnessIsRefused(t *testing.T) {
-	_, _, err := runCLI(t, "--harness", "codex", "--model", "size-md", "--dry-run", "q")
+	_, _, err := runCLI(t, "--harness", "no-such-harness", "--model", "size-md", "--dry-run", "q")
 	require.ErrorIs(t, err, ErrUnknownHarness)
 }
 
