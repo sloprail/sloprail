@@ -1519,6 +1519,17 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 			return dispatchcore.Verdict{}, engineError(g, err), true
 		}
 	}
+	if ev.verify && !have && requiresCitation(g) {
+		// Nothing is stored for this content, but a citation that is missing is a reason that
+		// can be acted on now, whatever else is not judged yet.
+		gate, err := ev.citationGate(rr)
+		if err != nil {
+			return dispatchcore.Verdict{}, err, true
+		}
+		if gate.Refused {
+			return gate, nil, true
+		}
+	}
 	if ev.verify && !have {
 		why := ""
 		if !ev.params.FailuresOnly {
