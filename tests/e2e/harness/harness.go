@@ -2007,12 +2007,21 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 	e.driver.ForkTranscript(e, cwd, oldSessionID, newSessionID)
 }
 
+// originReader is what a Driver implements when its record does not open on a uuid-keyed
+// record with no parent (Claude's layout, the default): the id of where the file begins.
+type originReader interface {
+	OriginRecord(record string) string
+}
+
 // OriginRecord is the uuid of the first record in a session's transcript with no
 // parent — where that FILE begins, read straight off the file. Not the identity
 // walk: a test uses it to name what the walk should land on, and the walk is
 // asked of the engine (SessionIdentity).
 func (e *Env) OriginRecord(projDir, sessionID string) string {
 	e.t.Helper()
+	if o, ok := e.driver.(originReader); ok {
+		return o.OriginRecord(e.transcript(projDir, sessionID))
+	}
 	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
 		var rec struct {
 			UUID       string  `json:"uuid"`
