@@ -95,11 +95,28 @@ type SubagentFile struct {
 // and companions), however the harness lays them out: Claude Code nests them under
 // <session>/subagents/, Codex writes each as a rollout of its own naming its parent
 // thread in its first line. A harness whose sub-agent records cannot be tied to their
-// parent from what it writes does not implement it (Cursor: a sub-agent is a sibling
-// conversation directory and the parent link is only in hook payloads, recorded in
-// harness-mocks cursor-mock subagent-transcripts), and has none to find.
+// parent from what it writes does not implement it, and has none to find (and declares
+// so with SubagentsUnlinkable).
 type SubagentLocator interface {
 	SubagentFiles(transcriptPath string) []SubagentFile
+}
+
+// SubagentsUnlinkable is implemented by a Transcripts that declares a sub-agent's
+// session cannot be tied to the conversation that dispatched it: nothing a sub-agent
+// writes, and nothing a hook reports, names its parent. A sub-agent's record is still
+// told from a root's (the harness says which), but the link between the two does not
+// exist, so what a sub-agent may cite of the user's conversation cannot be resolved and
+// a root cannot enumerate its sub-agents' records.
+type SubagentsUnlinkable interface {
+	SubagentsUnlinkable() bool
+}
+
+// ParentLocator is implemented by a Transcripts whose sub-agent record names the session
+// that dispatched it by a link the file itself holds (Codex: the first line's
+// parent_thread_id), where Claude Code's is derived from a companion's tool-use id. The
+// parent is the dispatching agent's record, "" when path is a root or the link is dead.
+type ParentLocator interface {
+	ParentRecord(transcriptPath string) string
 }
 
 // Transcripts is how a harness's session record is parsed and located: its line
@@ -122,6 +139,14 @@ type Transcripts interface {
 	// ProjectDir is where the harness keeps the session files of every session
 	// run in dir (already symlink-resolved); empty when configDir is empty.
 	ProjectDir(configDir, dir string) string
+}
+
+// RecordLister is implemented by a Transcripts whose project directory (ProjectDir) is not
+// one flat directory of session files: Codex keeps every session in a date-sharded tree, so
+// the conversation's other transcripts are found by walking it. ListRecords is every session
+// file under projectDir, in no particular order.
+type RecordLister interface {
+	ListRecords(projectDir string) []string
 }
 
 // RecordOpener is what a Transcripts MAY implement when the record the engine should

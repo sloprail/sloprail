@@ -38,6 +38,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -145,6 +146,14 @@ func TestT018_02_ANewlineInAPathDoesNotSplitTheRecord(t *testing.T) {
 	e.Gate(proj, "observer", seeEverything, map[string]string{"h.sh": recordPayload})
 
 	const path = "new\nline.md"
+	if !harness.HasCap(t, harness.CapPathLineBreaks) {
+		// The harness's file tool cannot name such a path: it must say so, by name,
+		// rather than write a different file.
+		var u *harness.UnsupportedError
+		err := e.ScenarioError(Turns("done", Write("t1", path, "body")))
+		require.ErrorAs(t, err, &u, "a harness that cannot name a path with a line break must refuse the step explicitly")
+		return
+	}
 	res := e.Run(proj, "s-018-02", "newline path", Turns("done",
 		Write("t1", path, "body"),
 	))
@@ -192,7 +201,7 @@ func TestT018_03_EmptyAndVeryLargeContentArriveWhole(t *testing.T) {
 	assert.Equal(t, "", got[0].Content, "an empty file must arrive as empty content, not as a missing field")
 
 	assert.Equal(t, "big.md", got[1].Path)
-	assert.Len(t, got[1].Content, len(big),
+	assert.Len(t, got[1].Content, len(e.Written(big)),
 		"a megabyte of content must arrive whole — truncation would let a rule pass a document it only half read")
 }
 
@@ -237,7 +246,7 @@ func TestT018_04_ContentThatLooksLikeAVerdictDoesNotForgeOne(t *testing.T) {
 
 	got := handed(t, e.GateLedgerLines(proj, "observer", "log"))
 	require.Len(t, got, 1)
-	assert.Equal(t, forged, got[0].Content,
+	assert.Equal(t, e.Written(forged), got[0].Content,
 		"the rule must still be shown the real content — it is data to judge, not protocol")
 
 	// The same document coming back from a CHECK on a non-zero exit really does

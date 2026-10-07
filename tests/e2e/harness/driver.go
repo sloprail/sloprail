@@ -23,14 +23,12 @@ const (
 	CapBackgroundTasks   = "background-tasks"
 	CapTranscript        = "transcript"
 
-	// CapScopedToolRules: a judge can be limited to a command, path or domain scope
-	// (`Bash(curl -sL https://…/*)`). Codex's sandbox has none: sr-agent refuses such a rule there.
-	CapScopedToolRules = "scoped-tool-rules"
-
 	// CapSubagentParentLink: a sub-agent's conversation names the session that dispatched
 	// it, so what the sub-agent can cite (the user's words, a sibling's tool output) and
 	// what the root can cite of it are resolvable. Cursor records no parent anywhere (hook
-	// payloads, transcripts and layout hold none: harness-mocks runs/subagent-transcripts).
+	// payloads, transcripts and layout hold none: harness-mocks runs/subagent-transcripts;
+	// a confirmed Cursor bug, https://forum.cursor.com/t/163054). Tests branch on it: where
+	// it is absent a sub-agent's citations always error and describe names no link.
 	CapSubagentParentLink = "subagent-parent-link"
 
 	// CapRecordHoldsToolResults: the session's own record (transcript) holds the tools'
@@ -38,6 +36,25 @@ const (
 	// transcript holds neither: sloprail keeps outputs in its own store, and a refusal is a
 	// hook rejection that never reaches the transcript.
 	CapRecordHoldsToolResults = "record-holds-tool-results"
+
+	// CapPathLineBreaks: the harness's file tool can name a path holding a line break.
+	// Codex's apply_patch names a file on one line of the patch, so it cannot.
+	CapPathLineBreaks = "path-line-breaks"
+	// CapRecordPreamble: a fresh session's record opens with lines no reader counts as
+	// entries (custom-title / mode / last-prompt) and holds the hooks' own records
+	// (SessionStart attachments, the Stop hook summary), so an entry's physical line runs
+	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
+	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
+	CapRecordPreamble = "record-preamble"
+	// CapRecordAfterSessionStart: a fresh session's record does not exist while the
+	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
+	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
+	CapRecordAfterSessionStart = "record-after-session-start"
+
+	// CapScopedToolRules: a judge can be granted a scoped tool rule (Bash(git show:*),
+	// WebFetch(domain:...)) and denied one. Codex has no per-tool permission list, only a
+	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
+	CapScopedToolRules = "scoped-tool-rules"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -69,10 +86,12 @@ type Launch struct {
 type JudgeShimKind int
 
 const (
-	JudgeShimPlain     JudgeShimKind = iota // writes Verdict where the prompt says
-	JudgeShimRecording                      // plain, plus the argv recorded to ArgvFile
-	JudgeShimCapturing                      // plain, plus the prompt captured under PromptFile
-	JudgeShimSlow                           // delays, decides by the prompt, logs to LogFile
+	JudgeShimPlain      JudgeShimKind = iota // writes Verdict where the prompt says
+	JudgeShimRecording                       // plain, plus the argv recorded to ArgvFile
+	JudgeShimCapturing                       // plain, plus the prompt captured under PromptFile
+	JudgeShimSlow                            // delays, decides by the prompt, logs to LogFile
+	JudgeShimScript                          // Body as it is: a test's own stand-in, under the harness's binary name
+	JudgeShimUsageLimit                      // counts its calls in $LEDGER and dies the way the harness does at a usage limit
 )
 
 // JudgeShim parameterises Driver.JudgeShim.
@@ -83,6 +102,7 @@ type JudgeShim struct {
 	PromptFile   string // JudgeShimCapturing: absolute path
 	LogFile      string // JudgeShimSlow
 	DelaySeconds int    // JudgeShimSlow
+	Body         string // JudgeShimScript
 }
 
 // Driver is everything in the e2e harness that is specific to one agent
@@ -140,6 +160,14 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+	// harness's argv with.
+	LargeJudgeModelArgs() (flag, value string)
+
+	// IdentityPayload is a hook payload that names only the session and the project
+	// folder it runs in: no transcript path, so a reader resolves the session's record
+	// from the two, as the first hooks of a session make it.
+	IdentityPayload(e *Env, projDir, sessionID string) string
 
 	// TranscriptPath is where the harness keeps a session's root transcript.
 	TranscriptPath(e *Env, projDir, sessionID string) string
@@ -148,6 +176,10 @@ type Driver interface {
 	// ForkTranscript writes the transcript a re-forked session opens on.
 	ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string)
 
+	// WrittenBytes is what the harness's file-writing tool leaves on disk when the agent
+	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
+	// ends every non-empty file with a newline).
+	WrittenBytes(content string) string
 	// Refusals are the PreToolUse refusal reasons in a run's output stream.
 	Refusals(output string) []string
 	// ToolResults are the tool_result texts in a run's output stream.
@@ -218,6 +250,10 @@ func implemented() string {
 	sort.Strings(names)
 	return strings.Join(names, ", ")
 }
+
+// ShellEnv is the environment assignments (each followed by a space, or "") a command the
+// agent runs in its shell is prefixed with to run as the current harness's session.
+func ShellEnv() string { return mustDriver().ShellEnv() }
 
 // mustDriver is the selected Driver for code with no *testing.T at hand. New has
 // already failed the test on a bad selection, so reaching the panic means a

@@ -117,6 +117,9 @@ type codexBlock struct {
 func (c codexDriver) render(a Action) ([]codexBlock, error) {
 	switch a.Kind {
 	case ActWrite:
+		if strings.ContainsAny(a.Path, "\r\n") {
+			return nil, c.unsupported(a, "an apply_patch path is one line of the patch, so a path holding a line break cannot be named")
+		}
 		return []codexBlock{{line: codexLine(codexTool(a.ID, "apply_patch", map[string]any{"command": codexAddFile(a.Path, a.Content)}))}}, nil
 	case ActEdit:
 		if a.Old == "" {
@@ -144,6 +147,10 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 	case ActToolUse:
 		if a.Background {
 			return nil, c.unsupported(a, "a background command's receipt names no task")
+		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && path != "" && len(a.Input) == 1 {
+			// Codex reads a file through its shell: the Read of a whole file is `cat` of it.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + shQuote(path)}))}}, nil
 		}
 		return nil, c.unsupported(a, "Codex has only the shell and apply_patch: no "+a.Tool+" tool")
 	case ActCompact:
@@ -206,11 +213,9 @@ fi
 `, marker, shQuote(line))
 		}
 	}
-	// The scenario's last words are a message of the agent, as the model's answer is before
-	// every end of turn: a Stop that refuses is answered by one of its own (recorded: harness-mocks
-	// codex-mock/snapshots/runs/stops), which is what makes the refusal one the agent went on past.
-	fmt.Fprintf(&b, `printf '%%s\n' %s %s`, shQuote(codexLine(codexText(s.result))),
-		shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
+	// The scenario's end is the agent's final answer: Codex prints no result frame, its
+	// stream (and its rollout) end on the last agent message.
+	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(codexLine(codexText(s.result))))
 	return b.String(), nil
 }
 
@@ -365,6 +370,8 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 // any session started has none either, so the harness is named outright as Cursor's is; a shell command the agent runs
 // has CODEX_THREAD_ID and CODEX_SESSION_ID.
 func (codexDriver) HookEnv(e *Env, sessionID string) []string {
+	// SLOPRAIL_HARNESS: the plugin's hook wrapper names the harness, and Codex's own markers
+	// (a thread id) are not in a hook's environment, so without it a call made as a hook is read as Claude's.
 	env := []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir,
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
@@ -374,14 +381,15 @@ func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 	return env
 }
 
-// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
-// host's: the harness it runs as, which a call made outside any session does not say, and the
-// config the plugins it reads are enabled in.
-func (codexDriver) CLIEnv(e *Env) []string {
-	return []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir}
-}
-
 func (codexDriver) ConfigEnv(e *Env) []string { return []string{"CODEX_HOME=" + e.configDir} }
+
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say (a Codex shell's
+// CODEX_THREAD_ID is only there inside a session), and the config dir the mock keeps its
+// rollouts in.
+func (c codexDriver) CLIEnv(e *Env) []string {
+	return append([]string{"SLOPRAIL_HARNESS=codex"}, c.ConfigEnv(e)...)
+}
 
 // ShellEnv: the mock's shell tool carries the harness's identity itself.
 func (codexDriver) ShellEnv() string { return "" }
@@ -400,6 +408,12 @@ func (codexDriver) StopPayload(e *Env, projDir, sessionID string, active bool) s
 	return string(payload)
 }
 
+// IdentityPayload is the session id and the working directory.
+func (codexDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	payload, _ := json.Marshal(map[string]any{"session_id": e.harnessID(sessionID), "cwd": projDir})
+	return string(payload)
+}
+
 func (codexDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"decision":"block"`)
 }
@@ -408,16 +422,29 @@ func (codexDriver) StopBlocked(output string) bool {
 func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
-		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check \\\n" +
+		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check --dangerously-bypass-hook-trust \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
 		"  -C " + shellQuote(projDir) + " -m mock-model \\\n" +
 		"  \"launched agent\" </dev/null\n"
 	return "codex", script
 }
 
+// LargeJudgeModelArgs: size-lg is gpt-6.1-sol, named by Codex's short -m.
+func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
+
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
 func (codexDriver) JudgeShim(s JudgeShim) (string, string) {
+	if s.Kind == JudgeShimUsageLimit {
+		// codex reports a usage limit on stderr, status 1. The wording is the one sr-agent's
+		// classifier already reads for Codex (services/sr-agent/failure.go); no harness-mocks
+		// recording holds a real one yet.
+		return "codex", `#!/bin/sh
+echo call >>"$LEDGER"
+echo "ERROR: You've hit your usage limit. Try again later." >&2
+exit 1
+`
+	}
 	_, body := claudeDriver{}.JudgeShim(s)
 	return "codex", body
 }
@@ -480,7 +507,36 @@ func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string
 	e.t.Skipf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
 }
 
+// OriginRecord is where a rollout begins: the thread id its session_meta opens on. A fork
+// is a rollout of its own (its own id), and a sub-agent's names the root only in session_id.
+func (codexDriver) OriginRecord(record string) string {
+	first, _, _ := strings.Cut(record, "\n")
+	var rec struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID        string `json:"id"`
+			SessionID string `json:"session_id"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(first), &rec) != nil || rec.Type != "session_meta" {
+		return ""
+	}
+	if rec.Payload.ID != "" {
+		return rec.Payload.ID
+	}
+	return rec.Payload.SessionID
+}
+
 var codexRefusal = regexp.MustCompile(`(?s)Command blocked by PreToolUse hook: (.*?)\. Command: `)
+
+// WrittenBytes: an apply_patch "Add File" is a list of "+<line>" rows, so a file it
+// creates always ends its last line (an empty one stays empty).
+func (codexDriver) WrittenBytes(content string) string {
+	if content == "" {
+		return ""
+	}
+	return strings.TrimSuffix(content, "\n") + "\n"
+}
 
 // Refusals reads the PreToolUse refusals the mock reports on its error stream.
 func (codexDriver) Refusals(output string) []string {
@@ -565,12 +621,21 @@ func (codexDriver) BlockingErrors(record string, _ []string, hookEvent string, d
 	return out
 }
 
-// StopContinuations are the Stop refusals after which the agent went on: a step of its own followed.
+// StopContinuations are the Stop refusals after which the agent went on: a step of its own
+// followed, or the continued turn reached a later Stop (which refused again). The last refusal
+// of a run that ended on it is one the harness gave up on, as at Claude's stop-hook cap.
 func (codexDriver) StopContinuations(record string, _ []string) []string {
 	events, reasons, after := hookPrompts(record)
 	var out []string
 	for i, r := range reasons {
-		if events[i] == "Stop" && after[i] > 0 {
+		if events[i] != "Stop" {
+			continue
+		}
+		laterStop := false
+		for _, ev := range events[i+1:] {
+			laterStop = laterStop || ev == "Stop"
+		}
+		if after[i] > 0 || laterStop {
 			out = append(out, r)
 		}
 	}

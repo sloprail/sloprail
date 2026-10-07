@@ -180,6 +180,12 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 			path, transcript.SubagentUserAdvice)
 		os.Exit(citeInSubagent)
 	}
+	if errors.Is(err, transcript.ErrSubagentUnlinked) {
+		// A harness that cannot link a sub-agent to its parent: cite answers nothing from
+		// one, in any pool (transcript.CitationsUnavailable).
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: cite is not available in a sub-agent (trajectory %s is a sub-agent's): %v\n", path, err)
+		os.Exit(citeInSubagent)
+	}
 	if err != nil {
 		// The trajectory could not be read at all — a broken environment, not an
 		// absence of the quote. Surfaced as an error rather than as exit 1, so a

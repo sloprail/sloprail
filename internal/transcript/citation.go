@@ -203,6 +203,9 @@ func CiteInSession(path, quote string, sources []SourceType) ([]CitationMatch, e
 
 // sr:invariant citations/user-pool-is-the-root-conversation
 func citeInSession(path, quote string, sources []SourceType, subagent bool) ([]CitationMatch, error) {
+	if err := CitationsUnavailable(path, subagent); err != nil {
+		return nil, err
+	}
 	userIn, toolIn, err := citationRecords(path, subagent)
 	if err != nil {
 		return nil, err

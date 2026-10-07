@@ -484,6 +484,26 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
+// InstallJudgeScript puts a test's own stand-in for the judge's agent binary (body, a
+// script) where the judge resolves it: under the name the current harness's binary has.
+func (e *Env) InstallJudgeScript(body string) {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimScript, Body: body})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge shim: %v", err)
+	}
+}
+
+// InstallJudgeUsageLimit installs a judge that appends a line to $LEDGER per call and dies
+// the way the current harness does at a usage limit.
+func (e *Env) InstallJudgeUsageLimit() {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimUsageLimit})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write usage-limit judge shim: %v", err)
+	}
+}
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
@@ -515,6 +535,10 @@ func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
 		e.t.Fatalf("harness: write recording judge claude shim: %v", err)
 	}
 }
+
+// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+// harness's argv with, in the recording of InstallJudgeClaudeRecordingArgv.
+func (e *Env) LargeJudgeModelArgs() (flag, value string) { return e.driver.LargeJudgeModelArgs() }
 
 // InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
 // the judge was asked, so a test can assert what the template actually rendered.
@@ -1386,6 +1410,24 @@ func (e *Env) WrapBinary(name, body string) {
 	}
 }
 
+// Written is the bytes the selected harness's file tool leaves on disk when the agent
+// writes content: what a test compares a file (or the content a rule was handed) to.
+func (e *Env) Written(content string) string { return e.driver.WrittenBytes(content) }
+
+// ScenarioError is the error the selected harness gives for a scenario it cannot take
+// (an *UnsupportedError naming the step), or nil when it can render it.
+func (e *Env) ScenarioError(s Scenario) error {
+	_, err := e.driver.RenderScript(s)
+	return err
+}
+
+// ForHarness fills `{{harness}}` in a check script with the name of the selected
+// harness, for a script that launches an agent through `sr-agent --harness`: the agent
+// it runs is then the one this run's shim (InstallClaudeShim) stands in for.
+func (e *Env) ForHarness(script string) string {
+	return strings.ReplaceAll(script, "{{harness}}", e.driver.Name())
+}
+
 // Exists reports whether a path is present in a project.
 //
 // How a test asks what actually happened to the tree, as opposed to what came
@@ -2001,12 +2043,21 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 	e.driver.ForkTranscript(e, cwd, oldSessionID, newSessionID)
 }
 
+// originReader is what a Driver implements when its record does not open on a uuid-keyed
+// record with no parent (Claude's layout, the default): the id of where the file begins.
+type originReader interface {
+	OriginRecord(record string) string
+}
+
 // OriginRecord is the uuid of the first record in a session's transcript with no
 // parent — where that FILE begins, read straight off the file. Not the identity
 // walk: a test uses it to name what the walk should land on, and the walk is
 // asked of the engine (SessionIdentity).
 func (e *Env) OriginRecord(projDir, sessionID string) string {
 	e.t.Helper()
+	if o, ok := e.driver.(originReader); ok {
+		return o.OriginRecord(e.transcript(projDir, sessionID))
+	}
 	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
 		var rec struct {
 			UUID       string  `json:"uuid"`

@@ -100,6 +100,9 @@ func (Harness) RecordToolResult(in harness.HookInput) error {
 	case string(SessionStart):
 		// the session's own conversation (see record.KindRoot): never fired for a sub-agent's
 		return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindRoot})
+	case string(PreCompact):
+		// the transcript is about to hold the prompt again, written by Cursor
+		return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindCompact})
 	case string(PreToolUse):
 		if in.ToolUseID == "" || in.ToolName == "" {
 			return nil

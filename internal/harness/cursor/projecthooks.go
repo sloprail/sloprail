@@ -20,13 +20,17 @@ const hookScript = "sr-session-hook-cursor.sh"
 // MEASURED in Cursor's TUI (harness-mocks #287, tui-plugins and tui-plugins-event-gating):
 // a plugin's `stop` hook never fires, and a local plugin loads late, after sessionStart
 // has already been delivered, so its sessionStart hook never runs. Project hooks
-// (<project>/.cursor/hooks.json) fire for both. The other events stay in the plugin.
+// (<project>/.cursor/hooks.json) fire for both. preCompact is here too: the recordings
+// that show it fire (tui-manual-compaction, compaction-transcript-continuity) register it
+// in the project, and none shows a plugin's preCompact firing. The other events stay in
+// the plugin.
 var projectHooks = []struct {
 	event, arg string
 	timeout    int
 }{
 	{"sessionStart", "start", 3600},
 	{"stop", "stop", 3600},
+	{"preCompact", "post-tool", 60},
 }
 
 // HooksPath is the project's hooks file.

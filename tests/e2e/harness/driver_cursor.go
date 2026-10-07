@@ -1,10 +1,10 @@
 package harness
 
 import (
-	"github.com/sloprail/sloprail/internal/harness"
-	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
+	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +43,7 @@ func (cursorDriver) Name() string { return "cursor" }
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapScopedToolRules}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapScopedToolRules}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -71,15 +71,6 @@ func cursorLine(content ...map[string]any) string {
 
 // cursorWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
 const cursorWorkspaceMark = "@@WORKSPACE@@"
-
-// The two Read sizes recorded in harness-mocks (cursor-mock toolexec ReadCarriedBytes,
-// ReadOmittedBytes): a file up to the first is carried whole, from the second on it is
-// named by an id. Between them the mock fails the Read rather than guess, so a step
-// that reads such a file is unsupported.
-const (
-	cursorReadCarriedBytes = 7602
-	cursorReadOmittedBytes = 53900
-)
 
 // cursorPassthrough are the tools a generic ToolUse may name: those the mock runs with string inputs.
 var cursorPassthrough = map[string]bool{"Read": true, "Grep": true, "Delete": true, "Shell": true}
@@ -115,11 +106,6 @@ func (c cursorDriver) render(a Action) (string, error) {
 		}
 		if !cursorPassthrough[a.Tool] {
 			return "", c.unsupported(a, "the mock runs no "+a.Tool+" tool")
-		}
-		if a.Tool == "Read" {
-			if st, err := os.Stat(a.Input["file_path"]); err == nil && st.Size() > cursorReadCarriedBytes && st.Size() < cursorReadOmittedBytes {
-				return "", c.unsupported(a, fmt.Sprintf("cursor-mock does not model a Read of a %d-byte file: Cursor's cut-off between %d and %d bytes is unrecorded", st.Size(), cursorReadCarriedBytes, cursorReadOmittedBytes))
-			}
 		}
 		in := map[string]any{}
 		for k, v := range a.Input {
@@ -205,7 +191,9 @@ func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
 		cmd.Env = append(cmd.Env, "SLOPRAIL_CHECK_TIMEOUT="+e.checkTimeout)
 	}
 	if l.Mode == SessionResume {
-		if p := c.TranscriptPath(e, l.ProjDir, l.SessionID); fileExists(p) {
+		// Cursor files the conversation under the workspace the run was opened on, which a
+		// session started from a subdirectory makes that subdirectory, not the project root.
+		if p := c.TranscriptPath(e, l.WorkDir, l.SessionID); fileExists(p) {
 			if b, err := os.ReadFile(p); err == nil {
 				n := strings.Count(string(b), `"type":"tool_use"`) + strings.Count(string(b), `"role":"user"`)
 				// the base is of THIS session's file only: a sub-agent inherits the environment
@@ -277,6 +265,13 @@ func (c cursorDriver) InstallPlugins(e *Env, dir string) {
 	if err := os.MkdirAll(local, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir %s: %v", local, err)
 	}
+	// The plugin under test is also installed the way a user installs a local plugin: a
+	// sloprail command run in the agent's shell (not from a plugin hook, so without
+	// CURSOR_PLUGIN_ROOT) finds a plugin only there (cursor.Resolve). Without it `sr-checks run`
+	// before the stop judges the range against no shipped guardrail, and stores that.
+	if err := copyTree(c.pluginDirs(e)[0], filepath.Join(local, pluginName)); err != nil {
+		e.t.Fatalf("harness: install the plugin under test as a local plugin: %v", err)
+	}
 	for _, p := range e.extraPlugins {
 		manifest := filepath.Join(p.root, ".cursor-plugin", "plugin.json")
 		if !fileExists(manifest) {
@@ -315,8 +310,13 @@ func (cursorDriver) syncPlugins(e *Env) {
 // HookEnv names the harness outright, as the plugin's own hook wrapper does.
 func (c cursorDriver) HookEnv(e *Env, sessionID string) []string {
 	c.syncPlugins(e)
-	return []string{"SLOPRAIL_HARNESS=cursor",
+	env := []string{"SLOPRAIL_HARNESS=cursor",
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+	if sessionID != "" {
+		// a shell tool's environment names its conversation (recorded, subprocess-session-env)
+		env = append(env, "CURSOR_CONVERSATION_ID="+e.harnessID(sessionID))
+	}
+	return env
 }
 
 // CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
@@ -357,19 +357,41 @@ func (c cursorDriver) StopPayload(e *Env, projDir, sessionID string, active bool
 	return string(payload)
 }
 
+// IdentityPayload is the conversation and the workspace, with no transcript path: null at
+// sessionStart and the first events (recorded).
+func (cursorDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	id := e.harnessID(sessionID)
+	payload, _ := json.Marshal(map[string]any{
+		"conversation_id": id, "session_id": id, "transcript_path": nil,
+		"workspace_roots": []string{resolveWorkDir(projDir)},
+	})
+	return string(payload)
+}
+
 func (cursorDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"followup_message"`)
 }
 
-func (cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
+// AgentShim is the `cursor-agent` a hook-launched agent resolves to: the mock, running the
+// inner scenario with the same plugins a session loads, so the launched agent is guarded by
+// the project's other rules as a real one (which loads the user's plugins) is.
+func (c cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
 		"unset A10N_CURSOR_MOCK_STOP\n" +
 		"exec " + shellQuote(e.mock) + " -p --force --trust --output-format stream-json \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
-		"  --workspace " + shellQuote(projDir) + " \\\n" +
-		"  \"launched agent\" </dev/null\n"
+		"  --workspace " + shellQuote(projDir) + " \\\n"
+	for _, d := range c.pluginDirs(e) {
+		script += "  --plugin-dir " + shellQuote(d) + " \\\n"
+	}
+	script += "  \"launched agent\" </dev/null\n"
 	return "cursor-agent", script
+}
+
+// LargeJudgeModelArgs: size-lg is claude-opus-5-5-medium.
+func (cursorDriver) LargeJudgeModelArgs() (string, string) {
+	return "--model", "claude-opus-5-5-medium"
 }
 
 func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {
@@ -450,6 +472,8 @@ func cursorRejections(output string) []string {
 	}
 	return out
 }
+
+func (cursorDriver) WrittenBytes(content string) string { return content }
 
 func (cursorDriver) Refusals(output string) []string { return cursorRejections(output) }
 
