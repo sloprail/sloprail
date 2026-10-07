@@ -106,6 +106,9 @@ type codexBlock struct {
 	suffix string
 	// afterCall: the line names the agent the call of this id spawned.
 	spawnedBy string
+	// compact: the line asks for a compaction, which leaves no id: it has gone when the
+	// rollout holds more compactions than this run began with, plus the earlier ones of the scenario.
+	compact bool
 }
 
 // render renders an action as the blocks it is, or says why Codex cannot take it.
@@ -141,6 +144,11 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 			return nil, c.unsupported(a, "a background command's receipt names no task")
 		}
 		return nil, c.unsupported(a, "Codex has only the shell and apply_patch: no "+a.Tool+" tool")
+	case ActCompact:
+		if a.UnwrittenParent {
+			return nil, c.unsupported(a, "a compaction naming an unwritten parent is Claude's")
+		}
+		return []codexBlock{{line: `{"type":"compact","trigger":"manual"}`, compact: true}}, nil
 	case ActBashBatch:
 		return nil, c.unsupported(a, "several calls in one message are not modelled")
 	}
@@ -153,6 +161,7 @@ func (c codexDriver) RenderScript(s Scenario) (string, error) {
 	var b strings.Builder
 	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
 	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
+	compacts := 0
 	for i, t := range s.turns {
 		blocks, err := c.render(t.act)
 		if err != nil {
@@ -164,6 +173,15 @@ func (c codexDriver) RenderScript(s Scenario) (string, error) {
 				marker = fmt.Sprintf("slop-turn-%d-%s-%s", i, blk.suffix, t.act.ID)
 			}
 			line := blk.line
+			if blk.compact {
+				fmt.Fprintf(&b, `if [ "$(printf '%%s' "$SESS" | grep -c '"type":"compacted"')" -le $(( ${SLOP_COMPACTED_BASE:-0} + %d )) ]; then
+  printf '%%s\n' %s
+  exit 0
+fi
+`, compacts, shQuote(line))
+				compacts++
+				continue
+			}
 			if blk.spawnedBy != "" {
 				// A spawn is answered with a receipt naming the agent; waiting for it is
 				// what makes the dispatch run to its end before the scenario goes on, as a
@@ -228,6 +246,14 @@ func (codexDriver) Command(e *Env, l Launch) *exec.Cmd {
 	)
 	if e.checkTimeout != "" {
 		cmd.Env = append(cmd.Env, "SLOPRAIL_CHECK_TIMEOUT="+e.checkTimeout)
+	}
+	// A resumed session's script counts compactions from where the rollout already is.
+	if l.Mode == SessionResume {
+		if p := rolloutPath(e, e.harnessID(l.SessionID)); p != "" {
+			if b, err := os.ReadFile(p); err == nil {
+				cmd.Env = append(cmd.Env, fmt.Sprintf("SLOP_COMPACTED_BASE=%d", strings.Count(string(b), `"type":"compacted"`)))
+			}
+		}
 	}
 	return cmd
 }
