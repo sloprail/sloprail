@@ -65,12 +65,23 @@ func TestT026_07_EveryShippedHookPassesTheGrep(t *testing.T) {
 	if len(scripts) < 50 {
 		t.Fatalf("found only %d shipped hook scripts — the walk is not reaching them", len(scripts))
 	}
+	// Plus the fixture plugin's scripts (fixture_hooks_test.go), read from a temp
+	// tree and checked under their `.sloprail/...` rel paths.
+	fixtures := writeFixtureHooks(t)
+	for rel := range fixtureHooks {
+		scripts = append(scripts, "fixture:"+rel)
+	}
 	for _, rel := range scripts {
 		t.Run(rel, func(t *testing.T) {
-			body, err := os.ReadFile(filepath.Join(root, rel))
+			src, path := root, rel
+			if strings.HasPrefix(rel, "fixture:") {
+				src, path = fixtures, strings.TrimPrefix(rel, "fixture:")
+			}
+			body, err := os.ReadFile(filepath.Join(src, path))
 			if err != nil {
 				t.Fatal(err)
 			}
+			rel := path
 			payload, _ := json.Marshal(map[string]any{"event": map[string]any{
 				"kind": "PreFileUpdate", "path": rel, "newContent": string(body), "resultKnown": true,
 			}})
@@ -119,9 +130,21 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/prepare-judgment-gates.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/gates-hold.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gate-is-grounded/resolve-gate-context.sh", "PostFileUpdate", refuses, nil},
+		// The fixture plugin's scripts (fixture_hooks_test.go), under a temp tree.
+		// A git repository where committed code pins the file: an unread file
+		// nothing pins is waived (nothing is at stake), so that fixture must pin it.
+		{"fixture:.sloprail/file-guard/when-pinned/pinned.sh", "PostFileUpdate", applies, pinnedTaskRepo},
+		{"fixture:.sloprail/file-guard/when-drops/drops.sh", "PostFileUpdate", applies, nil},
+		{"fixture:.sloprail/file-guard/prepare-judges/prepare.sh", "PostFileUpdate", judges, nil},
+		{"fixture:.sloprail/context/goal/enter.sh", "PostFileUpdate", activate, nil},
 	} {
 		t.Run(tc.script, func(t *testing.T) {
-			dir := filepath.Join(root, filepath.Dir(tc.script))
+			base := root
+			if rel, ok := strings.CutPrefix(tc.script, "fixture:"); ok {
+				tc.script = filepath.Join(writeFixtureHooks(t), rel)
+				base = ""
+			}
+			dir := filepath.Join(base, filepath.Dir(tc.script))
 			payload, _ := json.Marshal(map[string]any{
 				"event": map[string]any{
 					"kind": tc.kind, "path": "memories/tasks/a/b/TASK.md",
@@ -164,4 +187,34 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pinnedTaskRepo is a git repository whose committed code carries an
+// sr:invariant marker pinning memories/tasks/a/b/TASK.md L1 — the path T026_08's
+// payload names — so a rule that asks "does anything pin this path?" finds it
+// pinned.
+func pinnedTaskRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.MkdirAll(filepath.Join(repo, "memories/tasks/a/b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "memories/tasks/a/b/TASK.md"), []byte("old line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := "package x\n\n// sr:invariant " + repo + "@0123456789abcdef0123456789abcdef01234567:memories/tasks/a/b/TASK.md#L1-1\nfunc f() {}\n"
+	if err := os.WriteFile(filepath.Join(repo, "x.go"), []byte(code), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-qm", "pinned")
+	return repo
 }
