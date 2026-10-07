@@ -12,13 +12,14 @@ transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 # block on .message.content[], so match raw entries, not --events.
 entries="$(sr-session trajectory normalize --path "$transcript_path")"
 
-# The last auditable action this turn, keyed on representative tool names (a real
-# deployment names its own). Guard .content to arrays: a text message carries it
+# The last auditable action this turn, keyed on the tool part of a browser MCP tool's
+# name: a real harness names them mcp__<server>__<tool> (mcp__browser__fill_form), so
+# match what follows the server (a real deployment names its own). Guard .content to arrays: a text message carries it
 # as a STRING, and iterating that with [] is a jq fatal that fails closed.
 action="$(printf '%s' "$entries" | jq -c '
   [ .[] | (.message | objects | .content // [] | if type == "array" then .[] else empty end)
     | select(.type == "tool_use"
-        and (.name == "fill_form" or .name == "download_file")) ][-1] // null')"
+        and (.name | test("^mcp__.+__(fill_form|download_file)$"))) ][-1] // null')"
 
 if [ "$action" = "null" ]; then
   # No auditable action this turn — nothing to demand proof of.
@@ -31,7 +32,7 @@ fi
 # actually shows the action's fields.
 proof="$(printf '%s' "$entries" | jq -c '
   ([ .[] | (.message | objects | .content // [] | if type == "array" then .[] else empty end)
-     | select(.type == "tool_use" and .name == "screenshot") | .id ][-1]) as $sid
+     | select(.type == "tool_use" and (.name | test("^mcp__.+__screenshot$"))) | .id ][-1]) as $sid
   | if $sid == null then null
     else ([ .[]
              | select(any((.message | objects | .content // [] | if type == "array" then .[] else empty end);
