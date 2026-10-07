@@ -175,6 +175,7 @@ func TestEvaluate_MatchSelectingNothingIsAPass(t *testing.T) {
 }
 
 // sr:proves fileguard/unreadable-range-refuses
+// sr:proves matching/unevaluable-never-passes
 func TestEvaluate_AMatchThatDoesNotCompileFailsClosedAndIsRecordedAsAnEngineFailure(t *testing.T) {
 	f := newEvalFixture(t, func(g *declaration.FileGuard) { g.Match = `path ==` })
 	f.commitDoc(t, "docs/a.md", "clean")
