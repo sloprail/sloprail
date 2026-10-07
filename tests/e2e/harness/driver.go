@@ -68,6 +68,16 @@ const (
 	// hook rejection that never reaches the transcript.
 	CapRecordHoldsToolResults = "record-holds-tool-results"
 
+	// CapOrphanToolResult: the session's record can hold a tool result whose call is not in
+	// the record (a scenario step supplying one). Codex's and Cursor's results are the
+	// harness's own record of a command it ran, so each has its call.
+	CapOrphanToolResult = "orphan-tool-result"
+
+	// CapMCPTools: the agent can call a tool of an MCP server (mcp__<server>__<tool>) and
+	// the scenario can state its result (harness-mocks spec/capabilities mcp-tool: claude
+	// only, codex and cursor pending).
+	CapMCPTools = "mcp-tools"
+
 	// CapPathLineBreaks: the harness's file tool can name a path holding a line break.
 	// Codex's apply_patch names a file on one line of the patch, so it cannot.
 	CapPathLineBreaks = "path-line-breaks"

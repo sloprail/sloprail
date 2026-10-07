@@ -27,7 +27,7 @@ func (claudeDriver) SkillLoadTool() string { return "Skill" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapSubagentLifecycleHooks, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapProseWithCallInOneEntry}
+		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapOrphanToolResult, CapMCPTools, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapProseWithCallInOneEntry}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
