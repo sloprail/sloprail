@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"testing"
 )
 
 // Scenario is what the agent does: one turn per action.
@@ -259,6 +260,31 @@ func AskUserQuestion(id, question, answer string) (Turn, Turn) {
 		jsonStr(question), jsonStr(answer), jsonStr(answer))
 	use, _ := toolUseWithResultRaw(id, "AskUserQuestion", input, "null")
 	return use, AnswerQuestion(id, [2]string{question, answer})
+}
+
+// AnswerIfAsked is AnswerQuestion where the harness has an answer record (CapAskUserQuestion)
+// and NO turn where it has none. Codex and Cursor offer the agent no question tool, so
+// nothing the person "answered" can be in their record: a test that pins what the product
+// does with an answer envelope runs the same scenario and asserts, on those harnesses, what
+// the product does when the record holds no such answer — the explicit counterpart, the
+// words never having been said.
+func AnswerIfAsked(t testing.TB, id string, qa ...[2]string) []Turn {
+	t.Helper()
+	if !HasCap(t, CapAskUserQuestion) {
+		return nil
+	}
+	return []Turn{AnswerQuestion(id, qa...)}
+}
+
+// AskUserQuestionIfOffered is AskUserQuestion's two turns where the harness offers the
+// question tool (CapAskUserQuestion), and none where it does not (see AnswerIfAsked).
+func AskUserQuestionIfOffered(t testing.TB, id, question, answer string) []Turn {
+	t.Helper()
+	if !HasCap(t, CapAskUserQuestion) {
+		return nil
+	}
+	ask, ans := AskUserQuestion(id, question, answer)
+	return []Turn{ask, ans}
 }
 
 // ToolResult returns ONE turn carrying a tool's RESULT with arbitrary content — the

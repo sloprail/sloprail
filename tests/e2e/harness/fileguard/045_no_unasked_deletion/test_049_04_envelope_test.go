@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,7 +57,7 @@ func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 	// the session transcript. The prompt does NOT contain the answer substring, so
 	// the quote resolves uniquely to the envelope line, not the prompt.
 	e.Run(proj, sess, "here is a memory editing task", Turns("done",
-		harness.AnswerQuestion("q1", [2]string{question, answer}),
+		harness.AnswerIfAsked(t, "q1", [2]string{question, answer})...,
 	))
 
 	// Run 2, SAME session: the removal, authorized by an sr:asked marker quoting the
@@ -66,6 +68,22 @@ func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 	).ThenCommit("write the files", harness.CitesUser("remove the second line please")))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	// Without an answer record (no question tool) the person never said the answer: the
+	// removal's quote does not resolve, so nothing grounds it — the judge is never
+	// asked and no question or answer reaches a prompt — and the file keeps its line.
+	if !harness.HasCap(t, harness.CapAskUserQuestion) {
+		if prompt != "" {
+			t.Fatalf("the judge ran for a removal quoting words the person never said:\n%s", prompt)
+		}
+		body, err := os.ReadFile(filepath.Join(proj, "memories/topic.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "remove the second line") {
+			t.Fatalf("a removal grounded in words never said landed:\n%s", body)
+		}
+		return
+	}
 	if prompt == "" {
 		t.Fatalf("the judge never ran — no prompt captured (did the grounded ask reach the judge?)")
 	}

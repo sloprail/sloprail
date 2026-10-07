@@ -156,23 +156,35 @@ func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 // sr:proves citations/user-pool-is-the-persons-own-words
 func TestT041_32_AnAnswerIsNotToolOutput(t *testing.T) {
 	e, proj := provenanceProject(t)
-	ask, answer := harness.AskUserQuestion("q1", "which retry budget?", "ANSWER-E2E-6120 five retries")
-	e.Run(proj, "s-041-32", prompt, Turns("done", ask, answer))
+	asked := harness.HasCap(t, harness.CapAskUserQuestion)
+	e.Run(proj, "s-041-32", prompt, Turns("done", harness.AskUserQuestionIfOffered(t, "q1", "which retry budget?", "ANSWER-E2E-6120 five retries")...))
 	record := readFile(t, e.TranscriptPath(proj, "s-041-32"))
-	for _, want := range []string{`"name":"AskUserQuestion"`, "ANSWER-E2E-6120"} {
-		if !strings.Contains(record, want) {
-			t.Fatalf("%q is not in the record, so this would not test it", want)
+	if asked {
+		for _, want := range []string{`"name":"AskUserQuestion"`, "ANSWER-E2E-6120"} {
+			if !strings.Contains(record, want) {
+				t.Fatalf("%q is not in the record, so this would not test it", want)
+			}
 		}
+	} else if strings.Contains(record, "ANSWER-E2E-6120") {
+		// No question tool, so no answer: the words are in no record, and so ground
+		// neither a user nor a tool_result citation.
+		t.Fatalf("the answer is in a record that has no answer to hold:\n%s", record)
 	}
 	res := e.Run(proj, "s-041-32", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/budget.md --cite:tool_result 'ANSWER-E2E-6120 five retries' --content '# budget'`),
 		Bash("b2", `sr-file write notes/budget.md --cite:user 'ANSWER-E2E-6120 five retries' --content '# budget'`),
 	))
-	if !res.Saw("memories/plain.md") {
+	if !res.Saw("memories/budget.md") {
 		t.Fatalf("the citing calls never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/budget.md") {
 		t.Errorf("the user's answer grounded a --cite:tool_result write:\n%s", res.Output)
+	}
+	if !asked {
+		if e.Exists(proj, "notes/budget.md") {
+			t.Errorf("words no one said grounded a --cite:user write:\n%s", res.Output)
+		}
+		return
 	}
 	if !e.Exists(proj, "notes/budget.md") {
 		t.Errorf("the user's answer did not ground a --cite:user write:\n%s", res.Output)
