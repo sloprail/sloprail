@@ -111,6 +111,14 @@ type SubagentsUnlinkable interface {
 	SubagentsUnlinkable() bool
 }
 
+// ParentLocator is implemented by a Transcripts whose sub-agent record names the session
+// that dispatched it by a link the file itself holds (Codex: the first line's
+// parent_thread_id), where Claude Code's is derived from a companion's tool-use id. The
+// parent is the dispatching agent's record, "" when path is a root or the link is dead.
+type ParentLocator interface {
+	ParentRecord(transcriptPath string) string
+}
+
 // Transcripts is how a harness's session record is parsed and located: its line
 // format and its on-disk layout. Everything above this (walking a chain, citing,
 // the identity of a conversation) is harness-neutral and lives in internal/transcript.

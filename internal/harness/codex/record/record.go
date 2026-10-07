@@ -72,6 +72,9 @@ type payload struct {
 	Output    json.RawMessage `json:"output"`
 	Content   json.RawMessage `json:"content"`
 	Item      json.RawMessage `json:"item"`
+
+	// ThreadSource is "subagent" on a sub-agent's session_meta, "user" on a root's.
+	ThreadSource string `json:"thread_source"`
 }
 
 // ParseRecord parses one line of a Codex rollout.
@@ -97,6 +100,7 @@ func (Transcripts) ParseRecord(raw []byte) (harness.Record, error) {
 		// give the sub-agent its parent's identity and state.
 		id := firstNonEmpty(p.ID, p.SessionID)
 		rec.UUID, rec.ParentUUID, rec.SessionID, rec.Cwd = id, nil, id, p.Cwd
+		rec.IsSidechain = p.ThreadSource == "subagent"
 	case "turn_context":
 		rec.Cwd = p.Cwd
 	case "response_item":
@@ -344,6 +348,21 @@ func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
 		}
 	}
 	return out
+}
+
+// ParentRecord implements harness.ParentLocator: the rollout of the thread the sub-agent's
+// session_meta names as its parent (recorded: harness-mocks codex-mock nested-subagents),
+// found beside it in the sessions tree. "" for a root, or when that rollout is not there.
+func (Transcripts) ParentRecord(transcriptPath string) string {
+	parent := rolloutParent(transcriptPath)
+	if parent == "" {
+		return ""
+	}
+	sessions := filepath.Dir(transcriptPath)
+	for i := 0; i < 3; i++ { // sessions/YYYY/MM/DD/<rollout>
+		sessions = filepath.Dir(sessions)
+	}
+	return FindRollout(filepath.Dir(sessions), parent)
 }
 
 // rolloutThreadID is the thread id a rollout's file name ends with.

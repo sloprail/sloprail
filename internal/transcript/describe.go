@@ -301,6 +301,9 @@ func subagentDirOf(path string) string {
 // link. The one hard error is an unreadable search directory, which is a broken
 // environment rather than a trajectory without a parent.
 func ParentPath(path, searchDir string) (string, error) {
+	if l, ok := harness.ForTranscript(path).Transcripts().(harness.ParentLocator); ok {
+		return l.ParentRecord(path), nil
+	}
 	meta, ok, err := ReadSubagentMeta(path)
 	if err != nil {
 		return "", err
