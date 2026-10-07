@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -54,8 +53,8 @@ declares none). Plugins that could not be found are reported on stderr and not l
 // pluginVersion is the version in the plugin.json a plugin folder holds, under whichever harness's
 // manifest folder, or "".
 func pluginVersion(dir string) string {
-	for _, d := range []string{".claude-plugin", ".codex-plugin", ".cursor-plugin"} {
-		raw, err := os.ReadFile(filepath.Join(dir, d, "plugin.json"))
+	for _, path := range harness.PluginManifestPaths(dir) {
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}

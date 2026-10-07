@@ -9,8 +9,7 @@ git init -q .
 # one agent run with no turn sets up the plugin (config dir and plugin cache) so sr-checks loads sloprail's rules here
 git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
-export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
-export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
+while IFS= read -r kv; do export "$kv"; done < <(echo "$SETUP" | jq -er ".env[]")
 : > "$SR_EVENTS_FILE"
 mkdir -p plugins/p/.claude-plugin plugins/p/.sloprail/gate/demo/tests/demo-case
 printf '{"name":"p","version":"0.0.1"}\n' > plugins/p/.claude-plugin/plugin.json

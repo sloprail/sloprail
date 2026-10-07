@@ -77,6 +77,21 @@ type Entry struct {
 	// is empty. Left undecoded for the same reason Message is: what is inside is
 	// the harness's own shape, per `attachment.type`.
 	Attachment json.RawMessage `json:"attachment,omitempty"`
+
+	// StopHook is how a Stop hook run ended, on the EntrySystem record the harness
+	// writes for it (Claude Code's `stop_hook_summary`). Nil on every other entry,
+	// and on harnesses whose records carry no such outcome.
+	StopHook *StopHook `json:"stopHook,omitempty"`
+}
+
+// StopHook is the outcome of one Stop hook run: whether the hooks let the turn end,
+// and why not when they did not.
+type StopHook struct {
+	// Refused is true when the hooks sent the agent back to work: a hook listed an error.
+	Refused bool `json:"refused"`
+
+	// Reasons are the hook errors the harness listed, empty when Refused is false.
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 // EntryType is what kind of entry an entry is.

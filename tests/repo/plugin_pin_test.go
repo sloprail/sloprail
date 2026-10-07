@@ -77,6 +77,7 @@ func TestBumpVersionWritesVersionAndRef(t *testing.T) {
 		}
 	}
 	copyFile("scripts/bump-version.sh")
+	copyFile("scripts/plugin-manifest-dirs.sh")
 	copyFile(".claude-plugin/marketplace.json")
 	for _, p := range readMarketplace(t, root).Plugins {
 		copyFile(filepath.Join(p.Source.Path, ".claude-plugin/plugin.json"))

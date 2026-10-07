@@ -72,12 +72,21 @@ esac
 # The release the CI job installs sloprail from: `v<version>` of the plugin installed here (the version
 # `sr-session plugins` reports for the plugin resolved at this plugin's root), else the version in this
 # plugin's own plugin.json, so CI runs the engine installed here.
+# manifest_of <plugin dir> -> that plugin's plugin.json under any harness's manifest folder (the list in
+# internal/harness/pluginmanifest.go); nothing when there is none.
+manifest_of() {
+  local m
+  for m in .claude-plugin .codex-plugin .cursor-plugin; do
+    [ -r "$1/$m/plugin.json" ] && { printf '%s\n' "$1/$m/plugin.json"; return 0; }
+  done
+  return 0
+}
 ver=
 if [ -n "$plugin_root" ]; then
   ver="$(sr-session plugins 2>/dev/null | jq -r --arg root "$plugin_root" 'select((.root // "") == $root) | .version // empty' 2>/dev/null | head -n1)"
 fi
-if [ -z "$ver" ] && [ -n "$plugin_root" ] && [ -r "$plugin_root/.claude-plugin/plugin.json" ]; then
-  ver="$(jq -r '.version // empty' "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null)"
+if [ -z "$ver" ] && [ -n "$plugin_root" ] && [ -n "$(manifest_of "$plugin_root")" ]; then
+  ver="$(jq -r '.version // empty' "$(manifest_of "$plugin_root")" 2>/dev/null)"
 fi
 case "$ver" in
   "" | *[!0-9A-Za-z.+-]*) refuse "ci-verify-required could not read the sloprail plugin version, so the CI job's install pin could not be computed" ;;
