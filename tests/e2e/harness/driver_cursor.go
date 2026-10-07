@@ -265,6 +265,13 @@ func (c cursorDriver) InstallPlugins(e *Env, dir string) {
 	if err := os.MkdirAll(local, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir %s: %v", local, err)
 	}
+	// The plugin under test is also installed the way a user installs a local plugin: a
+	// sloprail command run in the agent's shell (not from a plugin hook, so without
+	// CURSOR_PLUGIN_ROOT) finds a plugin only there (cursor.Resolve). Without it `sr-checks run`
+	// before the stop judges the range against no shipped guardrail, and stores that.
+	if err := copyTree(c.pluginDirs(e)[0], filepath.Join(local, pluginName)); err != nil {
+		e.t.Fatalf("harness: install the plugin under test as a local plugin: %v", err)
+	}
 	for _, p := range e.extraPlugins {
 		manifest := filepath.Join(p.root, ".cursor-plugin", "plugin.json")
 		if !fileExists(manifest) {

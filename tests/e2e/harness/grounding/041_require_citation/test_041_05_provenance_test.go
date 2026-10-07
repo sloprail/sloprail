@@ -194,6 +194,7 @@ func readFile(t *testing.T, path string) string {
 // sr-file failing the same way is left to say its own words.
 // sr:proves citations/user-pool-is-the-root-conversation
 func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
