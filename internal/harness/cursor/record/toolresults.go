@@ -271,6 +271,7 @@ func sweep(dir string) {
 type slot struct {
 	id, tool, key, path, gen string
 	at                       time.Time
+	started                  int // the store line index of its pre
 
 	// where the outcome text is: the line index (1-based, the line's number in the store,
 	// which is what the result is cited under), its offset and length in the file.
@@ -354,14 +355,14 @@ func loadStore(conversationID string) *store {
 							break
 						}
 						open = without(open, s)
-						*s = slot{id: s.id, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at}
+						*s = slot{id: s.id, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at, started: where.idx}
 						if s.tool == "Read" && s.path != "" {
 							s.open = true
 							open = append(open, s)
 						}
 						break
 					}
-					s := &slot{id: l.ToolUseID, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at}
+					s := &slot{id: l.ToolUseID, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at, started: where.idx}
 					byID[s.id] = s
 					all = append(all, s)
 					if s.tool == "Read" && s.path != "" {
@@ -457,6 +458,15 @@ func (st *store) pairing(callCounts map[string]int) map[string][]*slot {
 		ok := true
 		for _, extra := range slots[calls:] {
 			if extra.postRecorded || extra.bound {
+				ok = false
+			}
+		}
+		// Calls pair with slots by START order, which is the transcript's order only if
+		// the calls did not overlap: each must have finished before the next began.
+		// Two running together (parallel identical commands) may have started in either
+		// order relative to the transcript, so their outputs could swap: no result.
+		for i := 0; ok && i+1 < calls; i++ {
+			if !slots[i].postRecorded || slots[i].post.idx > slots[i+1].started {
 				ok = false
 			}
 		}
