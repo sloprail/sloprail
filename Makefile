@@ -80,15 +80,10 @@ where:
 	elif [ -n "$(INSTALLED_SR)" ]; then echo "  because: sr is already installed at $(INSTALLED_SR)"; \
 	else echo "  because: no sr on \$$PATH — defaulting to the Go bin dir"; fi
 
-# Before rolling out a build that changes the check-results key (checkcache.SchemaDir /
-# SchemaVersion), verify the migration on a COPY of the real store, never the store itself:
-#   git clone --no-local --bare <repo> /tmp/mig.git       # carries the sloprail/checks branch
-#   git -C /tmp/mig.git fetch origin 'refs/heads/sloprail/checks:refs/sloprail/checks'
-#   (cd /tmp/mig.git && sr-checks log)                    # read-only: old results, old directory
-#   go test ./internal/checkcache -run MigrateKeys        # the migration itself
-# then run `sr-checks run` once in a scratch clone of the repository with the new build: it
-# migrates the checks ref (one commit, v2026-10-03 left in place) and pushes it. CI's installed
-# sr-checks MUST be upgraded in the same release: an older sr-checks refuses the new directory.
+# A build that changes the check-results key (checkcache.SchemaDir / SchemaVersion) starts a
+# new, empty directory in the checks ref; the older one stays untouched and everything is judged
+# again. CI's installed sr-checks MUST be upgraded in the same release: an older sr-checks
+# refuses the new directory.
 #
 # distribute-local installs the whole set into ONE directory, which is what
 # sibling resolution requires: `sr session start` execs the sr-session next to
@@ -277,17 +272,39 @@ test-services:
 # CI and every contributor run the same mock, and a mock bump is a reviewed
 # change to that file. Built from source by `go install`, so it works on any OS.
 # The .bin/a10n-claude-mock.<version> stamp makes a repeat run a no-op.
+#
+# The codex and cursor mocks are pinned the same way (CODEX_MOCK_VERSION,
+# CURSOR_MOCK_VERSION beside it) and installed as a10n-codex-mock and
+# a10n-cursor-mock, for running the suite against those harnesses.
 MOCK_VERSION := $(shell cat tests/e2e/harness/MOCK_VERSION)
 MOCK_STAMP := .bin/a10n-claude-mock.$(MOCK_VERSION)
+CODEX_MOCK_VERSION := $(shell cat tests/e2e/harness/CODEX_MOCK_VERSION)
+CODEX_MOCK_STAMP := .bin/a10n-codex-mock.$(CODEX_MOCK_VERSION)
+CURSOR_MOCK_VERSION := $(shell cat tests/e2e/harness/CURSOR_MOCK_VERSION)
+CURSOR_MOCK_STAMP := .bin/a10n-cursor-mock.$(CURSOR_MOCK_VERSION)
 
 .PHONY: mock
-mock: $(MOCK_STAMP)
+mock: $(MOCK_STAMP) $(CODEX_MOCK_STAMP) $(CURSOR_MOCK_STAMP)
 
 $(MOCK_STAMP): tests/e2e/harness/MOCK_VERSION
 	@mkdir -p .bin
 	GOBIN=$(CURDIR)/.bin go install github.com/sloprail/harness-mocks/claude-mock@$(MOCK_VERSION)
 	mv .bin/claude-mock .bin/a10n-claude-mock
 	rm -f .bin/a10n-claude-mock.v*
+	touch $@
+
+$(CODEX_MOCK_STAMP): tests/e2e/harness/CODEX_MOCK_VERSION
+	@mkdir -p .bin
+	GOBIN=$(CURDIR)/.bin go install github.com/sloprail/harness-mocks/codex-mock@$(CODEX_MOCK_VERSION)
+	mv .bin/codex-mock .bin/a10n-codex-mock
+	rm -f .bin/a10n-codex-mock.v*
+	touch $@
+
+$(CURSOR_MOCK_STAMP): tests/e2e/harness/CURSOR_MOCK_VERSION
+	@mkdir -p .bin
+	GOBIN=$(CURDIR)/.bin go install github.com/sloprail/harness-mocks/cursor-mock@$(CURSOR_MOCK_VERSION)
+	mv .bin/cursor-mock .bin/a10n-cursor-mock
+	rm -f .bin/a10n-cursor-mock.v*
 	touch $@
 
 # -timeout 30m: each e2e package builds binaries and drives a mock agent.

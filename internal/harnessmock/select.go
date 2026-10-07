@@ -29,8 +29,8 @@ type entry struct {
 // table is THE place where a harness maps to its mock. Order is the detection priority.
 var table = []entry{
 	{harness: Claude, binary: "a10n-claude-mock", version: Version, released: true, markers: []string{".claude-plugin"}},
-	{harness: Codex, binary: "codex-mock", markers: []string{".codex-plugin", ".codex"}},
-	{harness: Cursor, binary: "cursor-mock", markers: []string{".cursor-plugin", ".cursor"}},
+	{harness: Codex, binary: "a10n-codex-mock", markers: []string{".codex-plugin", ".codex"}},
+	{harness: Cursor, binary: "a10n-cursor-mock", markers: []string{".cursor-plugin", ".cursor"}},
 }
 
 // Mock is the selected mock.

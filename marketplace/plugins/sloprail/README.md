@@ -127,7 +127,7 @@ File-guards are judged over an explicit range, never by the Stop hook:
 
 A verdict is also reused when a range's base and head trees equal those of a range already judged (a squash merge of a verified, up-to-date PR); if main moved under the PR, run `sr-checks run --base <before> --head <after>` for the push.
 
-Every check (script, judge, requirement) is cached; a verdict per guard and subject is keyed by content (rule hash, subject, fingerprint), not by
+Every check (script, judge, requirement) is cached; a verdict per guard and subject is keyed by content (rule, check, subject, fingerprint; not the rule's own definition), not by
 commit or session, and kept on the orphan branch `sloprail/checks` on `origin`, so a
 rebase, another clone or CI reads the same results. The Stop hook only verifies: it
 refuses uncommitted work on guarded paths, then verifies each range the session
