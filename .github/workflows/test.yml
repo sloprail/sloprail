@@ -302,6 +302,9 @@ jobs:
   # or fail on what Codex support does today. `plugins` is left out: those modules
   # drive the Claude mock. The shards must stay a subset of the Makefile's (the
   # guard in tests/repo checks it).
+  # Runs on main only (each step's if:). On a branch, drive Codex or Cursor with an
+  # [e2e-only: harness=codex|cursor pkgs=... run=...] commit (e2e-adhoc), which runs
+  # just the chosen packages instead of 14 full shards on every push.
   e2e-codex:
     name: e2e codex (${{ matrix.codex-shard }})
     needs: changes
@@ -313,17 +316,17 @@ jobs:
         codex-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         name: e2e (codex)
         shell: bash
         env:
@@ -353,17 +356,17 @@ jobs:
         cursor-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.code-changed == 'true' && github.ref == 'refs/heads/main'
         name: e2e (cursor)
         shell: bash
         env:
