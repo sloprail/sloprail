@@ -61,8 +61,14 @@ jobs:
     name: which files changed
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # An [e2e-only: ...] commit runs ONLY the e2e-adhoc job below (every other
+    # job's steps skip) — see the adhoc step.
     outputs:
-      code-changed: ${{ steps.diff.outputs.code-changed }}
+      code-changed: ${{ steps.adhoc.outputs.adhoc == 'true' && 'false' || steps.diff.outputs.code-changed }}
+      adhoc: ${{ steps.adhoc.outputs.adhoc }}
+      adhoc-harness: ${{ steps.adhoc.outputs.harness }}
+      adhoc-pkgs: ${{ steps.adhoc.outputs.pkgs }}
+      adhoc-run: ${{ steps.adhoc.outputs.run }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,6 +122,34 @@ jobs:
           else
             echo "code-changed=true" >> "$GITHUB_OUTPUT"
           fi
+      # A quick repro in CI instead of the whole suite: a pushed commit whose
+      # message carries
+      #   [e2e-only: harness=codex pkgs=./tests/e2e/harness/fileguard/...,./tests/e2e/harness/gate/... run=TestT034_01]
+      # (harness defaults to claude, run to every test) runs just those packages
+      # under that harness in e2e-adhoc, and every other job skips. e2e (all)
+      # then FAILS on purpose, so a branch whose head is such a commit cannot
+      # merge on it: push a commit without the tag for the full run.
+      - id: adhoc
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          line="$(printf '%s\n' "$MSG" | grep -oE '\[e2e-only:[^]]*\]' | tail -1 || true)"
+          if [ -z "$line" ]; then echo "adhoc=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          body="${line#\[e2e-only:}"; body="${body%\]}"
+          harness=claude pkgs='' run=''
+          for kv in $body; do
+            case "$kv" in
+              harness=*) harness="${kv#harness=}" ;;
+              pkgs=*) pkgs="$(printf '%s' "${kv#pkgs=}" | tr ',' ' ')" ;;
+              run=*) run="${kv#run=}" ;;
+              *) echo "[e2e-only]: unknown field '$kv' (want harness=, pkgs=, run=)" >&2; exit 1 ;;
+            esac
+          done
+          case "$harness" in claude|codex|cursor) ;; *) echo "[e2e-only]: harness must be claude, codex or cursor" >&2; exit 1 ;; esac
+          [ -n "$pkgs" ] || { echo "[e2e-only]: pkgs= is required" >&2; exit 1; }
+          case "$pkgs" in *[!a-zA-Z0-9_./\ -]*) echo "[e2e-only]: pkgs takes package paths only" >&2; exit 1 ;; esac
+          case "$run" in *[!a-zA-Z0-9_|^$.*()/-]*) echo "[e2e-only]: run takes a go test -run regex only" >&2; exit 1 ;; esac
+          { echo "adhoc=true"; echo "harness=$harness"; echo "pkgs=$pkgs"; echo "run=$run"; } >> "$GITHUB_OUTPUT"
 
   unit:
     name: unit + services
@@ -250,10 +284,12 @@ jobs:
       - env:
           CHANGES: ${{ needs.changes.result }}
           CODE_CHANGED: ${{ needs.changes.outputs.code-changed }}
+          ADHOC: ${{ needs.changes.outputs.adhoc }}
           E2E: ${{ needs.e2e.result }}
         run: |
-          echo "changes=$CHANGES code-changed=$CODE_CHANGED e2e=$E2E"
+          echo "changes=$CHANGES code-changed=$CODE_CHANGED adhoc=$ADHOC e2e=$E2E"
           [ "$CHANGES" = success ] || { echo "the which-files-changed job did not succeed"; exit 1; }
+          [ "$ADHOC" != true ] || { echo "an [e2e-only] commit ran a subset only: push a commit without the tag for the full run"; exit 1; }
           [ "$E2E" = success ] && exit 0
           if [ "$E2E" = skipped ] && [ "$CODE_CHANGED" != true ]; then exit 0; fi
           echo "an e2e shard did not succeed"
@@ -393,3 +429,36 @@ jobs:
       - if: always() && needs.changes.outputs.code-changed == 'true'
         name: stop local server
         run: kill "$(cat /tmp/http-server.pid)" 2>/dev/null || true
+
+  # The [e2e-only: ...] subset (see the changes job's adhoc step). Not required;
+  # e2e (all) fails for such a commit regardless of this job's result.
+  e2e-adhoc:
+    name: e2e adhoc
+    needs: changes
+    if: needs.changes.outputs.adhoc == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install the mocks
+        run: make mock
+      - name: e2e (${{ needs.changes.outputs.adhoc-harness }})
+        shell: bash
+        env:
+          SR_HARNESS: ${{ needs.changes.outputs.adhoc-harness }}
+          PKGS: ${{ needs.changes.outputs.adhoc-pkgs }}
+          RUN: ${{ needs.changes.outputs.adhoc-run }}
+        run: |
+          set +e
+          # shellcheck disable=SC2086
+          go test -p 1 -count=1 -timeout 40m -v ${RUN:+-run "$RUN"} $PKGS 2>&1 | tee e2e.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "harness=$SR_HARNESS packages=$PKGS run=${RUN:-all}"
+            echo "pass=$(grep -c -- '--- PASS' e2e.log) fail=$(grep -c -- '--- FAIL' e2e.log) skip=$(grep -c -- '--- SKIP' e2e.log)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
