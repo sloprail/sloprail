@@ -12,6 +12,7 @@ func TestCursorRendersWhatCursorCanDo(t *testing.T) {
 		Bash("b1", "echo hi"),
 		Compact("k1"),
 		Dispatch("d1", "go", "/tmp/sub.sh", ""),
+		Skill("k2", "x"),
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +22,10 @@ func TestCursorRendersWhatCursorCanDo(t *testing.T) {
 		`"name":"Bash"`,
 		`{"type":"compact","trigger":"manual"}`,
 		`"name":"Task"`,
-		`{"type":"result","subtype":"success","is_error":false,"result":"fin"}`,
+		`"name":"Read"`, // a skill is loaded by reading its SKILL.md: Cursor has no skill tool
+		`/.claude/skills/x/SKILL.md`,
+		// the final reply is an assistant line: the run's result is what the assistant said
+		`{"message":{"content":[{"text":"fin","type":"text"}]},"type":"assistant"}`,
 	} {
 		if !strings.Contains(script, frag) {
 			t.Errorf("script lacks %s:\n%s", frag, script)
@@ -31,7 +35,6 @@ func TestCursorRendersWhatCursorCanDo(t *testing.T) {
 
 func TestCursorReportsWhatItCannotDo(t *testing.T) {
 	cases := map[string]Turn{
-		"Skill":          Skill("k1", "x"),
 		"BashBatch":      BashBatch("bb", "a", "b"),
 		"Background":     Background("bg", "Bash", map[string]string{"command": "x"}),
 		"ToolResult":     ToolResult("r1", "x"),

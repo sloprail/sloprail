@@ -1826,12 +1826,14 @@ const MockPreambleLines = 3
 
 // SessionStartAttachments is the number of records a fresh session's SessionStart
 // leaves ahead of the prompt. The mock writes a fresh transcript in the order real
-// Claude Code does: nothing while SessionStart runs, then one hook_success attachment
-// per SessionStart hook that printed anything, then the prompt. The plugin's start
-// hook always prints (rules-first.md, the one standing instruction it gives the
-// agent), so every session this harness drives opens with exactly one — and that
-// attachment, not the prompt, is the session's origin.
-const SessionStartAttachments = 1
+// Claude Code does: nothing while SessionStart runs, then, for each SessionStart hook
+// that printed anything, a hook_success attachment and, because the plugin's start
+// hook hands its text over as hookSpecificOutput.additionalContext (sr-session
+// emit-context), a hook_additional_context attachment, then the prompt. The plugin's
+// start hook always prints (rules-first.md, the one standing instruction it gives the
+// agent), so every session this harness drives opens with exactly those two — and the
+// first of them, not the prompt, is the session's origin.
+const SessionStartAttachments = 2
 
 // RootMessageLine is the 1-based PHYSICAL line the prompt record sits on in a
 // session's transcript: after the preamble and the SessionStart attachment.
