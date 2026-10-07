@@ -14,7 +14,6 @@ import (
 // main package chooses the harness by importing that package (blank import), and
 // no other package may import an implementation (tests/repo enforces it). A main
 // may import several; which one a process runs is decided by Current. A main
-// may import several; which one a process runs is decided by Current.
 //
 // The interface is deliberately small: what generic code (the engine, gates,
 // file-guards, sr-checks) needs to be harness-independent, and nothing a single
