@@ -13,7 +13,7 @@ examples/<name>/
     seed/  (or a repo: + ref: pin)
     overlay/                           # optional — see example-vs-fixture.md
 
-tests/e2e/examples/0NN_<name>/
+tests/e2e/<layer>/examples/0NN_<name>/   # <layer>: harness if a test drives the mock agent, else cli
   main_test.go                         # shim — copy an existing one verbatim, see below
   test_0NN_01_<thing>_test.go
   test_0NN_02_<thing>_test.go
@@ -28,11 +28,11 @@ match but usually echo it.
 
 ## Numbering a new e2e test package
 
-`tests/e2e/examples/` packages are numbered sequentially, oldest first, no
-gaps, no reuse. Find the next number:
+`tests/e2e/*/examples/` packages (both layers together) are numbered sequentially,
+oldest first, no gaps, no reuse. Find the next number:
 
 ```
-ls tests/e2e/examples/ | sort -t_ -k1 -n | tail -1
+ls tests/e2e/*/examples/ | sort -t_ -k1 -n | tail -1
 ```
 
 and increment. As of this writing the highest is `051_required_context_precondition`,
@@ -40,7 +40,7 @@ so a new example's e2e package is `052_<name>`.
 
 ## The e2e shim
 
-Every `tests/e2e/examples/0NN_<name>/main_test.go` is the same boilerplate —
+Every `tests/e2e/<layer>/examples/0NN_<name>/main_test.go` is the same boilerplate —
 copy an existing one (e.g. `046_business_invariants/main_test.go`) verbatim
 and just check the imports/helpers it uses match what your test files need
 (`Write`, `Bash`, `Turns`, etc. — see [test-cli-command](../test-cli-command/SKILL.md)
