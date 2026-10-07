@@ -3,10 +3,10 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
-	sragent "github.com/sloprail/sloprail/internal/harness/claudecode"
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
@@ -95,18 +95,19 @@ func TestRubricReachesSkillJudgePrompt(t *testing.T) {
 }
 
 // TestJudgeConfigReachesTheHarness pins that the migrated guardrail's own judge
-// config — the haiku model PIN and the allowed_tools: [Read] — reaches the real
-// sr-agent -> claude invocation. sr-agent builds `claude -p --model <resolved>
-// --settings <isolation> --add-dir <workspace> <answer dir> --allowed-tools
-// Edit(//<answer dir>/**) Read --disallowed-tools Edit(//<workspace>/**) --
-// <prompt>`, so the recorded argv carries the pinned model and the merged grant.
-// This is the D.1/D.2 config threaded end to end through the real binaries, not
-// just the unit-level judgeCommand.
+// config — the size-md model and the allowed_tools: [Read] — reaches the real
+// sr-agent -> harness invocation, and that the judge's agent is launched with the
+// project's hooks off. Each harness spells the launch its own way (Claude Code:
+// `--model`, `--allowed-tools Edit(//<answer dir>/**) Read`, an isolation
+// `--settings`; Codex: `-m` and a sandbox; Cursor: `--model` and a private
+// permission config), so the recorded launch is read through the driver and the
+// assertions are the ones every harness can be asked: the resolved model, the grant
+// of Read, nothing wider than Read and the answer directory, hooks off.
 func TestJudgeConfigReachesTheHarness(t *testing.T) {
 	e := New(t)
 	proj := guardProject(t, e, "rule-quality")
 
-	// A recording shim: writes a passing verdict AND records the claude argv.
+	// A recording shim: writes a passing verdict AND records the harness launch.
 	argvFile := filepath.Join(proj, "claude-argv.txt")
 	e.InstallJudgeClaudeRecordingArgv(argvFile, `{"pass": true, "reasoning": ""}`)
 
@@ -116,42 +117,44 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
-		t.Fatalf("the recording shim captured no claude argv (was the judge invoked?): %v", err)
+		t.Fatalf("the recording shim captured no harness argv (was the judge invoked?): %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
+	access := e.JudgeAccess(argvFile)
 
 	// The guardrail's model is size-md — the engine's default judge modelset. sr-agent
-	// RESOLVES that size alias to a concrete harness model before invoking claude, so
-	// the argv carries the resolved model, not the alias: for the Claude Code harness,
-	// size-md resolves to `sonnet`.
-	if !hasAdjacent(lines, "--model", "sonnet") {
-		t.Errorf("the guardrail's model (size-md) did not resolve to `--model sonnet` at the harness; argv:\n%s", string(argv))
+	// RESOLVES that size alias to a concrete harness model before invoking the harness, so
+	// the launch carries the resolved model, not the alias.
+	if _, want := e.MediumJudgeModelArgs(); access.Model != want {
+		t.Errorf("the guardrail's model (size-md) did not resolve to %q at the harness; got %q; argv:\n%s", want, access.Model, string(argv))
 	}
-	// allowed_tools: [Read] merged into the same --allowed-tools flag as the
-	// answer-file grant, which is an Edit rule scoped to the answer directory —
-	// never an unscoped Write (measured to write anywhere on disk).
-	allowed := flagValues(lines, "--allowed-tools")
-	if !contains(allowed, "Read") {
-		t.Errorf("the guardrail's allowed_tools ([Read]) did not reach the harness's --allowed-tools; argv:\n%s", string(argv))
+	// allowed_tools: [Read] reached the harness, merged with the answer-file grant — which
+	// is scoped to the answer directory, never an unscoped Write (measured to write
+	// anywhere on disk) — and nothing wider.
+	if !access.ReadGranted {
+		t.Errorf("the guardrail's allowed_tools ([Read]) did not reach the harness; argv:\n%s", string(argv))
 	}
-	if contains(allowed, "Write") {
-		t.Errorf("the judge was granted an unscoped Write, which writes anywhere on disk; argv:\n%s", string(argv))
+	if len(access.OtherTools) != 0 {
+		t.Errorf("the judge was granted more than Read and its answer directory: %q; argv:\n%s", access.OtherTools, string(argv))
 	}
-	if len(allowed) == 0 || !strings.HasPrefix(allowed[0], "Edit(//") {
-		t.Errorf("the answer file was not granted by a scoped Edit rule first in --allowed-tools; argv:\n%s", string(argv))
+	if len(access.Writable) == 0 {
+		t.Errorf("the answer directory was not granted a scoped write; argv:\n%s", string(argv))
 	}
-	// The isolation --settings the old script hand-rolled is now sr-agent's baseArgs.
-	if !hasAdjacent(lines, "--settings", sragent.IsolationSettings) {
-		t.Errorf("the isolation --settings did not reach the harness; argv:\n%s", string(argv))
+	// The isolation the old script hand-rolled is now sr-agent's: the judge's agent runs
+	// without the project's hooks.
+	if !e.JudgeHooksOff(string(argv), proj) {
+		t.Errorf("the isolation (hooks off) did not reach the harness; argv:\n%s", string(argv))
 	}
 }
 
+// projectBeingJudged is the directory the engine tells the judge the project is at.
+var projectBeingJudged = regexp.MustCompile(`The project being judged is at (\S+?)\. Paths in`)
+
 // TestJudgeReadsTheWorkspaceButCannotWriteIt pins the judge's project access at
-// the harness: the workspace is a working directory of the judge's agent (so its
-// Read/Grep/Glob reach the project — before this, a judge started in the rule's
-// folder was denied every read of the project it judged), and every file-writing
-// tool is denied there (a deny rule beats any allow), while the only write grant
-// is the answer directory. The engine also tells the judge where the project is.
+// the harness: the project is readable (a judge started in the rule's folder was
+// denied every read of the project it judged), and it cannot be written — by a deny
+// that beats any allow, or by a sandbox whose only writable root is the answer
+// directory — while the only write grant is the answer directory. The engine also
+// tells the judge where the project is.
 // sr:proves judges/judge-cannot-change-the-project
 func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 	e := New(t)
@@ -166,75 +169,65 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
-		t.Fatalf("the recording shim captured no claude argv (was the judge invoked?): %v", err)
+		t.Fatalf("the recording shim captured no harness argv (was the judge invoked?): %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
+	access := e.JudgeAccess(argvFile)
 	realWs := resolved(t, proj)
 
-	// Readable: the project is one of the --add-dir working directories. A file-guard
+	// The judge is told where the project is, so it need not guess the root. A file-guard
 	// judges commits, so the project is the read-only snapshot of the committed tip
 	// (.../sr-tree-*/tree), never the folder's checked-out working tree.
-	dirs := flagValues(lines, "--add-dir")
-	// The engine passes it as `--add-dir:readonly`; sr-agent adds the
-	// answer folder after it as one more (writable) dir, through the same path.
-	if len(dirs) != 2 || filepath.Base(dirs[0]) != "tree" || !strings.Contains(dirs[0], "sr-tree-") || strings.HasPrefix(dirs[0], realWs) {
-		t.Fatalf("--add-dir must carry the tip's tree snapshot then the answer dir; got %q (workspace %s); argv:\n%s", dirs, realWs, string(argv))
+	m := projectBeingJudged.FindStringSubmatch(string(argv))
+	if m == nil {
+		t.Fatalf("the judge's prompt does not name the workspace; argv:\n%s", string(argv))
 	}
-	ws := dirs[0]
-	answerDir := dirs[1]
-
-	// Not writable: every spelling of the workspace is denied to the Edit family.
-	deny := flagValues(lines, "--disallowed-tools")
-	if !contains(deny, "Edit(/"+ws+"/**)") && !contains(deny, "Edit(/"+resolvedLoose(ws)+"/**)") {
-		t.Errorf("the workspace %s is not denied to file-writing tools; --disallowed-tools %q; argv:\n%s", ws, deny, string(argv))
+	ws := m[1]
+	if filepath.Base(ws) != "tree" || !strings.Contains(ws, "sr-tree-") || strings.HasPrefix(ws, realWs) {
+		t.Fatalf("the judge must be pointed at the tip's tree snapshot, not the working tree; got %q (workspace %s)", ws, realWs)
 	}
 
-	// The grant is EXACTLY the answer directory's Edit rule (one per spelling —
-	// the answer dir may sit under a symlinked temp root) plus the rule's own
-	// allowed_tools ([Read]). Anything else — an Edit allow on the workspace, an
-	// unscoped Write — fails here. The answer dir itself is gone (sr-agent
-	// removed it), so its resolved spelling is built from its parent's.
-	wantAllowed := []string{"Edit(/" + answerDir + "/**)"}
-	if parent := resolved(t, filepath.Dir(answerDir)); parent != filepath.Dir(answerDir) {
-		wantAllowed = append(wantAllowed, "Edit(/"+filepath.Join(parent, filepath.Base(answerDir))+"/**)")
+	// Readable: the snapshot is among the directories the judge is given, or the harness
+	// reads the whole disk.
+	if !access.ReadsAnywhere && !within(ws, access.Readable) {
+		t.Errorf("the workspace %s is not readable by the judge; readable %q; argv:\n%s", ws, access.Readable, string(argv))
 	}
-	wantAllowed = append(wantAllowed, "Read")
-	if got := flagValues(lines, "--allowed-tools"); strings.Join(got, "\n") != strings.Join(wantAllowed, "\n") {
-		t.Errorf("--allowed-tools must be exactly the answer dir's Edit rule(s) and Read;\n got %q\nwant %q\nargv:\n%s", got, wantAllowed, string(argv))
+
+	// The only write grant is the answer directory (one entry per spelling — the answer dir
+	// may sit under a symlinked temp root). Anything else — a write allow on the workspace,
+	// an unscoped Write — fails here. The answer dir itself is gone (sr-agent removed it),
+	// so its resolved spelling is built from its parent's.
+	if len(access.Writable) == 0 {
+		t.Fatalf("the judge has no writable answer directory; argv:\n%s", string(argv))
 	}
-	// And the answer dir is outside the readonly workspace, or its deny would
-	// block the verdict (sr-agent places it outside every readonly dir).
+	answerDir := access.Writable[0]
+	for _, w := range access.Writable {
+		if filepath.Base(w) != filepath.Base(answerDir) || resolved(t, filepath.Dir(w)) != resolved(t, filepath.Dir(answerDir)) {
+			t.Errorf("the judge may write more than its answer directory %s: %q; argv:\n%s", answerDir, access.Writable, string(argv))
+		}
+	}
+	if len(access.OtherTools) != 0 {
+		t.Errorf("the judge was granted more than Read and its answer directory: %q; argv:\n%s", access.OtherTools, string(argv))
+	}
+
+	// Not writable: the workspace is denied outright, or the harness confines writes to
+	// the granted directories and the workspace is not one of them.
+	denied := within(ws, access.Readonly) || within(resolvedLoose(ws), access.Readonly)
+	confined := access.ConfinedToWritable && !within(ws, access.Writable) && !within(resolvedLoose(ws), access.Writable)
+	if !denied && !confined {
+		t.Errorf("the workspace %s is writable by the judge; readonly %q, writable %q (confined %v); argv:\n%s",
+			ws, access.Readonly, access.Writable, access.ConfinedToWritable, string(argv))
+	}
+	// And the answer dir is outside the readonly workspace, or its deny would block the
+	// verdict (sr-agent places it outside every readonly dir).
 	if strings.HasPrefix(resolved(t, filepath.Dir(answerDir))+string(filepath.Separator), resolvedLoose(ws)+string(filepath.Separator)) {
 		t.Errorf("the answer dir %s lies inside the workspace %s", answerDir, ws)
 	}
-
-	// And the judge is told where the project is, so it need not guess the root.
-	if !strings.Contains(string(argv), "The project being judged is at ") {
-		t.Errorf("the judge's prompt does not name the workspace; argv:\n%s", string(argv))
-	}
 }
 
-// flagValues is every value a variadic flag carried: the argv lines after flag
-// up to the next flag (or the `--` that ends them).
-func flagValues(lines []string, flag string) []string {
-	var values []string
-	for i := 0; i < len(lines); i++ {
-		if lines[i] != flag {
-			continue
-		}
-		for _, v := range lines[i+1:] {
-			if strings.HasPrefix(v, "--") {
-				break
-			}
-			values = append(values, v)
-		}
-	}
-	return values
-}
-
-func contains(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
+// within reports whether path is one of dirs or lies under one.
+func within(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if path == d || strings.HasPrefix(path, strings.TrimSuffix(d, "/")+"/") {
 			return true
 		}
 	}
@@ -250,17 +243,6 @@ func resolved(t *testing.T, path string) string {
 		t.Fatalf("resolve %s: %v", path, err)
 	}
 	return r
-}
-
-// hasAdjacent reports whether flag is immediately followed by value in the argv
-// lines — how sr-agent passes a flag and its value as two consecutive arguments.
-func hasAdjacent(lines []string, flag, value string) bool {
-	for i := 0; i+1 < len(lines); i++ {
-		if lines[i] == flag && lines[i+1] == value {
-			return true
-		}
-	}
-	return false
 }
 
 // TestEmptyRulesIsRefusalNotFailOpen pins the PRESERVED asymmetry: a guard whose

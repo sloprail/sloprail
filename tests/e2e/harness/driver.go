@@ -91,6 +91,11 @@ const (
 	// WebFetch(domain:...)) and denied one. Codex has no per-tool permission list, only a
 	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
 	CapScopedToolRules = "scoped-tool-rules"
+
+	// CapShellDenyBesideGrant: a judge can be granted a shell command and denied a form of it
+	// in the same run. Cursor does not enforce a shell deny beside a shell grant (measured), so
+	// sr-agent refuses such a run rather than promise a confinement it cannot give.
+	CapShellDenyBesideGrant = "shell-deny-beside-grant"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -203,6 +208,11 @@ type Driver interface {
 	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
 	// harness's argv with.
 	LargeJudgeModelArgs() (flag, value string)
+	// MediumJudgeModelArgs is the same for size-md, the judge default.
+	MediumJudgeModelArgs() (flag, value string)
+	// JudgeAccess reads the recording of a JudgeShimRecording judge into what the judge was
+	// granted (see JudgeAccess).
+	JudgeAccess(argvFile string) (JudgeAccess, error)
 
 	// SkillDir is the project-relative directory this harness reads a project's skills
 	// from (<dir>/<name>/SKILL.md).
@@ -260,6 +270,9 @@ type Driver interface {
 	WrittenBytes(content string) string
 	// Refusals are the PreToolUse refusal reasons in a run's output stream.
 	Refusals(output string) []string
+	// RefusalOutput is the output stream of a run in which a PreToolUse hook refused the
+	// agent's tool call with reason, in this harness's own shape: what Refusals reads back.
+	RefusalOutput(reason string) string
 	// ToolResults are the tool_result texts in a run's output stream.
 	ToolResults(output string) []string
 	// StopBlocked reports whether a Stop hook's output refuses the turn.
