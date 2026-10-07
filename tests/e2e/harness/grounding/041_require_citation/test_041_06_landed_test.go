@@ -118,10 +118,12 @@ func TestT041_36_EachDryRunFailureIsQuotedBesideItsFile(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a line whose changes sr-file cannot compute was permitted:\n%s", res.Output)
 	}
+	// The Bash call's own answer: the stream's other frames repeat the command line, which names
+	// both files.
 	var refusal string
-	for _, l := range strings.Split(res.Output, "\n") {
-		if strings.Contains(l, `"tool_use_id":"b1`) {
-			refusal = l
+	for _, r := range res.ToolResults() {
+		if strings.Contains(r, "hook error") {
+			refusal = r
 		}
 	}
 	if !strings.Contains(refusal, "QUOTE-NOBODY-SAID-4410") {

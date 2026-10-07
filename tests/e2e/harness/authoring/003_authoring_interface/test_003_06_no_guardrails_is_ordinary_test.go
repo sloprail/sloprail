@@ -1,6 +1,9 @@
 package e2e
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // T003_06: a project that has declared no guardrails sees no difference.
 //
@@ -29,7 +32,10 @@ func TestT003_06_ProjectWithNoGuardrailsPermitsEverything(t *testing.T) {
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	if got.Saw("denied") || got.Saw("blocked") || got.Saw("sloprail:") {
+	// What the tools answered, not the whole stream: the SessionStart hook's own text names the
+	// plugin ("sloprail:authoring-guardrails"), and the result frame's stats carry "killed"/"refused".
+	answered := strings.Join(got.ToolResults(), "\n")
+	if got.Refused() || strings.Contains(answered, "denied") || strings.Contains(answered, "blocked") || strings.Contains(answered, "sloprail:") {
 		t.Fatalf("a project with no guardrails was not silent:\n%s", got.Output)
 	}
 }

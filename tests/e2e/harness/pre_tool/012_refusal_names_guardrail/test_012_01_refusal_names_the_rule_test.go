@@ -83,14 +83,14 @@ func TestT012_01_RefusalNamesTheRuleThatFired(t *testing.T) {
 				Write("w1", dir+"/notes.md", "hello"),
 			))
 
-			if !got.Saw("that is not allowed here") {
+			if !got.SawInRefusal("that is not allowed here") {
 				t.Fatalf("the write under %q was not refused at all:\n%s", dir, got.Output)
 			}
-			if !got.Saw(name) {
+			if !got.SawInRefusal(name) {
 				t.Fatalf("the refusal never names %q, so the agent cannot find the rule it broke:\n%s", name, got.Output)
 			}
 			for other := range names {
-				if other != name && got.Saw(other) {
+				if other != name && got.SawInRefusal(other) {
 					t.Errorf("the refusal names %q, which did not fire — it points at the wrong rule:\n%s", other, got.Output)
 				}
 			}

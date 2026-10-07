@@ -118,11 +118,11 @@ func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 	))
 
 	require.True(t, res.Refused(), "an expired check must refuse")
-	assert.False(t, res.Saw("exit -1"),
+	assert.False(t, res.SawInRefusal("exit -1"),
 		"the reason reports a status no process can return, sending the author to debug an exit path never taken:\n%s", res.Output)
-	assert.True(t, res.Saw("killed"),
+	assert.True(t, res.SawInRefusal("killed"),
 		"the reason must say the check was killed rather than that it decided:\n%s", res.Output)
-	assert.True(t, res.Saw(testCheckTimeout),
+	assert.True(t, res.SawInRefusal(testCheckTimeout),
 		"the reason must say how long the check was given, or the author cannot tell a wedged rule from a merely slow one:\n%s", res.Output)
 }
 
@@ -196,9 +196,9 @@ func TestT019_09c_ASlowHookInsideTheDeadlineStillDecides(t *testing.T) {
 		Write("w1", "notes.md", "hello"),
 	))
 
-	assert.True(t, res.Saw("the slow rule thought about it and said no"),
+	assert.True(t, res.SawInRefusal("the slow rule thought about it and said no"),
 		"a check well inside the deadline must run to completion and its own words must govern:\n%s", res.Output)
-	assert.False(t, res.Saw("killed"),
+	assert.False(t, res.SawInRefusal("killed"),
 		"a check that answered in time must not be reported as killed:\n%s", res.Output)
 	assert.True(t, res.Refused(), "and its refusal must stand")
 	assert.False(t, e.Exists(proj, "notes.md"), "and prevent the work")

@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -31,7 +30,7 @@ func TestT003_70_AnOwedTipUnderARemovedSubagentFolderIsStillJudged(t *testing.T)
 	res := e.Run(proj, "s-003-70", "delegate", Turns("root done",
 		harness.Dispatch("d1", "write the docs", sub, "worktree"),
 	))
-	refused := strings.Contains(res.Output, "SubagentStop blocked (") || stopRefusals(e, proj, "s-003-70") != ""
+	refused := e.SubagentStopBlocked(proj, "s-003-70", "") || stopRefusals(e, proj, "s-003-70") != ""
 	if !refused {
 		t.Fatalf("a violating commit under a removed sub-agent folder was never judged by any Stop:\n%s", res.Output)
 	}

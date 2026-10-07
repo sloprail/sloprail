@@ -23,7 +23,7 @@ func TestT002_06_ASubagentInTheRootsTreeIsNotGated(t *testing.T) {
 	))
 
 	// The sub-agent's own Stop ran (its work is in the tree) and was NOT refused.
-	if res.AnySubagentStopBlocked() {
+	if !e.NoSubagentStopBlock(proj, "s-002-06") {
 		t.Fatalf("a sub-agent sharing the root's tree was refused for uncommitted work:\n%s", res.Output)
 	}
 	// Premise: the file really is uncommitted in the shared tree, and the root —
@@ -51,7 +51,7 @@ func TestT002_07_AnIsolatedSubagentOwnsItsTreeAndIsGated(t *testing.T) {
 
 	// The refusal reaches the sub-agent (the mock prints it as it re-runs it), and
 	// names the file in the tree it was bound to.
-	if !res.SubagentStopBlocked("Commit your work before ending this turn") || !strings.Contains(res.Output, "docs/isolated.md") {
+	if !e.SubagentStopBlocked(proj, "s-002-07", "Commit your work before ending this turn") || !e.SubagentStopBlocked(proj, "s-002-07", "docs/isolated.md") {
 		t.Fatalf("an isolated sub-agent was not refused for its own uncommitted work:\n%s", res.Output)
 	}
 }

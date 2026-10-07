@@ -43,7 +43,7 @@ func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(
 		harness.CommitFile("c1", "docs/release.md", "the steps", "document the release"),
 	))
 	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	if !res.AnySubagentStopBlocked() {
+	if !e.SubagentStopBlocked(proj, sess, "") {
 		t.Fatalf("premise: the sub-agent's uncited commit should be refused at its Stop:\n%s", res.Output)
 	}
 	told := strings.Join(e.SubagentBlockingErrors(proj, sess), "\n")
@@ -120,12 +120,17 @@ func TestT003_75_TheRootIsToldToCiteNotToHandBack(t *testing.T) {
 func TestT003_75_AStashedUncitedChangeIsNotJudgedUntilItIsCommitted(t *testing.T) {
 	e, proj, _ := project(t, citingRule)
 	const sess = "s-003-75s"
+	// The sub-agent first commits a file the rule does not match: a worktree left clean with no
+	// commit is removed when the sub-agent ends (the stash lives in the repository's shared
+	// refs/stash, not in the worktree), and this test needs the folder to still be there to
+	// pop the stash in.
 	sub := harness.SubagentScript(t, Turns("sub done",
+		harness.CommitFile("c0", "notes/unrelated.txt", "not a doc", "an unrelated change"),
 		Bash("w1", "mkdir -p docs && echo steps > docs/release.md"),
 		Bash("w2", "git stash push -u -q"),
 	))
 	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	if res.AnySubagentStopBlocked() {
+	if !e.NoSubagentStopBlock(proj, sess) {
 		t.Fatalf("a sub-agent's stashed change was judged:\n%s", res.Output)
 	}
 	if got := stopRefusals(e, proj, sess); got != "" {
@@ -143,5 +148,50 @@ func TestT003_75_AStashedUncitedChangeIsNotJudgedUntilItIsCommitted(t *testing.T
 	r := subagentStopNow(t, e, proj, sess, wt, agent)
 	if !harness.Blocked(r) || !strings.Contains(r.Output, "must cite") {
 		t.Fatalf("the commit made from the popped stash was not judged:\n%s", r.Output)
+	}
+}
+
+// T003_75b: a sub-agent that ONLY stashes an uncited docs/ change leaves its worktree clean with no
+// commit, which Claude Code removes when the sub-agent ends; the stash stays in the repository's
+// shared refs/stash. Nothing may break on the folder that is gone: the sub-agent's Stop passed
+// (nothing recorded was uncited), the root's Stop neither errors nor refuses for the missing path,
+// and the stash, popped in the main session and committed, is judged and refused.
+func TestT003_75b_ASubagentThatOnlyStashesLosesItsWorktreeAndNothingBreaks(t *testing.T) {
+	e, proj, _ := project(t, citingRule)
+	const sess = "s-003-75b"
+	sub := harness.SubagentScript(t, Turns("sub done",
+		Bash("w1", "mkdir -p docs && echo steps > docs/release.md"),
+		Bash("w2", "git stash push -u -q"),
+	))
+	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	if !e.NoSubagentStopBlock(proj, sess) {
+		t.Fatalf("a sub-agent's stashed change was judged at its Stop:\n%s", res.Output)
+	}
+	wt, _ := subagentFolder(t, e, proj, sess)
+	if _, err := os.Stat(wt); err == nil {
+		t.Fatalf("premise: the clean sub-agent's worktree %s was not removed", wt)
+	}
+	if out := e.Git(proj, "stash", "list"); !strings.Contains(out, "stash@{0}") {
+		t.Fatalf("premise: the stash is not in the main repository: %q", out)
+	}
+	if got := stopRefusals(e, proj, sess); got != "" {
+		t.Fatalf("the root was refused for a stash, or for the removed worktree:\n%s", got)
+	}
+	if r := e.StopNow(proj, sess, false); harness.Blocked(r) || r.Code != 0 {
+		t.Fatalf("the root's Stop broke on the removed sub-agent worktree (exit %d):\n%s", r.Code, r.Output)
+	}
+
+	// Popped in the main session, then committed as its own command (the commit gate cannot check
+	// a line that also runs the stash): judged and refused, at the commit or at the Stop.
+	blocks := stopBlocks(e, proj, sess)
+	applied := e.Run(proj, sess, "apply the stash", Turns("applied",
+		Bash("a1", "git stash pop -q && git add docs/release.md"),
+		Bash("a2", "git -C '"+proj+"' commit -q -m 'document the release'"),
+	))
+	if !applied.Saw("must cite") && !strings.Contains(newBlocks(e, proj, sess, blocks), "must cite") {
+		t.Fatalf("the commit made from the popped stash was not refused with \"must cite\":\n%s", applied.Output)
+	}
+	if strings.Contains(e.Git(proj, "log", "--oneline"), "document the release") && !strings.Contains(newBlocks(e, proj, sess, blocks), "must cite") {
+		t.Fatal("the uncited commit from the popped stash landed and its Stop did not refuse it")
 	}
 }

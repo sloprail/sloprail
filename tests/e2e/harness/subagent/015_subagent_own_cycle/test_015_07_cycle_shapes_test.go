@@ -137,7 +137,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	}
 
 	// The sub-agent was sent round again: the harness says so in its own words.
-	if !strings.Contains(res.Output, "re-running subagent") {
+	if e.SubagentStopFeedbackCount(proj, "s-015-07") < 1 {
 		t.Fatalf("the sub-agent was never re-run after its cycle was refused. A Post refusal "+
 			"cannot undo the write; the whole mechanism by which it gets anything corrected is "+
 			"sending the agent round again:\n%s", res.Output)
@@ -241,7 +241,7 @@ func TestT015_08b_AReFiredSubagentStopAsksTheScriptAgain(t *testing.T) {
 	if !strings.Contains(strings.Join(e.SubagentBlockingErrors(proj, "s-015-08b"), "\n"), "this rule always says no") {
 		t.Fatalf("the rule's refusal never reached the sub-agent's own stop:\n%s", res.Output)
 	}
-	if n := strings.Count(res.Output, "re-running subagent (turn"); n < 2 {
+	if n := e.SubagentStopFeedbackCount(proj, "s-015-08b"); n < 2 {
 		t.Fatalf("the sub-agent was sent round %d time(s): the re-fired stop was not judged, so a rule "+
 			"gave way to the sub-agent simply being sent round again", n)
 	}

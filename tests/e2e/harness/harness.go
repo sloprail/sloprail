@@ -404,7 +404,12 @@ func New(t *testing.T, opts ...Option) *Env {
 // column a measurement of nesting rather than of luck.
 func (e *Env) InstallClaudeShim(projDir string) {
 	e.t.Helper()
+	// sr-agent feeds its prompt on the shim's standard input; the shim answers with
+	// a fixed scenario whatever the prompt, so it reads and drops it (a pipe nobody
+	// reads would break sr-agent's write), and starts the mock with no stdin: the
+	// mock refuses a prompt argument beside a piped stdin.
 	script := "#!/bin/sh\n" +
+		"[ -t 0 ] || cat >/dev/null\n" +
 		"exec " + shellQuote(e.mock) + " \\\n" +
 		"  --output-format stream-json \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
@@ -412,7 +417,7 @@ func (e *Env) InstallClaudeShim(projDir string) {
 		"  --config-dir " + shellQuote(e.configDir) + " \\\n" +
 		"  --plugin-cache-dir " + shellQuote(e.pluginDir) + " \\\n" +
 		"  --session-id \"inner-$$\" \\\n" +
-		"  \"launched agent\"\n"
+		"  \"launched agent\" </dev/null\n"
 	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write claude shim: %v", err)
 	}
@@ -2493,6 +2498,59 @@ type Result struct {
 // refusal travels back in, or the agent's own output.
 func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
 
+// ToolResults returns the text of every tool_result block in a run's stream, in
+// order. Unlike Saw it does not see the agent's own tool input, Stop-hook
+// feedback frames (isSynthetic user records carrying text blocks) or the
+// stream's bookkeeping (subagent_stats): only what a tool answered.
+func (r Result) ToolResults() []string {
+	var out []string
+	for _, line := range strings.Split(r.Output, "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type    string          `json:"type"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_result" {
+				out = append(out, resultTexts(b.Content)...)
+			}
+		}
+	}
+	return out
+}
+
+// SawInToolResult reports whether text appears in some tool_result of the run.
+func (r Result) SawInToolResult(text string) bool {
+	for _, body := range r.ToolResults() {
+		if strings.Contains(body, text) {
+			return true
+		}
+	}
+	return false
+}
+
+// SawInRefusal reports whether text appears in the reason of some PreToolUse
+// refusal: what the agent was shown when a call was stopped.
+func (r Result) SawInRefusal(text string) bool {
+	for _, reason := range r.Refusals() {
+		if strings.Contains(reason, text) {
+			return true
+		}
+	}
+	return false
+}
+
 // Refusals returns the reason of every PreToolUse refusal in a run's stream, in
 // order.
 //
@@ -2818,6 +2876,9 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
+		// A permission host, which is what offers AskUserQuestion to a
+		// non-interactive run (the mock refuses the tool otherwise).
+		"--permission-prompt-tool", "stdio",
 	}
 	args = append(args, sessionFlags...)
 	args = append(args, prompt)
@@ -2852,10 +2913,11 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 		"PATH="+e.shimDir+string(os.PathListSeparator)+
 			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
-	// HostEnv above already dropped the outer session's CLAUDE_CODE_EXECPATH, which
-	// the mock never sets: left in, sr-agent's resolveBinary would exec the
-	// operator's real claude directly, bypassing the shim dir InstallClaudeShim
-	// puts first on PATH.
+	// HostEnv above already dropped the outer session's CLAUDE_CODE_EXECPATH. The
+	// mock sets its own in every Bash command (as real Claude Code does), so the
+	// harness's sr-checks run prefixes clear it: left in, sr-agent's resolveBinary
+	// would exec the mock (or the operator's real claude) directly, bypassing the
+	// shim dir InstallClaudeShim puts first on PATH.
 	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
 	// last so it wins over any ambient value; omitted entirely when unset, leaving
 	// the mock's own default (8). See the stopBlockCap field's doc.

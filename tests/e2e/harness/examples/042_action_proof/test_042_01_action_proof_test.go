@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -38,31 +39,30 @@ import (
 // recognises by tool name. Its input is what an audit would later check field by
 // field.
 func aFillForm(id string) harness.Turn {
-	return harness.ToolUse(id, "fill_form", map[string]string{
-		"name":  "Ada Lovelace",
-		"email": "ada@example.com",
-	})
+	return harness.ToolUseJSON(id, "mcp__browser__fill_form", `{"name":"Ada Lovelace","email":"ada@example.com",`+
+		`"mock_result":{"content":[{"type":"text","text":"Filled 2 fields"}],"isError":false}}`)
 }
 
 // aDownloadInvoice is a turn that downloads an invoice — the other auditable
 // action. A distinct action name and input, so a test can tell which one the
 // prepare pulled into the template.
 func aDownloadInvoice(id string) harness.Turn {
-	return harness.ToolUse(id, "download_file", map[string]string{
-		"url": "https://vendor.example/invoice-42.pdf",
-	})
+	return harness.ToolUseJSON(id, "mcp__browser__download_file", `{"url":"https://vendor.example/invoice-42.pdf",`+
+		`"mock_result":{"content":[{"type":"text","text":"Saved the download"}],"isError":false}}`)
 }
 
-// screenshotProof is the artifact a screenshot produced — a description an auditor
-// reads plus the image bytes. Distinctive text so a test can find it in the
-// rendered prompt (proving the prepare pulled the toolUseResult into the template).
-const screenshotProof = `{"description":"screenshot of the filled contact form showing name=Ada Lovelace and email=ada@example.com, every field visible","image":"data:image/png;base64,PROOFPIXELS"}`
+// screenshotProof is the text a screenshot tool returned: the mock does not model image results,
+// and an MCP tool may answer in text, so the proof is a description an auditor reads. Distinctive
+// text so a test can find it in the rendered prompt (proving the prepare pulled the tool's result
+// into the template).
+const screenshotProof = "screenshot of the filled contact form showing name=Ada Lovelace and email=ada@example.com, every field visible"
 
-// aScreenshotWithProof is the pair of turns for a screenshot that PRODUCED a proof
-// artifact: the tool_use and the record carrying its toolUseResult. The prepare
-// correlates them by tool-use id and reports proof non-null.
-func aScreenshotWithProof(id string) (harness.Turn, harness.Turn) {
-	return harness.ToolUseWithResult(id, "screenshot", map[string]string{"target": "contact-form"}, screenshotProof)
+// aScreenshotWithProof is the turn for a screenshot that PRODUCED a proof artifact: an MCP call whose
+// result (mock_result) is the text above. The prepare correlates the call with its result by
+// tool-use id and reports proof non-null.
+func aScreenshotWithProof(id string) harness.Turn {
+	return harness.ToolUseJSON(id, "mcp__browser__screenshot", `{"target":"contact-form",`+
+		`"mock_result":{"content":[{"type":"text","text":`+strconv.Quote(screenshotProof)+`}],"isError":false}}`)
 }
 
 // T042_01: an action WITH a real proof artifact ADMITS, and the template rendered
@@ -82,11 +82,9 @@ func TestT042_01_ProvenActionAdmits(t *testing.T) {
 	installExampleTree(t, proj)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
-	shotUse, shotRes := aScreenshotWithProof("w2")
 	e.Run(proj, "s-042-01", "fill the form and prove it with a screenshot", Turns("done",
 		aFillForm("w1"),
-		shotUse,
-		shotRes,
+		aScreenshotWithProof("w2"),
 	))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-042-01", "Stop"); len(blocks) != 0 {
@@ -270,19 +268,20 @@ func TestT042_05_StructuredInputAndProofReachJudgeAsJSON(t *testing.T) {
 	installExampleTree(t, proj)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
-	shotUse, shotRes := harness.ToolUseWithResult("w2", "screenshot", map[string]string{"target": "contact-form"},
-		`{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"PROOFPIXELS"}}],"width":1280}`)
 	e.Run(proj, "s-042-05", "fill the form and prove it with a screenshot", Turns("done",
-		harness.ToolUseJSON("w1", "fill_form", `{"name":"Ada","age":36,"address":{"city":"London"},"tags":["vip"]}`),
-		shotUse,
-		shotRes,
+		harness.ToolUseJSON("w1", "mcp__browser__fill_form", `{"name":"Ada","age":36,"address":{"city":"London"},"tags":["vip"],`+
+			`"mock_result":{"content":[{"type":"text","text":"Filled 4 fields"}],"isError":false}}`),
+		// The proof is the MCP result's content blocks: image results are not modelled, so the
+		// screenshot answers in two text blocks (an MCP tool may), which reach the judge as a JSON array.
+		harness.ToolUseJSON("w2", "mcp__browser__screenshot", `{"target":"contact-form",`+
+			`"mock_result":{"content":[{"type":"text","text":"form screenshot, 1280px wide"},{"type":"text","text":"name=Ada age=36 city=London"}],"isError":false}}`),
 	))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
 		t.Fatalf("the judge never ran for the structured fill_form action")
 	}
-	for _, want := range []string{`"age":36`, `"city":"London"`, `"tags":["vip"]`, `"media_type":"image/png"`, `"width":1280`} {
+	for _, want := range []string{`"age":36`, `"city":"London"`, `"tags":["vip"]`, `"text":"form screenshot, 1280px wide"`, `"text":"name=Ada age=36 city=London"`, `"type":"text"`} {
 		if !containsStr(prompt, want) {
 			t.Errorf("the judge prompt does not carry %s as JSON:\n%s", want, prompt)
 		}

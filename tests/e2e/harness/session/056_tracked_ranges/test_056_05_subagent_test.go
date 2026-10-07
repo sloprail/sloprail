@@ -43,7 +43,7 @@ func TestT056_05_ByDefaultOnlyTheRootsStopVerifiesASubagentsRange(t *testing.T) 
 
 	res := runSubagentCommit(t, e, proj, sess)
 
-	if res.AnySubagentStopBlocked() {
+	if !e.NoSubagentStopBlock(proj, sess) {
 		t.Fatalf("the sub-agent's own Stop verified a tracked range:\n%s", res.Output)
 	}
 	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
@@ -60,7 +60,7 @@ func TestT056_06_OptingInMakesTheSubagentsOwnStopVerify(t *testing.T) {
 
 	res := runSubagentCommit(t, e, proj, sess)
 
-	if !res.AnySubagentStopBlocked() || !strings.Contains(res.Output, failedText) {
+	if !e.SubagentStopBlocked(proj, sess, failedText) {
 		t.Fatalf("the sub-agent's Stop did not refuse its failing range:\n%s", res.Output)
 	}
 }

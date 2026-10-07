@@ -80,49 +80,48 @@ func TestT008_07_OwnerReadsSiblingRegistry(t *testing.T) {
 	))
 
 	// The registry has to have been planted, or an empty owned read proves nothing.
-	if got.Saw("PLANT-FAILED") {
+	if got.SawInRefusal("PLANT-FAILED") {
 		t.Fatalf("the sibling registry could not be planted, so the owned read proves nothing:\n%s", got.Output)
 	}
-	if !got.Saw("OWNED-KEYS:") {
+	if !got.SawInRefusal("OWNED-KEYS:") {
 		t.Fatalf("the reader check never ran, so nothing was tested:\n%s", got.Output)
 	}
 
 	// The cross-guardrail read returns the owner's two reg: keys, in key order,
 	// under the prefix. The reading guardrail never wrote under registry-owner, so
 	// these are the owner's rows and not its own.
-	if !got.Saw("OWNED-KEYS:[reg:alpha,reg:beta]") {
+	if !got.SawInRefusal("OWNED-KEYS:[reg:alpha,reg:beta]") {
 		t.Fatalf("--owner did not return the sibling's registry keys under the prefix:\n%s", got.Output)
 	}
 	// The VALUE crosses too, not only the key.
-	if !got.Saw("OWNED-VAL:[owner-signature]") {
+	if !got.SawInRefusal("OWNED-VAL:[owner-signature]") {
 		t.Fatalf("--owner returned the key but not the owner's stored value:\n%s", got.Output)
 	}
 	// An owner that never wrote is an empty read, exiting zero — not an error the
 	// gate would have to tell apart from "nothing declared".
-	if !got.Saw("MISSING:[]") {
+	if !got.SawInRefusal("MISSING:[]") {
 		t.Fatalf("--owner on a guardrail that never wrote was not empty:\n%s", got.Output)
 	}
 	// The reader's OWN list is unaffected by --owner: it still sees its own entry
 	// and NOT the owner's.
-	if !got.Saw("MINE-KEYS:[own:mine]") {
+	if !got.SawInRefusal("MINE-KEYS:[own:mine]") {
 		t.Fatalf("the reader's own list was not its own entry alone — --owner may have leaked into the plain read:\n%s", got.Output)
 	}
-	if mine := lineWithPrefix(got.Output, "MINE-KEYS:"); strings.Contains(mine, "reg:") || strings.Contains(mine, "sig:") {
+	if mine := lineWithPrefix(strings.Join(got.Refusals(), "\n"), "MINE-KEYS:"); strings.Contains(mine, "reg:") || strings.Contains(mine, "sig:") {
 		t.Fatalf("the reader's own list contained the owner's registry keys — the boundary leaked:\n%s", got.Output)
 	}
 }
 
 // lineWithPrefix returns the substring of output starting at prefix and ending at
-// the next escaped newline (or end), or "" when the prefix is absent. It reads the
-// escaped transport blob, where lines are joined by literal \n rather than real
-// newlines, so it splits on that.
+// the next newline (or end), or "" when the prefix is absent. It reads refusal
+// reasons, the decoded text the agent is shown, where lines are real newlines.
 func lineWithPrefix(output, prefix string) string {
 	i := strings.Index(output, prefix)
 	if i < 0 {
 		return ""
 	}
 	rest := output[i:]
-	if j := strings.Index(rest, `\n`); j >= 0 {
+	if j := strings.Index(rest, "\n"); j >= 0 {
 		return rest[:j]
 	}
 	return rest

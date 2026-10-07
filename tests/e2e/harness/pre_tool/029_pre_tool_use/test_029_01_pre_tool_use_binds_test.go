@@ -92,6 +92,9 @@ func TestT029_01_PreToolUseBindsToATool(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.Gate(proj, "watch-skill", boundToPreToolUse, map[string]string{"record.sh": recordTool})
+	// The skill has to exist: the mock answers a call naming an unknown skill with
+	// an error before any hook sees it, as real Claude Code does.
+	e.WriteFile(proj, ".claude/skills/some-skill/SKILL.md", "---\nname: some-skill\ndescription: a skill to load\n---\n\nDo the thing.\n")
 
 	e.Run(proj, "s-029-01", "load a skill", Turns("done",
 		Skill("s1", "some-skill"),
