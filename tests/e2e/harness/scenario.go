@@ -426,62 +426,9 @@ func (s Scenario) Script(path string) error {
 	return os.WriteFile(path, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755)
 }
 
-// script renders the scenario as the shell the mock runs.
-//
-// Each turn is gated on its own marker being absent from the conversation so
-// far, so re-running the script advances rather than repeating. With every turn
-// emitted, the scenario finishes.
-//
-// The marker carries the TURN'S OWN ID, not its index. A bare index is unique
-// only within one scenario, and a session that is Run more than once — which is
-// how a test settles something and then comes back to it under the same
-// conversation — writes its markers into a transcript the next Run reads. With
-// `slop-turn-0` already in the file from the first Run, every turn of the
-// second looks like it has already fired and the whole scenario emits nothing:
-// silently, with no error, and with the test observing an empty second cycle
-// that it reads as "the hook did not run". The id is the test's own, so
-// distinct scenarios cannot collide unless they deliberately reuse it.
-func (s Scenario) script() string {
-	var b strings.Builder
-	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
-	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
-
-	for i, t := range s.turns {
-		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
-		line := injectMarker(t.jsonl, marker)
-		if t.launchedOutput {
-			// A background command's receipt names its output file: "Output is
-			// being written to: <file>. You will be notified …". The latest one
-			// is the command meant.
-			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  OUT="$(printf '%%s' "$SESS" | grep -o 'Output is being written to: [^ ]*\.output' | tail -1 | sed 's/.*: //')"
-  printf '%%s\n' %s | sed "s|%s|$OUT|"
-  exit 0
-fi
-`, marker, shQuote(line), launchedOutputPlaceholder)
-			continue
-		}
-		if t.launchedTask {
-			// The receipt a background launch was answered with names its id:
-			// "Command running in background with ID: <id>" for a Bash,
-			// "agentId: <id>" for an Agent. The latest one is the task meant.
-			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  TASK="$(printf '%%s' "$SESS" | grep -o 'running in background with ID: [A-Za-z0-9_-]*\|agentId: [A-Za-z0-9_-]*' | tail -1 | sed 's/.*: //')"
-  printf '%%s\n' %s | sed "s/%s/$TASK/"
-  exit 0
-fi
-`, marker, shQuote(line), launchedTaskPlaceholder)
-			continue
-		}
-		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  printf '%%s\n' %s
-  exit 0
-fi
-`, marker, shQuote(line))
-	}
-	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(result(s.result)))
-	return b.String()
-}
+// script renders the scenario as the shell the agent runs, in the selected
+// harness's own dialect (Driver.RenderScript).
+func (s Scenario) script() string { return mustDriver().RenderScript(s) }
 
 // toolUse renders one assistant turn invoking a tool.
 //
