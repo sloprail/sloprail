@@ -329,13 +329,14 @@ func dispatchPromptContains(path, quote string) bool {
 	if err != nil {
 		return false
 	}
+	needle := citeNeedle(quote)
 	for _, r := range append(records, subs...) {
-		entries, err := ReadLines(r)
+		rec, err := loadRecord(r)
 		if err != nil {
 			continue
 		}
-		for _, e := range entries {
-			if e.Type != EntryUser || e.IsMeta {
+		for _, e := range rec.entries {
+			if e.Type != EntryUser || e.IsMeta || !mayContain(e.Message, needle) {
 				continue
 			}
 			for _, text := range messageText(e.Message) {
@@ -378,26 +379,15 @@ func citationRecords(path string, subagent bool) (userIn string, toolIn []string
 // citable result is rendered, and a result is citable only when its call is in
 // the record (citableResults), so every id here has its call.
 func entryCalls(path string, line int) (string, error) {
-	entries, err := ReadLines(path)
+	rec, err := loadRecord(path)
 	if err != nil {
 		return "", err
 	}
-	calls := map[string]assistantContentBlock{}
-	citable := citableFor(path, entries)
+	calls := rec.toolCalls()
+	citable := rec.citable(path)
 	var ids []string
-	for _, e := range entries {
-		switch {
-		case e.Type == EntryAssistant && len(e.Message) > 0:
-			var msg assistantContent
-			var blocks []assistantContentBlock
-			if json.Unmarshal(e.Message, &msg) == nil && json.Unmarshal(msg.Content, &blocks) == nil {
-				for _, b := range blocks {
-					if b.Type == "tool_use" && b.ID != "" {
-						calls[b.ID] = b
-					}
-				}
-			}
-		case e.Line == line:
+	for _, e := range rec.entries {
+		if e.Line == line && !(e.Type == EntryAssistant && len(e.Message) > 0) {
 			ids = genuineToolResultIDs(e.Message, citable)
 		}
 	}
@@ -441,25 +431,25 @@ func clipText(s string, max int) string {
 // entryText is the text the entry at line holds in the given pools — the same
 // text the quote was searched in — joined by blank lines and capped.
 func entryText(path string, line int, pools []SourceType) (string, error) {
-	entries, err := ReadLines(path)
+	rec, err := loadRecord(path)
 	if err != nil {
 		return "", err
 	}
 	var parts []string
-	for _, e := range entries {
+	for _, e := range rec.entries {
 		if e.Line != line {
 			continue
 		}
 		switch e.Type {
 		case EntryUser:
-			if own, ok := ownWords(e.Entry, otherToolUses(entries)); ok && wants(pools, SourceUser) {
+			if own, ok := ownWords(e.Entry, rec.toolUsesOtherThanAsk()); ok && wants(pools, SourceUser) {
 				// The typed message, and — for an AskUserQuestion answer — the whole
 				// envelope, so the question the user was answering comes with it.
 				parts = append(parts, messageText(own.Message)...)
 				parts = append(parts, answerEnvelopes(own.Message)...)
 			}
 			if wants(pools, SourceToolResult) {
-				parts = append(parts, genuineToolResultText(e.Message, citableFor(path, entries))...)
+				parts = append(parts, genuineToolResultText(e.Message, rec.citable(path))...)
 			}
 		case EntryAttachment:
 			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) && !notThePerson(e.Entry) {

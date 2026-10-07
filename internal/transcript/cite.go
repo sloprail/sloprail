@@ -183,14 +183,20 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 	if strings.TrimSpace(quote) == "" {
 		return nil, nil
 	}
-	entries, err := ReadLines(path)
+	rec, err := loadRecord(path)
 	if err != nil {
 		return nil, err
 	}
-	others := otherToolUses(entries)
-	citable := citableFor(path, entries)
+	others := rec.toolUsesOtherThanAsk()
+	citable := rec.citable(path)
+	needle := citeNeedle(quote)
 	var matches []CitationMatch
-	for _, e := range entries {
+	for _, e := range rec.entries {
+		// Every matcher below reads Message or Attachment alone; an entry whose raw
+		// bytes lack the needle cannot match, and is not parsed to find out.
+		if !mayContain(e.Message, needle) && !mayContain(e.Attachment, needle) {
+			continue
+		}
 		switch e.Type {
 		case EntryUser:
 			if entryContains(e.Entry, quote, sources, others, citable) {
@@ -728,12 +734,12 @@ func toolResultText(raw json.RawMessage) []string {
 // one), yields ("", false, nil): "not a tool_result" is the honest answer, not an
 // error, so the caller can name the citation rather than crash on a bad range.
 func ToolResultAt(path string, line int) (text string, isToolResult bool, err error) {
-	entries, err := ReadLines(path)
+	rec, err := loadRecord(path)
 	if err != nil {
 		return "", false, err
 	}
-	citable := citableFor(path, entries)
-	for _, e := range entries {
+	citable := rec.citable(path)
+	for _, e := range rec.entries {
 		if e.Line != line {
 			continue
 		}
