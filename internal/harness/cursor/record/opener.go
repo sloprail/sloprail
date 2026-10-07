@@ -89,12 +89,14 @@ func (Transcripts) RecordVersion(path string) (int64, time.Time, error) {
 // merge copies the transcript to w as OpenRecord describes.
 func merge(r io.Reader, w io.Writer, st *store, side *os.File, slots map[string][]*slot, counts map[string]int) error {
 	seen := map[string]int{}
+	midTurn := false
 	return eachLine(r, func(n int, line []byte) error {
 		out, calls := augment(line, n)
 		if !st.root {
 			out = markSidechain(out)
 		}
 		out = markInjected(out, st.followups)
+		out, midTurn = markCompactionRewrite(out, st.compacted, midTurn)
 		if _, err := w.Write(append(out, '\n')); err != nil {
 			return err
 		}
@@ -296,4 +298,41 @@ func unwrapQuery(text string) string {
 		return text
 	}
 	return text[i+len(open) : len(text)-len(shut)]
+}
+
+// markCompactionRewrite marks a user line Cursor wrote mid-turn in a conversation it
+// compacted as harness-injected (isMeta): after a compaction Cursor writes the prompt
+// into the transcript again, byte-identical to the person's, so that it would ground a
+// citation of the user's words a second time. Exact, no text comparison: the
+// conversation was compacted (preCompact fired, KindCompact) and the line is a user line
+// that follows an assistant line with no turn_ended between (a turn is still running).
+// midTurn is that state, carried from line to line.
+func markCompactionRewrite(line []byte, compacted, midTurn bool) ([]byte, bool) {
+	var top struct {
+		Role string `json:"role"`
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(line, &top) != nil {
+		return line, midTurn
+	}
+	switch {
+	case top.Role == "assistant":
+		return line, true
+	case top.Type == "turn_ended":
+		return line, false
+	case top.Role != "user":
+		return line, midTurn
+	case !compacted || !midTurn:
+		return line, false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(line, &m) != nil {
+		return line, midTurn
+	}
+	m["sloprail_meta"] = json.RawMessage("true")
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line, midTurn
+	}
+	return out, true
 }
