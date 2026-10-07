@@ -95,11 +95,25 @@ type SubagentFile struct {
 // and companions), however the harness lays them out: Claude Code nests them under
 // <session>/subagents/, Codex writes each as a rollout of its own naming its parent
 // thread in its first line. A harness whose sub-agent records cannot be tied to their
-// parent from what it writes does not implement it (Cursor: a sub-agent is a sibling
-// conversation directory and the parent link is only in hook payloads, recorded in
-// harness-mocks cursor-mock subagent-transcripts), and has none to find.
+// parent from what it writes does not implement it, and has none to find (and declares
+// so with SubagentsUnlinkable).
+//
+// It is also how the link is read the other way: ParentRecord names, for a record at
+// path, the record of the session that spawned it. parent is "" when that record is not
+// on disk; isSubagent is false for a record that is a session's own.
 type SubagentLocator interface {
 	SubagentFiles(transcriptPath string) []SubagentFile
+	ParentRecord(path string) (parent string, isSubagent bool)
+}
+
+// SubagentsUnlinkable is implemented by a Transcripts that declares a sub-agent's
+// session cannot be tied to the conversation that dispatched it: nothing a sub-agent
+// writes, and nothing a hook reports, names its parent. A sub-agent's record is still
+// told from a root's (the harness says which), but the link between the two does not
+// exist, so what a sub-agent may cite of the user's conversation cannot be resolved and
+// a root cannot enumerate its sub-agents' records.
+type SubagentsUnlinkable interface {
+	SubagentsUnlinkable() bool
 }
 
 // Transcripts is how a harness's session record is parsed and located: its line
@@ -159,13 +173,4 @@ type UserAnswerer interface {
 	// text (never the questions or the harness's boilerplate); nil when the text is
 	// not an answer envelope.
 	ExtractAnswers(resultText string) []string
-}
-
-// SubagentParent is what a Transcripts MAY implement when a sub-agent's record names
-// the session that spawned it in the record itself rather than by where it is filed
-// (Codex: the first line of a rollout names the parent thread). parent is the record
-// of the session that spawned the sub-agent whose record is at path, "" when it is not
-// on disk; isSubagent is false for a record that is a session's own.
-type SubagentParent interface {
-	ParentRecord(path string) (parent string, isSubagent bool)
 }

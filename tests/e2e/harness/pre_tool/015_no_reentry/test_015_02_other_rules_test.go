@@ -27,7 +27,7 @@ exit 1
 const judgeOnlyScript = `#!/bin/sh
 cat >/dev/null
 echo ran >> ledger.txt
-sr-agent --harness claude-code --model size-xs "judge this note" >/dev/null 2>&1
+sr-agent --harness {{harness}} --model size-xs "judge this note" >/dev/null 2>&1
 exit 0
 `
 
@@ -47,7 +47,7 @@ exit 0
 func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": e.ForHarness(judgeOnlyScript)})
 	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// The launched agent reaches for a path the OTHER rule guards.
@@ -84,7 +84,7 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 func TestT015_03_LaunchedAgentCanStillDoItsWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": e.ForHarness(judgeOnlyScript)})
 	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// A path judge-notes guards (notes/) and no-secrets does not.

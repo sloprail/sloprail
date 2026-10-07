@@ -423,7 +423,7 @@ func FindRollout(configDir, sessionID string) string {
 	return matches[len(matches)-1]
 }
 
-// ParentRecord implements harness.SubagentParent: the rollout of the thread a
+// ParentRecord implements harness.SubagentLocator: the rollout of the thread a
 // sub-agent's session_meta names as its parent, found by id among the rollouts.
 func (Transcripts) ParentRecord(path string) (string, bool) {
 	parent := rolloutParent(path)

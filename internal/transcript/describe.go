@@ -194,7 +194,7 @@ func SubagentPaths(path string) ([]string, error) {
 // first record is not written yet: that would make the parent's dispatch
 // prompt citable as the end user's words.
 func isSubagentRecord(path string) bool {
-	if p, ok := harness.Current().Transcripts().(harness.SubagentParent); ok {
+	if p, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
 		if _, sub := p.ParentRecord(path); sub {
 			return true
 		}
@@ -222,7 +222,7 @@ func isSubagentRecord(path string) bool {
 func SessionRootOf(path string) string {
 	cur := path
 	for isSubagentRecord(cur) {
-		if p, ok := harness.Current().Transcripts().(harness.SubagentParent); ok {
+		if p, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
 			if parent, sub := p.ParentRecord(cur); sub {
 				if parent == "" || parent == cur {
 					return ""

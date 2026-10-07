@@ -49,6 +49,9 @@ func ResolveCitationAcrossSessions(current, projectDir string, req CitationReque
 			if errors.Is(err, ErrNoSessionRoot) {
 				continue
 			}
+			if errors.Is(err, ErrSubagentUnlinked) {
+				return Citation{}, err
+			}
 			unreadable = append(unreadable, fmt.Sprintf("%s (%v)", path, err))
 			continue
 		}

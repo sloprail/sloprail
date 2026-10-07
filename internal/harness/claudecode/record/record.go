@@ -6,6 +6,7 @@ package record
 import (
 	"encoding/json"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -32,6 +33,29 @@ func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
 		return nil
 	})
 	return out
+}
+
+// ParentRecord implements harness.SubagentLocator: a sub-agent's record is an
+// agent-<id>.jsonl somewhere under <session>/subagents/, and its parent is <session>.jsonl.
+func (Transcripts) ParentRecord(path string) (string, bool) {
+	name := filepath.Base(path)
+	if !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+		return "", false
+	}
+	for dir := filepath.Dir(path); ; {
+		up := filepath.Dir(dir)
+		if up == dir {
+			return "", false
+		}
+		if filepath.Base(dir) == "subagents" {
+			parent := up + ".jsonl"
+			if fi, err := os.Stat(parent); err != nil || fi.IsDir() {
+				return "", true
+			}
+			return parent, true
+		}
+		dir = up
+	}
 }
 
 // claudeRecord is one line of Claude Code's JSONL, in the fields we keep.

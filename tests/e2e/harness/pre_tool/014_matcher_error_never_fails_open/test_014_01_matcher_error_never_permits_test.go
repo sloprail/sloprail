@@ -409,7 +409,7 @@ func TestT014_08_APermittedWriteToAPathNamedDenyIsPermitted(t *testing.T) {
 	if got.Refused() {
 		t.Fatalf("a permitted write was reported as refused because its path said 'deny':\n%s", got.Output)
 	}
-	if !got.SawInToolResult("File created successfully at: ") || !got.SawInToolResult("deny/notes.md") {
+	if !e.Exists(proj, "deny/notes.md") {
 		t.Errorf("the write did not actually go through, so this proves nothing:\n%s", got.Output)
 	}
 }
