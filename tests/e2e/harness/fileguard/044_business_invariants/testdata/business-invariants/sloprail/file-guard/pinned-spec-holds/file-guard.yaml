@@ -1,0 +1,58 @@
+# A pinned spec line holds — the AFTER-CHECK half. A line some sr:invariant marker
+# pins changes only when the user's own words ask for the rule to change.
+# pinned-invariant checks the code upholds the pinned text; this checks the text
+# itself, which an agent can otherwise rewrite to agree with its code — and a real
+# Haiku run did, twice: asked for goodwill refunds above the charge, it relaxed the
+# spec's "a refund must never exceed the original charge" and re-pinned its code to
+# the new line.
+#
+# The gate of the same name refuses the change BEFORE it lands, while the agent can
+# still keep the rule and tell the user. This file-guard judges the committed
+# changeset: each file's content at the range's base against its content at head,
+# so it sees what the gate cannot: an edit the engine does not see as a write at all
+# (a script rewriting the file), and one command deleting every holder of a pin at
+# once (`rm a.go b.go`).
+#
+# The requirement is declared, conditionally: `when` changes-pinned-lines.sh says
+# the changeset changes a spec some pin names (anywhere in it: a pinned spec holds
+# the user's business rules), or moves code's pin off the wording it pinned (the
+# marker removed, or re-pinned to different text). An uncited change is refused
+# before any check, with the script's hint; the citation is a
+# `Sloprail-Cites-User: <their words>` trailer on a commit of the range. A cited
+# one goes to the judge, which checks the cited words ask for that change — for a
+# pinned line, for the rule itself to change, not merely for a feature that
+# conflicts with it.
+#
+# Matches only the files a pin can involve, not every path. Two kinds of file can
+# be involved:
+#
+#   - A spec: `SPEC.md` at any depth, or a `.md` file under a `specs/` directory,
+#     case-insensitively (`spec.md` is the same file on a macOS disk).
+#     That is this example's convention, and pinned-invariant holds pins to it
+#     (pin.sh refuses a pin into any other file), so no accepted pin names a file
+#     this guard does not match. Change both together.
+#   - A file carrying an sr:invariant marker, before or after the write:
+#     `oldMarkers` is what sees a write that REMOVES the marker, which `markers`
+#     alone reads as a file with none.
+#
+# Which lines of a spec are pinned is still decided by the markers pointing at
+# them: the predicate answers that with a `git grep` of the committed head and of the
+# range's base.
+#
+# `status == "R"` also selects every rename: `match` sees a renamed file under its
+# NEW path, so a spec renamed away (`git mv SPEC.md SPEC.old`) would otherwise leave
+# the guard unasked. The predicate treats a rename as the old path deleted and the new
+# one created, and waives one that touches nothing pinned.
+#
+# deletions: include — deleting the spec drops every rule in it at once.
+match: >-
+  path matches "(?i)(^|/)spec\\.md$" or path matches "(?i)(^|/)specs/.+\\.md$"
+  or any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
+  or status == "R"
+deletions: include
+require:
+  - citation: {source_types: [user]}
+    when: ./changes-pinned-lines.sh
+checks:
+  - prepare: ./only-when-pinned.sh
+    judge: ./cited-words-change-the-rule.md.j2

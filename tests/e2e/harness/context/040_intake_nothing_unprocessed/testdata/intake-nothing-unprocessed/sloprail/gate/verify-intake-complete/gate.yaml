@@ -1,0 +1,8 @@
+# On Stop: every user message either mapped to a task or explicitly mapped
+# to nothing. Success is when the residue is empty — collect all user
+# messages, subtract the ones a task references, refuse if anything is left
+# unaccounted for.
+on:
+  - event: Stop
+checks:
+  - script: ./verify-no-residue.sh

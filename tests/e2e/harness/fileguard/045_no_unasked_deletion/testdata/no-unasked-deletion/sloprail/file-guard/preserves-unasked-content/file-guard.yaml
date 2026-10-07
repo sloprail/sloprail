@@ -1,0 +1,35 @@
+# An edit must not silently drop content nobody asked to remove. The load-bearing
+# word is UNASKED: the removal's relationship to the user's own words.
+#
+# The AFTER-CHECK half. The gate of the same name computes the diff at Pre time,
+# before the loss, and refuses there — a check after the commit is too late to keep
+# the bytes. This file-guard judges the committed changeset: every file the range
+# touched, its content at the range's base against head, as one squashed diff — so a
+# removal the gate could not see (a script rewriting the file) is refused too. It is
+# the NET diff that is judged: a removal a later commit put back is not a removal.
+#
+# "Asked" is deterministic: a removal must CITE the user's own words. The agent
+# commits the change with `Sloprail-Cites-User: <quote>` trailers; the engine
+# resolves each quote against the session's transcripts (a message or an
+# AskUserQuestion answer) and hands them to the checks on `changeset.citations`. The
+# quote rides on the commit, never in the file.
+#
+# The requirement is declared, conditionally: a pure append needs no ask, so
+# `require` demands a user citation only `when` removes-content.sh says the change
+# removes something. An uncited removal is refused by the engine before the judge
+# is paid for; a cited one goes to the judge, which rules the model-only
+# properties (the change covers only what the cited words asked, and is stated
+# absolutely).
+#
+# deletions: include — deleting a memory is the largest removal there is, so the
+# rule covers it as well as edits: a commit deleting one that cites nothing is
+# refused, a cited one goes to the judge like any removal. (The default, skip, would
+# hand every `rm` a free pass.)
+match: 'path startsWith "memories/" and path endsWith ".md"'
+deletions: include
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh
+checks:
+  - judge: ./change-is-clean-and-absolute.md.j2
+    prepare: ./skip-pure-addition.sh

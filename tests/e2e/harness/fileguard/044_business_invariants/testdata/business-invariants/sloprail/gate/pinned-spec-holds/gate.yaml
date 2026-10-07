@@ -1,0 +1,29 @@
+# PREVENTION half of pinned-spec-holds: refuses, before it lands, a write that
+# changes a spec line a pinned invariant rests on unless the user's words are cited
+# (`require: citation`, `when` the write touches a pinned line). Cheap and
+# deterministic only: whether the cited words actually ask for THIS change is the
+# judge's question, and the judge lives in the plain file-guard of the same name,
+# which judges what settled (`sr-checks run` judges it, Stop verifies).
+#
+# A write whose result the engine could not compute (sed -i, a notebook create)
+# arrives with `resultKnown: false`; a gate does not fail closed on that by itself,
+# so refuse-unknown-result.sh refuses it unless the `when` predicate decided nothing
+# pinned is at stake.
+on:
+  - event: PreFileCreate
+    match: >-
+      event.path matches "(?i)(^|/)spec\\.md$" or event.path matches "(?i)(^|/)specs/.+\\.md$"
+      or any(event.newMarkers, .kind == "invariant")
+  - event: PreFileUpdate
+    match: >-
+      event.path matches "(?i)(^|/)spec\\.md$" or event.path matches "(?i)(^|/)specs/.+\\.md$"
+      or any(event.newMarkers, .kind == "invariant") or any(event.oldMarkers, .kind == "invariant")
+  - event: PreFileDelete
+    match: >-
+      event.path matches "(?i)(^|/)spec\\.md$" or event.path matches "(?i)(^|/)specs/.+\\.md$"
+      or any(event.oldMarkers, .kind == "invariant")
+require:
+  - citation: {source_types: [user]}
+    when: ./changes-pinned-lines.sh
+checks:
+  - script: ./refuse-unknown-result.sh

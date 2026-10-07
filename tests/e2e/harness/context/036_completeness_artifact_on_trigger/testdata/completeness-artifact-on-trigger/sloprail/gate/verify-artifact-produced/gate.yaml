@@ -1,0 +1,8 @@
+# Runs only once tag-declared is active, reading the registry it accumulated.
+on:
+  - event: Stop
+    match: context["tag-declared"].active
+require:
+  - context: tag-declared
+checks:
+  - script: ./verify-tag-and-artifact.sh

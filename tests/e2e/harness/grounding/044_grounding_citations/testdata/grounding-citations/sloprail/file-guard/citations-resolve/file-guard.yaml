@@ -1,0 +1,31 @@
+# In this project a markdown file restates what other files say — a summary, a
+# migration note — so every claim must be referenced, not regenerated: grounded in
+# the tool output the agent actually read.
+#
+# The citation rides on the commit, never in the file. The agent reads the source
+# (a Read, a `cat`), writes the markdown, and commits it quoting that output
+# exactly:
+#
+#   git commit -m 'Add the migration note' -m 'Sloprail-Cites-Tool: <exact words from the output>'
+#
+# The engine resolves each quote against the session's transcripts, in the
+# tool_result pool only — the user's words or the agent's own summary never resolve
+# as source output — into `changeset.citations`, so a citation a check sees EXISTS.
+# Every commit of the explicit range counts, so the range's commits accumulate
+# their citations. An in-file `[quote](/abs/path:a-b)` link is gone: an absolute
+# path resolves on no other machine.
+#
+# require: unconditional — every markdown file here restates a source, so there is
+# no change that needs no grounding. The engine refuses a range whose commits cite
+# nothing before the judge is paid for. The judge answers what existence cannot:
+# does the file say what the cited output says?
+#
+# The gate of the same name refuses an ungrounded claim BEFORE it lands, while the
+# agent still has the source in view. This file-guard judges the committed range,
+# so a markdown change the gate could not see (a script rewriting the file) is
+# grounded too.
+match: "**/*.md"
+require:
+  - citation: {source_types: [tool_result]}
+checks:
+  - judge: ./claims-match-cited-output.md.j2

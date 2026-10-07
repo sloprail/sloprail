@@ -1,0 +1,19 @@
+# PREVENTION half of scanner-keywords-hold: a write or delete that drops a keyword a
+# scanner declared (drops-keywords.sh, `when` predicate) needs the user's words cited
+# (`require: citation`), before it lands — `rm -rf` of the scanner folder included
+# (PreFileDelete). Whether the cited words ask for THESE keywords is the judge's
+# question, and the judge lives in the plain file-guard of the same name (Stop).
+#
+# require-known-result.sh refuses a write whose result the engine could not compute
+# (`resultKnown: false`). Recording what the user asked for (record-admitted.sh) waits
+# for the judge's verdict, so it lives in the file-guard.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
+  - event: PreFileDelete
+    match: 'event.path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
+require:
+  - citation: {source_types: [user]}
+    when: ./drops-keywords.sh
+checks:
+  - script: ./require-known-result.sh

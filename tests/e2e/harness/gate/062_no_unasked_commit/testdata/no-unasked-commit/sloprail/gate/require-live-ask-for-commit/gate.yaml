@@ -1,0 +1,44 @@
+# github.com/anthropics/claude-code/issues/95745: after a /compact, an agent
+# committed AND pushed twice, unasked, even though CLAUDE.md said "never
+# create a commit the developer did not ask for" and "'commit this' is one
+# commit, not a licence for the session." Earlier in the SAME session the user
+# had said "commit + push" twice, and the model wrongly extrapolated that into
+# standing permission for the rest of the session.
+#
+# So: a `git commit` or `git push` invocation must cite the user's own words
+# (require: citation, source_types: [user]) — never a file, since the thing
+# being guarded is the COMMAND ITSELF, not a file's state. And the citation
+# must be the user's LATEST real message, never a standing or stale grant from
+# earlier in the session — a plain keyword match on "any past user message"
+# would have let #95745's stale "commit + push" through, since that message is
+# real and genuinely from this user. Checked in two halves, cheap first:
+#   - citation-is-latest-user-turn.sh (script): is the cited line the latest
+#     real user message in the transcript? Deterministic — this is a fact
+#     about line numbers, not wording.
+#   - asks-for-commit-or-push.md.j2 (judge): does THAT message ask to commit
+#     exactly what this command commits? "commit it" means nothing without
+#     what "it" is, so the judge READS the session record itself (the cited
+#     message, the agent reply it answered, the edits since) and the working
+#     tree (read-only git), and fails a commit that sweeps in changes the user
+#     was not shown, e.g. an unrelated edit caught by `git add -A`. No prepare
+#     script: the judge does the reading, with the tools granted below.
+#     Read/Grep reach the transcript by absolute path; the Bash grants are
+#     read-only git and nothing else.
+on:
+  - event: PreCommandInvoke
+    match: >
+      any(event.invocations, .bin == "git" and
+        (any(.argv, # == "commit") or any(.argv, # == "push")))
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./citation-is-latest-user-turn.sh
+  - judge: ./asks-for-commit-or-push.md.j2
+    model: size-md
+    allowed_tools:
+      - Read
+      - Grep
+      - "Bash(git status:*)"
+      - "Bash(git diff:*)"
+      - "Bash(git log:*)"
+      - "Bash(git show:*)"

@@ -1,0 +1,9 @@
+# Writing under memories/topics/ is blocked until document-topic was loaded
+# this session. No checks: `require` is the whole rule. `PreFileWrite` is the
+# alias the engine expands to PreFileCreate + PreFileUpdate — so the same match
+# is written once, not duplicated across two triggers.
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/topics/"
+require:
+  - skill: document-topic

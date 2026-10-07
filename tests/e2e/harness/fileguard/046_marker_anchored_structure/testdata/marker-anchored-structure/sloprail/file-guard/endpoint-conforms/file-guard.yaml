@@ -1,0 +1,15 @@
+# The marker anchors the rule, not the path — matches any file carrying an
+# endpoint marker. Script checks the file-name pattern; judge checks the code
+# uses the required libs / ORM / naming.
+#
+# Not in agent-config docs (.claude/{skills,commands,agents}/**.md): a skill's SKILL.md documents the marker with a placeholder
+# (`// sr:endpoint "<verb>-<resource>"`) and the scanner reads a marker anywhere
+# in a file's text, so that example would pose as a real endpoint. This rule is
+# about code; a doc is not code. The exclusion is
+# markdown under those three folders only, so .claude/hooks/*.py and anything else
+# stays in scope; it loosens nothing
+# for real code (skipping `<...>` fqns could skip a genuine one).
+match: any(markers, .kind == "endpoint") and not (path endsWith ".md" and (path startsWith ".claude/skills/" or path startsWith ".claude/commands/" or path startsWith ".claude/agents/"))
+checks:
+  - script: ./file-name-matches-pattern.sh
+  - judge: ./endpoint-uses-required-libs.md.j2
