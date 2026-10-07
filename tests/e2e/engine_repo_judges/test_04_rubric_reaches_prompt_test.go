@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	sragent "github.com/sloprail/sloprail/internal/harness"
+	sragent "github.com/sloprail/sloprail/internal/harness/claudecode"
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 

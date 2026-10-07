@@ -18,6 +18,7 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sloprail/sloprail/internal/ambientenv"
 	"github.com/sloprail/sloprail/internal/harnessmock"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
@@ -40,7 +40,7 @@ import (
 // any SLOPRAIL_* / SR_* / SLOP_SUBBIN_DIR the test did not set itself. A suite run
 // from inside a live Claude Code session therefore behaves exactly as in CI, with
 // no `env -u ...` prefix. Callers append what they deliberately set, after it.
-func HostEnv() []string { return ambientenv.Hermetic(os.Environ()) }
+func HostEnv() []string { return claudecode.Hermetic(os.Environ()) }
 
 const (
 	marketplaceName = "sloprail-marketplace"
@@ -2753,7 +2753,7 @@ func (e *Env) RunReal(projDir, prompt string) Result {
 		"--", prompt,
 	)
 	cmd.Dir = projDir
-	cmd.Env = append(ambientenv.Session(os.Environ()),
+	cmd.Env = append(claudecode.Session(os.Environ()),
 		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	out, err := cmd.CombinedOutput()

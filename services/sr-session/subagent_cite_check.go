@@ -97,7 +97,7 @@ func subagentUserCitationRefusal(p HookPayload) string {
 // a citation that does not resolve is known to come from a sub-agent; "" when
 // it cannot be found.
 func subagentRecord(p HookPayload) string {
-	path, err := p.record()
+	path, err := p.Record()
 	if err != nil || path == "" {
 		return ""
 	}

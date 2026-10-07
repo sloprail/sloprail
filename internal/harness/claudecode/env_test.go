@@ -1,4 +1,4 @@
-package ambientenv
+package claudecode
 
 import (
 	"slices"

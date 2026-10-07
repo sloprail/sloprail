@@ -1,4 +1,4 @@
-// Package ambientenv strips an enclosing Claude Code session's identity from a
+// This file strips an enclosing Claude Code session's identity from a
 // process environment, so a subprocess a test or the eval runner launches sees
 // only the variables its launcher deliberately sets.
 //
@@ -9,7 +9,8 @@
 // outer session's identity and fails in CI where there is none (or reaches the
 // operator's real claude binary). The launcher owns the scrub; nobody should
 // have to remember an `env -u ...` prefix.
-package ambientenv
+
+package claudecode
 
 import "strings"
 
