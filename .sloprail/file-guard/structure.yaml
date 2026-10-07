@@ -8,6 +8,8 @@ allow:
   - glob: "*"
   - glob: ".claude/**"
   - glob: ".claude-plugin/**"
+  - glob: ".cursor/**"
+  - glob: ".cursor-plugin/**"
   - glob: ".github/**"
   - glob: "bin/**"
   - glob: ".bin/**"
