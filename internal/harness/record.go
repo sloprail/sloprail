@@ -24,6 +24,10 @@ type Record struct {
 	ToolUseResult     []byte
 	Attachment        []byte
 
+	// StopHook is the outcome of a Stop hook run the harness recorded, nil for a
+	// record that is not one.
+	StopHook *StopHook
+
 	// SessionID is the id the harness wrote this record under. Kept only so
 	// that a path GUESSED from a session id can be checked against what the
 	// file it landed on says about itself.
@@ -54,6 +58,7 @@ func (r Record) Entry() Entry {
 		Message:                   r.Message,
 		ToolUseResult:             r.ToolUseResult,
 		Attachment:                r.Attachment,
+		StopHook:                  r.StopHook,
 		Cwd:                       r.Cwd,
 	}
 	if r.ParentUUID != nil {
