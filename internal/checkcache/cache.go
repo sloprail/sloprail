@@ -96,9 +96,15 @@ type Check struct {
 	Status  string `json:"status"`
 	// Fingerprint is the cache key part; only a guard's verdict carries one (its steps inside
 	// it do not), and what has none is not findable.
-	Fingerprint string         `json:"fingerprint,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	Items       []Item         `json:"items,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	// FilesPart and SubjectFingerprint are what Fingerprint was made of (a guard's verdict
+	// only): the subject's files as the key reads them, and the fingerprint the rule's
+	// `subjects:` script gave it. With them a later change to how the fingerprint is derived
+	// is a pure rewrite of the records (RekeyFromParts), reading nothing from the repository.
+	FilesPart          []byte         `json:"filesPart,omitempty"`
+	SubjectFingerprint string         `json:"subjectFingerprint,omitempty"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
+	Items              []Item         `json:"items,omitempty"`
 }
 
 // Run is one rule evaluated once over one commit range.

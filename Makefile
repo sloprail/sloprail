@@ -86,9 +86,11 @@ where:
 #   git -C /tmp/mig.git fetch origin 'refs/heads/sloprail/checks:refs/sloprail/checks'
 #   (cd /tmp/mig.git && sr-checks log)                    # read-only: old results, old directory
 #   go test ./internal/checkcache -run MigrateKeys        # the migration itself
-# then run `sr-checks run` once in a scratch clone of the repository with the new build: it
-# migrates the checks ref (one commit, v2026-10-03 left in place) and pushes it. CI's installed
-# sr-checks MUST be upgraded in the same release: an older sr-checks refuses the new directory.
+# then run `sr-checks migrate-keys` once in a scratch clone of the repository with the new build:
+# it carries the newest pass of each subject across (one commit, the older directory left in
+# place) and pushes it. `run` and `verify` never migrate: the new layout starts empty beside the
+# older one. CI's installed sr-checks MUST be upgraded in the same release: an older sr-checks
+# refuses the new directory.
 #
 # distribute-local installs the whole set into ONE directory, which is what
 # sibling resolution requires: `sr session start` execs the sr-session next to

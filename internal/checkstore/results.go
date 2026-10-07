@@ -72,8 +72,11 @@ type CheckRecord struct {
 	Status string
 	// Fingerprint is the cache key part; only a guard's verdict carries one.
 	Fingerprint string
-	Metadata    map[string]any
-	Items       []CheckItem
+	// FilesPart and SubjectFingerprint are what Fingerprint was made of (checkcache.Check).
+	FilesPart          []byte
+	SubjectFingerprint string
+	Metadata           map[string]any
+	Items              []CheckItem
 }
 
 // CheckItem is one finding inside a check.
@@ -186,7 +189,7 @@ func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("checkstore: record check %q: no run %q", c.Kind, runID)
 	}
-	check := checkcache.Check{Subject: c.Subject, Kind: c.Kind, Status: c.Status, Fingerprint: c.Fingerprint, Metadata: c.Metadata}
+	check := checkcache.Check{Subject: c.Subject, Kind: c.Kind, Status: c.Status, Fingerprint: c.Fingerprint, FilesPart: c.FilesPart, SubjectFingerprint: c.SubjectFingerprint, Metadata: c.Metadata}
 	for _, it := range c.Items {
 		check.Items = append(check.Items, checkcache.Item{Key: it.Key, Passed: it.Passed, Metadata: it.Metadata})
 	}

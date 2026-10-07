@@ -16,14 +16,13 @@ import (
 // another machine pushed are found; a remote that cannot be reached is reported on w and the
 // local copy is used. With write (`run`) it then also imports an older engine's stores and
 // pushes what is pending; without it (`verify`, `show`) it only reads: nothing is pushed,
-// migrated or written. guards are the rules in force: an older store's verdicts are re-keyed
-// by them (a verdict of a rule not among them is left behind).
-func OpenCache(w io.Writer, root string, write bool, guards []declaration.FileGuard) (*checkcache.Store, error) {
-	opt := checkcache.Options{Dir: root}
-	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
-		opt.Remote = "origin"
-	}
-	store, err := checkcache.Open(opt)
+// migrated or written.
+//
+// A store of an older layout is not migrated here, however it is opened: the current layout
+// starts empty beside it and the older one stays in the ref untouched. Carrying its verdicts
+// across is MigrateKeys, an explicit command.
+func OpenCache(w io.Writer, root string, write bool) (*checkcache.Store, error) {
+	store, err := checkcache.Open(cacheOptions(root))
 	if err != nil {
 		return nil, fmt.Errorf("sloprail: the check results could not be opened: %w", err)
 	}
@@ -37,16 +36,43 @@ func OpenCache(w io.Writer, root string, write bool, guards []declaration.FileGu
 	if err := store.Sync(); err != nil {
 		fmt.Fprintf(w, "sloprail: the check results could not be fetched from origin, using the local copy: %v\n", err)
 	}
-	// Results filed under an older key schema are re-keyed once (a no-op when current), by
-	// rebuilding each stored pass's key at its recorded range (RebuildKeys): nothing is judged.
+	return store, nil
+}
+
+// cacheOptions is the store of the repository at root: its results branch, and origin as the
+// remote when there is one.
+func cacheOptions(root string) checkcache.Options {
+	opt := checkcache.Options{Dir: root}
+	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		opt.Remote = "origin"
+	}
+	return opt
+}
+
+// MigrateKeys carries the verdicts an older layout of the results branch holds into the current
+// one (`sr-checks migrate-keys`), reporting on w. Each stored pass whose key was built differently
+// has its new key rebuilt (RebuildKeys): nothing is judged. It is the only thing that rebuilds
+// keys, and changes nothing when there is nothing to carry or when it was done already.
+func MigrateKeys(w io.Writer, root string, guards []declaration.FileGuard) error {
+	store, err := checkcache.Open(cacheOptions(root))
+	if err != nil {
+		return fmt.Errorf("sloprail: the check results could not be opened: %w", err)
+	}
+	if err := store.Sync(); err != nil {
+		fmt.Fprintf(w, "sloprail: the check results could not be fetched from origin, using the local copy: %v\n", err)
+	}
 	store.SetRebuild(RebuildKeys(root, guards))
 	stats, done, err := store.MigrateKeys()
 	if err != nil {
-		fmt.Fprintf(w, "sloprail: the check results could not be re-keyed, older verdicts may be judged again: %v\n", oneLine(err))
-	} else if done {
-		fmt.Fprint(w, migrationLine(stats))
+		return fmt.Errorf("sloprail: the check results could not be re-keyed: %w", err)
 	}
-	return store, nil
+	if !done {
+		fmt.Fprintln(w, "sloprail: nothing to migrate: no older layout of the check results is left to carry across")
+		return nil
+	}
+	fmt.Fprint(w, migrationLine(stats))
+	WarnPending(w, store)
+	return nil
 }
 
 // OpenLocalCache is the repository's check cache without its remote: the local copy of the

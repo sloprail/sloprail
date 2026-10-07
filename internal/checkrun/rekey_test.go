@@ -63,7 +63,7 @@ func (f *rekeyFixture) refTip(t *testing.T) string {
 func (f *rekeyFixture) evaluate(t *testing.T, write bool) (string, []FileGuardResult, []CheckOutcome) {
 	t.Helper()
 	var w bytes.Buffer
-	cache, err := OpenCache(&w, f.repo, write, []declaration.FileGuard{f.guard})
+	cache, err := OpenCache(&w, f.repo, write)
 	require.NoError(t, err)
 	results := checkstore.Open(cache, !write)
 	rng, err := gitrepo.ResolveRange(f.repo, f.base, f.head)
@@ -74,51 +74,113 @@ func (f *rekeyFixture) evaluate(t *testing.T, write bool) (string, []FileGuardRe
 	return w.String(), got, outcomes
 }
 
-// An older store (the released v2026-10-03 with sr1 keys, or the unreleased v2026-10-07 with
-// sr2 keys) is carried across by rebuilding each stored pass's key at its recorded range, with
-// the rule's subjects script as it is in the head tree: the first run then HITS under the new
-// key and asks no judge (an unmocked judge is an error here). Records whose commits are
-// unreachable, whose subject is gone or whose rule is no longer declared are skipped and
-// counted, and a second run writes nothing.
-func TestRekey_OlderStoresAreRebuiltWithoutJudging(t *testing.T) {
-	for name, tc := range map[string]struct{ dir, version string }{
-		"v2026-10-03 (sr1)": {"v2026-10-03", "sr1"},
-		"v2026-10-07 (sr2)": {"v2026-10-07", "sr2"},
-	} {
+// migrate is `sr-checks migrate-keys`.
+func (f *rekeyFixture) migrate(t *testing.T) string {
+	t.Helper()
+	var w bytes.Buffer
+	rekeyProgress = &w
+	t.Cleanup(func() { rekeyProgress = os.Stderr })
+	require.NoError(t, MigrateKeys(&w, f.repo, []declaration.FileGuard{f.guard}))
+	return w.String()
+}
+
+// dirOid is the object id of a schema directory in the ref: the same while it is untouched.
+func (f *rekeyFixture) dirOid(t *testing.T, dir string) string {
+	t.Helper()
+	return runGit(t, f.repo, "rev-parse", "refs/sloprail/checks:"+dir)
+}
+
+var olderLayouts = map[string]struct{ dir, version string }{
+	"v2026-10-03 (sr1)": {"v2026-10-03", "sr1"},
+	"v2026-10-07 (sr2)": {"v2026-10-07", "sr2"},
+}
+
+// Opening and running over an older store converts nothing: the new layout starts empty beside
+// it, the older directory stays exactly as it was, and what was judged before is judged again
+// (an unmocked judge is an error here, so a miss shows). Nobody waits for a rebuild.
+func TestRekey_RunNeverMigratesAnOlderStore(t *testing.T) {
+	for name, tc := range olderLayouts {
 		t.Run(name, func(t *testing.T) {
 			f := newRekeyFixture(t)
-			ghost := "0123456789abcdef0123456789abcdef01234567"
+			require.NoError(t, checkcache.PutAsOlder(checkcache.Options{Dir: f.repo}, tc.dir, tc.version,
+				f.oldRun("r1", "api", f.base, f.head, checkstore.StatusPass)))
+			older := f.dirOid(t, tc.dir)
+
+			out, got, _ := f.evaluate(t, true)
+			assert.NotContains(t, out, "migrat", "no migration, no progress line")
+			require.Len(t, got, 1, "the stored verdict is not found under the new key: the judge is asked")
+			assert.Contains(t, got[0].Reason, "SR_CHECKS_JUDGE_MOCKS")
+			assert.Equal(t, older, f.dirOid(t, tc.dir), "the older directory is untouched")
+			assert.Equal(t, 0, countCommitsMatching(t, f.repo, "re-key"))
+
+			out, got, _ = f.evaluate(t, false)
+			assert.NotContains(t, out, "migrat")
+			assert.NotEmpty(t, got, "verify finds nothing under the new key either")
+		})
+	}
+}
+
+// `migrate-keys` carries each subject's newest pass across by rebuilding its key at its recorded
+// range, with the rule's subjects script as it is in the head tree: the next run then HITS under
+// the new key and asks no judge. Older passes of the subject, records whose commits are
+// unreachable, whose subject is gone or whose rule is no longer declared are skipped and counted,
+// the older directory stays untouched, and a second call does nothing.
+func TestRekey_MigrateKeysCarriesTheNewestPassesWithoutJudging(t *testing.T) {
+	for name, tc := range olderLayouts {
+		t.Run(name, func(t *testing.T) {
+			f := newRekeyFixture(t)
+			missing := "0123456789abcdef0123456789abcdef01234567"
+			superseded := f.oldRun("r0", "api", f.base, f.head, checkstore.StatusPass)
+			superseded.RunAt = "2026-09-01T10:00:00.000Z" // an older pass of the same subject
 			otherRule := f.oldRun("r5", "api", f.base, f.head, checkstore.StatusPass)
 			otherRule.Rule = "file-guard/removed"
 			require.NoError(t, checkcache.PutAsOlder(checkcache.Options{Dir: f.repo}, tc.dir, tc.version,
+				superseded,
 				f.oldRun("r1", "api", f.base, f.head, checkstore.StatusPass),
-				f.oldRun("r2", "api", f.base, ghost, checkstore.StatusPass),           // unreachable commits
+				f.oldRun("r2", "elsewhere", f.base, missing, checkstore.StatusPass),   // unreachable commits
 				f.oldRun("r3", "gone-subject", f.base, f.head, checkstore.StatusPass), // the subject no longer appears
 				f.oldRun("r4", "api", f.base, f.head, checkstore.StatusFail),          // only a pass is carried
 				otherRule,
 			))
+			older := f.dirOid(t, tc.dir)
 
-			// Before: the first (write) open rebuilds, and says so in one line.
+			out := f.migrate(t)
+			assert.Contains(t, out, "migrated 1, skipped 4 (commits unreachable: 1, rule no longer declared: 1, subject no longer in the range: 1, superseded by a newer pass: 1)")
+			assert.Contains(t, out, "migrating cache keys: ", "progress is reported")
+			assert.Equal(t, older, f.dirOid(t, tc.dir), "the older directory is untouched")
+			assert.Equal(t, 1, countCommitsMatching(t, f.repo, "re-key"))
+
+			// The next run HITS: the judge, which would be an error, is never asked.
 			out, got, outcomes := f.evaluate(t, true)
-			assert.Contains(t, out, "migrated 1, skipped 3 (commits unreachable: 1, rule no longer declared: 1, subject no longer in the range: 1)")
-			assert.Empty(t, got, "the rebuilt verdict is a hit: the judge was never asked (it would error)")
+			assert.NotContains(t, out, "migrated")
+			assert.Empty(t, got)
 			for _, o := range outcomes {
 				assert.Equal(t, checkstore.StatusPass, o.Status, o.Reason)
 			}
-			tip := f.refTip(t)
-
-			// A read-only open never migrates, and the new key is found by verify.
 			_, got, _ = f.evaluate(t, false)
-			assert.Empty(t, got)
+			assert.Empty(t, got, "verify finds the carried verdict")
 
-			// A second run is a no-op: the current directory is the marker.
-			out, got, _ = f.evaluate(t, true)
-			assert.NotContains(t, out, "migrated")
-			assert.Empty(t, got)
-			assert.NotEqual(t, tip, f.refTip(t), "the run itself recorded its replay")
+			// A second call finds it done and writes nothing.
+			tip := f.refTip(t)
+			assert.Contains(t, f.migrate(t), "nothing to migrate")
+			assert.Equal(t, tip, f.refTip(t))
 			assert.Equal(t, 1, countCommitsMatching(t, f.repo, "re-key"), "the migration is one commit, once")
 		})
 	}
+}
+
+// After a run has already started the new layout, the migration still carries the older pass,
+// next to what the run wrote.
+func TestRekey_MigrateKeysAfterTheNewLayoutWasStarted(t *testing.T) {
+	f := newRekeyFixture(t)
+	require.NoError(t, checkcache.PutAsOlder(checkcache.Options{Dir: f.repo}, "v2026-10-07", "sr2",
+		f.oldRun("r1", "api", f.base, f.head, checkstore.StatusPass)))
+	_, got, _ := f.evaluate(t, true) // starts the new layout (the judge errors: nothing stored under the key)
+	require.Len(t, got, 1)
+
+	assert.Contains(t, f.migrate(t), "migrated 1, skipped 0")
+	_, got, _ = f.evaluate(t, true)
+	assert.Empty(t, got, "carried, and found")
 }
 
 func countCommitsMatching(t *testing.T, repo, text string) int {

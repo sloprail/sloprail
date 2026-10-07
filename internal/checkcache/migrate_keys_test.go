@@ -74,7 +74,7 @@ func TestMigrateKeys_AnyOlderDirectoryIsRebuiltIntoTheCurrentOne(t *testing.T) {
 			assert.Equal(t, 1, stats.Skipped)
 			assert.Equal(t, "migrated 2, skipped 1 (not a pass: 1)", stats.String())
 			tip := s.tip()
-			assert.Contains(t, git(t, s.opt.Dir, "ls-tree", "--name-only", tip), tc.dir, "the older directory stays until a Gc")
+			assert.Contains(t, git(t, s.opt.Dir, "ls-tree", "--name-only", tip), tc.dir, "the older directory stays")
 
 			got, err = s.Lookup([]Key{key("new-fp"), key("new-other")})
 			require.NoError(t, err)
@@ -137,21 +137,68 @@ func TestMigrateKeys_AnOldBinaryRefusesTheNewDirectory(t *testing.T) {
 	}
 }
 
-// A write into an unmigrated store migrates first, so the old results are not hidden by the
-// fresh directory the write would otherwise create. With nothing to rebuild them by, it refuses.
-func TestMigrateKeys_APutMigratesFirstOrRefuses(t *testing.T) {
+// A write into an older store does not migrate it: the current directory starts beside the older
+// one, which stays as it was, and nothing refuses (no Rebuild is needed to write). MigrateKeys is
+// the explicit step, and still finds the older directory afterwards.
+func TestMigrateKeys_APutStartsTheCurrentDirectoryAndLeavesTheOlderOneAlone(t *testing.T) {
 	s := olderStore(t, "v2026-10-07", "sr2", twoRuleHashes()...)
-	err := s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))})
-	assert.ErrorIs(t, err, ErrMigrationPending)
-	got, err := s.Lookup([]Key{key("fresh")})
+	older := git(t, s.opt.Dir, "rev-parse", s.opt.Ref+":v2026-10-07")
+
+	require.NoError(t, s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))}))
+	assert.Equal(t, older, git(t, s.opt.Dir, "rev-parse", s.opt.Ref+":v2026-10-07"), "the older directory is untouched")
+	got, err := s.Lookup([]Key{key("fp"), key("fresh")})
 	require.NoError(t, err)
-	assert.Empty(t, got, "a refused write stored nothing")
+	assert.Len(t, got, 1, "only what the current directory holds is found: no fallback into the older one")
+	assert.Contains(t, got, key("fresh").ID())
+
+	_, _, err = s.MigrateKeys()
+	assert.ErrorIs(t, err, ErrMigrationPending, "with nothing to rebuild the keys by, the explicit step says so")
 
 	s.SetRebuild(rekey(nil))
-	require.NoError(t, s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))}))
-	got, err = s.Lookup([]Key{key("new-fp"), key("fresh")})
+	st, done, err := s.MigrateKeys()
 	require.NoError(t, err)
-	assert.Len(t, got, 2)
+	assert.True(t, done)
+	assert.Equal(t, 2, st.Migrated)
+	got, err = s.Lookup([]Key{key("new-fp"), key("new-other"), key("fresh")})
+	require.NoError(t, err)
+	assert.Len(t, got, 3, "the carried verdicts sit beside what the current directory already held")
+}
+
+// What the current directory already holds is never overwritten: a verdict whose new key is there
+// stays as it is, and the carried one is history only, counted as skipped.
+func TestMigrateKeys_NeverOverwritesAVerdictOfTheCurrentDirectory(t *testing.T) {
+	s := olderStore(t, "v2026-10-07", "sr2", twoRuleHashes()...)
+	// The current directory already judged the content the older pass was about, and failed it.
+	require.NoError(t, s.Put([]Run{run("2026-03-01T00:00:00Z", judge("new-fp", StatusFail))}))
+	s.SetRebuild(rekey(nil))
+
+	st, done, err := s.MigrateKeys()
+	require.NoError(t, err)
+	assert.True(t, done)
+	assert.Equal(t, 1, st.Migrated, "only new-other is carried")
+	assert.Equal(t, 1, st.Reasons[ReasonAlreadyKeyed])
+	got, err := s.Lookup([]Key{key("new-fp"), key("new-other")})
+	require.NoError(t, err)
+	assert.Equal(t, StatusFail, got[key("new-fp").ID()].Check.Status, "the verdict already there stands")
+	assert.Equal(t, StatusPass, got[key("new-other").ID()].Check.Status)
+
+	_, done, err = s.MigrateKeys()
+	require.NoError(t, err)
+	assert.False(t, done, "a second call does nothing")
+}
+
+// A compaction replaces the current directory only: the older layouts stay in the ref, so the
+// explicit migration can still be asked for after one.
+func TestGc_KeepsTheOlderDirectories(t *testing.T) {
+	s := olderStore(t, "v2026-10-07", "sr2", twoRuleHashes()...)
+	older := git(t, s.opt.Dir, "rev-parse", s.opt.Ref+":v2026-10-07")
+	require.NoError(t, s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))}))
+	_, err := s.Gc()
+	require.NoError(t, err)
+	assert.Equal(t, older, git(t, s.opt.Dir, "rev-parse", s.opt.Ref+":v2026-10-07"))
+	got, err := s.Lookup([]Key{key("fresh")})
+	require.NoError(t, err)
+	assert.Len(t, got, 1)
 }
 
 // Old segments are recognised by their old index keys, never called corrupt.

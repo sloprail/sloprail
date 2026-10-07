@@ -43,6 +43,7 @@ func newRoot() *cobra.Command {
   sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it
   sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch
   sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)
+  sr-checks migrate-keys                       after a release that re-keyed the results: carry the older layout's newest passes across, judging nothing (opt-in)
 
 The range is merge-base(--base, --head)..--head. --base and --head are required: the caller
 states the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by
@@ -57,6 +58,6 @@ origin by ` + "`run`" + ` and read from it by ` + "`verify`" + `.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newLogCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd())
+	root.AddCommand(newRunCmd(), newVerifyCmd(), newShowCmd(), newLogCmd(), newChangesetCmd(), newDefaultBaseCmd(), newStagedCmd(), newMigrateKeysCmd())
 	return root
 }

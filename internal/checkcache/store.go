@@ -21,9 +21,10 @@ import (
 // reads and writes. A ref carrying a newer v<date>/ directory is refused.
 //
 // A change to what a key is made of bumps it (with SchemaVersion) and adds the old directory
-// to schemaHistory: the first write open migrates the newest older directory into this one,
-// re-keying its verdicts by the rebuild the opener supplies (see MigrateKeys). The older
-// directories stay in the ref until a Gc replaces it. An older binary that meets the new
+// to schemaHistory. Opening or writing a ref that holds only older directories just starts this
+// one, empty: nothing is rebuilt implicitly, and the older directories stay in the ref, untouched
+// (a Gc replaces only the current directory). Carrying their verdicts across, re-keyed by the
+// rebuild the caller supplies, is the explicit MigrateKeys. An older binary that meets the new
 // directory refuses it (ErrFutureSchema), so CI's sr-checks is upgraded with the engine that
 // writes it.
 //
@@ -714,12 +715,7 @@ func (s *Store) Put(runs []Run) error {
 }
 
 func (s *Store) put(runs []Run) error {
-	_ = s.sync()        // an unreachable remote is not a reason to lose results: they go in the local ref
-	if s.keyID == nil { // a store speaking an older schema (PutAsOlder) never migrates
-		if _, _, err := s.migrateKeys(); err != nil {
-			return err
-		}
-	}
+	_ = s.sync() // an unreachable remote is not a reason to lose results: they go in the local ref
 	tip := s.tip()
 	sn, err := s.snapshotAt(tip)
 	if err != nil {
@@ -806,8 +802,9 @@ func (s *Store) commitEntries(parent string, fresh bool, entries map[string]stri
 	return s.commitTree(parent, !fresh, fresh, entries, msg)
 }
 
-// commitReplacing writes a commit on top of parent whose tree is exactly files (the schema
-// directory is replaced, not extended): a compaction that keeps the history.
+// commitReplacing writes a commit on top of parent whose schema directory is exactly files (the
+// directory is replaced, not extended): a compaction that keeps the history. The other schema
+// directories of the tree, the older layouts, are carried over as they are.
 func (s *Store) commitReplacing(parent string, files map[string][]byte, msg string) (string, error) {
 	entries := map[string]string{}
 	for path, content := range files {
@@ -817,11 +814,23 @@ func (s *Store) commitReplacing(parent string, files map[string][]byte, msg stri
 		}
 		entries[path] = strings.TrimSpace(string(oid))
 	}
-	return s.commitTree(parent, false, false, entries, msg)
+	var drop []string // what the current directory holds now, which the compaction replaces
+	if parent != "" {
+		listing, err := s.g.str("ls-tree", "-r", "--name-only", parent, "--", s.schemaDir()+"/")
+		if err != nil {
+			return "", err
+		}
+		for _, p := range strings.Split(listing, "\n") {
+			if p != "" {
+				drop = append(drop, strings.TrimPrefix(p, s.schemaDir()+"/"))
+			}
+		}
+	}
+	return s.commitTree(parent, true, false, entries, msg, drop...)
 }
 
 // commitTree: readTree starts from parent's tree; fresh drops the parent too.
-func (s *Store) commitTree(parent string, readTree, fresh bool, entries map[string]string, msg string) (string, error) {
+func (s *Store) commitTree(parent string, readTree, fresh bool, entries map[string]string, msg string, drop ...string) (string, error) {
 	dir, err := os.MkdirTemp("", "sr-checks-index-")
 	if err != nil {
 		return "", err
@@ -841,6 +850,9 @@ func (s *Store) commitTree(parent string, readTree, fresh bool, entries map[stri
 		}
 	}
 	var info bytes.Buffer
+	for _, path := range drop { // mode 0 removes the path from the index
+		fmt.Fprintf(&info, "0 %s\t%s/%s\n", strings.Repeat("0", 40), s.schemaDir(), path)
+	}
 	for path, oid := range entries {
 		fmt.Fprintf(&info, "100644 %s\t%s/%s\n", oid, s.schemaDir(), path)
 	}

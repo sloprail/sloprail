@@ -1374,6 +1374,17 @@ func guardKey(payload changeset.Payload) string {
 	return changeset.GuardFingerprint(changeset.FilesPart(payload), payload.Subject.Fingerprint)
 }
 
+// guardParts are what guardKey is made of, kept beside the verdict so a later change of the
+// key is a rewrite of the stored records (checkcache.RekeyFromParts).
+func guardParts(payload changeset.Payload) (files []byte, subjectFingerprint string) {
+	return []byte(changeset.FilesPart(payload)), payload.Subject.Fingerprint
+}
+
+// fingerprintOfParts is guardKey over parts stored by guardParts.
+func fingerprintOfParts(files []byte, subjectFingerprint string) string {
+	return changeset.GuardFingerprint(string(files), subjectFingerprint)
+}
+
 // failedByJudge says a judge check is among the failed steps of a stored verdict.
 func failedByJudge(steps []stepRow) bool {
 	for _, st := range steps {
@@ -1504,6 +1515,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 			meta[k] = val
 		}
 		rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: guardKind, Status: cached.Status, Fingerprint: rr.key, Metadata: meta}
+		rec.FilesPart, rec.SubjectFingerprint = guardParts(rr.payload)
 		if err := ev.recordCheck(rr.runID, rec); err != nil {
 			return dispatchcore.Verdict{}, engineError(g, err), true
 		}
@@ -1531,6 +1543,7 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 	}
 	meta := map[string]any{"steps": ev.stepsOf(rr)}
 	rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: guardKind, Fingerprint: rr.key, Metadata: meta}
+	rec.FilesPart, rec.SubjectFingerprint = guardParts(rr.payload)
 	switch {
 	case verdict.Refused:
 		// A refusal reached without a session is no verdict about the key: any check may read
@@ -1539,7 +1552,7 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 		if rr.volatile || ev.params.Transcript == "" {
 			// Still a refusal of THIS run: its run holds a failing row (under no fingerprint, so
 			// no lookup finds it), or the run would read as a pass and advance the effective base.
-			rec.Kind, rec.Status, rec.Fingerprint, meta["reasoning"] = guardKind+":unstored", checkstore.StatusFail, "", verdict.Reason
+			rec.Kind, rec.Status, rec.Fingerprint, rec.FilesPart, rec.SubjectFingerprint, meta["reasoning"] = guardKind+":unstored", checkstore.StatusFail, "", nil, "", verdict.Reason
 			if err := ev.recordCheck(rr.runID, rec); err != nil {
 				fmt.Fprintln(ev.log(rr.g), "sloprail:", err)
 			}

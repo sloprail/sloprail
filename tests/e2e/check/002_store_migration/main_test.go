@@ -10,11 +10,12 @@ import (
 )
 
 // store_migration: a `sloprail/checks` ref written by an OLDER sloprail (the released v0.4.1's
-// v2026-10-03 layout, or main's v2026-10-07) is carried to the current layout by the first
-// `sr-checks run`, by REBUILDING each stored pass's key at its recorded range from git and the
-// rule's subjects script: no judge is asked (SR_CHECKS_JUDGE_MOCKS is empty, so any judge call
-// is an error), and the verdicts are then found under the new key. The old stores are written
-// with the engine's own test writer (checkcache.PutAsOlder), not by an old binary.
+// v2026-10-03 layout, or main's v2026-10-07) is NOT converted by `sr-checks run` or `verify`: the
+// new layout starts empty beside it and the older directory stays untouched. The explicit
+// `sr-checks migrate-keys` carries it across, by REBUILDING each subject's newest stored pass's key
+// at its recorded range from git and the rule's subjects script: no judge is asked (the capturing
+// judge would record a call), and the verdicts are then found under the new key. The old stores
+// are written with the engine's own test writer (checkcache.PutAsOlder), not by an old binary.
 
 type Env = harness.Env
 
@@ -87,6 +88,15 @@ func (f *fixture) env() []string {
 
 func (f *fixture) run(base, head string) harness.Result {
 	return f.e.CLIDirectEnv(f.proj, f.env(), "sr-checks", "run", "--base", base, "--head", head)
+}
+
+func (f *fixture) migrate() harness.Result {
+	return f.e.CLIDirectEnv(f.proj, f.env(), "sr-checks", "migrate-keys")
+}
+
+// dirOid is the object id of a layout's directory in the ref: the same while it is untouched.
+func (f *fixture) dirOid(dir string) string {
+	return strings.TrimSpace(f.e.Git(f.proj, "rev-parse", "refs/sloprail/checks:"+dir))
 }
 
 func (f *fixture) verify(base, head string) harness.Result {
