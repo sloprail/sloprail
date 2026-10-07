@@ -365,14 +365,20 @@ func (cursorDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"followup_message"`)
 }
 
-func (cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
+// AgentShim is the `cursor-agent` a hook-launched agent resolves to: the mock, running the
+// inner scenario with the same plugins a session loads, so the launched agent is guarded by
+// the project's other rules as a real one (which loads the user's plugins) is.
+func (c cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
 		"unset A10N_CURSOR_MOCK_STOP\n" +
 		"exec " + shellQuote(e.mock) + " -p --force --trust --output-format stream-json \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
-		"  --workspace " + shellQuote(projDir) + " \\\n" +
-		"  \"launched agent\" </dev/null\n"
+		"  --workspace " + shellQuote(projDir) + " \\\n"
+	for _, d := range c.pluginDirs(e) {
+		script += "  --plugin-dir " + shellQuote(d) + " \\\n"
+	}
+	script += "  \"launched agent\" </dev/null\n"
 	return "cursor-agent", script
 }
 
