@@ -93,6 +93,18 @@ type ToolResultRecorder interface {
 	RecordToolResult(in HookInput) error
 }
 
+// CurrentTranscriptLocator is what a Harness MAY implement so a tool the agent runs
+// (`cite` from a Bash call, the cite-before-commit gate) finds the CURRENT session's
+// own transcript from its environment, where Claude Code's logic (CLAUDE_CODE_SESSION_ID
+// and its projects directory, internal/transcript.CurrentSessionPath) does not apply.
+// getenv reads the tool's environment; cwd is the caller's working directory ("" for the
+// process's own). ok is false when the harness has no opinion (its variables are absent),
+// and the default logic then runs; ok true with an empty path means "this harness's
+// session, record not found", never a fall-through to another harness's lookup.
+type CurrentTranscriptLocator interface {
+	CurrentTranscript(getenv func(string) string, cwd string) (path string, ok bool)
+}
+
 // Default is the harness a process runs under when nothing selects another.
 const Default = "claudecode"
 

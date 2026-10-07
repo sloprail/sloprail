@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -75,7 +76,9 @@ func (e *Env) publishPreSession(projDir, base string) {
 // against the stored results — it never calls a model — so what a test sees refused at Stop is
 // what the judges said, with the same texts as before. NoAutoCheck() leaves a scenario as written.
 func (e *Env) withPreStopRun(projDir, sessionID string, s Scenario) Scenario {
-	if e.noAutoCheck {
+	if e.noAutoCheck || !slices.Contains(e.driver.Caps(), CapStopHooks) {
+		// A harness whose stop hook never fires has nothing to verify the range against stored
+		// results at its end, and its mock models no compound command line.
 		return s
 	}
 	base := e.stopBase(projDir, sessionID)

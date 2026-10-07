@@ -38,7 +38,6 @@ func TestCodexReportsWhatItCannotDo(t *testing.T) {
 		"ToolUse":        ToolUse("t1", "fill_form", map[string]string{"a": "b"}),
 		"ToolUseJSON":    ToolUseJSON("t2", "x", `{}`),
 		"BashBatch":      BashBatch("bb", "a", "b"),
-		"Compact":        Compact("c1"),
 		"Background":     Background("bg", "Bash", map[string]string{"command": "x"}),
 		"ToolResult":     ToolResult("r1", "x"),
 		"IsolatedDispat": Dispatch("d1", "go", "/tmp/s.sh", "worktree"),

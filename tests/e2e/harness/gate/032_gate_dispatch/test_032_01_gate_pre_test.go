@@ -82,7 +82,7 @@ func TestT032_02_PassingScriptCheckAdmits(t *testing.T) {
 // gateRequireSkill is a PURE-require gate: writing under memories/topics/ is
 // blocked until the document-topic skill was loaded this session. No checks —
 // require is the whole rule, the exact shape
-// examples/required-context-precondition ships.
+// sloprail-community's examples/required-context-precondition ships.
 const gateRequireSkill = `on:
   - event: PreFileWrite
     match: event.path startsWith "memories/topics/"

@@ -35,7 +35,7 @@ user:                   # optional — makes the run multi-turn, see below
   HEAD stops being the same eval run to run). For a genuinely large, noisy
   tree that gives a required skill somewhere real to hide, or that proves a
   guardrail generalizes to an unprimed codebase (see
-  [document-example/example-vs-fixture.md](../document-example/example-vs-fixture.md)'s
+  [document-example/example-vs-fixture.md](https://github.com/sloprail/sloprail-community/blob/main/.claude/skills/document-example/example-vs-fixture.md)'s
   `required-context-precondition` case).
 - **`overlay`** — a directory copied ON TOP of the seed/repo once it's in
   place: the `.sloprail/` rule(s) under test (unless `exampleSloprail`
@@ -45,7 +45,7 @@ user:                   # optional — makes the run multi-turn, see below
   `examples/<name>/.sloprail/` into the project BEFORE `overlay` is applied
   (`overlay` still wins on any path collision), so a fixture testing the
   shipped rule unmodified carries no `overlay/.sloprail/` of its own. See
-  [document-example/example-vs-fixture.md](../document-example/example-vs-fixture.md)
+  [document-example/example-vs-fixture.md](https://github.com/sloprail/sloprail-community/blob/main/.claude/skills/document-example/example-vs-fixture.md)
   for exactly when to use it vs. write a full own copy — this is examples/-
   specific (it assumes the fixture lives at `examples/<name>/eval/<case>/`,
   two directories under the shipped `.sloprail/`); a fixture outside

@@ -232,7 +232,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [session, session2, pre_tool, examples, examples2, examples3, examples4, examples5, examples6, rest, rest2, rest3, rest4, plugins]
+        shard: [session, session2, pre_tool, rest, rest2, rest3, rest4, plugins]
     # 45, against the suite's own 30m: the gap absorbs the checkout, the module
     # download and the per-package binary builds, so a job killed here means the
     # shard genuinely hung rather than the runner being slow.
@@ -336,6 +336,46 @@ jobs:
           status=${PIPESTATUS[0]}
           pass=$(grep -c '^--- PASS' codex-e2e.log); fail=$(grep -c '^--- FAIL' codex-e2e.log); skip=$(grep -c '^--- SKIP' codex-e2e.log)
           echo "codex ${{ matrix.codex-shard }}: pass=$pass fail=$fail skip=$skip" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+  # The same e2e shards against Cursor (SR_HARNESS=cursor, a10n-cursor-mock). Allowed to
+  # fail and not part of `e2e (all)`, like the Codex leg: steps Cursor cannot take skip,
+  # naming the step. No examples shards (they move to sloprail-community). The shards
+  # must stay a subset of the Makefile's (the guard in tests/repo checks it).
+  e2e-cursor:
+    name: e2e cursor (${{ matrix.cursor-shard }})
+    needs: changes
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        cursor-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
+    timeout-minutes: 45
+    steps:
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/checkout@v4
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install the mocks
+        run: make mock
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: e2e (cursor)
+        shell: bash
+        env:
+          SR_HARNESS: cursor
+          GOFLAGS: -v
+        run: |
+          test -x .bin/a10n-cursor-mock || { echo "a10n-cursor-mock is not in .bin/"; exit 1; }
+          set +e
+          make test-e2e-shard SHARD=${{ matrix.cursor-shard }} 2>&1 | tee cursor-e2e.log
+          status=${PIPESTATUS[0]}
+          pass=$(grep -c '^--- PASS' cursor-e2e.log); fail=$(grep -c '^--- FAIL' cursor-e2e.log); skip=$(grep -c '^--- SKIP' cursor-e2e.log)
+          echo "cursor ${{ matrix.cursor-shard }}: pass=$pass fail=$fail skip=$skip" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $status
 
   # install-sh proves the stranger install path works, on every push — not only

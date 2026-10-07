@@ -6,7 +6,7 @@ import (
 
 // The structure.yaml every test in this group installs: writes are allowed under
 // memories/updates/*.md (a glob) and under a dated decisions folder (a regex), and
-// nowhere else — the exact shape examples/completeness-artifact-on-trigger ships.
+// nowhere else — the exact shape sloprail-community's examples/completeness-artifact-on-trigger ships.
 const structureYAML = `allow:
   - glob: "memories/updates/*.md"
   - regex: "^memories/decisions/[0-9]{8}_[a-z0-9-]+/.*\\.md$"

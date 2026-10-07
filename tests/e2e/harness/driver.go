@@ -160,7 +160,7 @@ const harnessEnvVar = "SR_HARNESS"
 var knownHarnesses = []string{"claude", "codex", "cursor"}
 
 func drivers() map[string]Driver {
-	return map[string]Driver{"claude": claudeDriver{}, "codex": codexDriver{}}
+	return map[string]Driver{"claude": claudeDriver{}, "codex": codexDriver{}, "cursor": cursorDriver{}}
 }
 
 var (

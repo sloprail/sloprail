@@ -1,8 +1,0 @@
-# Wires goal.yaml into the engine. PostFileWrite so it reads settled content
-# (the `enabled` flag exists only once the write lands). Tracks active/inactive
-# only; the goal-verify gate is what refuses a Stop.
-on:
-  - event: PostFileWrite
-    match: event.path startsWith "goal/" and event.path endsWith "goal.yaml"
-enter: ./enter.sh
-exit: ./exit.sh
