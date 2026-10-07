@@ -53,6 +53,24 @@
 # silently not enforcing something.
 set -eu
 
+# NAME THE HARNESS, DO NOT LET sr-session GUESS IT. This one wrapper is the hook
+# command of every harness that loads this plugin (hooks.json is shared), and an
+# environment can hold the markers of more than one: a Claude session started from a
+# Codex shell inherits Codex's variables. An explicit SLOPRAIL_HARNESS (the caller's
+# own wins) beats every marker, so hook-time selection never depends on detection.
+# What tells the two apart HERE is the plugin runtime: Codex sets PLUGIN_ROOT for a
+# plugin's hook commands (beside the CLAUDE_PLUGIN_ROOT it sets for compatibility);
+# Claude Code sets only CLAUDE_PLUGIN_ROOT, and a tool shell never carries PLUGIN_ROOT,
+# so it is not inherited into a Claude session started from Codex.
+if [ -z "${SLOPRAIL_HARNESS:-}" ]; then
+  if [ -n "${PLUGIN_ROOT:-}" ]; then
+    SLOPRAIL_HARNESS=codex
+  else
+    SLOPRAIL_HARNESS=claudecode
+  fi
+fi
+export SLOPRAIL_HARNESS
+
 subcommand="$1"
 shift
 

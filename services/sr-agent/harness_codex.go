@@ -67,6 +67,10 @@ var codexSpec = harnessSpec{
 		if getenv("SLOPRAIL_HARNESS") == "codex" {
 			return true
 		}
+		// Claude Code's markers win an ambiguous environment (see codex.Detect).
+		if getenv("CLAUDECODE") != "" || getenv("CLAUDE_CODE_ENTRYPOINT") != "" || getenv("CLAUDE_CODE_SESSION_ID") != "" {
+			return false
+		}
 		for _, k := range []string{"CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI", "CODEX_MANAGED_BY_NPM", "PLUGIN_ROOT"} {
 			if getenv(k) != "" {
 				return true

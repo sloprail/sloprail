@@ -11,11 +11,19 @@ func TestCodexSpec_EverySizeAliasResolves(t *testing.T) {
 	require.NoError(t, aliasesComplete())
 }
 
-func TestCodexSpec_IsDetectedFromWhatCodexSetsAndBeatsAnInheritedClaudeMarker(t *testing.T) {
+func TestCodexSpec_IsDetectedFromWhatCodexSetsAndYieldsToClaudeMarkers(t *testing.T) {
 	env := envOf(map[string]string{"CLAUDECODE": "1", "CODEX_THREAD_ID": "t"})
 	spec, err := DetectHarness(env)
 	require.NoError(t, err)
-	assert.Equal(t, Codex, spec.name, "a Codex started inside a Claude Code shell is a Codex")
+	assert.Equal(t, ClaudeCode, spec.name, "both sets of markers: ambiguous, Claude Code wins (a hook names its harness explicitly)")
+
+	spec, err = DetectHarness(envOf(map[string]string{"CODEX_THREAD_ID": "t"}))
+	require.NoError(t, err)
+	assert.Equal(t, Codex, spec.name)
+
+	spec, err = DetectHarness(envOf(map[string]string{"CLAUDECODE": "1", "SLOPRAIL_HARNESS": "codex"}))
+	require.NoError(t, err)
+	assert.Equal(t, Codex, spec.name, "an explicit name beats every marker")
 
 	spec, err = DetectHarness(envOf(map[string]string{"CLAUDECODE": "1"}))
 	require.NoError(t, err)

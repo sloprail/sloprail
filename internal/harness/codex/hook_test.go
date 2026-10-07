@@ -124,6 +124,16 @@ func TestParseHook_EmptyOrUnreadableIsAZeroInput(t *testing.T) {
 	assert.Equal(t, harness.HookInput{}, New().ParseHook(strings.NewReader("{")))
 }
 
+func TestDetect_YieldsToClaudeCodeMarkers(t *testing.T) {
+	assert.True(t, Detect([]string{"CODEX_THREAD_ID=t"}))
+	assert.True(t, Detect([]string{"PLUGIN_ROOT=/p"}))
+	assert.False(t, Detect([]string{"CODEX_HOME=/h"}), "a directory a user may export for any reason")
+	for _, claude := range []string{"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_SESSION_ID=s"} {
+		assert.False(t, Detect([]string{"CODEX_THREAD_ID=t", claude}), claude+": both marker sets is ambiguous, Claude Code wins")
+	}
+	assert.True(t, Detect([]string{"CODEX_THREAD_ID=t", "CLAUDECODE="}), "an empty marker is not one")
+}
+
 func TestProjectSkillDirs_CodexReadsAgentsSkills(t *testing.T) {
 	assert.Equal(t, []string{".agents/skills"}, harness.ProjectSkillDirs(New()))
 }

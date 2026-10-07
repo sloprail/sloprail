@@ -490,10 +490,9 @@ func (s harnessSpec) modelFlagOrDefault() string {
 }
 
 // harnesses is the registry. Adding a harness is adding an entry here. The order
-// is the order environment detection tries them: Codex first, because its markers
-// (CODEX_THREAD_ID and friends) are set afresh by every Codex, while CLAUDECODE can
-// be inherited by a Codex started from inside a Claude Code shell, and the innermost
-// harness is the one running.
+// is the order environment detection tries them. SLOPRAIL_HARNESS, when set, is read
+// first (DetectHarness); the specs' own markers decide otherwise, and Codex's yields to
+// Claude Code's when an environment holds both.
 var harnesses = []harnessSpec{codexSpec, claudeCodeSpec}
 
 // ErrNoHarness is returned when the environment names no harness this binary

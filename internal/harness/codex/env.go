@@ -78,8 +78,27 @@ func Hermetic(environ []string) []string {
 	return out
 }
 
-// Detect reports whether environ is that of a process running under Codex.
+// claudeKeys are what a Claude Code session sets. They are inherited by everything
+// Claude starts, and Codex's own markers are inherited by everything Codex starts, so
+// an environment holding both is ambiguous; detection yields to Claude Code, the one
+// whose markers are tight (a hook never relies on it: the plugin wrapper sets
+// SLOPRAIL_HARNESS explicitly, and an explicit name beats detection).
+var claudeKeys = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID"}
+
+// Detect reports whether environ is that of a process running under Codex, and not
+// one that Claude Code marks as its own.
 func Detect(environ []string) bool {
+	for _, kv := range environ {
+		key, val, _ := strings.Cut(kv, "=")
+		if val == "" {
+			continue
+		}
+		for _, k := range claudeKeys {
+			if key == k {
+				return false
+			}
+		}
+	}
 	for _, kv := range environ {
 		key, val, _ := strings.Cut(kv, "=")
 		if val == "" {
