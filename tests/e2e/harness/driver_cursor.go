@@ -17,7 +17,7 @@ import (
 // with --plugin-dir and of <workspace>/.cursor/hooks.json.
 //
 //   - The tools are Shell (Bash), Write, StrReplace (Edit), Read, Grep, Delete and
-//     Task (a sub-agent, with no worktree option). A step with no such tool (Skill,
+//     Task (a sub-agent, with no worktree option). A step with no such tool (
 //     background commands, raw results) is unsupported.
 //   - The transcript has no tool-call ids, so a step cannot mark itself done by its
 //     id as on the other harnesses: the script counts the records the transcript holds
@@ -63,6 +63,9 @@ func cursorLine(content ...map[string]any) string {
 	return codexLine(content...) // the scenario protocol is the same on every harness
 }
 
+// cursorWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
+const cursorWorkspaceMark = "@@WORKSPACE@@"
+
 // cursorPassthrough are the tools a generic ToolUse may name: those the mock runs with string inputs.
 var cursorPassthrough = map[string]bool{"Read": true, "Grep": true, "Delete": true, "Shell": true}
 
@@ -104,7 +107,9 @@ func (c cursorDriver) render(a Action) (string, error) {
 		}
 		return cursorLine(codexTool(a.ID, a.Tool, in)), nil
 	case ActSkill:
-		return "", c.unsupported(a, "Cursor has no skill tool")
+		// Cursor has no skill tool: reading the skill's SKILL.md is how it loads one.
+		return cursorLine(codexTool(a.ID, "Read", map[string]any{
+			"file_path": cursorWorkspaceMark + "/.claude/skills/" + a.Text + "/SKILL.md"})), nil
 	case ActBashBatch:
 		return "", c.unsupported(a, "several calls in one message are not modelled")
 	}
@@ -127,9 +132,18 @@ PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - ${SLOP_BASE:-0} -
 		if err != nil {
 			return "", err
 		}
+		if strings.Contains(line, cursorWorkspaceMark) {
+			// the line names a path in the workspace: the script runs there, so $PWD is its root
+			fmt.Fprintf(&b, "if [ \"$PROG\" -eq %d ]; then\n  printf '%%s\\n' %s | sed \"s|%s|$PWD|g\"\n  exit 0\nfi\n", i, shQuote(line), cursorWorkspaceMark)
+			continue
+		}
 		fmt.Fprintf(&b, "if [ \"$PROG\" -eq %d ]; then\n  printf '%%s\\n' %s\n  exit 0\nfi\n", i, shQuote(line))
 	}
-	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"result":%s}`, jsonStr(s.result))))
+	// the mock reads the assistant lines of the stream-json; the final reply is one of them
+	// (a result line of the script is not read: the run's result is what the assistant said)
+	if s.result != "" {
+		fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(cursorLine(codexText(s.result))))
+	}
 	return b.String(), nil
 }
 
@@ -310,9 +324,32 @@ func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	return filepath.Join(e.home, ".cursor", "projects", project, "agent-transcripts", id, id+".jsonl")
 }
 
-// SubagentRecordPaths: Cursor's sub-agent transcripts sit beside the session's with
-// nothing that names their parent (subagent-transcripts), so none can be attributed.
-func (cursorDriver) SubagentRecordPaths(*Env, string, string) []string { return nil }
+// SubagentRecordPaths: Cursor keeps a sub-agent's transcript as a conversation of its own
+// beside the session's, with nothing that names its parent (subagent-transcripts). The
+// sessions a test started are known (Env.harnessIDs), so a conversation beside them that
+// is none of those is a sub-agent's.
+func (c cursorDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []string {
+	root := c.TranscriptPath(e, projDir, sessionID)
+	base := filepath.Dir(filepath.Dir(root))
+	known := map[string]bool{}
+	for _, id := range e.harnessIDs {
+		known[id] = true
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, ent := range entries {
+		if !ent.IsDir() || known[ent.Name()] {
+			continue
+		}
+		if p := filepath.Join(base, ent.Name(), ent.Name()+".jsonl"); fileExists(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 func (cursorDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
 	e.t.Skipf("harness cursor: a fork of a conversation is not modelled")

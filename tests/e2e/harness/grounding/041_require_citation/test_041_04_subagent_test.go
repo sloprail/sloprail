@@ -125,6 +125,18 @@ func requireInSubagentRecord(t *testing.T, root, sub, callID string) {
 		}
 		return n
 	}
+	if body, _ := os.ReadFile(sub); !strings.Contains(string(body), "slop-turn") {
+		// A record that carries no call ids (Cursor's: its transcript names no ids and holds
+		// no results) cannot be counted by id: the sub-agent's conversation is a file of its
+		// own, so its tool call being there and not in the root's is what is checked.
+		if sub == root || !strings.Contains(string(body), `"tool_use"`) {
+			t.Fatalf("the sub-agent's record %s holds no tool call of its own", sub)
+		}
+		if rb, _ := os.ReadFile(root); strings.Contains(string(rb), `"name":"Bash"`) {
+			t.Fatalf("the sub-agent's shell call is in the root record, so this would not test the sub-agent's")
+		}
+		return
+	}
 	if n := count(sub); n != 2 {
 		t.Fatalf("expected the sub-agent's call and its result in its own record, found %d lines", n)
 	}
