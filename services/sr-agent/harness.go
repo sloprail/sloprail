@@ -22,7 +22,7 @@ type Harness string
 // (cursor_harness.go). What makes another cheap is that everything harness-shaped in
 // this binary is reached through the registry below rather than written inline.
 const (
-	ClaudeCode Harness = "claude-code"
+	ClaudeCode Harness = "claude"
 	Codex      Harness = "codex"
 )
 
@@ -580,6 +580,7 @@ var ErrUnknownHarness = errors.New("unsupported harness")
 
 // lookupSpec finds the registry entry for a named harness.
 func lookupSpec(name Harness) (harnessSpec, bool) {
+	name = Harness(harness.Canonical(string(name))) // deprecated spellings: internal/harness
 	for _, spec := range harnesses {
 		if spec.name == name {
 			return spec, true
@@ -611,11 +612,6 @@ func DetectHarness(getenv func(string) string) (harnessSpec, error) {
 	// An explicit SLOPRAIL_HARNESS names the session's harness: a judge runs on the
 	// harness that triggered it.
 	if name := getenv("SLOPRAIL_HARNESS"); name != "" {
-		// The plugin hooks export the internal/harness registry name, which spells
-		// Claude Code "claudecode"; --harness spells it "claude-code".
-		if name == "claudecode" {
-			name = string(ClaudeCode)
-		}
 		if spec, ok := lookupSpec(Harness(name)); ok {
 			return spec, nil
 		}

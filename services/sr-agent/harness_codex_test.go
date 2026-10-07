@@ -30,11 +30,18 @@ func TestCodexSpec_IsDetectedFromWhatCodexSetsAndYieldsToClaudeMarkers(t *testin
 	assert.Equal(t, ClaudeCode, spec.name)
 }
 
-// The plugin hook wrapper exports the internal/harness registry name.
-func TestDetectHarness_AcceptsTheNameThePluginHooksExport(t *testing.T) {
-	spec, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": "claudecode"}))
-	require.NoError(t, err)
-	assert.Equal(t, ClaudeCode, spec.name)
+// One identifier per harness; the earlier spellings still resolve (the alias table
+// is internal/harness's alone).
+func TestHarnessName_DeprecatedSpellingsResolveToTheIdentifier(t *testing.T) {
+	for _, name := range []string{"claude", "claude-code", "claudecode"} {
+		spec, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": name}))
+		require.NoError(t, err, name)
+		assert.Equal(t, ClaudeCode, spec.name, name)
+
+		spec, err = ResolveHarness(name, envOf(nil))
+		require.NoError(t, err, name)
+		assert.Equal(t, ClaudeCode, spec.name, name)
+	}
 }
 
 func TestCodexSpec_BuildsAnExecInvocationThatLoadsNoHooks(t *testing.T) {

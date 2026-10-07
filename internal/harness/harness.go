@@ -21,7 +21,7 @@ import (
 // launching `claude`, sr-session reading Claude hook payloads) imports the
 // implementation package itself; that is the wiring, not a leak.
 type Harness interface {
-	// Name is the harness's short name ("claudecode").
+	// Name is the harness's one identifier ("claude", "codex", "cursor"), the same everywhere: SLOPRAIL_HARNESS, sr-agent --harness, SR_HARNESS.
 	Name() string
 
 	// ResolvePlugins reads a project's enabled plugins from the harness's own
@@ -140,12 +140,29 @@ type JudgeGate interface {
 }
 
 // Default is the harness a process runs under when nothing selects another.
-const Default = "claudecode"
+const Default = "claude"
 
 // SelectEnv names, when set, the harness a process runs under, overriding
 // detection. It is how a harness's plugin wires its hooks explicitly (the hook
 // command sets it), where the environment alone would not say.
 const SelectEnv = "SLOPRAIL_HARNESS"
+
+// deprecatedNames are spellings an earlier release gave a harness, still accepted
+// where a name is read (SLOPRAIL_HARNESS, sr-agent --harness, a stored archive).
+// This is the one place they are known; everything else says "claude".
+var deprecatedNames = map[string]string{
+	"claude-code": "claude",
+	"claudecode":  "claude",
+}
+
+// Canonical is the harness identifier a name stands for: its own, or the one a
+// deprecated spelling maps to.
+func Canonical(name string) string {
+	if c, ok := deprecatedNames[name]; ok {
+		return c
+	}
+	return name
+}
 
 var (
 	mu       sync.RWMutex
@@ -186,7 +203,7 @@ func Select(environ []string) Harness {
 	}
 	for _, kv := range environ {
 		if v, ok := strings.CutPrefix(kv, SelectEnv+"="); ok && v != "" {
-			h, found := registry[v]
+			h, found := registry[Canonical(v)]
 			if !found {
 				panic(fmt.Sprintf("harness: %s=%q names no registered harness (registered: %s)", SelectEnv, v, names()))
 			}

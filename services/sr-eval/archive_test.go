@@ -71,7 +71,7 @@ func TestArchiveRun_WritesAndCommitsTheRun(t *testing.T) {
 	root, transcript := archiveRunWorld(t)
 	started := time.Date(2026, 10, 4, 9, 8, 7, 0, time.FixedZone("x", 3600))
 	rec := runRecord{
-		Fixture: "my-fixture", FixtureDir: "/abs/fixtures/my-fixture", Model: "sonnet", Harness: "claude-code",
+		Fixture: "my-fixture", FixtureDir: "/abs/fixtures/my-fixture", Model: "sonnet", Harness: "claude",
 		Passed: true, Transcript: transcript, StartedAt: started, FinishedAt: started.Add(time.Minute),
 	}
 	verdict := &Verdict{Subject: "s", Status: "pass", Rows: []VerdictRow{{CheckID: "c1", Status: "pass", Reasoning: "fine"}}}

@@ -66,7 +66,7 @@ if [ -z "${SLOPRAIL_HARNESS:-}" ]; then
   if [ -n "${PLUGIN_ROOT:-}" ]; then
     SLOPRAIL_HARNESS=codex
   else
-    SLOPRAIL_HARNESS=claudecode
+    SLOPRAIL_HARNESS=claude
   fi
 fi
 export SLOPRAIL_HARNESS

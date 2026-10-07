@@ -40,6 +40,12 @@
         "use": "session ...",
         "short": "Session lifecycle — the hook points a harness calls",
         "long": "Session lifecycle — the hook points a harness calls.\n\nRuns sr-session, passing everything after `session` to it unchanged.\nRun `sr-session --help` — or `sr session --help` — for its own help."
+      },
+      {
+        "path": "sr test",
+        "use": "test ...",
+        "short": "Run a project's end-to-end rule tests through a harness mock",
+        "long": "Run a project's end-to-end rule tests through a harness mock.\n\nRuns sr-test, passing everything after `test` to it unchanged.\nRun `sr-test --help` — or `sr test --help` — for its own help."
       }
     ]
   },
@@ -47,7 +53,7 @@
     "path": "sr-session",
     "use": "sr-session",
     "short": "Session lifecycle — the hook points a harness calls",
-    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n  sr-session codex-trust           trust sloprail's plugin hooks in Codex (it skips untrusted ones silently)\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
     "children": [
       {
         "path": "sr-session agents",
@@ -66,6 +72,28 @@
                 "usage": "Print the registry as JSON"
               }
             ]
+          }
+        ]
+      },
+      {
+        "path": "sr-session codex-trust",
+        "use": "codex-trust",
+        "short": "Trust sloprail's plugin hooks in Codex (Codex skips untrusted hooks silently)",
+        "long": "Codex runs a plugin's hooks only after they are trusted, and skips the others\nwithout a message: an enabled sloprail plugin whose hooks are untrusted guards nothing.\n\nThis asks Codex (codex app-server, the same calls its review dialog makes) which of\nsloprail's hooks it would skip, and records trust for them. Enabling or upgrading the\nplugin does not do it; changing a hook's definition in hooks.json drops its trust\nagain, and editing the hook's script does not.\n\n  sr-session codex-trust            trust sloprail's untrusted or modified hooks\n  sr-session codex-trust --check    only report; exit 1 when Codex would skip any\n\nRun it where the project is (--dir) so project-layer hooks resolve the same way. With\nno sloprail plugin enabled in Codex it finds nothing and changes nothing.",
+        "flags": [
+          {
+            "name": "check",
+            "default": "false",
+            "usage": "only report the hooks Codex would skip; change nothing"
+          },
+          {
+            "name": "codex",
+            "default": "codex",
+            "usage": "the codex binary"
+          },
+          {
+            "name": "dir",
+            "usage": "the project directory (default: the current one)"
           }
         ]
       },
@@ -456,6 +484,10 @@
         "usage": "Claude Code's own settings as a JSON object, passed through untouched (e.g. '{\"permission-mode\":\"plan\"}')"
       },
       {
+        "name": "codex-args",
+        "usage": "Codex's own settings as a JSON object, passed through untouched (e.g. '{\"config\":\"model_reasoning_effort=low\"}')"
+      },
+      {
         "name": "disallowed-tools",
         "usage": "Tool rules the agent is denied, in the same form; a deny beats every allow (e.g. \"Bash(curl * -o *)\")"
       },
@@ -466,7 +498,7 @@
       },
       {
         "name": "harness",
-        "usage": "Run this harness instead of the one the environment names (claude-code)"
+        "usage": "Run this harness instead of the one the environment names (claude, codex, cursor)"
       },
       {
         "name": "model",
@@ -496,13 +528,13 @@
     "path": "sr-checks",
     "use": "sr-checks <command>",
     "short": "Judge the file-guards over an explicit commit range and show the results",
-    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule hash (which covers its scripts and templates), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
+    "long": "Judge the file-guards over an explicit range of commits.\n\n  sr-checks run    --base <rev> --head <rev>   run what has no stored verdict (script, judge, requirement); writes the results\n  sr-checks verify --base <rev> --head <rev>   only reads stored verdicts: executes nothing, writes nothing; exit 1 when anything fails or is unjudged\n  sr-checks show   --base <rev> --head <rev>   each subject's latest result, without a verdict\n  sr-checks changeset --rule <name> --base <rev> --head <rev>   what a rule would be handed, without running it\n  sr-checks default-base --head <rev>          the sha a range over head starts at: its merge base with the default branch\n  sr-checks staged --needs citation [--amend]  the staged files a commit must cite (what a file-guard's require: citation will want of it)\n\nThe range is merge-base(--base, --head)..--head. --base and --head are required: the caller\nstates the range. EVERY check is cached the same way: a guard's verdict over a subject is keyed by\nthe rule name (not its definition: editing a rule does not void a verdict), the subject, the content of the subject's\nfiles, the citation quotes (require: citation rules) and the subject's fingerprint from the rule's\nsubjects script, when it has one — never by a commit, session or agent — so the same content after\na rebase, a squash or a revert is a cache hit, and so is the same content another clone already\njudged. `run` runs nothing on a hit (a stored fail is replayed); `verify` never executes a script or a judge: a key with\nno stored verdict is \"not judged yet\". Results are kept on the orphan branch sloprail/checks, pushed to\norigin by `run` and read from it by `verify`.",
     "children": [
       {
         "path": "sr-checks changeset",
         "use": "changeset --rule <name> --base <rev> --head <rev>",
         "short": "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
-        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range is merge-base(--base, --head)..--head, both revisions\nstated by the caller (a branch, a tag or a sha).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified name as a\nrefusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  base, head          the range, as SHAs: the stated one, raised to the rule's own floor\n                      (the parent of the commit that last changed the rule), as run judges it\n  ruleHash            the hash of every git-tracked file under the rule's .sloprail root\n                      (shared _lib included), as on disk; untracked and ignored files do\n                      not count; a plugin rule hashes its plugin's .sloprail root\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits, files,\n                      others, citations — each with the commits that carried it and the\n                      files they changed), subject. A rule with a subjects: script\n                      prints subjects, one payload per subject, from running that script.\n\nNothing is run and nothing is recorded. Where the session cannot be found from the environment\n(no CLAUDE_CODE_SESSION_ID), quotes are not resolved.",
+        "long": "Show what a file-guard would be judged on, without judging it.\n\nA file-guard judges commits. Its range is merge-base(--base, --head)..--head, both revisions\nstated by the caller (a branch, a tag or a sha).\n\n--rule names the file-guard: its folder name (`size-limit`), or its qualified name as a\nrefusal cites it (`file-guard/size-limit`, `plugin/file-guard/size-limit`).\n\nThe output is JSON on stdout:\n\n  rule                the qualified name\n  base, head          the range, as SHAs: the stated one, raised to the rule's own floor\n                      (the parent of the commit that last changed the rule), as run judges it\n  ruleHash            the hash of every git-tracked file under the rule's .sloprail root (shared _lib\n                      included), as on disk, recorded on each run for the trace only: it is not\n                      part of a verdict's key, so editing a rule never voids one; untracked and ignored files do\n                      not count; a plugin rule hashes its plugin's .sloprail root\n  unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve\n  payload             what a check receives on stdin: event, changeset (commits, files,\n                      others, citations — each with the commits that carried it and the\n                      files they changed), subject. A rule with a subjects: script\n                      prints subjects, one payload per subject, from running that script.\n\nNothing is run and nothing is recorded. Where the session cannot be found from the environment\n(no CLAUDE_CODE_SESSION_ID), quotes are not resolved.",
         "flags": [
           {
             "name": "base",
@@ -534,7 +566,7 @@
         "path": "sr-checks run",
         "use": "run --base <rev> --head <rev>",
         "short": "Judge every file-guard over merge-base(base, head)..head and record the verdicts",
-        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nEvery check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed\nby the rule hash, the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the\ninput changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.\n\nRun it in the foreground and wait: it prints progress to stderr (a line per judge and per rule, and a\nheartbeat every 30s), so do not poll the process list. It is safe to run in parallel, in several\nworktrees at once: judges share a machine-wide limit (SLOPRAIL_JUDGE_SLOTS, default 8; a process waits for\na free slot), two runs judging the same check judge it once, and a second run of the same worktree and\nrange waits for the first and reuses its verdicts. The lock files are under the user cache dir\n(SLOPRAIL_LOCK_DIR overrides) and a killed run releases them.",
+        "long": "Judge every file-guard over merge-base(--base, --head)..--head.\n\nEvery check (requirement, script, judge) is cached by content: one verdict per guard and subject, keyed\nby the rule name (never its definition), the subject, the content of its files and the citation quotes. A stored PASS is a hit and a stored FAIL with the same key is replayed (terminal until the\ninput changes): nothing is run. A miss runs the steps in order and stores the verdict, as one segment\nof the sloprail/checks branch, and pushed to origin when the repository has one. Prints each\nrefusal, and exits 1 when any rule refuses.\n\nRun it in the foreground and wait: it prints progress to stderr (a line per judge and per rule, and a\nheartbeat every 30s), so do not poll the process list. It is safe to run in parallel, in several\nworktrees at once: judges share a machine-wide limit (SLOPRAIL_JUDGE_SLOTS, default 8; a process waits for\na free slot), two runs judging the same check judge it once, and a second run of the same worktree and\nrange waits for the first and reuses its verdicts. The lock files are under the user cache dir\n(SLOPRAIL_LOCK_DIR overrides) and a killed run releases them.",
         "flags": [
           {
             "name": "base",
