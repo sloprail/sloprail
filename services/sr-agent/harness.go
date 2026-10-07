@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"path/filepath"
 	"sort"
@@ -127,6 +128,15 @@ type harnessSpec struct {
 	// seam for saying so per-harness rather than assuming every harness has
 	// Claude Code's permission model.
 	grant func(g accessGrant) []string
+
+	// checkGrant, when set, refuses an access grant this harness cannot express as
+	// tightly as asked (before anything runs). nil accepts every grant.
+	checkGrant func(g accessGrant) error
+
+	// tools, when set, translates the allowed/denied tools (the canonical vocabulary,
+	// internal/harness/toolrules.go) into this harness's run settings, instead of the
+	// rules riding through verbatim in grant. nil means verbatim (Claude Code).
+	tools harness.ToolPolicy
 }
 
 // claudeCodeSpec is Claude Code.

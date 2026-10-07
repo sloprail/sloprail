@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // ErrBadHarnessArgs is returned when a `--<harness>-args` value is not a JSON
@@ -364,8 +366,35 @@ func unsafeRulePath(path string) string {
 // would either leave the judge blind or hand it write access, and the caller
 // asked for neither.
 func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
+	if spec.checkGrant != nil {
+		if err := spec.checkGrant(g); err != nil {
+			return nil, err
+		}
+	}
 	if spec.grant != nil {
-		return spec.grant(g), nil
+		args := spec.grant(g)
+		if spec.tools != nil {
+			allow, err := harness.ParseToolRules(g.Tools)
+			if err != nil {
+				return nil, fmt.Errorf("--allowed-tools: %w", err)
+			}
+			deny, err := harness.ParseToolRules(g.DenyTools)
+			if err != nil {
+				return nil, fmt.Errorf("--disallowed-tools: %w", err)
+			}
+			writable := 0
+			for _, d := range g.Dirs {
+				if d.Mode == dirWritable {
+					writable++
+				}
+			}
+			extra, err := spec.tools.MapToolRules(allow, deny, harness.ToolContext{WritableDirs: writable})
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s: %s", ErrModeUnsupported, spec.name, err)
+			}
+			args = append(args, extra...)
+		}
+		return args, nil
 	}
 	if len(g.DenyTools) > 0 {
 		return nil, fmt.Errorf("%w: %s has no permission model to deny tools in; drop --disallowed-tools or run a harness that has one",

@@ -45,8 +45,47 @@ func TestCodexSpec_GrantIsTheSandbox(t *testing.T) {
 	assert.Equal(t, []string{"--sandbox", "read-only"},
 		codexSpec.grant(accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}}}),
 		"a readonly directory needs nothing: read-only is the default for what is not added")
-	assert.Equal(t, []string{"--sandbox", "workspace-write", "--add-dir", "/answer"},
-		codexSpec.grant(accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}, {Path: "/answer", Mode: dirWritable}}}))
+	assert.Equal(t, []string{
+		"-C", "/answer", "--sandbox", "workspace-write",
+		"-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+		"-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+	}, codexSpec.grant(accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}, {Path: "/answer", Mode: dirWritable}}}),
+		"the answer folder is the working directory and the only writable root; /tmp is not")
+	assert.Equal(t, []string{"--add-dir", "/b"},
+		codexSpec.grant(accessGrant{Dirs: []dirGrant{{Path: "/a", Mode: dirWritable}, {Path: "/b", Mode: dirWritable}}})[8:],
+		"further writable directories ride on --add-dir")
+}
+
+func TestCodexSpec_AReadonlyDirInsideAWritableOneIsRefused(t *testing.T) {
+	_, err := harnessGrant(codexSpec, accessGrant{Dirs: []dirGrant{{Path: "/w", Mode: dirWritable}, {Path: "/w/ro", Mode: dirReadonly}}})
+	assert.ErrorIs(t, err, ErrModeUnsupported)
+}
+
+func TestCodexSpec_ToolsMapToTheSandboxAndAreRefusedWhenTheyCannotBe(t *testing.T) {
+	answer := dirGrant{Path: "/answer", Mode: dirWritable}
+	got, err := harnessGrant(codexSpec, accessGrant{Dirs: []dirGrant{answer}, Tools: []string{"Read", "Write", "WebSearch"}})
+	require.NoError(t, err)
+	assert.Contains(t, got, `web_search="live"`)
+	assert.Contains(t, got, "sandbox_workspace_write.network_access=false")
+	assert.Equal(t, []string{"--disable", "multi_agent"}, got[len(got)-2:], "sub-agents are off unless allowed")
+
+	got, err = harnessGrant(codexSpec, accessGrant{Dirs: []dirGrant{answer}, Tools: []string{"WebFetch"}})
+	require.NoError(t, err)
+	assert.Contains(t, got, "sandbox_workspace_write.network_access=true")
+	assert.Contains(t, got, `web_search="disabled"`)
+
+	for _, tc := range []accessGrant{
+		{Dirs: []dirGrant{answer}, Tools: []string{"Bash(ls:*)"}},
+		{Dirs: []dirGrant{answer}, Tools: []string{"Edit(//x/**)"}},
+		{Dirs: []dirGrant{answer}, Tools: []string{"mcp__s__t"}},
+		{Tools: []string{"Write"}},
+		{Tools: []string{"WebFetch"}},
+		{Dirs: []dirGrant{answer}, DenyTools: []string{"Bash"}},
+		{Dirs: []dirGrant{answer}, Tools: []string{"WebSearch"}, DenyTools: []string{"WebSearch"}},
+	} {
+		_, err := harnessGrant(codexSpec, tc)
+		assert.ErrorIs(t, err, ErrModeUnsupported, "%+v", tc)
+	}
 }
 
 func TestClaudeCodeSpec_InvocationIsUnchangedByTheHarnessSeam(t *testing.T) {

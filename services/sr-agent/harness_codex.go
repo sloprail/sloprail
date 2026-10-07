@@ -1,6 +1,11 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness/codex"
+)
 
 // codexSpec is the OpenAI Codex CLI, run one-shot as `codex exec`.
 //
@@ -97,6 +102,22 @@ var codexSpec = harnessSpec{
 
 	baseArgs: []string{"--ignore-user-config", "--disable", "hooks", "--ephemeral", "--skip-git-repo-check"},
 
+	// The judge's sandbox is as tight as Claude's per-path rules: the first writable
+	// directory (under --verify, the answer folder) is the run's WORKING directory and
+	// `-s workspace-write` makes only it writable (the others ride on --add-dir); the
+	// project is read by absolute path, which is read-only because it is outside every
+	// writable root. With nothing writable the run is `-s read-only`. /tmp and $TMPDIR
+	// are writable under workspace-write unless switched off, so both are: a project
+	// that lives under /tmp (as every test's does) would otherwise be writable.
+	//
+	// Verified on codex 0.160.1 (gpt-6-luna, ChatGPT login), a judge started in the
+	// project with `-C <scratch>`: reading <project>/secret.txt worked; writes to
+	// <project>/pwned.txt and /tmp/probe were refused; <scratch>/answer.txt landed.
+	// The control, the same run without the two exclude_* settings, WROTE <project>/pwned.txt
+	// and /tmp/probe (the project sat under /private/tmp): the settings are what close it.
+	//
+	// A caller's tools are not rules here: tools (codex.Harness.MapToolRules) maps them
+	// to the sandbox's network, the search mode and sub-agents, and refuses the rest.
 	grant: func(g accessGrant) []string {
 		var writable []string
 		for _, d := range g.Dirs {
@@ -107,10 +128,35 @@ var codexSpec = harnessSpec{
 		if len(writable) == 0 {
 			return []string{"--sandbox", "read-only"}
 		}
-		args := []string{"--sandbox", "workspace-write"}
-		for _, d := range writable {
+		args := []string{
+			"-C", writable[0],
+			"--sandbox", "workspace-write",
+			"-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+			"-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+		}
+		for _, d := range writable[1:] {
 			args = append(args, "--add-dir", d)
 		}
 		return args
 	},
+
+	// A readonly directory that sits inside a writable root is writable anyway (the
+	// sandbox has no "except this sub-directory"), so the grant is refused, as Claude's
+	// own cannot express its nested-writable case either.
+	checkGrant: func(g accessGrant) error {
+		for _, r := range g.Dirs {
+			if r.Mode != dirReadonly {
+				continue
+			}
+			for _, w := range g.Dirs {
+				if w.Mode == dirWritable && within(r.Path, w.Path) {
+					return fmt.Errorf("%w: codex: --add-dir:readonly %s lies inside the writable %s, and a sandbox cannot make an exception inside a writable root",
+						ErrModeUnsupported, r.Path, w.Path)
+				}
+			}
+		}
+		return nil
+	},
+
+	tools: codex.Harness{},
 }
