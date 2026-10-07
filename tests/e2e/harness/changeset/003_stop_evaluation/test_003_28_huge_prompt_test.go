@@ -35,7 +35,7 @@ tmp="$(mktemp)"
 cat > "$tmp"
 argv=0
 for arg in "$@"; do argv=$((argv + ${#arg})); done
-printf 'stdin=%s argv=%s\n' "$(wc -c < "$tmp" | tr -d ' ')" "$argv" >> `+shellQ(record)+`
+printf 'stdin=%s argv=%s\n' "$(wc -c < "$tmp" | tr -d ' ')" "$argv" >> ` + shellQ(record) + `
 out="$(sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' "$tmp" | tail -1)"
 rm -f "$tmp"
 if [ -n "$out" ]; then

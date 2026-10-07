@@ -437,6 +437,10 @@ func rolloutPath(e *Env, threadID string) string {
 
 // TranscriptPath is the session's rollout; before the session has run there is none, and
 // the path where it would be named after the session.
+func (codexDriver) SeedRecord() string {
+	return `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}`
+}
+
 func (codexDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	if p := rolloutPath(e, e.harnessID(sessionID)); p != "" {
 		return p

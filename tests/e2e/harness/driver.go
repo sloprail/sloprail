@@ -152,6 +152,9 @@ type Driver interface {
 	// from the two, as the first hooks of a session make it.
 	IdentityPayload(e *Env, projDir, sessionID string) string
 
+	// SeedRecord is the line a transcript is seeded with for a session that has run no turn:
+	// a user message, in the harness's own record shape.
+	SeedRecord() string
 	// TranscriptPath is where the harness keeps a session's root transcript.
 	TranscriptPath(e *Env, projDir, sessionID string) string
 	// SubagentRecordPaths lists the sub-agent transcripts of a session, sorted.

@@ -307,7 +307,7 @@ func (c cursorDriver) HookEnv(e *Env, sessionID string) []string {
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
 		// a shell tool's environment names its conversation (recorded, subprocess-session-env)
-		env = append(env, "CURSOR_CONVERSATION_ID="+e.harnessID(sessionID))
+		env = append(env, "CURSOR_CONVERSATION_ID="+cursorConversationID(e, sessionID))
 	}
 	return env
 }
@@ -383,12 +383,23 @@ func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {
 
 var cursorNonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
+// cursorConversationID is the conversation id the harness gave a session, or the stand-in a
+// session no mock has run yet is filed under (its transcript path and its shell's variable agree).
+func cursorConversationID(e *Env, sessionID string) string {
+	if id := e.harnessID(sessionID); id != "" {
+		return id
+	}
+	return "not-yet-run-" + sessionID
+}
+
+// SeedRecord is the one line of a Cursor transcript: a user message, in Cursor's own shape.
+func (cursorDriver) SeedRecord() string {
+	return `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nwork\n</user_query>"}]}}`
+}
+
 // TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
 func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
-	id := e.harnessID(sessionID)
-	if id == "" {
-		id = "not-yet-run-" + sessionID
-	}
+	id := cursorConversationID(e, sessionID)
 	project := cursorNonAlnum.ReplaceAllString(strings.TrimPrefix(resolveWorkDir(projDir), "/"), "-")
 	return filepath.Join(e.home, ".cursor", "projects", project, "agent-transcripts", id, id+".jsonl")
 }

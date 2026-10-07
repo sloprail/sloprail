@@ -422,6 +422,10 @@ exit 0
 }
 
 // TranscriptPath is where claude keeps a session's transcript: <config>/projects/<encoded project dir>/<session>.jsonl.
+func (claudeDriver) SeedRecord() string {
+	return `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}`
+}
+
 func (claudeDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
