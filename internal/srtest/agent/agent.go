@@ -32,12 +32,11 @@ type Result struct {
 	Exit    int    `json:"exit"`
 	Session string `json:"session"`
 	Stream  string `json:"stream"`
-	// ConfigDir and PluginCache are the hermetic Claude config dir and plugin cache the run used.
-	// Exported as CLAUDE_CONFIG_DIR and CLAUDE_CODE_PLUGIN_CACHE_DIR, they let a case with no agent
-	// turn (sr-checks run over a range) load the same plugins from this folder's .claude settings.
-	ConfigDir   string            `json:"config_dir"`
-	PluginCache string            `json:"plugin_cache"`
-	Events      []json.RawMessage `json:"events"`
+	// Env is the harness's sandbox environment (KEY=VALUE) the run used: its hermetic config dir
+	// and plugin cache. Exported, it lets a case with no agent turn (sr-checks run over a range)
+	// load the same plugins from this folder's settings.
+	Env    []string          `json:"env"`
+	Events []json.RawMessage `json:"events"`
 }
 
 // Command returns `agent <agent.sh> [--prompt P] [--session ID]`.
@@ -175,13 +174,15 @@ func Run(o Options) (*Result, error) {
 	cmd.Dir = cwd
 	cmd.Stdout = stream
 	cmd.Stderr = stream
+	var sandbox []string
+	if se, ok := harness.Current().(harness.SandboxEnv); ok {
+		sandbox = se.SandboxEnv(cfg, plugins, tmp)
+	}
 	cmd.Env = append(harness.Current().SessionEnv(os.Environ()),
 		"SR_TEST_PLUGINS_DIR="+pluginsDir, // <dir>/<plugin> is each installed plugin's root, whichever way it was installed
-		"CLAUDE_CONFIG_DIR="+cfg,
-		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+plugins,
-		"CLAUDE_CODE_TMPDIR="+tmp,
 		"SR_EVENTS_FILE="+eventsPath,
 	)
+	cmd.Env = append(cmd.Env, sandbox...)
 	code := 0
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
@@ -211,7 +212,7 @@ func Run(o Options) (*Result, error) {
 			return nil, fmt.Errorf("append to SR_EVENTS_FILE: %w", werr)
 		}
 	}
-	return &Result{Exit: code, Session: findSession(cfg, o.Session), Stream: streamPath, ConfigDir: cfg, PluginCache: plugins, Events: events}, nil
+	return &Result{Exit: code, Session: findSession(cfg, o.Session), Stream: streamPath, Env: sandbox, Events: events}, nil
 }
 
 // readEvents returns the file's JSON lines (none if the file was never created).
