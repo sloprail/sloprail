@@ -6,7 +6,8 @@ input="$(cat)"
 printf '%s\n' "$input" | grep -o '<subject id="[^"]*"' | sed 's/.*id="//; s/"$//' | tr '\n' ' ' >> "$JUDGE_LOG"
 echo >> "$JUDGE_LOG"
 for t in $(printf '%s\n' "$input" | grep -o '<test path="[^"]*"' | sed 's/.*path="//; s/"$//'); do
-  if ! grep -q 'if ' "$t"; then
+  # The judge runs in the rule's folder; a <test> path is the project's.
+  if ! grep -q 'if ' "$(git rev-parse --show-toplevel)/$t"; then
     echo "{\"pass\": false, \"reasoning\": \"MOCK: $t asserts nothing\"}"
     exit 0
   fi

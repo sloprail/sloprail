@@ -16,7 +16,7 @@
 # with "<" (a rule like "<5 days").
 match: >-
   path matches "^spec/[a-z0-9-]+/invariants/[a-z0-9-]+[.]yaml$"
-  or (any(markers, .kind == "invariant") and not path startsWith "examples/"
+  or (any(markers, .kind == "invariant") and not (path startsWith "examples/")
   and not (path endsWith ".md" and (path startsWith ".claude/skills/" or path startsWith ".claude/commands/" or path startsWith ".claude/agents/")))
 subjects: ./subjects.sh
 checks:
