@@ -69,10 +69,9 @@ case $? in
      refuse "'sr-mark find' failed in $top, so whether the committed tree carries a '$MARKER' CI marker could not be checked: $why" ;;
 esac
 
-# The release the CI job installs sloprail from: `v<version>` of the plugin installed here (this
-# project's entry in installed_plugins.json: its version field, else the plugin.json under its
-# installPath), else the version in this plugin's own plugin.json, so CI runs the engine installed here.
-installed="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
+# The release the CI job installs sloprail from: `v<version>` of the plugin installed here (the version
+# `sr-session plugins` reports for the plugin resolved at this plugin's root), else the version in this
+# plugin's own plugin.json, so CI runs the engine installed here.
 # manifest_of <plugin dir> -> that plugin's plugin.json under any harness's manifest folder (the list in
 # internal/harness/pluginmanifest.go); nothing when there is none.
 manifest_of() {
@@ -83,13 +82,8 @@ manifest_of() {
   return 0
 }
 ver=
-if [ -n "$plugin_root" ] && [ -r "$installed" ]; then
-  entry="$(jq -r --arg root "$plugin_root" '[.plugins[]?[]? | select((.installPath // "") == $root)][0] // empty | [.version // "", .installPath // ""] | @tsv' "$installed" 2>/dev/null)"
-  ver="${entry%%$'\t'*}"
-  ipath="${entry#*$'\t'}"
-  if [ -z "$ver" ] && [ -n "$ipath" ] && [ -n "$(manifest_of "$ipath")" ]; then
-    ver="$(jq -r '.version // empty' "$(manifest_of "$ipath")" 2>/dev/null)"
-  fi
+if [ -n "$plugin_root" ]; then
+  ver="$(sr-session plugins 2>/dev/null | jq -r --arg root "$plugin_root" 'select((.root // "") == $root) | .version // empty' 2>/dev/null | head -n1)"
 fi
 if [ -z "$ver" ] && [ -n "$plugin_root" ] && [ -n "$(manifest_of "$plugin_root")" ]; then
   ver="$(jq -r '.version // empty' "$(manifest_of "$plugin_root")" 2>/dev/null)"

@@ -69,6 +69,7 @@ about to happen.
   sr-session id | query | state   what a hook asks about the session so far
   sr-session refs list|track|untrack   the ranges of commits the session answers for
   sr-session agents list    the sub-agents the session dispatched, and which still run
+  sr-session plugins        the plugins the harness resolves for this project (JSON lines)
   sr-session trajectory ...        read a trajectory — describe it, cite into it
 
 There is no setup command. The guardrails directory is created by whatever
@@ -88,7 +89,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionPostToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStartCmd(), newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(), newSessionRefsCmd(), newSessionAgentsCmd(), newSessionWorktreeRemoveCmd(),
-		newSessionTrajectoryCmd(),
+		newSessionTrajectoryCmd(), newSessionPluginsCmd(),
 	)
 	return root
 }
