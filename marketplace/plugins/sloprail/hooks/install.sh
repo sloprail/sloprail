@@ -220,6 +220,7 @@ else
   got="$want"
 fi
 
+# sr:invariant install/install-verifies-the-release-checksum
 [ "$got" = "$want" ] || die "checksum mismatch for ${archive}: expected ${want}, got ${got} — download is corrupt or tampered, not installing"
 
 # --- unpack and install ---------------------------------------------------------
@@ -231,6 +232,7 @@ missing=""
 for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
   [ -f "${tmp}/sloprail-${platform}/${bin}" ] || missing="${missing} ${bin}"
 done
+# sr:invariant install/install-verifies-the-release-checksum
 [ -z "$missing" ] || die "release ${tag} does not contain:${missing} — it predates those binaries, nothing was installed. Install from source instead: GOBIN=\"${INSTALL_DIR}\" go install github.com/sloprail/sloprail/services/...@main"
 for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
   cp "${tmp}/sloprail-${platform}/${bin}" "${INSTALL_DIR}/${bin}"
