@@ -26,6 +26,18 @@ func TestExtractAnswersPullsOnlyTheAnswer(t *testing.T) {
 	assert.NotContains(t, got[0], "Read the answers", "the harness's instruction is not the user's words")
 }
 
+// Newer Claude Code writes the envelope as "Your questions have been answered:"
+// and ends it with "You can now continue with these answers in mind." Verbatim
+// from a 2026-10 session, where no answer of that version could be cited.
+func TestExtractAnswersNewerHarnessWording(t *testing.T) {
+	envelope := `Your questions have been answered: "The judge wants your words for that ban. Keep it?"="Yes, ban other skips (Recommended)". You can now continue with these answers in mind.`
+	got := extractAnswers(envelope)
+	require.Equal(t, []string{"Yes, ban other skips (Recommended)"}, got)
+
+	two := `Your questions have been answered: "Q1 pick one?"="alpha", "Q2 proceed?"="yes go ahead". You can now continue with these answers in mind.`
+	assert.Equal(t, []string{"alpha", "yes go ahead"}, extractAnswers(two))
+}
+
 // TestExtractAnswersMultiQuestion is the regression the reviewer caught: one
 // AskUserQuestion call routinely asks SEVERAL questions, and the harness writes
 // every Q/A pair into ONE string. Each ANSWER must be extracted separately, and

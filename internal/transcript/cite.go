@@ -550,10 +550,24 @@ func queuedCommandContains(e Entry, quote string) bool {
 	return text != "" && containsWords(text, quote)
 }
 
-// answerPrefix is what a harness writes at the head of an AskUserQuestion answer
-// envelope. The text after it opens with the question and answer as
-// `"<question>"="<answer>"`; see answerText for what is pulled out.
-const answerPrefix = `The user answered:`
+// answerPrefixes are what a harness writes at the head of an AskUserQuestion
+// answer envelope, one per wording a Claude Code version has used. The text after
+// each opens with the question and answer as `"<question>"="<answer>"`; see
+// answerText for what is pulled out. Newer versions write "Your questions have
+// been answered:" (measured in a 2026-10 session); a wording missing here leaves
+// every answer of that version uncitable.
+var answerPrefixes = []string{`The user answered:`, `Your questions have been answered:`}
+
+// answerPrefixAt is where the first answer prefix in envelope starts and how long
+// it is, or -1.
+func answerPrefixAt(envelope string) (int, int) {
+	for _, p := range answerPrefixes {
+		if i := strings.Index(envelope, p); i >= 0 {
+			return i, len(p)
+		}
+	}
+	return -1, 0
+}
 
 // answerText returns the answers the user selected to any AskUserQuestion tool
 // call recorded on a user entry — extracted from the tool_result envelopes on it.
@@ -850,12 +864,13 @@ func HookRefusalReason(body string) (string, bool) {
 // quote identifiers and prior phrases).
 const pairJoin = `"="`
 
-// answerTrailer is the sentence the harness appends after the LAST answer, and
-// the reliable end-of-pairs anchor: every one of the 308 real envelopes measured
-// carries it verbatim, and none carries a `"` inside it. Cutting the pair list
-// here removes the boilerplate cleanly, so the last answer's own closing quote is
-// the last `"` of what remains rather than something hidden in the trailer.
-const answerTrailer = `. Read the answers`
+// answerTrailers are the sentences a harness appends after the LAST answer, one
+// per wording (see answerPrefixes), and the reliable end-of-pairs anchor: every
+// one of the 308 real envelopes first measured carries the first verbatim, and
+// none carries a `"` inside it. Cutting the pair list here removes the
+// boilerplate cleanly, so the last answer's own closing quote is the last `"` of
+// what remains rather than something hidden in the trailer.
+var answerTrailers = []string{`. Read the answers`, `. You can now continue with these answers`}
 
 // extractAnswers pulls every <answer> out of an AskUserQuestion envelope, which
 // carries one Q/A pair per question asked:
@@ -889,15 +904,18 @@ const answerTrailer = `. Read the answers`
 // Not an envelope — no prefix, or no `"="` join at all — returns nothing, and the
 // caller treats the tool_result as output rather than the user's words.
 func extractAnswers(envelope string) []string {
-	i := strings.Index(envelope, answerPrefix)
+	i, n := answerPrefixAt(envelope)
 	if i < 0 {
 		return nil
 	}
-	pairs := envelope[i+len(answerPrefix):]
+	pairs := envelope[i+n:]
 	// Drop the trailing boilerplate so the last answer's close is the last quote
 	// of what remains. Absent (a truncated line) leaves the whole tail as pairs.
-	if t := strings.Index(pairs, answerTrailer); t >= 0 {
-		pairs = pairs[:t]
+	for _, trailer := range answerTrailers {
+		if t := strings.Index(pairs, trailer); t >= 0 {
+			pairs = pairs[:t]
+			break
+		}
 	}
 
 	var answers []string

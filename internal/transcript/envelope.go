@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // Fetching the whole tool_result envelope that sits at a citation's location.
@@ -115,7 +114,7 @@ func answerEnvelopesOf(raw json.RawMessage) []string {
 			// answer prefix present means it is the user's prompted answer and the
 			// whole string is worth carrying; absent means it is a tool's output and
 			// is not.
-			if strings.Contains(envelope, answerPrefix) {
+			if i, _ := answerPrefixAt(envelope); i >= 0 {
 				out = append(out, envelope)
 			}
 		}
