@@ -484,12 +484,24 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
-// InstallJudgeAgent is InstallShim for the binary the judge runs under this harness (`claude`,
-// `codex`, `cursor-agent`): a test's own script standing in for the judge's model.
-func (e *Env) InstallJudgeAgent(script string) {
+// InstallJudgeScript puts a test's own stand-in for the judge's agent binary (body, a
+// script) where the judge resolves it: under the name the current harness's binary has.
+func (e *Env) InstallJudgeScript(body string) {
 	e.t.Helper()
-	name, _ := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimPlain})
-	e.InstallShim(name, script)
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimScript, Body: body})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge shim: %v", err)
+	}
+}
+
+// InstallJudgeUsageLimit installs a judge that appends a line to $LEDGER per call and dies
+// the way the current harness does at a usage limit.
+func (e *Env) InstallJudgeUsageLimit() {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimUsageLimit})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write usage-limit judge shim: %v", err)
+	}
 }
 
 // JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the

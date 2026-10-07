@@ -89,12 +89,14 @@ func (Transcripts) RecordVersion(path string) (int64, time.Time, error) {
 // merge copies the transcript to w as OpenRecord describes.
 func merge(r io.Reader, w io.Writer, st *store, side *os.File, slots map[string][]*slot, counts map[string]int) error {
 	seen := map[string]int{}
+	var turn turnState
 	return eachLine(r, func(n int, line []byte) error {
 		out, calls := augment(line, n)
 		if !st.root {
 			out = markSidechain(out)
 		}
 		out = markInjected(out, st.followups)
+		out = turn.markCompactionRewrite(out, st.compacted)
 		if _, err := w.Write(append(out, '\n')); err != nil {
 			return err
 		}
@@ -296,4 +298,57 @@ func unwrapQuery(text string) string {
 		return text
 	}
 	return text[i+len(open) : len(text)-len(shut)]
+}
+
+// turnState follows the transcript line by line for markCompactionRewrite: whether a
+// turn is running, and the message of the user line that opened it.
+type turnState struct {
+	running bool
+	opening json.RawMessage
+}
+
+// markCompactionRewrite marks a user line as harness-injected (isMeta) when Cursor wrote
+// it as the compaction's rewrite of the prompt. After a compaction Cursor writes the
+// prompt into the transcript again, byte-identical to the person's (recorded: harness-mocks
+// cursor-mock runs/compaction-transcript-continuity), so it would ground a citation of the
+// user's words a second time. All three must hold, none is a similarity test:
+//
+//   - a compaction was recorded for the conversation (preCompact, KindCompact);
+//   - the line comes after the user line that opened its turn (a turn is running: an
+//     assistant line since, no turn_ended);
+//   - its message is byte-identical to that opening line's message.
+//
+// A different message written mid-turn (a person's own, a <dynamic_tools> record) is left
+// as it is. The opening line is the transcript's own record of the submitted prompt:
+// beforeSubmitPrompt, which carries it, never fires in print mode (recorded) and is not
+// proven to fire from a plugin.
+func (s *turnState) markCompactionRewrite(line []byte, compacted bool) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return line
+	}
+	var role, typ string
+	_ = json.Unmarshal(top["role"], &role)
+	_ = json.Unmarshal(top["type"], &typ)
+	switch {
+	case role == "assistant":
+		s.running = true
+		return line
+	case typ == "turn_ended":
+		s.running = false
+		return line
+	case role != "user":
+		return line
+	case !s.running:
+		s.opening = top["message"]
+		return line
+	case !compacted || string(top["message"]) != string(s.opening):
+		return line
+	}
+	top["sloprail_meta"] = json.RawMessage("true")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return out
 }

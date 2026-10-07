@@ -438,6 +438,16 @@ func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
 func (codexDriver) JudgeShim(s JudgeShim) (string, string) {
+	if s.Kind == JudgeShimUsageLimit {
+		// codex reports a usage limit on stderr, status 1. The wording is the one sr-agent's
+		// classifier already reads for Codex (services/sr-agent/failure.go); no harness-mocks
+		// recording holds a real one yet.
+		return "codex", `#!/bin/sh
+echo call >>"$LEDGER"
+echo "ERROR: You've hit your usage limit. Try again later." >&2
+exit 1
+`
+	}
 	_, body := claudeDriver{}.JudgeShim(s)
 	return "codex", body
 }

@@ -8,8 +8,10 @@ import (
 )
 
 // A judge that reads the project the way a real one does: it passes only when the
-// project it was given (sr-agent's --add-dir, which reaches the harness as an argument)
-// holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
+// project it was given holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
+// The tree is the one the prompt names ("The project being judged is at <dir>."), which is how
+// every harness's judge learns it: Claude is also handed it as an --add-dir, but a Codex judge
+// reads the project by absolute path and is handed no such argument.
 const requiredFileJudge = `#!/bin/sh
 out=""
 ok=no
@@ -17,12 +19,10 @@ for arg in "$@"; do
   case "$arg" in
     *"Write your answer to the file "*)
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      tree="$(printf '%s' "$arg" | sed -n 's/.*The project being judged is at \(.*\)\. Paths in the material.*/\1/p' | head -1)"
+      if [ -n "$tree" ] && [ -f "$tree/REQUIRED.md" ]; then ok=yes; fi
       ;;
   esac
-  # The prompt itself says where the project is (a harness may also hand it over as an argument).
-  tree="$(printf '%s' "$arg" | sed -n 's/.*The project being judged is at \(.*\)\. Paths in the material.*/\1/p' | head -1)"
-  if [ -n "$tree" ] && [ -f "$tree/REQUIRED.md" ]; then ok=yes; fi
-  if [ -f "$arg/REQUIRED.md" ]; then ok=yes; fi
 done
 [ -n "$out" ] || exit 0
 if [ "$ok" = yes ]; then
@@ -36,7 +36,7 @@ exit 0
 func requiredProject(t *testing.T) (*Env, string, string) {
 	t.Helper()
 	e, proj := judgeProject(t, verdictPass)
-	e.InstallJudgeAgent(requiredFileJudge)
+	e.InstallJudgeScript(requiredFileJudge)
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 
