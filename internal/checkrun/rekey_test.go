@@ -138,7 +138,7 @@ func TestRekey_RebuiltKeysEqualTheKeysRunComputes(t *testing.T) {
 		rekeyGroup{rule: f.guard.Qualified(), base: f.base, head: f.head})
 	require.Empty(t, reason)
 	require.Contains(t, fps, "api")
-	assert.NotEmpty(t, fps["api"])
+	assert.NotEmpty(t, fps["api"].key)
 
 	// The same rule, the subject's fingerprint moved: the key moves with it.
 	require.NoError(t, os.WriteFile(filepath.Join(f.guard.Dir, "subjects.sh"),
@@ -149,7 +149,7 @@ func TestRekey_RebuiltKeysEqualTheKeysRunComputes(t *testing.T) {
 	moved, reason := rangeFingerprints(f.repo, map[string]declaration.FileGuard{f.guard.Qualified(): f.guard},
 		rekeyGroup{rule: f.guard.Qualified(), base: f.base, head: head2})
 	require.Empty(t, reason)
-	assert.NotEqual(t, fps["api"], moved["api"], "the script as it is in the head tree decides the fingerprint")
+	assert.NotEqual(t, fps["api"].key, moved["api"].key, "the script as it is in the head tree decides the fingerprint")
 }
 
 // The control: with no older verdict to carry across, the same evaluation asks the judge,

@@ -2,6 +2,8 @@ package checkrun
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1006,18 +1008,22 @@ func (ev *changesetEvaluation) citationGate(rr *ruleRun) (dispatchcore.Verdict, 
 		TrustTrailers(&cs)
 		pl.Changeset = cs
 	}
-	if ev.verify && req.ProjectRoot == "" && citationHasWhen(rr.g) {
-		// A `when` script reads the project at head: verify's one read-only checkout of it.
-		tree, err := ev.verifyTree(rr.head)
-		if err != nil {
-			return dispatchcore.Verdict{}, engineError(rr.g, err)
-		}
-		if tree != nil {
-			req.ProjectRoot = tree.Path
-			req.Env = append(changeset.Env(tree.Path, rr.base, rr.head), ev.agentEnv("SR_SESSION_START="+rr.base)...)
+	return ev.runRequiresOf(rr, pl, req, false, gatedCitation)
+}
+
+// gatedCitation is a citation requirement the engine can check afresh on any range, from the
+// commits' trailers alone. One with a `when` script decides on more than that (a script may read
+// the session's own state, which `verify` has none of), so its verdicts are kept per citation
+// set instead: see citationDigest.
+func gatedCitation(p declaration.Prerequisite) bool { return p.Citation != nil && p.When == "" }
+
+func requiresGate(g declaration.FileGuard) bool {
+	for _, p := range g.Require {
+		if gatedCitation(p) {
+			return true
 		}
 	}
-	return ev.runRequiresOf(rr, pl, req, false, func(p declaration.Prerequisite) bool { return p.Citation != nil })
+	return false
 }
 
 func citationHasWhen(g declaration.FileGuard) bool {
@@ -1479,6 +1485,12 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	if err != nil {
 		return dispatchcore.Verdict{}, engineError(g, err), true
 	}
+	if have && (cached.Status == checkstore.StatusFail || citationHasWhen(g)) && cached.Metadata["citations"] != citationDigest(rr.payload) {
+		// A refusal may have read the citations (a script or judge is handed them), and so does a
+		// requirement whose `when` script decides on more than the trailers; they are not in the
+		// key, so such a verdict reached over other citations is no verdict about these.
+		have = false
+	}
 	reused := ""
 	byTrees := func() (bool, error) {
 		// A squash merge carries the judged branch's net change in a commit of another message:
@@ -1494,7 +1506,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 	// A stored verdict is about the content; the citation requirements are a gate, checked afresh
 	// on every run and never part of what was stored (they are not in the key).
 	gated := false
-	if have && requiresCitation(g) {
+	if have && requiresGate(g) {
 		gate, err := ev.citationGate(rr)
 		if err != nil {
 			return dispatchcore.Verdict{}, err, true
@@ -1519,7 +1531,7 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 			return dispatchcore.Verdict{}, engineError(g, err), true
 		}
 	}
-	if ev.verify && !have && requiresCitation(g) {
+	if ev.verify && !have && requiresGate(g) {
 		// Nothing is stored for this content, but a citation that is missing is a reason that
 		// can be acted on now, whatever else is not judged yet.
 		gate, err := ev.citationGate(rr)
@@ -1600,7 +1612,7 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 	if ev.store == nil || ev.verify || rr.runID == "" || rr.key == "" || rr.replayed {
 		return
 	}
-	meta := map[string]any{"steps": ev.stepsOf(rr)}
+	meta := map[string]any{"steps": ev.stepsOf(rr), "citations": citationDigest(rr.payload)}
 	rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: guardKind, Fingerprint: rr.key, Metadata: meta}
 	switch {
 	case verdict.Refused:
@@ -1610,7 +1622,7 @@ func (ev *changesetEvaluation) recordGuard(rr *ruleRun, verdict dispatchcore.Ver
 		// is a refusal of the citation requirement alone: citations are not in the key, so it is
 		// this range's, asked again on every run (a stored one would also supersede the pass).
 		steps, _ := meta["steps"].([]stepRow)
-		if rr.volatile || ev.params.Transcript == "" || onlyCitationFailed(steps) {
+		if rr.volatile || ev.params.Transcript == "" || (onlyCitationFailed(steps) && !citationHasWhen(rr.g)) {
 			// Still a refusal of THIS run: its run holds a failing row (under no fingerprint, so
 			// no lookup finds it), or the run would read as a pass and advance the effective base.
 			rec.Kind, rec.Status, rec.Fingerprint, meta["reasoning"] = guardKind+":unstored", checkstore.StatusFail, "", verdict.Reason
@@ -1941,4 +1953,19 @@ func (ev *changesetEvaluation) releaseInflight(rr *ruleRun) {
 func subjectChangeset(cs changeset.Changeset, sub changeset.Subject) changeset.Changeset {
 	cs.Citations = append([]changeset.Citation{}, cs.EvidenceForSubject(sub)...)
 	return cs
+}
+
+// citationDigest is a short digest of the citations a subject's checks receive (the quotes and
+// pools of its evidence, as the commit trailers state them). It is kept with a stored FAIL, not
+// in any key: a refusal that may have read them is replayed only over the same ones.
+func citationDigest(p changeset.Payload) string {
+	cs := p.Changeset
+	TrustTrailers(&cs)
+	var parts []string
+	for _, c := range cs.EvidenceForSubject(p.Subject) {
+		parts = append(parts, fmt.Sprint(c.SourceTypes)+"\x00"+c.Quote)
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x01")))
+	return hex.EncodeToString(sum[:8])
 }

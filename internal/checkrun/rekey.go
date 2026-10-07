@@ -52,6 +52,10 @@ type rekeyGroup struct{ rule, base, head string }
 
 type rekeyRef struct{ run, check int }
 
+// rekeyed is a subject's new key (the guard fingerprint), and the digest of its citations when
+// its rule keeps verdicts per citation set.
+type rekeyed struct{ key, digest string }
+
 func rekeyRuns(root string, guards []declaration.FileGuard, old []checkcache.Run) ([]checkcache.Run, checkcache.MigrationStats, error) {
 	var st checkcache.MigrationStats
 	byRule := map[string]declaration.FileGuard{}
@@ -99,7 +103,17 @@ func rekeyRuns(root string, guards []declaration.FileGuard, old []checkcache.Run
 					out[ref.run].Checks = append([]checkcache.Check(nil), old[ref.run].Checks...)
 					owned[ref.run] = true
 				}
-				out[ref.run].Checks[ref.check].Fingerprint = fp
+				out[ref.run].Checks[ref.check].Fingerprint = fp.key
+				if fp.digest != "" {
+					// The verdict of a rule whose `when` script decides on more than the trailers
+					// is valid for the citations it was reached over (see citationDigest).
+					meta := map[string]any{}
+					for k, v := range c.Metadata {
+						meta[k] = v
+					}
+					meta["citations"] = fp.digest
+					out[ref.run].Checks[ref.check].Metadata = meta
+				}
 				st.Migrated++
 			}
 		}
@@ -109,7 +123,7 @@ func rekeyRuns(root string, guards []declaration.FileGuard, old []checkcache.Run
 
 // rangeFingerprints is the guard fingerprint of every subject of a rule over a recorded range,
 // as `run` computes them: by subject id. A non-empty reason says the range yields none.
-func rangeFingerprints(root string, rules map[string]declaration.FileGuard, k rekeyGroup) (map[string]string, string) {
+func rangeFingerprints(root string, rules map[string]declaration.FileGuard, k rekeyGroup) (map[string]rekeyed, string) {
 	g, ok := rules[k.rule]
 	if !ok {
 		return nil, skipRuleGone
@@ -141,9 +155,13 @@ func rangeFingerprints(root string, rules map[string]declaration.FileGuard, k re
 		}
 		subjects = subs
 	}
-	fps := make(map[string]string, len(subjects))
+	fps := make(map[string]rekeyed, len(subjects))
 	for _, sub := range subjects {
-		fps[sub.ID] = guardKey(changeset.NewPayload(cs, sub, ""))
+		pl := changeset.NewPayload(cs, sub, "")
+		fps[sub.ID] = rekeyed{key: guardKey(pl)}
+		if citationHasWhen(g) {
+			fps[sub.ID] = rekeyed{key: guardKey(pl), digest: citationDigest(pl)}
+		}
 	}
 	return fps, ""
 }
