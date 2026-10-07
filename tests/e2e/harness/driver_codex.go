@@ -207,7 +207,9 @@ fi
 `, marker, shQuote(line))
 		}
 	}
-	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
+	// The scenario's end is the agent's final answer: Codex prints no result frame, its
+	// stream (and its rollout) end on the last agent message.
+	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(codexLine(codexText(s.result))))
 	return b.String(), nil
 }
 
