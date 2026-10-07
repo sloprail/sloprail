@@ -11,7 +11,9 @@ import (
 // locating wraps whatever harness is registered and adds a TranscriptLocator.
 type locating struct{ harness.Harness }
 
-func (locating) LocateTranscript(in harness.HookInput) string { return "/found/" + in.SessionID + ".jsonl" }
+func (locating) LocateTranscript(in harness.HookInput) string {
+	return "/found/" + in.SessionID + ".jsonl"
+}
 
 func TestSessionRecord_AHarnessLocatorFindsARecordThePayloadDidNotName(t *testing.T) {
 	harness.Register(locating{harness.Current()})
