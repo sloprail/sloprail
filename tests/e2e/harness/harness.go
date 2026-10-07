@@ -906,6 +906,15 @@ func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 	return e.runBin(dir, "", binary, args...)
 }
 
+// SessionCLIEnv is the environment a service binary needs to read the record the harness
+// under test itself wrote (CLIDirectEnv): nil when the host environment already says so.
+func (e *Env) SessionCLIEnv() []string {
+	if d, ok := e.driver.(interface{ SessionCLIEnv(e *Env) []string }); ok {
+		return d.SessionCLIEnv(e)
+	}
+	return nil
+}
+
 // CLIDirectEnv runs one service binary by name with extra environment variables
 // set, and no stdin — for the agent-facing commands that read the environment
 // rather than a hook payload.

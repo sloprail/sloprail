@@ -34,7 +34,7 @@ func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
 	}
 
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", rootPath)
+	res := e.CLIDirectEnv(proj, e.SessionCLIEnv(), "sr-session", "trajectory", "describe", "--path", rootPath)
 	if res.Code != 0 {
 		t.Fatalf("describe on a root exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -94,7 +94,7 @@ func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
 	}
 
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
+	res := e.CLIDirectEnv(proj, e.SessionCLIEnv(), "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe on a sub-agent exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -153,7 +153,7 @@ func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
 	}
 
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
+	res := e.CLIDirectEnv(proj, e.SessionCLIEnv(), "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe exited %d, want 0:\n%s", res.Code, res.Output)
 	}

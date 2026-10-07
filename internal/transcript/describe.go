@@ -206,6 +206,11 @@ func isSubagentRecord(path string) bool {
 	return IsSubagentTranscript(path)
 }
 
+// IsSubagentRecord is isSubagentRecord for callers outside the package: whether the
+// record at path is a sub-agent's, by what it says of itself or by where, or how, the
+// harness filed it (harness.SubagentLocator).
+func IsSubagentRecord(path string) bool { return isSubagentRecord(path) }
+
 // SessionRootOf returns the ROOT record of the session the trajectory at path
 // belongs to — the end user's own conversation — climbing out of however many
 // levels of delegation path sits under. A root answers itself.

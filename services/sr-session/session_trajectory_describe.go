@@ -80,7 +80,7 @@ func runSessionTrajectoryDescribe(cmd *cobra.Command, _ []string) error {
 	}
 
 	desc := TrajectoryDescription{
-		IsSubagent:    transcript.IsSubagentTranscript(path),
+		IsSubagent:    transcript.IsSubagentRecord(path),
 		SubagentPaths: []string{},
 	}
 
@@ -96,6 +96,12 @@ func runSessionTrajectoryDescribe(cmd *cobra.Command, _ []string) error {
 		parent, err := transcript.ParentPath(path, searchDirFor(path, p))
 		if err != nil {
 			return err
+		}
+		if parent == "" {
+			if l, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
+				// A harness whose sub-agent record names its parent says so itself.
+				parent, _ = l.ParentRecord(path)
+			}
 		}
 		desc.ParentPath = parent
 	}

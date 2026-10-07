@@ -655,3 +655,10 @@ func (codexDriver) SubagentReply(path, callID string) (string, error) {
 	}
 	return reply.String(), nil
 }
+
+// SessionCLIEnv is what a sloprail command run against this harness's own record (not a
+// Claude-format fixture) needs on top of the host's: the harness it runs as and where Codex
+// keeps its rollouts, which the environment alone does not say. Env.SessionCLIEnv offers it.
+func (codexDriver) SessionCLIEnv(e *Env) []string {
+	return []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir}
+}
