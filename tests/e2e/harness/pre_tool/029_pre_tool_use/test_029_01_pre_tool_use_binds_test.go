@@ -2,8 +2,11 @@ package e2e
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // PreToolUse is the event a rule binds to when neither a file nor a command
@@ -91,10 +94,13 @@ func toolEventOf(t *testing.T, line string) (kind, tool, inputRaw string) {
 func TestT029_01_PreToolUseBindsToATool(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "watch-skill", boundToPreToolUse, map[string]string{"record.sh": recordTool})
+	// The tool a skill is loaded with: the Skill tool where the harness has one, else the
+	// tool that reads the skill's SKILL.md (Codex's shell, Cursor's Read).
+	loadTool := harness.SkillLoadTool(t)
+	e.Gate(proj, "watch-skill", strings.ReplaceAll(boundToPreToolUse, `"Skill"`, strconv.Quote(loadTool)), map[string]string{"record.sh": recordTool})
 	// The skill has to exist: the mock answers a call naming an unknown skill with
 	// an error before any hook sees it, as real Claude Code does.
-	e.WriteFile(proj, ".claude/skills/some-skill/SKILL.md", "---\nname: some-skill\ndescription: a skill to load\n---\n\nDo the thing.\n")
+	e.WriteFile(proj, harness.ProjectSkillDir(t)+"/some-skill/SKILL.md", "---\nname: some-skill\ndescription: a skill to load\n---\n\nDo the thing.\n")
 
 	e.Run(proj, "s-029-01", "load a skill", Turns("done",
 		Skill("s1", "some-skill"),
@@ -109,7 +115,7 @@ func TestT029_01_PreToolUseBindsToATool(t *testing.T) {
 	if kind != "PreToolUse" {
 		t.Errorf("the event a gate triggering on PreToolUse received was not a PreToolUse: %q", kind)
 	}
-	if tool != "Skill" {
+	if tool != loadTool {
 		t.Errorf("PreToolUse did not carry the tool name the trigger narrowed on: %q", tool)
 	}
 	// The input the harness reported rides along, so a rule that wants more than

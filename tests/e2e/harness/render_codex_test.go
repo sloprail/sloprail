@@ -13,6 +13,7 @@ func TestCodexRendersWhatCodexCanDo(t *testing.T) {
 		Bash("b1", "echo hi"),
 		Say("s1", "hello"),
 		Dispatch("d1", "go", "/tmp/sub.sh", ""),
+		Skill("k1", "x"),
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -24,6 +25,7 @@ func TestCodexRendersWhatCodexCanDo(t *testing.T) {
 		`"name":"Bash"`,
 		`"name":"spawn_agent"`,
 		`"name":"wait_agent"`,
+		`cat @@WORKSPACE@@/.agents/skills/x/SKILL.md`, // a skill is loaded by reading its SKILL.md: Codex has no skill tool
 		`{"type":"result","subtype":"success","result":"fin"}`,
 	} {
 		if !strings.Contains(script, frag) {
@@ -34,7 +36,6 @@ func TestCodexRendersWhatCodexCanDo(t *testing.T) {
 
 func TestCodexReportsWhatItCannotDo(t *testing.T) {
 	cases := map[string]Turn{
-		"Skill":          Skill("k1", "x"),
 		"ToolUse":        ToolUse("t1", "fill_form", map[string]string{"a": "b"}),
 		"ToolUseJSON":    ToolUseJSON("t2", "x", `{}`),
 		"BashBatch":      BashBatch("bb", "a", "b"),

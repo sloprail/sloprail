@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Capabilities a Driver may declare. A test that needs one the selected harness
@@ -250,6 +252,10 @@ type Driver interface {
 	// are the harness's own (Claude Code's tool results) plants them; one with none returns nil.
 	Companions(e *Env, projDir, sessionID string) map[string]string
 
+	// SkillLoadTool is the tool whose call loads a skill: the Skill tool where the harness
+	// has one, else the tool that reads the skill's SKILL.md (CapSkills names the former).
+	SkillLoadTool() string
+
 	// WrittenBytes is what the harness's file-writing tool leaves on disk when the agent
 	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
 	// ends every non-empty file with a newline).
@@ -384,4 +390,22 @@ func RequireCap(t testing.TB, caps ...string) {
 			t.Skipf("harness %s lacks capability %q", d.Name(), c)
 		}
 	}
+}
+
+// ProjectSkillDir is the project-relative directory the selected harness loads a project's
+// own skills from (".claude/skills" on Claude Code), where a test that seeds a skill puts it.
+func ProjectSkillDir(t testing.TB) string {
+	t.Helper()
+	return harness.ProjectSkillDirs(harness.Select([]string{harness.SelectEnv + "=" + Selected(t)}))[0]
+}
+
+// SkillLoadTool is the tool the selected harness's PreToolUse names when the agent loads a
+// skill: "Skill" on Claude Code, the tool that reads the skill's SKILL.md elsewhere.
+func SkillLoadTool(t testing.TB) string {
+	t.Helper()
+	d, err := selectDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.SkillLoadTool()
 }
