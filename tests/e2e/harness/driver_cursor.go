@@ -45,7 +45,7 @@ func (cursorDriver) Name() string { return "cursor" }
 func (cursorDriver) SkillLoadTool() string { return "Read" }
 
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapScopedToolRules}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -117,7 +117,7 @@ func (c cursorDriver) render(a Action) (string, error) {
 	case ActSkill:
 		// Cursor has no skill tool: reading the skill's SKILL.md is how it loads one.
 		return cursorLine(codexTool(a.ID, "Read", map[string]any{
-			"file_path": cursorWorkspaceMark + "/" + harness.ProjectSkillDirs(cursorharness.New())[0] + "/" + a.Text + "/SKILL.md"})), nil
+			"file_path": cursorWorkspaceMark + "/" + c.SkillDir() + "/" + a.Text + "/SKILL.md"})), nil
 	case ActBashBatch:
 		return "", c.unsupported(a, "several calls in one message are not modelled")
 	}
@@ -401,13 +401,28 @@ func (c cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 	return "cursor-agent", script
 }
 
+// SkillDir: Cursor's project skills.
+func (cursorDriver) SkillDir() string { return harness.ProjectSkillDirs(cursorharness.New())[0] }
+
 // LargeJudgeModelArgs: size-lg is claude-opus-5-5-medium.
 func (cursorDriver) LargeJudgeModelArgs() (string, string) {
 	return "--model", "claude-opus-5-5-medium"
 }
 
+// MediumJudgeModelArgs: size-md is claude-sonnet-5-5-medium.
+func (cursorDriver) MediumJudgeModelArgs() (string, string) {
+	return "--model", "claude-sonnet-5-5-medium"
+}
+
 func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {
 	_, body := claudeDriver{}.JudgeShim(s)
+	if s.Kind == JudgeShimRecording {
+		// The judge's grants are not in its argv: they are the private permission config
+		// (removed when the run ends) and the engine's second-layer grant in the environment.
+		rec := shellQuote(cursorGrantRecord(s.ArgvFile))
+		body = strings.Replace(body, "\n", "\n"+
+			`{ printf 'config=%s\n' "$(tr -d '\n' <"$CURSOR_CONFIG_DIR/cli-config.json" 2>/dev/null)"; printf 'grant=%s\n' "$SLOPRAIL_JUDGE_GRANT"; } > `+rec+"\n", 1)
+	}
 	return "cursor-agent", body
 }
 
@@ -485,6 +500,13 @@ func (cursorDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID strin
 }
 
 // rejected walks a completed tool frame for the reason a hook gave when it refused the call.
+// RefusalOutput is the completed tool_call frame a refused shell command is reported in.
+func (cursorDriver) RefusalOutput(reason string) string {
+	frame, _ := json.Marshal(map[string]any{"type": "tool_call", "subtype": "completed", "tool_call": map[string]any{
+		"shellToolCall": map[string]any{"result": map[string]any{"rejected": map[string]any{"reason": reason}}}}})
+	return string(frame)
+}
+
 func cursorRejections(output string) []string {
 	var out []string
 	for _, line := range strings.Split(output, "\n") {

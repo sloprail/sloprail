@@ -26,7 +26,7 @@ func TestCodexRendersWhatCodexCanDo(t *testing.T) {
 		`"name":"spawn_agent"`,
 		`"name":"wait_agent"`,
 		`cat @@WORKSPACE@@/.agents/skills/x/SKILL.md`, // a skill is loaded by reading its SKILL.md: Codex has no skill tool
-		`{"type":"result","subtype":"success","result":"fin"}`,
+		`{"text":"fin","type":"text"}`,
 	} {
 		if !strings.Contains(script, frag) {
 			t.Errorf("script lacks %s:\n%s", frag, script)

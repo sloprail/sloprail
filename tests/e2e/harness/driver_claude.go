@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"github.com/sloprail/sloprail/internal/harnessmock"
 )
@@ -26,7 +27,7 @@ func (claudeDriver) SkillLoadTool() string { return "Skill" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText}
+		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -309,8 +310,14 @@ func (claudeDriver) AgentShim(e *Env, projDir string) (string, string) {
 	return "claude", script
 }
 
+// SkillDir: Claude Code's project skills.
+func (claudeDriver) SkillDir() string { return harness.ProjectSkillDirs(claudecode.New())[0] }
+
 // LargeJudgeModelArgs: size-lg is Claude Code's `opus` alias.
 func (claudeDriver) LargeJudgeModelArgs() (string, string) { return "--model", "opus" }
+
+// MediumJudgeModelArgs: size-md is sonnet.
+func (claudeDriver) MediumJudgeModelArgs() (string, string) { return "--model", "sonnet" }
 
 // JudgeShim is the stand-in for the `claude` the judge (sr-agent) runs by name.
 func (claudeDriver) JudgeShim(s JudgeShim) (string, string) {
@@ -624,6 +631,12 @@ func resultTexts(raw json.RawMessage) []string {
 
 // Refusals reads the PreToolUse refusals out of the stream's tool_result records (see Result.Refusals).
 func (claudeDriver) WrittenBytes(content string) string { return content }
+
+// RefusalOutput is the tool_result real Claude Code answers a refused call with.
+func (claudeDriver) RefusalOutput(reason string) string {
+	body, _ := json.Marshal("PreToolUse:Write hook error: " + reason)
+	return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":` + string(body) + `,"is_error":true}]}}`
+}
 
 func (claudeDriver) Refusals(output string) []string {
 	var out []string

@@ -454,8 +454,14 @@ func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 	return "codex", script
 }
 
+// SkillDir: Codex's project skills.
+func (codexDriver) SkillDir() string { return harness.ProjectSkillDirs(codexharness.New())[0] }
+
 // LargeJudgeModelArgs: size-lg is gpt-6.1-sol, named by Codex's short -m.
 func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
+
+// MediumJudgeModelArgs: size-md is gpt-6.1-sol as well.
+func (codexDriver) MediumJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
 
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
@@ -569,6 +575,11 @@ func (codexDriver) WrittenBytes(content string) string {
 		return ""
 	}
 	return strings.TrimSuffix(content, "\n") + "\n"
+}
+
+// RefusalOutput is the line the mock reports on its error stream for a refused command.
+func (codexDriver) RefusalOutput(reason string) string {
+	return "Command blocked by PreToolUse hook: " + reason + ". Command: echo hi"
 }
 
 // Refusals reads the PreToolUse refusals the mock reports on its error stream.
