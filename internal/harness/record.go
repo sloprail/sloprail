@@ -53,6 +53,19 @@ func (r Record) Entry() Entry {
 	return e
 }
 
+// ConversationNamer is implemented by a Transcripts whose session files NAME their
+// conversation: Cursor writes no record identity inside the file (no uuid, no parent),
+// but names the file after the conversation id every hook payload carries
+// (agent-transcripts/<id>/<id>.jsonl). Where a harness does, that name is the
+// conversation's identity, read from the path alone, so it needs neither the file's
+// contents (the identity walk has no origin record to find) nor the file's existence
+// (the first hooks of a conversation run before it is written).
+type ConversationNamer interface {
+	// ConversationID is the conversation the session file at path belongs to, "" when
+	// the path does not name one.
+	ConversationID(path string) string
+}
+
 // Transcripts is how a harness's session record is parsed and located: its line
 // format and its on-disk layout. Everything above this (walking a chain, citing,
 // the identity of a conversation) is harness-neutral and lives in internal/transcript.

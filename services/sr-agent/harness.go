@@ -18,13 +18,16 @@ import (
 // zero value and lose it.
 type Harness string
 
-// ClaudeCode and Codex are the harnesses supported today; everything
-// harness-shaped in this binary is reached through the registry below rather
-// than written inline.
+// ClaudeCode and Codex are the first harnesses this binary supported; Cursor follows
+// (cursor_harness.go). What makes another cheap is that everything harness-shaped in
+// this binary is reached through the registry below rather than written inline.
 const (
 	ClaudeCode Harness = "claude-code"
 	Codex      Harness = "codex"
 )
+
+// Cursor is Cursor's CLI agent, `cursor-agent`.
+const Cursor Harness = "cursor"
 
 // SizeAlias is one of the harness-agnostic sizes a model set may name.
 //
@@ -137,6 +140,12 @@ type harnessSpec struct {
 	// internal/harness/toolrules.go) into this harness's run settings, instead of the
 	// rules riding through verbatim in grant. nil means verbatim (Claude Code).
 	tools harness.ToolPolicy
+
+	// grantEnv is grant for a harness whose permissions are not command-line flags
+	// but a configuration the process reads: it returns the environment that points
+	// the harness at one made for this run, any arguments that belong with it, and a cleanup that removes it. Used by
+	// Cursor (see cursor_grant.go). nil when the harness has none.
+	grantEnv func(g accessGrant) (env, args []string, cleanup func(), err error)
 }
 
 // claudeCodeSpec is Claude Code.
@@ -392,6 +401,72 @@ var claudeCodeSpec = harnessSpec{
 	},
 }
 
+// cursorSpec is Cursor (`cursor-agent -p`).
+//
+// Every claim here was measured against the real cursor-agent 2026.10.01 on
+// 2026-10-07 (headless, a scratch directory), beyond the harness-mocks recordings
+// (cursor-mock/snapshots/runs/*/run.yaml); docs: https://cursor.com/docs/cli/headless,
+// https://cursor.com/docs/cli/reference/parameters,
+// https://cursor.com/docs/cli/reference/permissions.
+//
+//   - Invocation: `cursor-agent -p --trust --model <m> [-- <prompt>]`. `--trust` is the
+//     headless workspace-trust flag. `--force` is deliberately NOT passed: without it
+//     a headless run rejects shell commands (also recorded: runs/noninteractive-no-force),
+//     while file writes still apply, which is what lets --verify's answer file be written.
+//   - Prompt: with no prompt argument cursor-agent -p reads it from STDIN (a 600 KB
+//     prompt on stdin answered; the same as an argument failed to start), and `--`
+//     before a positional prompt is accepted. So stdinPromptAbove is the same bound as
+//     claude's.
+//   - Permissions: no flag, but a private CURSOR_CONFIG_DIR with a cli-config.json is
+//     honoured headless; see cursor_grant.go for what that does and does not express.
+//   - Hooks are NOT disabled: no flag or setting turns off project, user or plugin
+//     hooks (the user's are read from the real home, which also holds the login). A
+//     judge launched here carries SLOPRAIL_LAUNCHED_BY, which the engine's own hook
+//     answers by not gating; any other hook the project has fires.
+//   - Models: `cursor-agent --list-models`. The aliases map to rungs of one vendor
+//     family where there is one: Gemini Flash for the small sizes, Claude Sonnet 5.5
+//     for the middle, Claude Opus 5.5 above. Claude's Fable (the top rung under
+//     claude-code) is not used: Cursor lists it "NO ZDR" (no zero data retention),
+//     which a judge reading a user's project should not opt into silently.
+var cursorSpec = harnessSpec{
+	name:   Cursor,
+	binary: "cursor-agent",
+
+	// CURSOR_AGENT=1 is set in the environment of every shell command the agent runs
+	// (recorded: runs/subprocess-session-env), which is where a judge check
+	// launched by a hook or tool call would look; CURSOR_INVOKED_AS is the same
+	// session's second marker.
+	detect: func(getenv func(string) string) bool {
+		return getenv("CURSOR_AGENT") != "" || getenv("CURSOR_INVOKED_AS") != ""
+	},
+	sizes: map[SizeAlias]string{
+		SizeXS:  "gemini-3.8-flash-low",
+		SizeSM:  "gemini-3.8-flash-high",
+		SizeMD:  "claude-sonnet-5-5-medium",
+		SizeLG:  "claude-opus-5-5-medium",
+		SizeXL:  "claude-opus-5-5-high",
+		SizeXXL: "claude-opus-5-5-max",
+	},
+	// A concrete name is Cursor's when it looks like one of the catalogue's families.
+	// A prefix test, not the catalogue, for the reason claudeCodeSpec gives: the CLI
+	// is the authority on what exists.
+	offers: func(model string) bool {
+		if model == "auto" {
+			return true
+		}
+		for _, prefix := range []string{"cursor-", "composer-", "gpt-", "claude-", "gemini-", "grok-", "muse-"} {
+			if strings.HasPrefix(model, prefix) {
+				return true
+			}
+		}
+		return false
+	},
+	argsFlag:         "--cursor-args",
+	baseArgs:         []string{"--trust"},
+	stdinPromptAbove: 64 << 10,
+	grantEnv:         cursorGrantEnv,
+}
+
 // isClaudeFamilyAlias reports whether a name is one of claude's own bare family
 // aliases. They carry no `claude-` prefix, so the prefix test alone would miss
 // them and a set naming `sonnet` outright would be skipped under the very
@@ -493,7 +568,7 @@ func (s harnessSpec) modelFlagOrDefault() string {
 // is the order environment detection tries them. SLOPRAIL_HARNESS, when set, is read
 // first (DetectHarness); the specs' own markers decide otherwise, and Codex's yields to
 // Claude Code's when an environment holds both.
-var harnesses = []harnessSpec{codexSpec, claudeCodeSpec}
+var harnesses = []harnessSpec{codexSpec, claudeCodeSpec, cursorSpec}
 
 // ErrNoHarness is returned when the environment names no harness this binary
 // knows.

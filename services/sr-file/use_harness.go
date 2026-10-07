@@ -7,4 +7,5 @@ package main
 import (
 	_ "github.com/sloprail/sloprail/internal/harness/claudecode"
 	_ "github.com/sloprail/sloprail/internal/harness/codex"
+	_ "github.com/sloprail/sloprail/internal/harness/cursor"
 )

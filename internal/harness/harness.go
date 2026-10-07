@@ -96,6 +96,15 @@ func ProjectSkillDirs(h Harness) []string {
 	return []string{DefaultSkillDir}
 }
 
+// JudgeGate is what a Harness MAY implement when it cannot confine a launched judge
+// by its own permissions alone (Cursor's cannot say "writable only here"): the engine's
+// pre-tool hook, which fires inside the judge too, asks it whether the pending call
+// is outside what the judge was granted, getenv being the hook's environment (where
+// sr-agent put the grant). "" means allowed, or not a launched judge.
+type JudgeGate interface {
+	JudgeRefusal(in HookInput, getenv func(string) string) string
+}
+
 // Default is the harness a process runs under when nothing selects another.
 const Default = "claudecode"
 
