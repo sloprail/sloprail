@@ -52,14 +52,30 @@ const (
 // `sr-session`. Listed once here so a new service is added in one place.
 var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks", "sr-eval", "sr-test"}
 
+// harnessID is the id the agent harness gave the session a test calls id: the
+// same id for a harness that takes the caller's (Claude), the one the run printed
+// for one that names its sessions itself (Codex).
+func (e *Env) harnessID(id string) string {
+	if v, ok := e.harnessIDs[id]; ok {
+		return v
+	}
+	if e.driver.Name() == "claude" {
+		return id
+	}
+	return ""
+}
+
+func (e *Env) setHarnessID(id, harnessID string) { e.harnessIDs[id] = harnessID }
+
 // Env is one isolated end-to-end environment.
 type Env struct {
-	t         *testing.T
-	driver    Driver // the agent harness under test, selected by SR_HARNESS
-	binDir    string // holds every built service binary, prepended to PATH so the plugin finds them
-	home      string
-	configDir string // an isolated stand-in for ~/.claude
-	pluginDir string
+	harnessIDs map[string]string // the session ids of a test, by the harness's own (Driver.Observe)
+	t          *testing.T
+	driver     Driver // the agent harness under test, selected by SR_HARNESS
+	binDir     string // holds every built service binary, prepended to PATH so the plugin finds them
+	home       string
+	configDir  string // an isolated stand-in for ~/.claude
+	pluginDir  string
 
 	// tmpDir is the mock's CLAUDE_CODE_TMPDIR: where it writes a background
 	// task's output file (<tmpdir>/claude-<uid>/<cwd>/<session>/tasks/), as real
@@ -272,22 +288,6 @@ func build(t *testing.T) string {
 	return builtDir
 }
 
-// findMock locates the a10n-claude-mock binary the suite drives, or "":
-// $A10N_CLAUDE_MOCK (a mock build of your own), then the repo's .bin/ where
-// `make mock` installs the pinned version, then PATH.
-func findMock(t *testing.T) string {
-	if p := os.Getenv("A10N_CLAUDE_MOCK"); p != "" {
-		return p
-	}
-	if p := filepath.Join(repoRoot(t), ".bin", "a10n-claude-mock"); fileExists(p) {
-		return p
-	}
-	if p, err := exec.LookPath("a10n-claude-mock"); err == nil {
-		return p
-	}
-	return ""
-}
-
 func fileExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && !fi.IsDir()
@@ -344,9 +344,9 @@ func New(t *testing.T, opts ...Option) *Env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock := findMock(t)
+	mock, hint := drv.FindMock(repoRoot(t))
 	if mock == "" {
-		t.Skip("harness: a10n-claude-mock not found — run `make mock` to install the pinned version (tests/e2e/harness/MOCK_VERSION) into .bin/")
+		t.Skipf("harness: the %s mock agent not found — %s", drv.Name(), hint)
 	}
 	// A short root, not t.TempDir(): the encoded project-dir path below is a
 	// 1:1 non-alphanumeric substitution with no shortening, and a long test
@@ -371,6 +371,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		runBase:      map[string]string{},
 		origins:      map[string]string{},
 		published:    map[string]bool{},
+		harnessIDs:   map[string]string{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -631,7 +632,10 @@ func (e *Env) JudgePromptWith(projDir, relPromptFile, marker string) string {
 func (e *Env) InnerScenario(projDir string, s Scenario) {
 	e.t.Helper()
 	path := filepath.Join(projDir, ".inner-scenario.sh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+	if err := s.Script(path); err != nil {
+		if SkipIfUnsupported(e.t, err) {
+			return
+		}
 		e.t.Fatalf("harness: write inner scenario: %v", err)
 	}
 }
@@ -651,9 +655,6 @@ func (e *Env) Project() string {
 	}
 	e.t.Cleanup(func() { os.RemoveAll(dir) })
 
-	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
-		e.t.Fatalf("harness: mkdir .claude: %v", err)
-	}
 	e.writeSettings(dir)
 	return dir
 }
@@ -1193,7 +1194,7 @@ func (e *Env) sessionDBPath(projDir, sessionID string) string {
 	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(payload)
-	cmd.Env = append(HostEnv(), "HOME="+e.home, "CLAUDE_CONFIG_DIR="+e.configDir)
+	cmd.Env = append(append(HostEnv(), "HOME="+e.home), e.driver.ConfigEnv(e)...)
 	out, err := cmd.Output()
 	if err != nil {
 		e.t.Fatalf("harness: resolve session id: %v", err)
@@ -2013,17 +2014,13 @@ func (e *Env) OriginRecord(projDir, sessionID string) string {
 func (e *Env) SessionIdentity(projDir, sessionID string) string {
 	e.t.Helper()
 
-	transcript := filepath.Join(e.configDir, "projects",
-		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
+	transcript := e.transcriptPath(projDir, sessionID)
 	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`, transcript, projDir)
 
 	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(payload)
-	cmd.Env = append(HostEnv(),
-		"HOME="+e.home,
-		"CLAUDE_CONFIG_DIR="+e.configDir,
-	)
+	cmd.Env = append(append(HostEnv(), "HOME="+e.home), e.driver.ConfigEnv(e)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -2350,9 +2347,6 @@ func (e *Env) RunFrom(projDir, subRel, sessionID, prompt string, s Scenario) Res
 	// enabled plugin, exactly as a user would install them. Nothing about the
 	// wiring differs — only where it sits, which is what a session reporting this
 	// directory requires.
-	if err := os.MkdirAll(filepath.Join(workDir, ".claude"), 0o755); err != nil {
-		e.t.Fatalf("harness: RunFrom %q: mkdir .claude: %v", subRel, err)
-	}
 	e.writeSettings(workDir)
 	return e.run(projDir, workDir, sessionID, prompt, s)
 }
@@ -2446,7 +2440,8 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 func (e *Env) drive(projDir, workDir, prompt string, s Scenario, mode SessionMode, sessionID, fromSessionID string) Result {
 	e.t.Helper()
 	scriptPath := filepath.Join(projDir, ".scenario.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+	if err := s.Script(scriptPath); err != nil {
+		SkipIfUnsupported(e.t, err)
 		e.t.Fatalf("harness: write scenario: %v", err)
 	}
 	cmd := e.driver.Command(e, Launch{
@@ -2461,6 +2456,10 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, mode SessionMod
 		e.t.Fatalf("harness: run mock: %v\n%s", err, out)
 	}
 	e.t.Logf("mock:\n%s", out)
+	e.driver.Observe(e, Launch{
+		ProjDir: projDir, WorkDir: workDir, ScriptPath: scriptPath, Prompt: prompt,
+		Mode: mode, SessionID: sessionID, FromSessionID: fromSessionID,
+	}, string(out))
 	return Result{Output: string(out), Code: code}
 }
 

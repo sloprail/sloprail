@@ -3,7 +3,6 @@ package harness
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -21,7 +20,8 @@ type Scenario struct {
 
 // Turn is one assistant action.
 type Turn struct {
-	jsonl string
+	// act is what the agent does, in no harness's words: each Driver renders it.
+	act Action
 	// launchedOutput marks a turn whose jsonl names the output file of the most
 	// recently launched background command as @@LAUNCHED_OUTPUT@@, filled in when
 	// the turn is emitted — the mock picks the file at launch, and only its
@@ -49,24 +49,17 @@ func Turns(finalText string, turns ...Turn) Scenario {
 
 // Write returns a turn where the agent writes a file.
 func Write(id, path, content string) Turn {
-	return Turn{jsonl: toolUse(id, "Write", map[string]string{
-		"file_path": path,
-		"content":   content,
-	})}
+	return Turn{act: Action{Kind: ActWrite, ID: id, Path: path, Content: content}}
 }
 
 // Edit returns a turn where the agent replaces text in a file.
 func Edit(id, path, oldString, newString string) Turn {
-	return Turn{jsonl: toolUse(id, "Edit", map[string]string{
-		"file_path":  path,
-		"old_string": oldString,
-		"new_string": newString,
-	})}
+	return Turn{act: Action{Kind: ActEdit, ID: id, Path: path, Old: oldString, New: newString}}
 }
 
 // Bash returns a turn where the agent runs a shell command.
 func Bash(id, command string) Turn {
-	return Turn{jsonl: toolUse(id, "Bash", map[string]string{"command": command})}
+	return Turn{act: Action{Kind: ActBash, ID: id, Command: command}}
 }
 
 // WebFetch returns a turn where the agent fetches a page: the real tool's url and
@@ -74,7 +67,7 @@ func Bash(id, command string) Turn {
 // answered with (the mock reaches no web). The mock refuses a url that is not an
 // http or https address with a host, so a malformed one cannot be sent here.
 func WebFetch(id, url, prompt string) Turn {
-	return ToolUseJSON(id, "WebFetch", fmt.Sprintf(`{"url":%s,"prompt":%s,"mock_result":{"result":"(the fetched page)"}}`, jsonStr(url), jsonStr(prompt)))
+	return Turn{act: Action{Kind: ActWebFetch, ID: id, Text: url, Text2: prompt}}
 }
 
 // Say returns a turn where the agent writes plain prose — an assistant message
@@ -90,9 +83,7 @@ func WebFetch(id, url, prompt string) Turn {
 // a turn that has prose in it. It carries a uuid keyed off the turn's id, like
 // every other turn, so transcript.Read does not skip it.
 func Say(id, text string) Turn {
-	return Turn{jsonl: fmt.Sprintf(
-		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s}]}}`,
-		"e2e-turn-"+id, jsonStr(text))}
+	return Turn{act: Action{Kind: ActSay, ID: id, Text: text}}
 }
 
 // ToolUse returns a turn where the agent invokes an ARBITRARY tool by name.
@@ -118,15 +109,14 @@ func Say(id, text string) Turn {
 // tool WITH a produced artifact a check reads back — a screenshot whose image an
 // audit inspects — uses ToolUseWithResult instead, which supplies that field.
 func ToolUse(id, name string, input map[string]string) Turn {
-	return Turn{jsonl: toolUse(id, name, input)}
+	return Turn{act: Action{Kind: ActToolUse, ID: id, Tool: name, Input: input}}
 }
 
 // ToolUseJSON is ToolUse with the input given as a raw JSON object, for a tool
 // whose input carries numbers, nested objects or arrays — values a check must
 // carry through as JSON, which a map of strings cannot express.
 func ToolUseJSON(id, name, inputJSON string) Turn {
-	return Turn{jsonl: fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		"e2e-turn-"+id, id, name, inputJSON)}
+	return Turn{act: Action{Kind: ActToolUseJSON, ID: id, Tool: name, Raw: inputJSON}}
 }
 
 // ToolUseWithResult returns the TWO turns that model a tool call which produced an
@@ -169,23 +159,15 @@ func ToolUseJSON(id, name, inputJSON string) Turn {
 // toolUseResultJSON is a raw JSON value (an object, a string — whatever the artifact
 // is), placed verbatim under `toolUseResult`.
 func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJSON string) (Turn, Turn) {
-	return toolUseWithResultRaw(id, name, inputObject(name, input), toolUseResultJSON)
+	use, res := toolUseWithResultRaw(id, name, "", toolUseResultJSON)
+	use.act.Input = input
+	return use, res
 }
 
 // toolUseWithResultRaw is ToolUseWithResult with the input already a JSON object.
 func toolUseWithResultRaw(id, name, inputJSON, toolUseResultJSON string) (Turn, Turn) {
-	// The tool_use, with a top-level `id` as the marker anchor so the block's own
-	// `id` stays clean and equal to `id`.
-	use := Turn{jsonl: fmt.Sprintf(
-		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		id+"#u", "e2e-turn-"+id+"u", id, name, inputJSON)}
-	// The artifact record: a user tool_result for the same id, carrying the
-	// `toolUseResult`. Its top-level `id` is the marker anchor; `tool_use_id` stays
-	// clean and equal to `id` so it correlates to the tool_use above.
-	res := Turn{jsonl: fmt.Sprintf(
-		`{"type":"user","id":%q,"uuid":%q,"toolUseResult":%s,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":"the tool produced its result"}]}}`,
-		id+"#r", "e2e-turn-"+id+"r", toolUseResultJSON, id)}
-	return use, res
+	return Turn{act: Action{Kind: ActCall, ID: id, Tool: name, Raw: inputJSON}},
+		Turn{act: Action{Kind: ActArtifact, ID: id, Raw: toolUseResultJSON}}
 }
 
 // CallWithOutput returns the TWO turns of a tool call whose output the mock
@@ -246,17 +228,7 @@ func CallWithOutput(id, name string, input map[string]string, output string) (Tu
 // tool_use), so the mock forwards it and reaches EOF as end-of-turn — the answer
 // envelope lands as the transcript's next record after the seeded prompt.
 func AnswerQuestion(id string, qa ...[2]string) Turn {
-	content := `The user answered: `
-	for i, p := range qa {
-		if i > 0 {
-			content += `, `
-		}
-		content += `"` + p[0] + `"="` + p[1] + `"`
-	}
-	content += `. Read the answers carefully — they may request clarification, changes, or that you not proceed.`
-	return Turn{jsonl: fmt.Sprintf(
-		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
-		id+"#a", "e2e-turn-"+id, id, jsonStr(content))}
+	return Turn{act: Action{Kind: ActAnswer, ID: id, QA: qa}}
 }
 
 // AskUserQuestion returns the TWO turns of a question the agent asks and the
@@ -316,9 +288,7 @@ func AskUserQuestion(id, question, answer string) (Turn, Turn) {
 // tool_use), so the mock forwards it and reaches EOF as end-of-turn — the result
 // lands as the transcript's next record after whatever preceded it.
 func ToolResult(id, result string) Turn {
-	return Turn{jsonl: fmt.Sprintf(
-		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
-		id+"#r", "e2e-turn-"+id, id, jsonStr(result))}
+	return Turn{act: Action{Kind: ActToolResult, ID: id, Text: result}}
 }
 
 // Skill returns a turn where the agent loads a skill.
@@ -329,7 +299,7 @@ func ToolResult(id, result string) Turn {
 // about the reaching. Whether the skill then loaded is the environment's
 // business, not evidence about the agent.
 func Skill(id, skill string) Turn {
-	return Turn{jsonl: toolUse(id, "Skill", map[string]string{"skill": skill})}
+	return Turn{act: Action{Kind: ActSkill, ID: id, Text: skill}}
 }
 
 // Dispatch returns a turn where the agent delegates work to a sub-agent, which
@@ -357,16 +327,7 @@ func Skill(id, skill string) Turn {
 // a guardrail fires against the name real sessions carry. Consumers should
 // accept both names; the harness emits the one production emits.
 func Dispatch(id, prompt, scriptPath, isolation string) Turn {
-	input := map[string]string{
-		"description":   "delegated work",
-		"prompt":        prompt,
-		"subagent_type": "general-purpose",
-		"script":        scriptPath,
-	}
-	if isolation != "" {
-		input["isolation"] = isolation
-	}
-	return Turn{jsonl: toolUse(id, "Agent", input)}
+	return Turn{act: Action{Kind: ActDispatch, ID: id, Text: prompt, Script: scriptPath, Isolation: isolation}}
 }
 
 // DispatchNoParent is Dispatch with an EMPTY dispatching tool_use id — the shape a
@@ -396,141 +357,22 @@ func Dispatch(id, prompt, scriptPath, isolation string) Turn {
 // the marker rides the top-level anchor. The entry carries a uuid so transcript.Read
 // does not skip it.
 func DispatchNoParent(id, prompt, scriptPath string) Turn {
-	input := map[string]string{
-		"description":   "delegated work",
-		"prompt":        prompt,
-		"subagent_type": "general-purpose",
-		"script":        scriptPath,
-	}
-	var ib strings.Builder
-	ib.WriteByte('{')
-	first := true
-	for k, v := range input {
-		if !first {
-			ib.WriteByte(',')
-		}
-		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
-	}
-	ib.WriteByte('}')
-	// Top-level `id` is the marker anchor; the tool_use block's own `id` is empty so
-	// the mock records an empty toolUseId and the parent stays underivable.
-	return Turn{jsonl: fmt.Sprintf(
-		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":"","name":"Agent","input":%s}]}}`,
-		id+"#np", "e2e-turn-"+id, ib.String())}
+	return Turn{act: Action{Kind: ActDispatchNoParent, ID: id, Text: prompt, Script: scriptPath}}
 }
 
 // Script writes a scenario as a standalone script file and returns its path, for
 // handing to Dispatch as what the sub-agent runs.
 func (s Scenario) Script(path string) error {
-	return os.WriteFile(path, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755)
+	script, err := s.script()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0o755)
 }
 
 // script renders the scenario as the shell the agent runs, in the selected
 // harness's own dialect (Driver.RenderScript).
-func (s Scenario) script() string { return mustDriver().RenderScript(s) }
-
-// toolUse renders one assistant turn invoking a tool.
-//
-// The record carries a uuid, keyed off the turn's own id. Without one the line
-// is not merely untidy — `transcript.Read` SKIPS every record that has no uuid,
-// because Claude Code's own preamble and bookkeeping lines carry none. A turn
-// emitted without one therefore never reaches `sr-session query`, so a
-// rule reading the trajectory sees an empty session and a test asserting on
-// what the agent did passes or fails for reasons that have nothing to do with
-// the rule.
-//
-// The parent is deliberately left off. Nothing this harness drives walks the
-// chain — the identity walk reads the seeded ROOT record, which has its own
-// uuid and an explicit null parent — and inventing a plausible parent chain
-// here would be this file asserting a shape it does not maintain.
-func toolUse(id, name string, input map[string]string) string {
-	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		"e2e-turn-"+id, id, name, inputObject(name, input))
-}
-
-// inputObject is a tool's input as a JSON object, each value typed by inputValue.
-func inputObject(name string, input map[string]string) string {
-	var ib strings.Builder
-	ib.WriteByte('{')
-	first := true
-	for k, v := range input {
-		if !first {
-			ib.WriteByte(',')
-		}
-		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, inputValue(name, k, v))
-	}
-	ib.WriteByte('}')
-	return ib.String()
-}
-
-// typedInputs lists, for the tools the mock models, the inputs real Claude Code
-// sends as JSON booleans or numbers rather than strings. A scenario still gives
-// every input as a string; toolUse writes these as the typed JSON a real agent
-// sends, so a hook or the mock sees `"run_in_background": true`, not `"true"`.
-// Tools the mock does not model yet are left as strings.
-var typedInputs = map[string]map[string]string{
-	"Bash":  {"run_in_background": "bool", "timeout": "number", "dangerouslyDisableSandbox": "bool"},
-	"Read":  {"limit": "number", "offset": "number"},
-	"Edit":  {"replace_all": "bool"},
-	"Agent": {"run_in_background": "bool"},
-	"Task":  {"run_in_background": "bool"},
-}
-
-// inputValue is v as the JSON value of the named input of tool: typed when
-// typedInputs says so and v parses as that type, a string otherwise.
-func inputValue(tool, key, v string) string {
-	switch typedInputs[tool][key] {
-	case "bool":
-		if b, err := strconv.ParseBool(v); err == nil {
-			return strconv.FormatBool(b)
-		}
-	case "number":
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return strconv.FormatInt(n, 10)
-		}
-	}
-	return jsonStr(v)
-}
-
-func result(text string) string {
-	return fmt.Sprintf(`{"type":"result","subtype":"success","result":%s,"is_error":false}`, jsonStr(text))
-}
-
-// turnID reads the tool_use id a turn was built with, before any marker is
-// appended to it. Returns "" for a record carrying no id, which leaves the
-// marker as the bare index — the old behaviour, and correct for a scenario run
-// once.
-func turnID(jsonl string) string {
-	const idKey = `"id":"`
-	i := strings.Index(jsonl, idKey)
-	if i < 0 {
-		return ""
-	}
-	j := i + len(idKey)
-	end := strings.IndexByte(jsonl[j:], '"')
-	if end < 0 {
-		return ""
-	}
-	return jsonl[j : j+end]
-}
-
-// injectMarker appends a marker to the tool_use id, so a turn can tell whether
-// it has already fired by looking for it in the conversation.
-func injectMarker(jsonl, marker string) string {
-	const idKey = `"id":"`
-	i := strings.Index(jsonl, idKey)
-	if i < 0 {
-		return jsonl
-	}
-	j := i + len(idKey)
-	end := strings.IndexByte(jsonl[j:], '"')
-	if end < 0 {
-		return jsonl
-	}
-	return jsonl[:j] + jsonl[j:j+end] + "-" + marker + jsonl[j+end:]
-}
+func (s Scenario) script() (string, error) { return mustDriver().RenderScript(s) }
 
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
@@ -560,17 +402,14 @@ func jsonStr(s string) string {
 // tool. transcript.AssistantText reads the text block (so PostTagWrite sees the
 // tag) and transcript.ToolCalls reads the tool_use (so the file event fires).
 func SayWrite(id, prose, path, content string) Turn {
-	return Turn{jsonl: sayWithTool(id, prose, "Write", map[string]string{
-		"file_path": path,
-		"content":   content,
-	})}
+	return Turn{act: Action{Kind: ActSayWrite, ID: id, Text: prose, Path: path, Content: content}}
 }
 
 // SayBash is SayWrite's Bash sibling: one assistant turn carrying a text block
 // (scanned for a #tag) and a Bash tool_use, for a tag declared atomically with a
 // shell command — needed for the same terminal-Say reason SayWrite documents.
 func SayBash(id, prose, command string) Turn {
-	return Turn{jsonl: sayWithTool(id, prose, "Bash", map[string]string{"command": command})}
+	return Turn{act: Action{Kind: ActSayBash, ID: id, Text: prose, Command: command}}
 }
 
 // BashBatch returns ONE assistant turn whose content is SEVERAL Bash tool_use
@@ -593,41 +432,7 @@ func SayBash(id, prose, command string) Turn {
 // mock (its synthesised result correlates by the first id); the later blocks are
 // trajectory records the derivation reads, which is all a spread-yield needs.
 func BashBatch(id string, commands ...string) Turn {
-	blocks := make([]string, 0, len(commands))
-	for i, cmd := range commands {
-		blockID := id
-		if i > 0 {
-			blockID = fmt.Sprintf("%s-%d", id, i)
-		}
-		blocks = append(blocks, fmt.Sprintf(
-			`{"type":"tool_use","id":%q,"name":"Bash","input":{"command":%s}}`,
-			blockID, jsonStr(cmd)))
-	}
-	return Turn{jsonl: fmt.Sprintf(
-		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[%s]}}`,
-		"e2e-turn-"+id, strings.Join(blocks, ","))}
-}
-
-// sayWithTool renders one assistant turn whose content is a two-block list: a
-// text block, then a tool_use. The tool_use carries the turn's id (so the mock's
-// marker machinery fires it once) and the entry a uuid (so transcript.Read does
-// not skip it), the same invariants toolUse and Say each keep for their single
-// block.
-func sayWithTool(id, prose, name string, input map[string]string) string {
-	var ib strings.Builder
-	ib.WriteByte('{')
-	first := true
-	for k, v := range input {
-		if !first {
-			ib.WriteByte(',')
-		}
-		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
-	}
-	ib.WriteByte('}')
-	return fmt.Sprintf(
-		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s},{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		"e2e-turn-"+id, jsonStr(prose), id, name, ib.String())
+	return Turn{act: Action{Kind: ActBashBatch, ID: id, Commands: commands}}
 }
 
 // Compact returns ONE turn in which the harness compacts the context, the way
@@ -636,7 +441,7 @@ func sayWithTool(id, prose, name string, input map[string]string) string {
 // the summary chained to it, then SessionStart with source "compact"
 // (a10n-claude-mock's {"type":"compact"} control record).
 func Compact(id string) Turn {
-	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted"}`, id)}
+	return Turn{act: Action{Kind: ActCompact, ID: id}}
 }
 
 // CompactNamingUnwrittenParent is Compact with a boundary whose logical parent
@@ -644,7 +449,7 @@ func Compact(id string) Turn {
 // compaction left, where the only trace of what it continues is the boundary
 // record itself, part-way down the file the compaction happened in.
 func CompactNamingUnwrittenParent(id string) Turn {
-	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted","logical_parent":"never-written-%s"}`, id, id)}
+	return Turn{act: Action{Kind: ActCompact, ID: id, UnwrittenParent: true}}
 }
 
 // Background launches a tool call in the background — a Bash or an Agent with
@@ -659,7 +464,7 @@ func Background(id, name string, input map[string]string) Turn {
 	for k, v := range input {
 		in[k] = v
 	}
-	return Turn{jsonl: toolUse(id, name, in)}
+	return Turn{act: Action{Kind: ActToolUse, ID: id, Tool: name, Input: in, Background: true}}
 }
 
 // ReadLaunchedOutput reads the output file of the most recently launched
@@ -669,7 +474,7 @@ func Background(id, name string, input map[string]string) Turn {
 // only a summary, never the output. (The mock no longer implements TaskOutput
 // as a tool: real transcripts hold no call to it.)
 func ReadLaunchedOutput(id string) Turn {
-	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
+	return Turn{act: Action{Kind: ActToolUse, ID: id, Tool: "Read", Input: map[string]string{"file_path": launchedOutputPlaceholder}}, launchedOutput: true}
 }
 
 // ToolResultWithText returns ONE turn whose `user` record carries a tool_result
@@ -677,7 +482,5 @@ func ReadLaunchedOutput(id string) Turn {
 // holds words the person typed. The sibling of ToolResult for a check that must
 // treat a mixed entry differently from a pure tool_result one.
 func ToolResultWithText(id, result, text string) Turn {
-	return Turn{jsonl: fmt.Sprintf(
-		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s},{"type":"text","text":%s}]}}`,
-		id+"#r", "e2e-turn-"+id, id, jsonStr(result), jsonStr(text))}
+	return Turn{act: Action{Kind: ActToolResultWithText, ID: id, Text: result, Text2: text}}
 }

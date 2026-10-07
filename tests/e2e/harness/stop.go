@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -36,24 +35,18 @@ func (e *Env) SessionEnv(sessionID string) []string { return e.hookEnv(sessionID
 // active is the payload's stop_hook_active: true for the retry after a refusal.
 func (e *Env) StopNow(projDir, sessionID string, active bool) Result {
 	e.t.Helper()
-	payload, _ := json.Marshal(map[string]any{
-		"session_id": sessionID, "transcript_path": e.TranscriptPath(projDir, sessionID),
-		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
-	})
-	return e.CLIDirectStdinEnv(projDir, string(payload), e.hookEnv(""), "sr-session", "stop")
+	payload := e.driver.StopPayload(e, projDir, sessionID, active)
+	return e.CLIDirectStdinEnv(projDir, payload, e.hookEnv(""), "sr-session", "stop")
 }
 
 // StopCmd is the command StopNow would run, built and not started, for a test that must
 // interrupt a Stop part-way (it owns the process: start it, kill it, wait for it).
 func (e *Env) StopCmd(projDir, sessionID string, active bool) *exec.Cmd {
 	e.t.Helper()
-	payload, _ := json.Marshal(map[string]any{
-		"session_id": sessionID, "transcript_path": e.TranscriptPath(projDir, sessionID),
-		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
-	})
+	payload := e.driver.StopPayload(e, projDir, sessionID, active)
 	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "stop")
 	cmd.Dir = projDir
-	cmd.Stdin = strings.NewReader(string(payload))
+	cmd.Stdin = strings.NewReader(payload)
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
 	cmd.Env = append(cmd.Env, e.autoWatchEnv()...)
 	cmd.Env = append(cmd.Env, e.hookEnv("")...)
