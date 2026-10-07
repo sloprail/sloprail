@@ -24,5 +24,11 @@ cmds=(
   "p3|go test ./internal/... ./services/..."
   "p4|env FOO=1 go test -test.run=TestB1 ./tests/e2e/b"
   "p5|go test -run 'TestBig01/sub' ./tests/e2e/big"
+  "p6|go test ./tests/e2e/ten"
+  "p7|make build"
+  "r1|go test -run \"\$X\" ./tests/e2e/a"
+  "r1ok|go test -run TestA1 ./tests/e2e/a"
+  "r2|go test ./tests/e2e/big"
+  "r2ok|go test -run '^TestBig0[1-5]$' ./tests/e2e/big"
 )
 if [ "$n" -lt ${#cmds[@]} ]; then c="${cmds[$n]}"; bash_ "${c%%|*}" "${c#*|}"; else finish; fi

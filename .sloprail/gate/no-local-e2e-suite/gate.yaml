@@ -20,6 +20,6 @@
 on:
   - event: PreCommandInvoke
     match: >-
-      any(event.invocations, ((.bin == "go" or .bin endsWith "/go") and any(.argv, # == "test")) or (.bin == "make" and any(.argv, # == "test-e2e" or # == "test-e2e-shard")))
+      any(event.invocations, ((.bin == "go" or .bin endsWith "/go") and any(.argv, # == "test")) or .bin == "make")
 checks:
   - script: ./refuse.sh
