@@ -87,8 +87,7 @@ type Entry struct {
 // StopHook is the outcome of one Stop hook run: whether the hooks let the turn end,
 // and why not when they did not.
 type StopHook struct {
-	// Refused is true when the hooks sent the agent back to work: a hook errored or
-	// prevented the turn from ending.
+	// Refused is true when the hooks sent the agent back to work: a hook listed an error.
 	Refused bool `json:"refused"`
 
 	// Reasons are the hook errors the harness listed, empty when Refused is false.

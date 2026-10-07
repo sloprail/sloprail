@@ -27,10 +27,6 @@ func TestStopHookSummaryOutcome(t *testing.T) {
 	assert.True(t, has)
 	assert.True(t, refused)
 	assert.Equal(t, []string{`gate "x" failed`}, reasons)
-
-	refused, _, has = parseEntry(t, `{"type":"system","subtype":"stop_hook_summary","uuid":"u3","preventedContinuation":true}`)
-	assert.True(t, has)
-	assert.True(t, refused)
 }
 
 func TestOtherRecordsCarryNoStopHook(t *testing.T) {

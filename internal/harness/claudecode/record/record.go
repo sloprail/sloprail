@@ -31,11 +31,10 @@ type claudeRecord struct {
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
 	Attachment        json.RawMessage `json:"attachment"`
 
-	// Subtype, HookErrors and PreventedContinuation are those of a system record
+	// Subtype and HookErrors are those of a system record
 	// of subtype stop_hook_summary, the harness's account of one Stop hook run.
-	Subtype               string   `json:"subtype"`
-	HookErrors            []string `json:"hookErrors"`
-	PreventedContinuation bool     `json:"preventedContinuation"`
+	Subtype    string   `json:"subtype"`
+	HookErrors []string `json:"hookErrors"`
 
 	// SessionID is the id the harness wrote this record under. Kept only so
 	// that a path GUESSED from a session id can be checked against what the
@@ -58,7 +57,7 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 	var stop *harness.StopHook
 	if r.Type == "system" && r.Subtype == "stop_hook_summary" {
 		stop = &harness.StopHook{
-			Refused: len(r.HookErrors) > 0 || r.PreventedContinuation,
+			Refused: len(r.HookErrors) > 0,
 			Reasons: r.HookErrors,
 		}
 	}
