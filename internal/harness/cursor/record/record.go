@@ -13,6 +13,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/harness"
 )
@@ -38,11 +40,10 @@ var ErrNotARecord = errors.New("cursor transcript: not a conversation record")
 // ParseRecord parses one line of a Cursor transcript.
 //
 // Cursor writes no record identity, and ParseRecord sees one line at a time, so the
-// uuid is a digest of the line itself and no record names a parent. The consequence,
-// stated because the identity walk (internal/transcript) depends on it: the
-// conversation's origin is the FIRST line of the file (the first parentless record),
-// and its identity the digest of that line, so two conversations in one workspace
-// whose first line is byte-identical (the same first prompt) share an identity. The
+// uuid is a digest of the line itself (it only has to be non-empty and stable for the
+// readers that skip uuid-less records) and no record names a parent. The
+// conversation's identity is NOT derived from these: it is the id in the file's path
+// (ConversationID), so two conversations with the same first prompt do not collide. The
 // Message block shapes are Cursor's own (tool_use input keys `path`/`contents`,
 // tool names Shell/Write/StrReplace), left undecoded; mapping them onto a canonical
 // tool vocabulary is the neutral seam's job, not this parser's.
@@ -64,6 +65,34 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 		return harness.Record{}, ErrNotARecord
 	}
 	return r, nil
+}
+
+// ConversationID implements harness.ConversationNamer: the conversation is the name
+// of the directory and of the file inside it, agent-transcripts/<id>/<id>.jsonl, the
+// same id as the conversation_id of every hook payload (measured on cursor-agent
+// 2026.10.01). A path not of that shape names no conversation.
+func (Transcripts) ConversationID(path string) string {
+	file := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	dir := filepath.Base(filepath.Dir(path))
+	if file == "" || file != dir || filepath.Base(filepath.Dir(filepath.Dir(path))) != "agent-transcripts" {
+		return ""
+	}
+	return file
+}
+
+// TranscriptPath is where Cursor writes the conversation's transcript, derived from
+// the workspace and the conversation id: for the first hooks of a conversation,
+// whose payload names no transcript yet (null at sessionStart and the first
+// preToolUse, measured). The file may not exist: that is an empty transcript, not an
+// absent record.
+func TranscriptPath(configDir, workspace, conversationID string) string {
+	if configDir == "" || workspace == "" || conversationID == "" {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(workspace); err == nil {
+		workspace = r
+	}
+	return filepath.Join(ProjectDir(configDir, workspace), "agent-transcripts", conversationID, conversationID+".jsonl")
 }
 
 // ConfigDir implements harness.Transcripts.

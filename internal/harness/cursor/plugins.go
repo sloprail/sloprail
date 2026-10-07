@@ -1,9 +1,11 @@
 package cursor
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/harness"
 )
@@ -12,24 +14,64 @@ import (
 // under: Cursor's plugins have no `<plugin>@<marketplace>` key to split.
 const localMarketplace = "local"
 
-// Resolve locates the plugins Cursor loads from disk for a project.
+// PluginRootEnv is set by cursor-agent in every hook's environment to the directory of
+// the plugin that hook belongs to (measured with `--plugin-dir`, cursor-agent
+// 2026.10.01, beside CLAUDE_PLUGIN_ROOT with the same value), and a plugin hook's
+// working directory is that same directory. So a hook finds its own plugin from the
+// environment or from where it runs, with no search.
+const PluginRootEnv = "CURSOR_PLUGIN_ROOT"
+
+// Resolve locates the plugins a Cursor project has loaded that a hook can know of:
 //
-// Cursor has no per-project "enabled plugins" setting a hook can read (the
-// recordings load plugins only through `--plugin-dir`, a launch flag no hook
-// payload or variable reports), and the account's marketplace installs are managed
-// in its dashboard. What is on disk and discoverable is a plugin directory
-// carrying .cursor-plugin/plugin.json under <home>/.cursor/plugins/local/ (Cursor's
-// documented place for a local plugin: https://cursor.com/docs/plugins; the path is
-// not exercised by any harness-mocks recording). Each such directory resolves; one
-// with no readable manifest is Unresolved, naming what was tried, so a half-installed
-// plugin is reported rather than read as "no plugins".
+//   - the plugin whose hook is running (CURSOR_PLUGIN_ROOT), however it was loaded
+//     (`--plugin-dir`, the account's marketplace);
+//   - the user's local plugins, <home>/.cursor/plugins/local/<name>, which Cursor
+//     loads at start (read off the cursor-agent binary: a directory or a symlink whose
+//     target stays inside that directory; dot-names skipped).
 //
-// A plugin loaded with --plugin-dir from elsewhere is NOT discovered: nothing in
-// the hook's input names its directory. Said here rather than papered over.
+// What it cannot know, said rather than papered over: the account's marketplace
+// installs are cached under <home>/.cursor/plugins/cache/<marketplace>/<plugin>/<version>
+// but whether each is ENABLED is account state no hook input names, so a cached plugin
+// is not assumed enabled, and a plugin loaded with --plugin-dir is found only from its
+// own hook. A directory with no readable manifest is Unresolved, naming what was
+// tried, so a half-installed plugin is reported rather than read as "no plugins".
 func Resolve(projectDir, home string) (harness.Resolution, error) {
 	var res harness.Resolution
-	root := filepath.Join(home, ".cursor", "plugins", "local")
-	entries, err := os.ReadDir(root)
+	seen := map[string]bool{}
+	add := func(name, dir string) {
+		real := dir
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			real = r
+		}
+		if seen[real] {
+			return
+		}
+		seen[real] = true
+		plugin := harness.Plugin{Name: name, Marketplace: localMarketplace}
+		manifest := filepath.Join(dir, ".cursor-plugin", "plugin.json")
+		raw, err := os.ReadFile(manifest)
+		if err != nil {
+			res.Unresolved = append(res.Unresolved, harness.Unresolved{
+				Plugin: plugin, Key: plugin.Key(), Tried: []string{manifest},
+				Reason: "the directory has no readable .cursor-plugin/plugin.json",
+			})
+			return
+		}
+		var m struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &m) == nil && m.Name != "" {
+			plugin.Name = m.Name
+		}
+		res.Roots = append(res.Roots, harness.Root{Plugin: plugin, Dir: dir})
+	}
+
+	if root := os.Getenv(PluginRootEnv); root != "" {
+		add(filepath.Base(root), root)
+	}
+
+	local := filepath.Join(home, ".cursor", "plugins", "local")
+	entries, err := os.ReadDir(local)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return res, nil
@@ -37,21 +79,23 @@ func Resolve(projectDir, home string) (harness.Resolution, error) {
 		return res, err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	base, _ := filepath.EvalSymlinks(local)
 	for _, e := range entries {
-		dir := filepath.Join(root, e.Name())
-		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-			continue // follows symlinks: a linked plugin is the usual local install
-		}
-		plugin := harness.Plugin{Name: e.Name(), Marketplace: localMarketplace}
-		manifest := filepath.Join(dir, ".cursor-plugin", "plugin.json")
-		if _, err := os.Stat(manifest); err != nil {
-			res.Unresolved = append(res.Unresolved, harness.Unresolved{
-				Plugin: plugin, Key: plugin.Key(), Tried: []string{manifest},
-				Reason: "the directory has no .cursor-plugin/plugin.json",
-			})
+		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		res.Roots = append(res.Roots, harness.Root{Plugin: plugin, Dir: dir})
+		dir := filepath.Join(local, e.Name())
+		target, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			continue
+		}
+		if fi, err := os.Stat(target); err != nil || !fi.IsDir() {
+			continue
+		}
+		if rel, err := filepath.Rel(base, target); err != nil || strings.HasPrefix(rel, "..") {
+			continue // Cursor rejects a link pointing outside the local directory
+		}
+		add(e.Name(), dir)
 	}
 	return res, nil
 }

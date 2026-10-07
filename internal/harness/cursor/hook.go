@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness/cursor/record"
 )
 
 // Event is Cursor's hook_event_name. Cursor spells them camelCase, unlike Claude's
@@ -146,6 +148,35 @@ func (p Payload) Transcript() string {
 		return ""
 	}
 	return *p.TranscriptPath
+}
+
+// TranscriptFile is the conversation's transcript path: the one the payload names,
+// else the one Cursor will write, derived from the workspace and conversation id
+// (cursor-agent names none at sessionStart and the first preToolUse). A derived file
+// may not exist yet; that is an empty transcript, and guardrails stay on.
+func (p Payload) TranscriptFile() string {
+	if t := p.Transcript(); t != "" {
+		return t
+	}
+	return record.TranscriptPath(record.ConfigDir(), p.Folder(), p.ConversationID)
+}
+
+// Task reports a pending sub-agent launch: Cursor's Task tool. Its preToolUse is the
+// only sign of a sub-agent in print mode (measured, cursor-agent 2026.10.01:
+// subagentStart/subagentStop never fire, the Task call has no postToolUse, and the
+// sub-agent's own events arrive under a different conversation_id with no link back).
+func (p Payload) Task() (subagentType, description string, ok bool) {
+	if p.HookEventName != PreToolUse || p.ToolName != "Task" {
+		return "", "", false
+	}
+	var in struct {
+		SubagentType string `json:"subagent_type"`
+		Description  string `json:"description"`
+	}
+	if json.Unmarshal(p.ToolInput, &in) != nil {
+		return "", "", false
+	}
+	return in.SubagentType, in.Description, true
 }
 
 // Folder is the project folder the hook belongs to.
