@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // RelocateRecord returns where the record the harness reported at path
@@ -130,7 +132,7 @@ var relocated sync.Map
 // — positively; an unreadable file or one with no sessionId at all is a no.
 func namesSession(path, sessionID string) bool {
 	found := false
-	_ = scanFile(path, func(rec claudeRecord) bool {
+	_ = scanFile(path, func(rec harness.Record) bool {
 		if rec.SessionID == sessionID {
 			found = true
 			return false

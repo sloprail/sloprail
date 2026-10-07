@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // The identity a conversation keeps.
@@ -276,11 +278,11 @@ func (w *walk) from(cur string, root Entry, inPath map[string]bool, depth int) (
 func rootRecord(path string) (Entry, error) {
 	var root Entry
 	found := false
-	err := scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec harness.Record) bool {
 		if rec.UUID == "" || rec.ParentUUID != nil {
 			return true
 		}
-		root = rec.entry()
+		root = rec.Entry()
 		found = true
 		return false
 	})
@@ -363,7 +365,7 @@ func BelongsToTree(path, cwd string) (bool, error) {
 	// directory and macOS symlinks /var to /private/var.
 	want := ResolveWorkDir(cwd)
 	var found string
-	err := scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec harness.Record) bool {
 		if rec.Cwd == "" {
 			return true
 		}
@@ -455,7 +457,7 @@ func BelongsToSession(path, sessionID string) (bool, error) {
 		return true, nil
 	}
 	var found string
-	err := scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec harness.Record) bool {
 		if rec.SessionID == "" {
 			return true
 		}
@@ -487,7 +489,7 @@ func BelongsToSession(path, sessionID string) (bool, error) {
 // read. Callers that need an answer treat "" as "cannot be determined".
 func StartCwd(path string) (string, error) {
 	var found string
-	err := scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec harness.Record) bool {
 		if rec.Cwd != "" {
 			found = rec.Cwd
 			return false
@@ -501,7 +503,7 @@ func StartCwd(path string) (string, error) {
 // began. The zero time with a nil error when the record carries none.
 func StartTime(path string) (time.Time, error) {
 	var found time.Time
-	err := scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec harness.Record) bool {
 		if rec.Timestamp == "" {
 			return true
 		}

@@ -1,10 +1,9 @@
 package transcript
 
 import (
-	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // A transcript's path arrives on the harness's payload, so nothing here is
@@ -17,19 +16,6 @@ import (
 // from scanning. One real ~/.claude held 1067 project directories; globbing a
 // session id across all of them is a directory-listing sweep on every single
 // resolution, when the encoding is deterministic and already known.
-
-// nonAlnum matches every character that is not an ASCII letter or digit —
-// Claude Code's own working-directory-to-project-directory rule, which is a
-// verbatim `replace(/[^a-zA-Z0-9]/g,"-")`.
-var nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
-
-// EncodeProjectDir maps a working directory to the harness's project directory
-// name. Ported from a10n, which ported it from the harness's own encoding and
-// keeps it in one place deliberately — a second copy of this rule is a second
-// thing to get subtly wrong.
-func EncodeProjectDir(dir string) string {
-	return nonAlnum.ReplaceAllString(dir, "-")
-}
 
 // ResolveWorkDir returns dir with its symlinks resolved, so that
 // EncodeProjectDir(ResolveWorkDir(dir)) matches what the harness itself
@@ -65,6 +51,12 @@ func ResolveWorkDir(dir string) string {
 	}
 }
 
+// EncodeProjectDir maps a working directory to the harness's project directory
+// name; the rule itself is the harness's (see harness.Transcripts).
+func EncodeProjectDir(dir string) string {
+	return harness.Current().Transcripts().EncodeProjectDir(dir)
+}
+
 // ProjectDir is where the harness keeps the transcripts of every session run in
 // dir.
 //
@@ -75,18 +67,9 @@ func ProjectDir(configDir, dir string) string {
 	if configDir == "" {
 		return ""
 	}
-	return filepath.Join(configDir, "projects", EncodeProjectDir(ResolveWorkDir(dir)))
+	return harness.Current().Transcripts().ProjectDir(configDir, ResolveWorkDir(dir))
 }
 
-// ConfigDir is the harness's own configuration directory — $CLAUDE_CONFIG_DIR
-// when set, else ~/.claude. Empty when neither can be resolved.
-func ConfigDir() string {
-	if cfg := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); cfg != "" {
-		return cfg
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude")
-}
+// ConfigDir is the harness's own configuration directory. Empty when it cannot
+// be resolved.
+func ConfigDir() string { return harness.Current().Transcripts().ConfigDir() }

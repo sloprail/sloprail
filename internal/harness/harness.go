@@ -39,6 +39,9 @@ type Harness interface {
 	// HermeticEnv is SessionEnv plus everything else that would point a launched
 	// process at operator or outer-run state.
 	HermeticEnv(environ []string) []string
+
+	// Transcripts is how the harness's session record is parsed and located.
+	Transcripts() Transcripts
 }
 
 var (

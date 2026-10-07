@@ -69,12 +69,12 @@ func BackgroundAgentSignalsSince(path string, cur AgentSignalCursor) ([]AgentSig
 		if len(line) > 0 {
 			if body := bytes.TrimSpace(line); len(body) > 0 {
 				if mayCarryAgentSignal(body) || namesAwaitedCall(body, background) {
-					var rec claudeRecord
-					if jerr := json.Unmarshal(body, &rec); jerr != nil {
+					rec, jerr := parseLine(body)
+					if jerr != nil {
 						return nil, cur, fmt.Errorf("transcript: parse %s: %w", path, jerr)
 					}
 					// Folded as it is read, so a call this very read began is awaited by the lines after it.
-					out = append(out, agentSignalsOf([]Entry{rec.entry()}, background)...)
+					out = append(out, agentSignalsOf([]Entry{rec.Entry()}, background)...)
 				} else if !json.Valid(body) {
 					return nil, cur, fmt.Errorf("transcript: parse %s: not a JSON record", path)
 				}

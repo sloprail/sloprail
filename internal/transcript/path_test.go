@@ -9,16 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEncodeProjectDir pins the rule exactly — every non-alphanumeric becomes a
-// dash, with no collapsing of the runs that produces. Pinned against a real
-// directory name observed on disk, for a path holding both slashes and a dot,
-// which land as adjacent dashes.
-func TestEncodeProjectDir(t *testing.T) {
-	got := EncodeProjectDir("/Users/nsviridenko/ws/horizon-37/a10n/.claude/worktrees/ecstatic-hermann-959022")
-	want := "-Users-nsviridenko-ws-horizon-37-a10n--claude-worktrees-ecstatic-hermann-959022"
-	assert.Equal(t, want, got)
-}
-
 // TestResolveWorkDirResolvesSymlinks is why the encoding is taken from a
 // resolved path: on macOS the temp roots are symlinked, so an encoding of the
 // unresolved path names a directory nothing is in.
@@ -63,11 +53,4 @@ func TestProjectDirIsDerivedNotSearched(t *testing.T) {
 // place and calling the conversation new.
 func TestProjectDirWithoutAConfigDir(t *testing.T) {
 	assert.Empty(t, ProjectDir("", "/w/p"), "no config dir must yield nothing, not a path rooted at nowhere")
-}
-
-// TestConfigDirPrefersTheEnvironment: the harness's own variable wins, which is
-// what keeps a sandboxed run off the host's real data.
-func TestConfigDirPrefersTheEnvironment(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "/somewhere/isolated")
-	assert.Equal(t, "/somewhere/isolated", ConfigDir(), "the harness's own variable wins")
 }

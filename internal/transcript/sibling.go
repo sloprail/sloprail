@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Searching the conversation's other transcripts — the half of the identity
@@ -151,7 +153,7 @@ func sameFile(a, b string) bool {
 // predecessors.
 func containsAnyUUID(path string, targets ...string) (bool, error) {
 	found := false
-	err := scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec harness.Record) bool {
 		for _, t := range targets {
 			if t != "" && rec.UUID == t {
 				found = true
