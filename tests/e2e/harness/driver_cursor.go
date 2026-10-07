@@ -1,10 +1,10 @@
 package harness
 
 import (
-	"github.com/sloprail/sloprail/internal/harness"
-	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
+	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -312,11 +312,17 @@ func (cursorDriver) syncPlugins(e *Env) {
 	}
 }
 
-// HookEnv names the harness outright, as the plugin's own hook wrapper does.
+// HookEnv names the harness outright, as the plugin's own hook wrapper does. A call made from
+// inside a session (sessionID set) also carries the conversation id, as cursor-agent puts it in
+// a shell tool's environment; the transcript is derived from it and the working directory.
 func (c cursorDriver) HookEnv(e *Env, sessionID string) []string {
 	c.syncPlugins(e)
-	return []string{"SLOPRAIL_HARNESS=cursor",
+	env := []string{"SLOPRAIL_HARNESS=cursor",
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+	if sessionID != "" {
+		env = append(env, "CURSOR_CONVERSATION_ID="+cursorConversationID(e, sessionID))
+	}
+	return env
 }
 
 // CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
@@ -379,12 +385,18 @@ func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {
 
 var cursorNonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
+// cursorConversationID is the conversation id the harness gave a session, or the stand-in a
+// session no mock has run yet is filed under.
+func cursorConversationID(e *Env, sessionID string) string {
+	if id := e.harnessID(sessionID); id != "" {
+		return id
+	}
+	return "not-yet-run-" + sessionID
+}
+
 // TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
 func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
-	id := e.harnessID(sessionID)
-	if id == "" {
-		id = "not-yet-run-" + sessionID
-	}
+	id := cursorConversationID(e, sessionID)
 	project := cursorNonAlnum.ReplaceAllString(strings.TrimPrefix(resolveWorkDir(projDir), "/"), "-")
 	return filepath.Join(e.home, ".cursor", "projects", project, "agent-transcripts", id, id+".jsonl")
 }
