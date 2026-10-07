@@ -552,6 +552,18 @@ func (codexDriver) WrittenBytes(content string) string {
 	return strings.TrimSuffix(content, "\n") + "\n"
 }
 
+// ResultRecord: a rollout's function_call_output names its call by call_id, which the mock
+// spells <id>-slop-turn-<n>-<id>.
+func (codexDriver) ResultRecord(record, id string) string {
+	found := ""
+	for _, l := range strings.Split(record, "\n") {
+		if strings.Contains(l, `"call_id":"`+id+`-slop-turn-`) && strings.Contains(l, `"function_call_output"`) {
+			found = l
+		}
+	}
+	return found
+}
+
 // Refusals reads the PreToolUse refusals the mock reports on its error stream.
 func (codexDriver) Refusals(output string) []string {
 	var out []string

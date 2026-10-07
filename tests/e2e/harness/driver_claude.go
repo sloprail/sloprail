@@ -623,6 +623,17 @@ func resultTexts(raw json.RawMessage) []string {
 // Refusals reads the PreToolUse refusals out of the stream's tool_result records (see Result.Refusals).
 func (claudeDriver) WrittenBytes(content string) string { return content }
 
+// ResultRecord: a tool_result block names the call it answers by tool_use_id.
+func (claudeDriver) ResultRecord(record, id string) string {
+	found := ""
+	for _, l := range strings.Split(record, "\n") {
+		if strings.Contains(l, `"tool_use_id":"`+id) {
+			found = l
+		}
+	}
+	return found
+}
+
 func (claudeDriver) Refusals(output string) []string {
 	var out []string
 	for _, line := range strings.Split(output, "\n") {

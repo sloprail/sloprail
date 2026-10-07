@@ -259,6 +259,9 @@ type Driver interface {
 	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
 	// ends every non-empty file with a newline).
 	WrittenBytes(content string) string
+	// ResultRecord is the line of a session record (the text of its file) that holds the
+	// result of the tool call the scenario named id, "" when it holds none.
+	ResultRecord(record, id string) string
 	// Refusals are the PreToolUse refusal reasons in a run's output stream.
 	Refusals(output string) []string
 	// ToolResults are the tool_result texts in a run's output stream.

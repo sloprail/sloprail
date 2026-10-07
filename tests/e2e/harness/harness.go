@@ -1482,6 +1482,10 @@ func (e *Env) WrapBinary(name, body string) {
 // writes content: what a test compares a file (or the content a rule was handed) to.
 func (e *Env) Written(content string) string { return e.driver.WrittenBytes(content) }
 
+// ResultRecord is the line of a session record holding the result of the call the scenario
+// named id (see Driver.ResultRecord).
+func (e *Env) ResultRecord(record, id string) string { return e.driver.ResultRecord(record, id) }
+
 // ScenarioError is the error the selected harness gives for a scenario it cannot take
 // (an *UnsupportedError naming the step), or nil when it can render it.
 func (e *Env) ScenarioError(s Scenario) error {

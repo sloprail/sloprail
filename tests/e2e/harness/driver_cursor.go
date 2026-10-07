@@ -515,6 +515,9 @@ func cursorRejections(output string) []string {
 
 func (cursorDriver) WrittenBytes(content string) string { return content }
 
+// ResultRecord: Cursor's transcript holds no tool results (no CapRecordHoldsToolResults).
+func (cursorDriver) ResultRecord(record, id string) string { return "" }
+
 func (cursorDriver) Refusals(output string) []string { return cursorRejections(output) }
 
 // ToolResults are the standard output of the shell commands the stream shows ran.
