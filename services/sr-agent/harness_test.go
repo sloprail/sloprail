@@ -380,6 +380,15 @@ func TestCursorRules_ToolMapping(t *testing.T) {
 	assert.ErrorIs(t, err, harness.ErrToolUnsupported, "the engine reports a grant the harness cannot express by this error")
 }
 
+func TestCursorRules_ScopedBashIsRefused(t *testing.T) {
+	for _, rule := range []string{"Bash(git show:*)", "Bash(curl * -o *)"} {
+		_, _, err := cursorRules(accessGrant{Tools: []string{rule}})
+		assert.ErrorIs(t, err, harness.ErrToolUnsupported, rule)
+		_, _, err = cursorRules(accessGrant{DenyTools: []string{rule}})
+		assert.ErrorIs(t, err, harness.ErrToolUnsupported, rule)
+	}
+}
+
 func TestCursorSizesAreCatalogueModels(t *testing.T) {
 	for alias, model := range cursorSpec.sizes {
 		assert.True(t, cursorSpec.offers(model), "%s -> %s", alias, model)

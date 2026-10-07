@@ -214,6 +214,10 @@ type Driver interface {
 	// granted (see JudgeAccess).
 	JudgeAccess(argvFile string) (JudgeAccess, error)
 
+	// SkillDir is the project-relative directory this harness reads a project's skills
+	// from (<dir>/<name>/SKILL.md).
+	SkillDir() string
+
 	// IdentityPayload is a hook payload that names only the session and the project
 	// folder it runs in: no transcript path, so a reader resolves the session's record
 	// from the two, as the first hooks of a session make it.
@@ -354,6 +358,17 @@ func mustDriver() Driver {
 		panic(err.Error())
 	}
 	return d
+}
+
+// SkillDir is the project-relative directory the selected harness reads a project's
+// skills from.
+func SkillDir(t testing.TB) string {
+	t.Helper()
+	d, err := selectDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.SkillDir()
 }
 
 // Selected is the name of the harness SR_HARNESS selects.
