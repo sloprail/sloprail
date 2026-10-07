@@ -74,6 +74,7 @@ func citedPostEvent(kind, path, oldContent, newContent string) event.Event {
 // A Post event carries the citations of every cited change that landed on its
 // path; its history carries the points, by content hash, with each content
 // retrievable once.
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
 func TestAttachHistoriesCarriesCitationsAndContent(t *testing.T) {
 	store := openTestStore(t)
 	pt := historyPoint{Cites: userCite, Before: st(store, "base"), After: st(store, "cited"), At: 1}
@@ -120,6 +121,7 @@ func historyOf(t *testing.T, store sessionstate.Store) map[string][]historyPoint
 // leave that way: at the session's first hook, each file already dirty; later,
 // each file that differs from how the agent left it at its last Stop. A cycle
 // already open records nothing — the agent's own changes are its own.
+// sr:proves citations/between-turn-changes-are-charged-only-with-running-work
 func TestBeginCycleRecordsOnlyWhatTheAgentDidNotDo(t *testing.T) {
 	repo := t.TempDir()
 	gitRun(t, repo, "init", "-q")

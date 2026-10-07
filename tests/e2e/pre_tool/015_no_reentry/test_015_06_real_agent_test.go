@@ -142,6 +142,7 @@ exit 0
 // that launched it, and that rule declines to enforce there.
 //
 // Skipped unless SLOPRAIL_REAL_AGENT=1, because it bills the operator.
+// sr:proves checks/check-launched-agent-does-not-reenter-its-rule
 func TestT015_06_RealAgentInheritsProvenanceAndTheRuleDeclines(t *testing.T) {
 	if os.Getenv("SLOPRAIL_REAL_AGENT") != "1" {
 		t.Skip("real-agent test: set SLOPRAIL_REAL_AGENT=1 to run it (spends money on a real claude)")

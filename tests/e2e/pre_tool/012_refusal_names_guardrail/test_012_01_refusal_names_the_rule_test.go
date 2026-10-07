@@ -72,6 +72,7 @@ func project(t *testing.T, e *harness.Env) string {
 // Three rules are declared and one is broken. A refusal mentioning any other name
 // sends the agent to a rule it did not break — worse than an unnamed refusal,
 // because it looks actionable and is wrong.
+// sr:proves gates/refusal-names-gate-and-plugin
 func TestT012_01_RefusalNamesTheRuleThatFired(t *testing.T) {
 	for name, dir := range names {
 		t.Run(name, func(t *testing.T) {

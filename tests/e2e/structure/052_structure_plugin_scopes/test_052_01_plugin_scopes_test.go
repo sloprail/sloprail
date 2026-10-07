@@ -59,6 +59,7 @@ func assertRefused(t *testing.T, e *harness.Env, proj, path string, refused bool
 // Fails on the old engine: there the plugin's structure (a singleton with no
 // notion of scope) became the tree-wide allowlist, so the write outside the
 // scope (src/main.go) was refused, and its refusal named no scope.
+// sr:proves structure/plugin-owns-its-scope
 func TestT052_01_PluginStructureGovernsOnlyItsScope(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -105,6 +106,7 @@ func TestT052_01_PluginStructureGovernsOnlyItsScope(t *testing.T) {
 // Fails on the old engine: the project's structure shadowed the plugin's, so the
 // owned mind-map path (not in the project's allow) was refused, and the notes
 // path (in the project's allow) was permitted.
+// sr:proves structure/project-deny-vetoes-plugin
 func TestT052_02_ProjectAndPluginCombine(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -152,6 +154,7 @@ func TestT052_02_ProjectAndPluginCombine(t *testing.T) {
 // Fails on the old engine: the earlier plugin's structure won and the later was
 // shadowed, so the overlap write was decided by one plugin alone (and permitted,
 // since it allows it) — nothing named both.
+// sr:proves structure/two-owners-conflict
 func TestT052_03_OverlappingScopesRefuseNamingBoth(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -221,6 +224,7 @@ func TestT052_05_DisabledPluginStructureIsLifted(t *testing.T) {
 //
 // Fails on the old engine: a scope-less plugin structure loaded as the tree-wide
 // allowlist, so the write outside .mdmap/ was refused and nothing was reported.
+// sr:proves loading/structure-scope-by-owner
 func TestT052_06_PluginStructureWithoutScopeIsReportedNotEnforced(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -271,6 +275,7 @@ func TestT052_07_BashWriteIsGatedLikeAWrite(t *testing.T) {
 
 // T052_08: a DELETE inside a plugin's scope is not gated by the structure gate —
 // the structure gate governs writes, as it always has.
+// sr:proves structure/deletes-are-not-writes
 func TestT052_08_DeleteInsideScopeIsNotGated(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

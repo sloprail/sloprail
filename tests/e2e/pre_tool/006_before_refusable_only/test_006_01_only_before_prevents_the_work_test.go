@@ -49,6 +49,7 @@ exit 1
 // The meaning of `before`: prevention leaves nothing to clean up and costs an
 // attempt. If the file exists afterwards, the refusal was an opinion rather than a
 // prevention, whatever the agent was told.
+// sr:proves gates/refusal-stops-the-action
 func TestT006_01_PreRefusalPreventsTheWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

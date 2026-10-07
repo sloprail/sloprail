@@ -60,6 +60,7 @@ func TestRanges_AnUntrackOfAnUnknownRangeIsRecordedSoAutoDoesNotBringItBack(t *t
 	assert.False(t, rs[0].Tracked())
 }
 
+// sr:proves session/untracked-range-returns-when-tip-moves
 func TestRanges_AnUntrackedRangeIsTrackedAgainWhenItsTipMoves(t *testing.T) {
 	s := openTemp(t)
 	require.NoError(t, s.TrackRange(TrackedRange{SessionID: "s", Folder: "/r", Head: "feat", HeadSHA: "t1", Base: "aaa", AddedBy: RangeAuto}))

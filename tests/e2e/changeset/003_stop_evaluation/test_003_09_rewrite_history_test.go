@@ -25,6 +25,7 @@ func startedJudgeProject(t *testing.T, sess, verdict string) (*Env, string) {
 // T003_09: an amend that changes SHAs but not content is a judge CACHE HIT. The
 // range holds the same one commit as before, so its fingerprint is the same and the
 // stored verdict is replayed without asking the model.
+// sr:proves cache/verdict-identity
 func TestT003_09_AnAmendThatChangesShasButNotContentIsACacheHit(t *testing.T) {
 	e, proj := startedJudgeProject(t, "s-003-09", verdictFail)
 

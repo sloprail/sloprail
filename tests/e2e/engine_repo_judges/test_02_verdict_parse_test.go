@@ -31,6 +31,7 @@ import (
 // TestVerdictParseRefusesAFlaggedRule: the verdict flags the rule (pass:false)
 // and carries a trailing second object; the engine must refuse. A greedy span
 // would swallow both objects and mis-read pass.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerdictParseRefusesAFlaggedRule(t *testing.T) {
 	e := New(t)
 	proj := guardProject(t, e, "rule-quality")
@@ -96,6 +97,7 @@ func TestVerdictParsePermitsACleanRule(t *testing.T) {
 
 // TestVerdictParsePermitsACleanSkill — the same other-direction proof for the
 // sibling.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerdictParsePermitsACleanSkill(t *testing.T) {
 	e := New(t)
 	proj := guardProject(t, e, "skill-quality")

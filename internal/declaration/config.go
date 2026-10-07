@@ -164,6 +164,7 @@ func SubagentThresholds(root string) (silent, stale time.Duration, err error) {
 // first would let a permissions accident silently re-enable every declaration a
 // project had deliberately switched off — the fail-open guardrail.LoadConfig
 // closes, closed the same way here.
+// sr:invariant loading/unreadable-config-fails-the-load
 func loadConfig(root string) (config, error) {
 	path := filepath.Join(root, configFile)
 	data, err := os.ReadFile(path)
@@ -210,6 +211,7 @@ func protectedDisable(qualified string) bool {
 
 // protectedPlugin reports whether a declaration is a protected rule shipped by a plugin
 // (see protectedDisable): the load lets it claim its name ahead of a project's.
+// sr:invariant loading/precedence-and-shadowing
 func protectedPlugin(o Origin, nature Nature, name string) bool {
 	return o.FromPlugin() && protectedDisable(o.Plugin+"/"+string(nature)+"/"+name)
 }
@@ -220,6 +222,7 @@ func protectedPlugin(o Origin, nature Nature, name string) bool {
 // recorded, or one taken at a sub-agent's Stop) or a config that cannot be read (no
 // repository, no such commit, no such file), nothing protected is honoured: a rule that
 // could not be checked stays on.
+// sr:invariant loading/protected-disable-needs-trusted-config
 func trustProtected(cfg config, root, rev string) config {
 	has := false
 	for _, n := range cfg.Disabled {

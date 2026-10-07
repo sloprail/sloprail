@@ -76,6 +76,7 @@ func TestT003_05_TheJudgeRendersTheChangeset(t *testing.T) {
 // the same input replays its verdict from the store without asking the model. A
 // fix changes the input, so the rule is judged again over the whole squashed
 // range and can pass — and the old failure is then stale (skip), not outstanding.
+// sr:proves cache/finished-verdicts-reused
 func TestT003_06_AFailIsReplayedUntilTheInputChanges(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 

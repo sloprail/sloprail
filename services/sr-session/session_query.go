@@ -125,6 +125,7 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 // Reported on stderr rather than silently, because a session persistently
 // unable to read its position is re-judging everything on every cycle, and the
 // only symptom otherwise is that things get slower.
+// sr:invariant session/judged-position-advances-to-what-was-offered
 func readMark(cmd *cobra.Command, p HookPayload) string {
 	store, err := openEngineState(p)
 	if err != nil {

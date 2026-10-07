@@ -48,6 +48,7 @@ func projectA(e *Env) string {
 }
 
 // T061_01: a Write into B from a session in A is refused with B's gate reason, naming B.
+// sr:proves gates/sibling-project-gates-apply
 func TestT061_01_WriteIntoSiblingIsRefusedByItsGate(t *testing.T) {
 	e := New(t)
 	a, b := projectA(e), sibling(e, true, lockedGate)
@@ -81,6 +82,7 @@ func TestT061_02_WriteElsewhereInSiblingIsPermitted(t *testing.T) {
 }
 
 // T061_03: `git -C B commit` hits B's Bash gate, and `cd B && git commit` does too.
+// sr:proves gates/sibling-project-gates-apply
 func TestT061_03_CommandTargetingSiblingHitsItsBashGate(t *testing.T) {
 	for i, command := range []string{
 		"git -C %s commit -q --allow-empty -m x",
@@ -127,6 +129,7 @@ func TestT061_05_SiblingWithoutDotSloprailIsUntouched(t *testing.T) {
 }
 
 // T061_06: a sibling whose .sloprail cannot be loaded refuses, naming it.
+// sr:proves gates/sibling-project-gates-apply
 func TestT061_06_UnreadableSiblingDeclarationsRefuse(t *testing.T) {
 	e := New(t)
 	a, b := projectA(e), sibling(e, true, lockedGate)
@@ -156,6 +159,7 @@ func TestT061_07_OnlyTheInvocationsInTheSiblingAreItsToJudge(t *testing.T) {
 }
 
 // T061_08: one gate in B that does not load refuses a Write and a Bash command into B, naming B.
+// sr:proves gates/sibling-project-gates-apply
 func TestT061_08_OneBrokenSiblingGateRefuses(t *testing.T) {
 	e := New(t)
 	a, b := projectA(e), sibling(e, true, lockedGate)
@@ -209,6 +213,7 @@ func TestT061_09_SiblingStructureGateAppliesWhenTheSessionProjectHasNoDeclaratio
 
 // T061_10: an Edit of a file in B outside B's structure is refused by B's structure gate, with
 // project A declaring nothing.
+// sr:proves gates/sibling-project-gates-apply
 func TestT061_10_EditIntoSiblingIsRefusedByItsStructure(t *testing.T) {
 	e := New(t)
 	a, b := projectA(e), sibling(e, false, "")
@@ -229,6 +234,7 @@ func TestT061_10_EditIntoSiblingIsRefusedByItsStructure(t *testing.T) {
 }
 
 // T061_11: deleting a file in B's locked/ is refused by B's PreFileDelete gate.
+// sr:proves gates/sibling-project-gates-apply
 func TestT061_11_DeleteInSiblingIsRefusedByItsGate(t *testing.T) {
 	e := New(t)
 	a, b := projectA(e), sibling(e, true, noDeleteGate)

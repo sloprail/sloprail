@@ -192,6 +192,7 @@ var errWillNotApply = errors.New("filemod: the pending edit cannot be applied")
 // `resultKnown: false`. That is strictly better than today's silence, which is
 // no event at all, and it is honest about what is not known. What it is NOT is
 // `content: ""`, which is the wrong this whole change removes.
+// sr:invariant events/unknown-bytes-are-flagged
 func resultFor(a pendingArgs, before string, exists bool) (string, error) {
 	switch {
 	case a.Content != nil:

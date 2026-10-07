@@ -56,6 +56,7 @@ checks:
 //
 // This is the invariant's load-bearing case, and the reason the Stop hook
 // compares rather than accumulates.
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -86,6 +87,7 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 // mentioned anywhere would pass T013_01 while getting the invariant exactly
 // backwards. The spec names this half outright: "an agent can report work it
 // never did".
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

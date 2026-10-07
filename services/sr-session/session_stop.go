@@ -242,6 +242,7 @@ func discardOffered(cmd *cobra.Command, p HookPayload) {
 // Failure is reported and swallowed. The cost of not moving the mark is that
 // the next cycle re-reads some turns; the cost of refusing here is the agent's
 // work blocked over the engine's bookkeeping.
+// sr:invariant session/judged-position-advances-to-what-was-offered
 func advanceReadMark(cmd *cobra.Command, store sessionstate.Store, p HookPayload) {
 	offered, ok, err := store.Meta(sessionstate.MetaTranscriptOffered)
 	if err != nil {
@@ -309,6 +310,7 @@ func advanceReadMark(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 // what it rejects is a position that CANNOT have come from reading a record to
 // its end. A transcript is append-only in normal operation, so this needs an
 // external rewrite to reach at all: a guard rather than a live defect.
+// sr:invariant session/judged-position-advances-to-what-was-offered
 func advanceOffered(store sessionstate.Store, entries []transcript.Entry, offered string) error {
 	if len(entries) > 0 && offered != transcript.Mark(entries) {
 		// Not the end of this record, so index order says nothing about whether

@@ -38,6 +38,7 @@ func sessionRecordLine(sessionID, uuid, parent string) string {
 // session begun in a worktree, resumed from the main checkout. The payload
 // names the main checkout's project directory; the record is still in the
 // worktree's.
+// sr:proves session/resume-from-another-directory
 func TestRelocateRecordFindsAResumeFromAnotherDirectory(t *testing.T) {
 	cfg := t.TempDir()
 	const sid = "06f7418e-0000-4000-8000-000000000001"
@@ -66,6 +67,7 @@ func TestRelocateRecordLeavesAnUnwrittenRecordAlone(t *testing.T) {
 // TestRelocateRecordRefusesAFileOfAnotherSession: a file that merely shares
 // the name but whose records name a different session is not this session's
 // record, and taking it would key this session on someone else's identity.
+// sr:proves session/resume-from-another-directory
 func TestRelocateRecordRefusesAFileOfAnotherSession(t *testing.T) {
 	cfg := t.TempDir()
 	const sid = "same-name"

@@ -12,6 +12,7 @@ import (
 // plugin gate's name, whose trigger matches nothing, would let a Write tool change
 // config.yaml with no grounding if it took the plugin gate's place. It does not: the
 // write is still refused before it lands, and the cited sr-file write lands.
+// sr:proves loading/precedence-and-shadowing
 func TestT042_20_AProjectGateCannotShadowTheGate(t *testing.T) {
 	e := New(t)
 	proj := project(t, e)
@@ -45,6 +46,7 @@ func TestT042_20_AProjectGateCannotShadowTheGate(t *testing.T) {
 // default branch, where the rule is still on, so the rule judges the range (the disable
 // included) and an uncited loosening of a rule is refused rather than the rule going quiet.
 // (The old session-start meta this was keyed on is gone; the range base is the merge base.)
+// sr:proves loading/protected-disable-needs-trusted-config
 func TestT042_32_AnUnlandedProtectedDisableIsNotHonoured(t *testing.T) {
 	e := harness.New(t, harness.WithOnlyShippedFileGuard(ruleName), harness.KeepOrigin())
 	proj := e.Project()

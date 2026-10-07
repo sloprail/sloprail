@@ -8,6 +8,9 @@ import (
 
 // T001_90: a declaration store that cannot be READ is a refusal for `run` and `verify`, never
 // zero guards and a green exit; no `.sloprail` at all stays exit 0.
+// sr:proves fileguard/unloadable-guard-refuses
+// sr:proves cli/checks-range-is-stated-and-resolves
+// sr:proves cli/checks-exit-status-is-the-verdict
 func TestT001_90_UnreadableDeclarationStoreRefuses(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permissions are not enforced for root")

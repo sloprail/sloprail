@@ -11,6 +11,7 @@ import (
 // somewhere else. Measured in the onboarding eval: an agent's new structure
 // refused its own scratch copy under /tmp, the very place the plugin tells
 // agents to keep throwaway files.
+// sr:proves structure/outside-project-not-governed
 func TestT033_08_WriteOutsideTheProjectIsNotGated(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -33,6 +34,7 @@ func TestT033_08_WriteOutsideTheProjectIsNotGated(t *testing.T) {
 // T033_09: the control for T033_08 — an absolute path that is INSIDE the
 // project is still the project's, and still refused when the structure does
 // not allow it. Without this, "absolute means outside" would be a hole.
+// sr:proves structure/outside-project-not-governed
 func TestT033_09_AbsolutePathInsideTheProjectIsStillGated(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -629,6 +629,7 @@ type hit struct {
 
 // Lookup returns the stored result of each key, by Key.ID(). It reads the local
 // ref only (call Sync first for fresh data); a corrupt segment is an error.
+// sr:invariant cache/store-failures-not-misses
 func (s *Store) Lookup(keys []Key) (map[string]Found, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -18,6 +18,7 @@ func (f *evalFixture) baseAt(t *testing.T) string {
 
 // The effective base is the head of the latest complete PASSING run: a fail never advances
 // it, a pass does, and a stored fail is replayed (no re-roll) until its input changes.
+// sr:proves fileguard/passes-not-re-examined
 func TestIncremental_EffectiveBaseAdvancesOnlyOnPass(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	assert.Equal(t, f.base, f.baseAt(t), "no run yet: the requested base")
@@ -63,6 +64,7 @@ func (f *evalFixture) evaluateOver(t *testing.T, base, head string, verify, whol
 
 // Verify computes the same effective base from the stored runs, so what run judged verifies
 // over the original, wider range, and nothing is executed.
+// sr:proves fileguard/passes-not-re-examined
 func TestIncremental_RunAndVerifyAgreeOnTheBase(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	f.commitDoc(t, "docs/a.md", "clean a")
@@ -81,6 +83,7 @@ func TestIncremental_RunAndVerifyAgreeOnTheBase(t *testing.T) {
 }
 
 // A base that is not an ancestor of the head is ignored, and so is one before the requested base.
+// sr:proves fileguard/passes-not-re-examined
 func TestIncremental_ABaseThatIsNotAnAncestorIsIgnored(t *testing.T) {
 	f := newEvalFixture(t, nil)
 	f.commitDoc(t, "docs/a.md", "clean")
@@ -105,6 +108,7 @@ func TestIncremental_ASubjectsScriptRuleKeepsTheRequestedBase(t *testing.T) {
 
 // Passes chain: B1..H1 then H1..H2 advance the base from B1 to H2, but a pass over a NARROW range
 // B2..H (B2 after B1) leaves B1..B2 unjudged and advances nothing; a FAIL anywhere is no pass.
+// sr:proves fileguard/passes-not-re-examined
 func TestIncremental_EffectiveBaseChainsPassesAndIgnoresNarrowOnes(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	c1 := f.commitDoc(t, "docs/a.md", "clean a")
@@ -126,6 +130,7 @@ func TestIncremental_EffectiveBaseChainsPassesAndIgnoresNarrowOnes(t *testing.T)
 	assert.Equal(t, f.base, baseFor(c3), "a pass over B2..H does not cover B1..B2")
 }
 
+// sr:proves fileguard/passes-not-re-examined
 func TestIncremental_SequentialPassesChain(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	c1 := f.commitDoc(t, "docs/a.md", "clean a")
@@ -140,6 +145,7 @@ func TestIncremental_SequentialPassesChain(t *testing.T) {
 	assert.Equal(t, c2, f.newEvaluation(t, f.results).effectiveBase(f.guard, rng).Base, "B1..H1 then H1..H2 reach H2")
 }
 
+// sr:proves fileguard/passes-not-re-examined
 func TestIncremental_AFailInTheChainStopsIt(t *testing.T) {
 	f := newEvalFixture(t, nil).withSession(t)
 	c1 := f.commitDoc(t, "docs/a.md", "clean a")

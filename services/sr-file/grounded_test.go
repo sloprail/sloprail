@@ -16,6 +16,7 @@ import (
 // A rule judges the path an sr-file call spells. Through a symbolic link the
 // bytes would land somewhere else, so every verb refuses one — in the target or
 // in a directory on the way to it — and touches nothing.
+// sr:proves citations/file-command-writes-nothing-unless-exact
 func TestGroundedRefusesSymbolicLinks(t *testing.T) {
 	proj := t.TempDir()
 	outside := t.TempDir()

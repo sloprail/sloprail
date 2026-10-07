@@ -33,6 +33,7 @@ func yamlScalar(s string) string {
 // the session, and shows the gate to write instead. The match is not restated:
 // a gate reads the event under `event`, so the author writes the file-guard's
 // match with `path` as `event.path` (a glob as `event.path matches "<regex>"`).
+// sr:invariant loading/retired-file-guard-keys-are-refused
 func validateNoTranscriptRequire(g FileGuard) []Problem {
 	var moved []string
 	for _, r := range g.Require {

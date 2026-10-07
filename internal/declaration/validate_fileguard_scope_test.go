@@ -8,6 +8,7 @@ import (
 // A file-guard whose match cannot compile is told what the scope holds — every
 // variable, oldMarkers included, or an author reaching for the marker a write
 // removes is sent looking for a name the message never mentions.
+// sr:proves loading/trigger-match-compiles-at-load
 func TestValidateFileGuard_BadMatchNamesTheWholeScope(t *testing.T) {
 	problems := ValidateFileGuard(FileGuard{Match: `any(markerz, .kind == "x")`}, Env{})
 	for _, p := range problems {

@@ -90,6 +90,7 @@ func Verify(path string) error {
 // character of a word must be a letter, a digit or one of `_ . / - + = : , @ %`; anything else
 // is shell syntax and is refused, naming the character. The first word is resolved against dir
 // unless absolute; a bare first word (no `/`) is a program on PATH, left to the exec to find.
+// sr:invariant checks/check-that-cannot-answer-refuses
 func Argv(dir, script string) ([]string, error) {
 	words := strings.Fields(script)
 	if len(words) == 0 {

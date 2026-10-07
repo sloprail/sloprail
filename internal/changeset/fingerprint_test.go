@@ -27,6 +27,7 @@ func cp(t *testing.T, p Payload) string {
 	return s
 }
 
+// sr:proves cache/verdict-identity
 func TestGuardFingerprint_IsDeterministicAndFilesSensitive(t *testing.T) {
 	assert.Equal(t, GuardFingerprint("f", "", ""), GuardFingerprint("f", "", ""))
 	assert.NotEqual(t, GuardFingerprint("f", "", ""), GuardFingerprint("g", "", ""))
@@ -41,6 +42,7 @@ func TestGuardFingerprint_SubjectFingerprintMovesTheKey(t *testing.T) {
 }
 
 // The matched files' content is keyed; a SHA, a base or a transcript never is.
+// sr:proves cache/verdict-identity
 func TestFilesPart_ContentOnly(t *testing.T) {
 	a, b := samplePayload(), samplePayload()
 	b.Changeset.Base, b.Changeset.Head, b.TranscriptPath = "x", "y", "/other.jsonl"
@@ -56,6 +58,7 @@ func TestFilesPart_ContentOnly(t *testing.T) {
 
 // Only the quotes (and their pools) that ground the subject are keyed. Rewording an unrelated
 // commit message, or adding a commit, is not an input.
+// sr:proves cache/verdict-identity
 func TestCitationPart_QuotesMatter(t *testing.T) {
 	for name, mutate := range map[string]func(*Payload){
 		"citation quote": func(p *Payload) { p.Changeset.Citations[0].Citation.Quote = "another quote" },
@@ -72,6 +75,7 @@ func TestCitationPart_QuotesMatter(t *testing.T) {
 	}
 }
 
+// sr:proves cache/verdict-identity
 func TestCitationPart_CommitMessagesAreNotInputs(t *testing.T) {
 	for name, mutate := range map[string]func(*Payload){
 		"subject":      func(p *Payload) { p.Changeset.Commits[0].Subject = "different" },
@@ -89,6 +93,7 @@ func TestCitationPart_CommitMessagesAreNotInputs(t *testing.T) {
 }
 
 // A citation that grounds another subject's file is not this subject's input.
+// sr:proves cache/verdict-identity
 func TestCitationPart_OnlyTheSubjectsCitations(t *testing.T) {
 	a, b := samplePayload(), samplePayload()
 	b.Changeset.Citations = append(b.Changeset.Citations, Citation{Citation: transcript.Citation{Quote: "elsewhere"}, Commits: []string{"c9"}})
@@ -114,6 +119,7 @@ func TestCitationPart_TrailerKeyOrderDoesNotMatter(t *testing.T) {
 }
 
 // Real repositories: the same content committed twice, different SHAs.
+// sr:proves cache/verdict-identity
 func TestCitationPart_ARebuiltRangeWithTheSameContentHits(t *testing.T) {
 	build := func(date string) Payload {
 		t.Setenv("GIT_AUTHOR_DATE", date)
@@ -131,6 +137,7 @@ func TestCitationPart_ARebuiltRangeWithTheSameContentHits(t *testing.T) {
 }
 
 // The key is over blob ids: the same blob at the same path is the same key without any bytes read.
+// sr:proves cache/verdict-identity
 func TestFilesPart_FromBlobIDsNotBytes(t *testing.T) {
 	mk := func(blob, content string) Payload {
 		return Payload{Subject: Subject{Files: []string{"a.md"}}, Changeset: Changeset{Files: []File{{Path: "a.md", Status: "M", NewBlob: blob, NewContent: content}}}}
@@ -167,6 +174,7 @@ func TestGuardKey_FQNSubjectIsItsFingerprint(t *testing.T) {
 }
 
 // A deletion is keyed by what was deleted: the same path deleted with other old content is another change.
+// sr:proves cache/verdict-identity
 func TestFilesPart_DeletedFileKeyHasItsOldBlob(t *testing.T) {
 	mk := func(oldBlob, oldContent string) Payload {
 		return Payload{Subject: Subject{Files: []string{"a.md"}}, Changeset: Changeset{Files: []File{{Path: "a.md", Status: "D", OldBlob: oldBlob, OldContent: oldContent}}}}

@@ -76,6 +76,7 @@ func firstPass(all []string, stop string) []string {
 // All four record in order, and d refuses at the end so the write is denied (one
 // pass, no landing, no re-fire). The full order a,b,c,d is what proves the sequence
 // rather than a prefix of it.
+// sr:proves checks/first-refusal-ends-the-run
 func TestT010_01_ChecksRunInDeclaredOrder(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

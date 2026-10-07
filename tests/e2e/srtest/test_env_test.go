@@ -18,6 +18,7 @@ func runCasesEnv(t *testing.T, root string, env []string, args ...string) map[st
 // TestSrTestCaseEnvIsAnAllowlist: what the caller has set (GIT_DIR, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
 // XDG_CONFIG_HOME, its own TMPDIR, a stray FOO, an extra PATH entry) does not reach a case, and git in the
 // case ignores the caller's global and system configuration.
+// sr:proves authoring-tools/test-case-environment-is-hermetic
 func TestSrTestCaseEnvIsAnAllowlist(t *testing.T) {
 	callerDir := t.TempDir()
 	extraBin := filepath.Join(callerDir, "extra-bin")
@@ -102,6 +103,7 @@ echo "$(cd "$TMPDIR/.." && pwd -P)|$(cd .. && pwd -P)|$(basename "$TMPDIR")|$TMP
 
 // TestSrTestCredentialsDoNotReachACase: a judge is always a mock script, so the caller's credentials and
 // network settings are not passed to a case (nor is anything else not on the allowlist).
+// sr:proves authoring-tools/test-case-environment-is-hermetic
 func TestSrTestCredentialsDoNotReachACase(t *testing.T) {
 	probe := `test -z "${ANTHROPIC_API_KEY-}" || { echo "ANTHROPIC_API_KEY leaked"; exit 1; }
 test -z "${HTTPS_PROXY-}" || { echo "HTTPS_PROXY leaked"; exit 1; }

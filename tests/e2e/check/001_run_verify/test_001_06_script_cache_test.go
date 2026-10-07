@@ -19,6 +19,7 @@ func scriptProject(t *testing.T) (*Env, string, string, func() int) {
 }
 
 // T001_05s: a script's pass is reused: the same range again does not run the script.
+// sr:proves cache/finished-verdicts-reused
 func TestT001_05s_AScriptPassIsReusedWithoutRunningIt(t *testing.T) {
 	e, proj, base, ran := scriptProject(t)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -37,6 +38,7 @@ func TestT001_05s_AScriptPassIsReusedWithoutRunningIt(t *testing.T) {
 }
 
 // T001_06s: the same content after an amend, and after a squash (new SHAs and messages), is a hit.
+// sr:proves cache/verdict-identity
 func TestT001_06s_TheSameScriptContentAfterARewriteIsAHit(t *testing.T) {
 	e, proj, base, ran := scriptProject(t)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")
@@ -66,6 +68,7 @@ func TestT001_06s_TheSameScriptContentAfterARewriteIsAHit(t *testing.T) {
 
 // T001_11s: verify never executes a script: with nothing stored it is red ("missing") and the
 // script has not run; after `run` it is green and still ran once.
+// sr:proves cache/verify-read-only
 func TestT001_11s_VerifyExecutesNoScript(t *testing.T) {
 	e, proj, base, ran := scriptProject(t)
 	commitDoc(e, proj, "docs/a.md", "the release is Friday\n", "add a")

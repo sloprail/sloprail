@@ -40,6 +40,7 @@ func provenanceProject(t *testing.T) (*harness.Env, string) {
 
 // T041_28: a tool_result whose call is not in the record does not ground a
 // citation — it could answer a sub-agent dispatch as easily as a command.
+// sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestT041_28_ResultOfUnknownProvenanceIsNotCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
 	e.Run(proj, "s-041-28", prompt, Turns("done", harness.ToolResult("elsewhere", "ORPHAN-E2E-5521 all green")))
@@ -152,6 +153,7 @@ func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 // output. The answer sits in a tool_result block answering the AskUserQuestion
 // call, so only the answer-envelope check keeps it out of the tool-output pool:
 // it grounds a --cite:user, and does not ground a --cite:tool_result.
+// sr:proves citations/user-pool-is-the-persons-own-words
 func TestT041_32_AnAnswerIsNotToolOutput(t *testing.T) {
 	e, proj := provenanceProject(t)
 	ask, answer := harness.AskUserQuestion("q1", "which retry budget?", "ANSWER-E2E-6120 five retries")
@@ -190,6 +192,7 @@ func readFile(t *testing.T, path string) string {
 // front — with no rule requiring a citation at all — and told why: the Bash it
 // runs cannot tell sr-file it is a sub-agent, the hook can. The root's own
 // sr-file failing the same way is left to say its own words.
+// sr:proves citations/user-pool-is-the-root-conversation
 func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

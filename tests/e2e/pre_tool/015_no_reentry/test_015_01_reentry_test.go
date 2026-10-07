@@ -89,6 +89,7 @@ func maxDepth(t *testing.T, lines []string) int {
 // sr-agent execs a `claude` that the harness has shimmed to the mock — the same
 // wiring a user installing this would get, with only the harness binary
 // substituted.
+// sr:proves checks/check-launched-agent-does-not-reenter-its-rule
 func TestT015_01_LaunchedAgentDoesNotReenterTheRuleThatLaunchedIt(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

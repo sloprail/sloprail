@@ -52,6 +52,7 @@ func runFindCmd(dir string, args ...string) (string, int) {
 	return out.String(), exitCode(err)
 }
 
+// sr:proves cli/mark-find-reads-committed-markers-only
 func TestFind_CommittedMarkersWithEveryLeader(t *testing.T) {
 	dir := gitRepo(t)
 	write(t, dir, ".github/workflows/a.yml", "jobs:\n  # sr:ci verify\n  x: 1\n")
@@ -69,6 +70,7 @@ func TestFind_CommittedMarkersWithEveryLeader(t *testing.T) {
 	}
 }
 
+// sr:proves cli/mark-find-reads-committed-markers-only
 func TestFind_UncommittedIsNotFound(t *testing.T) {
 	dir := gitRepo(t)
 	write(t, dir, "a.yml", "x: 1\n")
@@ -100,6 +102,7 @@ func TestFind_TextThatIsNotAMarkerIsNotOne(t *testing.T) {
 	}
 }
 
+// sr:proves cli/mark-find-reads-committed-markers-only
 func TestFind_ErrorsAreExitTwo(t *testing.T) {
 	if _, code := runFindCmd(t.TempDir(), "ci"); code != 2 {
 		t.Fatalf("not a repository: exit %d, want 2", code)

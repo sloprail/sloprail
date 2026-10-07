@@ -42,6 +42,8 @@ func runCount(t *testing.T, ledger string) int {
 }
 
 // T001_30: an error is refused, not cached; once the check works, the same content is judged afresh.
+// sr:proves checks/error-reports-are-not-answers
+// sr:proves cache/unfinished-never-stored
 func TestT001_30_AnErroredCheckIsRetriedNotReplayed(t *testing.T) {
 	e, proj := session(t)
 	dir := t.TempDir()
@@ -77,6 +79,8 @@ func TestT001_30_AnErroredCheckIsRetriedNotReplayed(t *testing.T) {
 }
 
 // T001_31: a check's own refusal is a verdict: the second run replays it without running the check.
+// sr:proves checks/error-reports-are-not-answers
+// sr:proves cache/finished-verdicts-reused
 func TestT001_31_ACheckRefusalIsStillReplayed(t *testing.T) {
 	e, proj := session(t)
 	ledger := filepath.Join(t.TempDir(), "ledger")

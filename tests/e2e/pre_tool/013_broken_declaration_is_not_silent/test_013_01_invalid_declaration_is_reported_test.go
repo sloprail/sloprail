@@ -79,6 +79,7 @@ const refuseScript = "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"guarded is 
 // An invalid guardrail blocks nothing. The fault belongs to the guardrail author
 // and is reported where the author looks (session start and stderr), not to the
 // agent, which did not write the file and often cannot repair it.
+// sr:proves gates/broken-declaration-denies-nothing
 func TestT013_01_MalformedMatchDoesNotStopTheWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -119,6 +120,7 @@ func TestT013_02_TheSameRuleSpelledRightRefuses(t *testing.T) {
 // T013_03: a broken rule stops nothing, on any path.
 //
 // A rule that cannot load refuses neither the path its match named nor any other.
+// sr:proves gates/broken-declaration-denies-nothing
 func TestT013_03_ABrokenRuleStopsNothing(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -241,6 +243,7 @@ func TestT013_08_TheRemedyIsNotRefused(t *testing.T) {
 //
 // The guard against the "blocks nothing" leaking into "permits everything": a
 // project whose declarations all parse must still enforce them.
+// sr:proves gates/broken-declaration-denies-nothing
 func TestT013_09_ASoundProjectStillEnforces(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

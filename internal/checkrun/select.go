@@ -31,6 +31,7 @@ func Markers(text string) []changeset.Marker {
 // `oldMarkers`, `trailers` (the range's, key to values). An
 // evaluation error is returned, never read as "not selected": a match that could
 // not decide has not decided the file is none of the rule's business.
+// sr:invariant matching/unevaluable-never-passes
 func Selector(match *guardrail.Matcher) func(changeset.Scope) (bool, error) {
 	return func(s changeset.Scope) (bool, error) {
 		return match.Match(event.Event{Kind: changeset.Kind, Fields: map[string]any{

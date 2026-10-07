@@ -54,6 +54,7 @@ func queueOp() string {
 // fork to fork until it came back to one it had seen. A second compaction in
 // one of the forks, resumed into two more files, made the same loop one level
 // further out.
+// sr:proves session/identity-survives-reissued-ids
 func TestStableSessionIDForksOfACompactionConverge(t *testing.T) {
 	p := newProject(t)
 

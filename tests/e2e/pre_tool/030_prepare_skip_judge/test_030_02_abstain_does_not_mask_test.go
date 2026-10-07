@@ -48,6 +48,7 @@ exit 0
 // abstaining judge does not mask a later check's refusal. The judge model is never
 // invoked (no prompt captured), proving the refusal came from the second check, not
 // a leaked judge.
+// sr:proves checks/prepare-skip-abstains
 func TestT030_03_AbstainDoesNotMaskALaterRefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -81,6 +82,7 @@ func TestT030_03_AbstainDoesNotMaskALaterRefusal(t *testing.T) {
 // T030_04: the judge abstains (skip-me path), and the SECOND check PASSES (no VETO)
 // -> the write is PERMITTED. The abstain drops out and the passing gate leaves the
 // chain with no refusal. The judge model is still never invoked.
+// sr:proves checks/prepare-skip-abstains
 func TestT030_04_AbstainThenPassPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

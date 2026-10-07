@@ -79,6 +79,7 @@ func observeErr(o fakeObserved) ([]event.Event, error) {
 
 // --- the three classifications ----------------------------------------------
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_AbsentBeforeAndPresentNowIsACreate(t *testing.T) {
 	root := tree(t, "new.md")
 
@@ -93,6 +94,7 @@ func TestObserved_AbsentBeforeAndPresentNowIsACreate(t *testing.T) {
 	assert.Equal(t, "new.md", events[0].Fields[FieldPath])
 }
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_PresentBeforeAndPresentNowIsAnUpdate(t *testing.T) {
 	root := tree(t, "existing.md")
 
@@ -107,6 +109,7 @@ func TestObserved_PresentBeforeAndPresentNowIsAnUpdate(t *testing.T) {
 	assert.Equal(t, "existing.md", events[0].Fields[FieldPath])
 }
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_PresentBeforeAndGoneNowIsADelete(t *testing.T) {
 	// Nothing is written to the tree: the file is gone, which is the case that
 	// breaks code assuming it can read what it reports.
@@ -123,6 +126,7 @@ func TestObserved_PresentBeforeAndGoneNowIsADelete(t *testing.T) {
 	assert.Equal(t, "gone.md", events[0].Fields[FieldPath])
 }
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_AbsentBeforeAndGoneNowIsNoEvent(t *testing.T) {
 	// Created and removed inside the same cycle: no difference against the
 	// baseline and nothing on disk, so there is no file for a rule to be about.
@@ -209,6 +213,7 @@ func TestObserved_DeleteOfAFileWhoseParentIsAlsoGone(t *testing.T) {
 
 // --- each Post kind carries the contents its declaration names --------------
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_EachKindCarriesItsDeclaredContents(t *testing.T) {
 	// A create has only newContent (read from disk, where the file now sits); a
 	// delete has only oldContent (the baseline bytes, no longer on disk); an
@@ -255,6 +260,7 @@ func TestObserved_EachKindCarriesItsDeclaredContents(t *testing.T) {
 
 // --- one event per file, in the order given ---------------------------------
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_OneEventPerFile(t *testing.T) {
 	root := tree(t, "a.md", "b.md")
 
@@ -474,6 +480,7 @@ func TestObserved_TwoSpellingsOfOneFileClassifyTheSameEitherOrder(t *testing.T) 
 
 // --- what it leaves out ------------------------------------------------------
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_UntouchedFilesStaySilent(t *testing.T) {
 	// The tree holds far more than the cycle changed. Only what the difference
 	// named produces an event — the module never walks the tree itself, which
@@ -545,6 +552,7 @@ func TestObserved_PayloadIsNotObserved(t *testing.T) {
 
 // --- classification does not consult the pending prediction ------------------
 
+// sr:proves events/post-changes-are-the-tree-diff
 func TestObserved_ClassificationIgnoresWhatAToolClaimed(t *testing.T) {
 	// The same path, the same tree, classified purely on the baseline fact. A
 	// write tool that announced a create over a file that was already there
@@ -623,6 +631,7 @@ func TestObserved_ProducesOnlyDeclaredKinds(t *testing.T) {
 // A Post create or update of a file that cannot be read safely — a link to a
 // FIFO, whose read blocks, or to a device, whose read never ends — is reported
 // with newContentKnown false and no bytes, not as an empty file, and returns.
+// sr:proves events/unknown-bytes-are-flagged
 func TestObserved_AnUnreadableSettledFileIsFlaggedNotRead(t *testing.T) {
 	root := tree(t)
 	fifo := filepath.Join(t.TempDir(), "fifo")

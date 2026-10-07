@@ -77,6 +77,7 @@ const newFormatGuardHook = ".sloprail/file-guard/mine/check.sh"
 // there is nothing — the file is inside an install cache the project never wrote
 // to. Without the plugin in the message a user meets a rule they never wrote and
 // cannot find.
+// sr:proves gates/refusal-names-gate-and-plugin
 func TestT026_01_PluginGuardrailFiresAndNamesThePlugin(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

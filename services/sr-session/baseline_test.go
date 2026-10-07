@@ -89,6 +89,7 @@ func TestEnsureBaseline_RecordsTheCommitAndTheBranch(t *testing.T) {
 	assert.Equal(t, "main", branch)
 }
 
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestEnsureBaseline_RecordedOnceAndNotRevised(t *testing.T) {
 	// The point is taken once and does not follow HEAD. An agent that commits
 	// mid-session must not push its own work — including work a hook refused —
@@ -145,6 +146,7 @@ func divergentBranch(t *testing.T, dir, name string) string {
 	return tip
 }
 
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestEnsureBaseline_BranchSwitchRetakesThePoint(t *testing.T) {
 	// A point recorded on the line the tree left describes a history it no
 	// longer has, and the difference against it would be every commit between
@@ -199,6 +201,7 @@ func TestEnsureBaseline_SwitchingBackIsAlsoASwitch(t *testing.T) {
 	assert.Equal(t, mainCommit, commit)
 }
 
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestEnsureBaseline_NewBranchOffTheSessionsOwnWorkDoesNotMoveThePoint(t *testing.T) {
 	// F3. `git checkout -b` changes the name and moves no history: everything
 	// the session committed is still reachable, so it is all still the
@@ -229,6 +232,7 @@ func TestEnsureBaseline_NewBranchOffTheSessionsOwnWorkDoesNotMoveThePoint(t *tes
 		"the point must still be where the session began, so the agent's own commit stays in the difference")
 }
 
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestEnsureBaseline_RenamingTheBranchDoesNotMoveThePoint(t *testing.T) {
 	// F3. `git branch -m` is a pure rename: same commit, same history, nothing
 	// left. Treating it as a switch re-takes the point past the session's own

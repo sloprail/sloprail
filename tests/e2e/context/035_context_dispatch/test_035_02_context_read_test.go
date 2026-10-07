@@ -71,6 +71,8 @@ exit 1
 // it enters this cycle). The Stop gate requires the context active — it is — and
 // its check reads the payload's mode=deterministic and passes. The turn ends
 // clean, and the gate's verdict is pass.
+// sr:proves contexts/gate-sees-context-activated-this-turn
+// sr:proves contexts/gate-requires-context
 func TestT035_03_GateReadsContextActiveAndPayload(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -107,6 +109,7 @@ func TestT035_03_GateReadsContextActiveAndPayload(t *testing.T) {
 // context inactive, so the gate's require fails and the turn is blocked. This
 // proves the pass in T035_03 was the context being read, not the gate always
 // passing.
+// sr:proves contexts/gate-requires-context
 func TestT035_04_GateBlocksWhenContextInactive(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

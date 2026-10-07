@@ -64,6 +64,7 @@ checks:
 // another — through ordinary tool calls, with nothing telling the engine which
 // is which. The classification can only have come from comparing the tree
 // against where the session began.
+// sr:proves events/post-changes-are-the-tree-diff
 func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -161,6 +162,7 @@ func TestT006_02_WorkInSeparateCommitsIsOneChangeset(t *testing.T) {
 // cycle touched, and it names no file. The last is the one with a wrong answer
 // available: a Stop carrying a path would let a matcher narrow it to one
 // file, and a rule about the cycle as a whole would then run per file.
+// sr:proves events/turn-end-every-turn
 func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -13,6 +13,7 @@ import (
 
 // T041_72: cited change, uncited tweak, uncited revert of the tweak: the file is back to the
 // cited state, so it is grounded by that commit's citation.
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestT041_72_RevertingToACitedStateIsGrounded(t *testing.T) {
 	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-72", prompt, Turns("done",

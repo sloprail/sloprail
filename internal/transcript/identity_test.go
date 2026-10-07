@@ -29,6 +29,7 @@ func TestStableSessionIDResolvesOrigin(t *testing.T) {
 // Code re-forks its session id mid-conversation and writes a second transcript
 // continuing the same message tree. Both must resolve to the same identity, or
 // everything stored under the first is abandoned the moment the fork happens.
+// sr:proves session/identity-survives-reissued-ids
 func TestStableSessionIDForkPairConverges(t *testing.T) {
 	p := newProject(t)
 	// The shared history: the fork copies it, so both files carry the same
@@ -242,6 +243,7 @@ func TestStableSessionIDDegradesWhenLogicalParentIsNowhere(t *testing.T) {
 // direction of the fork case: two genuinely unrelated conversations must never
 // merge. True by construction — only one transcript's own chain is ever read —
 // but pinned, because a merge would be as damaging as a split.
+// sr:proves session/identity-survives-reissued-ids
 func TestStableSessionIDKeepsIndependentConversationsApart(t *testing.T) {
 	p := newProject(t)
 	one := p.write("conversation-one", root("origin-one"), record("c1", "origin-one"))

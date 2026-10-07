@@ -60,6 +60,7 @@ func supportedExts() string {
 // front matter block (between the opening and closing `---` delimiters) — markdown has no
 // general-purpose comment syntax, so "#" is only unambiguous there; a target line outside front
 // matter is a hard error rather than silently emitting a stray markdown heading.
+// sr:invariant cli/mark-apply-is-idempotent
 func WriteMarker(absPath, kind, fqn string, line int) error {
 	leader, err := CommentLeader(absPath)
 	if err != nil {

@@ -81,6 +81,7 @@ func unix(t time.Time) int64 {
 
 // StartAgent records that an agent began (its SubagentStart): a new agent is running, and one
 // seen before is running again (a finished agent the dispatcher resumed).
+// sr:invariant subagents/agent-registry-survives-compaction
 func (s *store) StartAgent(sig AgentSignal) error {
 	if err := sig.check(); err != nil {
 		return err

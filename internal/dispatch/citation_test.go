@@ -57,6 +57,7 @@ func TestRequireCitation(t *testing.T) {
 
 // A prerequisite's `when` script decides whether it applies: only exit 1
 // waives it; exit 0, any other code, or a script that cannot run applies it.
+// sr:proves checks/when-waives-only-on-exit-one
 func TestRequireWhen(t *testing.T) {
 	dir := t.TempDir()
 	writeScript := func(name, body string) string {
@@ -89,6 +90,7 @@ func TestRequireWhen(t *testing.T) {
 
 // A `when` script that applies its prerequisite may say, on stdout, how to meet
 // it in this case; the refusal carries that after the engine's own remedy.
+// sr:proves checks/when-waives-only-on-exit-one
 func TestRequireWhenHint(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "hint.sh"),

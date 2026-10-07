@@ -68,6 +68,7 @@ exit 0
 // value the engine mints and verifies, or provenance read from the transcript
 // the way a10n reads its check-run link. Both are real options and neither is
 // this task.
+// sr:proves checks/check-launched-agent-does-not-reenter-its-rule
 func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -86,6 +86,7 @@ func recordCalls(entries []LinedEntry) map[string]recordCall {
 // citableResults returns, for each tool_use id in the record, whether the
 // result answering it is a tool's own output. An id not in the map — a call not
 // in the record — is not.
+// sr:invariant citations/tool-result-pool-is-genuine-tool-output
 func citableResults(entries []LinedEntry) map[string]bool {
 	calls := recordCalls(entries)
 	citable := map[string]bool{}

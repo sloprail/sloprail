@@ -47,6 +47,7 @@ func TestFindFileGuard_AmbiguityIsAnErrorNotAFirstWins(t *testing.T) {
 	assert.True(t, g.Origin.FromPlugin(), "the qualified name picks the plugin's")
 }
 
+// sr:proves fileguard/unloadable-guard-refuses
 func TestBrokenFileGuards_OnlyFileGuardsThatFailedToLoadAreNamed(t *testing.T) {
 	var none declaration.Loaded
 	assert.Empty(t, brokenFileGuards(none), "no file-guards and none invalid is clean")

@@ -68,6 +68,7 @@ checks:
 // write landed would pass on an engine that had never run the check, and the
 // ledger below is what separates those: the rule WAS asked, said its piece, and
 // its piece went nowhere.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT020_01_AnObjectionAtExitZeroPermitsAndIsNotDelivered(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -107,6 +108,7 @@ exit 0
 // own refusal vocabulary at the wrong exit status, this one is a message with no
 // structure at all — the thing a debugging `echo` leaves behind. If any input
 // could produce a third outcome it would be one of these two.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT020_02_ProsePrintedAtExitZeroIsNeitherARefusalNorDelivered(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -143,6 +145,7 @@ exit 0
 // The exit status governs, and the printed reason is used only as the wording.
 // Both halves are asserted: the work was stopped, and the agent was told
 // something rather than nothing.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT020_03_AClaimOfApprovalDoesNotSurviveANonZeroExit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -181,6 +184,7 @@ exit 1
 // Without it, T020_01 and T020_02 are satisfied by an engine that permits
 // everything, and T020_03 by one that refuses everything. Two of those three
 // would be green on an engine with no enforcement whatsoever.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT020_04_BothOutcomesAreReachable(t *testing.T) {
 	e := New(t)
 
@@ -221,6 +225,7 @@ func TestT020_04_BothOutcomesAreReachable(t *testing.T) {
 // Both ledgers are asserted because the claim is about two rules. Two gates on
 // the same event both run when the first PERMITS, so this says both were reached
 // — the adviser (which permits at exit 0) is asked, and the blocker refuses.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT020_05_AnObjectionCombinedWithARefusalIsJustARefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

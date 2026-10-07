@@ -59,6 +59,7 @@ import (
 // for this test, 300s leaves enormous margin regardless.
 const testCheckTimeout = "4s"
 
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT019_09_AnExpiredHookIsKilledAndRefuses(t *testing.T) {
 	e := New(t)
 	e.SetCheckTimeout(testCheckTimeout)
@@ -103,6 +104,7 @@ func TestT019_09_AnExpiredHookIsKilledAndRefuses(t *testing.T) {
 // It must NOT say "exit -1". A signal-killed process has no exit status of its
 // own; ExitCode() == -1 is Go's sentinel for "died by signal", and printing it
 // sends the author to debug an exit path that was never taken.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 	e := New(t)
 	e.SetCheckTimeout(testCheckTimeout)
@@ -143,6 +145,7 @@ func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 // writes a file. If the group kill worked, that descendant is dead long before
 // it writes and the file never appears. If only the shell was signalled, it
 // survives and leaves its mark — so the file's existence IS the leak.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT019_09d_TheKillReachesTheHooksDescendants(t *testing.T) {
 	e := New(t)
 	e.SetCheckTimeout(testCheckTimeout)
@@ -180,6 +183,7 @@ func TestT019_09d_TheKillReachesTheHooksDescendants(t *testing.T) {
 // It asserts the check's own verdict governed, not merely that something
 // refused. An engine that killed every slow check would also "refuse" here, and
 // only the check's distinctive text tells the two apart.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT019_09c_ASlowHookInsideTheDeadlineStillDecides(t *testing.T) {
 	e := New(t)
 	e.SetCheckTimeout(testCheckTimeout)

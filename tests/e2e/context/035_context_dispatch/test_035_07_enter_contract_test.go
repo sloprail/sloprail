@@ -63,6 +63,7 @@ func pathContextProject(t *testing.T) (*harness.Env, string) {
 // T035_15: an enter that exits 0 and prints NOTHING activates an inactive
 // context — the first trigger, so there is no payload to keep and the payload is
 // empty. A silent clean exit is not a "no".
+// sr:proves contexts/enter-activates-and-replaces-payload
 func TestT035_15_SilentCleanEnterActivates(t *testing.T) {
 	e, proj := pathContextProject(t)
 
@@ -85,6 +86,7 @@ func TestT035_15_SilentCleanEnterActivates(t *testing.T) {
 
 // T035_16: a silent clean enter on an ACTIVE context keeps the payload the last
 // printing enter set — it does not clear it, and does not deactivate.
+// sr:proves contexts/enter-activates-and-replaces-payload
 func TestT035_16_SilentCleanEnterKeepsThePayload(t *testing.T) {
 	e, proj := pathContextProject(t)
 
@@ -108,6 +110,7 @@ func TestT035_16_SilentCleanEnterKeepsThePayload(t *testing.T) {
 
 // T035_17: a NON-ZERO enter declines — an inactive context stays inactive.
 // The control for T035_15: the only difference is the exit code.
+// sr:proves contexts/nonzero-enter-declines
 func TestT035_17_NonZeroEnterDeclines(t *testing.T) {
 	e, proj := pathContextProject(t)
 
@@ -123,6 +126,7 @@ func TestT035_17_NonZeroEnterDeclines(t *testing.T) {
 
 // T035_18: a NON-ZERO enter on an ACTIVE context leaves it exactly as it was —
 // still active, payload intact. Declining is not `exit` saying done.
+// sr:proves contexts/nonzero-enter-declines
 func TestT035_18_NonZeroEnterLeavesAnActiveContextAsItWas(t *testing.T) {
 	e, proj := pathContextProject(t)
 

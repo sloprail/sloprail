@@ -87,6 +87,7 @@ func toolEventOf(t *testing.T, line string) (kind, tool, inputRaw string) {
 
 // T029_01: a gate triggering on PreToolUse and narrowed by tool fires on a tool
 // call that no file or command event covers.
+// sr:proves events/any-tool-call-is-an-event
 func TestT029_01_PreToolUseBindsToATool(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -120,6 +121,7 @@ func TestT029_01_PreToolUseBindsToATool(t *testing.T) {
 // The control for the trigger's match. Without it, T029_01 would pass against an
 // engine that fired the gate on every tool and ignored the `event.tool ==`
 // narrowing — the event gate-eligible but the match inert.
+// sr:proves events/any-tool-call-is-an-event
 func TestT029_02_TheMatcherNarrowsByTool(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

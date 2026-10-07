@@ -43,6 +43,7 @@ func mustCode(t *testing.T, r harness.Result, want int, what string) {
 
 // T001_20: a fail, then the fix, then verify: verify sees the newest verdict, never the older
 // one, in the process that follows the run and in every later one.
+// sr:proves cache/finished-verdicts-reused
 func TestT001_20_VerifySeesTheNewestVerdictAfterEachRun(t *testing.T) {
 	e, proj, names, base := manyRules(t, 3)
 	commitDoc(e, proj, "docs/a.md", "FORBIDDEN\n", "add a")
@@ -101,6 +102,7 @@ func TestT001_21_AResultPulledFromAnotherCloneIsSeen(t *testing.T) {
 // T001_22: sequential passes B1..H1 then H1..H2 let verify over B1..H2 find every rule's passes
 // (the effective base is H2 for each); a pass over a NARROW range does not (B1..B2 was never
 // judged); a branch that does not contain the passes' heads gets no advance from them.
+// sr:proves fileguard/passes-not-re-examined
 func TestT001_22_EveryRulesEffectiveBaseChains(t *testing.T) {
 	e, proj, _, base := manyRules(t, 8)
 	h1 := commitDocSHA(e, proj, "docs/a.md", "a\n", "add a")
@@ -130,6 +132,7 @@ func TestT001_22_EveryRulesEffectiveBaseChains(t *testing.T) {
 
 // T001_23: many rules at once (the pool runs them in parallel) give a verify the same words as
 // one rule at a time: every rule that refuses is named with its reason, and fixed content reports none.
+// sr:proves fileguard/refusals-independent
 func TestT001_23_ManyRulesRefuseExactlyAsEachWouldAlone(t *testing.T) {
 	e, proj, names, base := manyRules(t, 12)
 	commitDoc(e, proj, "docs/a.md", "FORBIDDEN\n", "add a")

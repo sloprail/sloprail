@@ -62,6 +62,7 @@ func TestAcrossSessions_TheFirstSessionContainingTheQuoteMustMatchOnce(t *testin
 	assert.Contains(t, res.Msg, "ambiguous", "an ambiguity is not resolved by looking further back")
 }
 
+// sr:proves citations/user-pool-is-the-persons-own-words
 func TestAcrossSessions_ModelTextIsNeverCitable(t *testing.T) {
 	p := newProject(t)
 	cur := p.write("cur", userMsg("u1", "start"), assistantText("a1", "u1", "MODELWORDS were said by the model"))
@@ -70,6 +71,7 @@ func TestAcrossSessions_ModelTextIsNeverCitable(t *testing.T) {
 	require.ErrorAs(t, err, &res)
 }
 
+// sr:proves citations/pool-is-not-borrowed
 func TestAcrossSessions_ToolPoolIsSeparateFromTheUserPool(t *testing.T) {
 	p := newProject(t)
 	cur := p.write("cur",
@@ -93,6 +95,7 @@ func TestAcrossSessions_NotFoundAnywhereIsAResolutionError(t *testing.T) {
 	require.ErrorAs(t, err, &res)
 }
 
+// sr:proves citations/unresolved-trailers-are-reported-not-dropped
 func TestAcrossSessions_AnUnreadableTranscriptDoesNotStopTheSearchButIsReported(t *testing.T) {
 	p := newProject(t)
 	cur := p.write("cur", userMsg("u1", "hello"))

@@ -29,6 +29,7 @@ const maxStop = 90 * time.Second
 // /dev/zero (a FIFO cannot be committed; this is the committable endless file) is
 // read from git as the link it is; a 30 MB blob is handed over whole. The check
 // refuses each by name; replacing them with ordinary files passes the same session.
+// sr:proves fileguard/unreadable-range-refuses
 func TestT040_01_UnreadableOrOversizedCommittedFilesFailClosed(t *testing.T) {
 	cases := []struct {
 		name, path, make string

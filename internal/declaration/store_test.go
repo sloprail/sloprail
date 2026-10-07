@@ -96,6 +96,7 @@ func hasKind(iv Invalid, kind error) bool {
 
 // A project with no `.sloprail` directory has no declarations — the ordinary
 // state of a project that has not adopted any, not an error.
+// sr:proves loading/rule-discovery
 func TestLoad_NoDotDir(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "does-not-exist")
 	loaded, err := New(root).Load(testRegistry(t))
@@ -108,6 +109,7 @@ func TestLoad_NoDotDir(t *testing.T) {
 }
 
 // An empty `.sloprail` directory is the same: nothing adopted, nothing wrong.
+// sr:proves loading/rule-discovery
 func TestLoad_EmptyDotDir(t *testing.T) {
 	loaded := loadOK(t, map[string]string{})
 	assert.Empty(t, loaded.FileGuards)
@@ -156,6 +158,7 @@ checks:
 // File-guard: refusals
 // ---------------------------------------------------------------------------
 
+// sr:proves loading/rule-must-decide-something
 func TestLoad_FileGuard_MissingMatch(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/nomarch/file-guard.yaml": `
@@ -169,6 +172,7 @@ checks:
 
 // The singular `marker.kind` the older example vocabulary used is refused — the
 // file scope exposes `markers` (list), and `marker` is out of scope.
+// sr:proves loading/trigger-match-compiles-at-load
 func TestLoad_FileGuard_SingularMarkerRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/bad/file-guard.yaml": `
@@ -216,6 +220,7 @@ checks:
 // The quoted/spaced form that genuinely reaches for an out-of-scope bare variable
 // IS refused — e.g. `refactoring.active == true`, which carries whitespace and so
 // routes to the expression parser, where `refactoring` is not in the file scope.
+// sr:proves loading/trigger-match-compiles-at-load
 func TestLoad_FileGuard_OutOfScopeVariableInExpressionRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/bad/file-guard.yaml": `
@@ -248,6 +253,7 @@ require:
 
 // A file-guard cannot see the session, so `require: skill` / `require: context`
 // is refused at load, and the message carries the gate to write instead.
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestLoad_FileGuard_SessionRequireIsRefusedWithTheGate(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/require-topic/file-guard.yaml": `
@@ -263,6 +269,7 @@ require:
 
 // A file-guard's match has no `context`: an identifier use is refused (with the
 // gate advice), while the word inside a string literal still loads.
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestLoad_FileGuard_MatchReadingContextIsRefused(t *testing.T) {
 	for _, m := range []string{`context["x"].active`, `any(markers, context["x"].active)`, `path contains "a" and context["x"].active`} {
 		iv := loadOneInvalid(t, map[string]string{
@@ -286,6 +293,7 @@ func TestLoad_FileGuard_ContextInAStringLiteralLoads(t *testing.T) {
 // A file-guard with neither require nor checks would select a file and decide
 // nothing — refused, the same at-least-one rule the gate has (ErrAtLeastOne, not a
 // per-field missing-field fault).
+// sr:proves loading/rule-must-decide-something
 func TestLoad_FileGuard_NeitherRequireNorChecks(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/nochecks/file-guard.yaml": `
@@ -624,6 +632,7 @@ checks:
 }
 
 // A gate with neither require nor checks would wake and do nothing — refused.
+// sr:proves loading/rule-must-decide-something
 func TestLoad_Gate_NeitherRequireNorChecks(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/empty/gate.yaml": `
@@ -635,6 +644,7 @@ on:
 }
 
 // A gate may not wake on a Post file event — the action already landed.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Gate_PostEventRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/late/gate.yaml": `
@@ -649,6 +659,7 @@ checks:
 }
 
 // The PostFileWrite alias is a context's alone — a gate naming it is refused.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Gate_PostFileWriteAliasRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/late/gate.yaml": `
@@ -663,6 +674,7 @@ checks:
 
 // A gate naming a kind no nature has is refused with a diagnostic listing what a
 // gate admits.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Gate_UnknownKindRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/typo/gate.yaml": `
@@ -677,6 +689,7 @@ checks:
 }
 
 // A gate trigger's match reads the event under `event`; a bare `path` is refused.
+// sr:proves loading/trigger-match-compiles-at-load
 func TestLoad_Gate_BareEventFieldRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/bare/gate.yaml": `
@@ -691,6 +704,8 @@ checks:
 }
 
 // A gate trigger's match reading a misspelled event field is refused at load.
+// sr:proves loading/trigger-match-compiles-at-load
+// sr:proves matching/checked-at-load
 func TestLoad_Gate_MisspelledEventFieldRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/typo/gate.yaml": `
@@ -709,6 +724,8 @@ checks:
 // `.flags.X` is the list of that flag's occurrences, so `.flags.tag == "next"`
 // could never match — the gate loaded and permitted `--tag=next` in silence.
 // The list spelling of the same rule loads.
+// sr:proves loading/trigger-match-compiles-at-load
+// sr:proves matching/flag-values-are-lists
 func TestLoad_Gate_FlagComparedToAStringRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/next-tag/gate.yaml": `
@@ -733,6 +750,7 @@ checks:
 }
 
 // A gate on Stop is legal (the one non-file/command event a gate carries).
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Gate_StopIsValid(t *testing.T) {
 	loadOK(t, map[string]string{
 		"gate/stopgate/gate.yaml": `
@@ -768,6 +786,8 @@ require:
 // oldContent which PreFileCreate lacks — so a match on event.oldContent is valid
 // for update and NOT for create, and must be refused because the alias covers
 // create too.
+// sr:proves loading/trigger-match-compiles-at-load
+// sr:proves matching/checked-at-load
 func TestLoad_Gate_PreFileWriteAliasRejectsFieldOnlyOneKindHas(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/write/gate.yaml": `
@@ -804,6 +824,7 @@ exit: ./exit.sh
 
 // A context may wake on a Post file event — the whole reason its vocabulary is
 // wider than a gate's.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Context_PostEventValid(t *testing.T) {
 	loadOK(t, map[string]string{
 		"context/people/context.yaml": `
@@ -817,6 +838,7 @@ exit: ./exit.sh
 }
 
 // A context may wake on PostTagWrite, reading event.tags.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Context_PostTagWriteValid(t *testing.T) {
 	loadOK(t, map[string]string{
 		"context/research/context.yaml": `
@@ -830,6 +852,7 @@ exit: ./exit.sh
 }
 
 // Stop is intentionally never a context ENTRY event — a Stop is where exit runs.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_Context_StopRefused(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"context/bad/context.yaml": `
@@ -843,6 +866,7 @@ exit: ./exit.sh
 	assert.Contains(t, iv.Reason, "Stop")
 }
 
+// sr:proves loading/rule-must-decide-something
 func TestLoad_Context_MissingEnter(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"context/noenter/context.yaml": `
@@ -855,6 +879,7 @@ exit: ./exit.sh
 	assert.Contains(t, iv.Reason, "enter")
 }
 
+// sr:proves loading/rule-must-decide-something
 func TestLoad_Context_MissingExit(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"context/noexit/context.yaml": `
@@ -867,6 +892,7 @@ enter: ./enter.sh
 	assert.Contains(t, iv.Reason, "exit")
 }
 
+// sr:proves loading/rule-must-decide-something
 func TestLoad_Context_NoTriggers(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"context/notrig/context.yaml": `
@@ -1165,6 +1191,7 @@ checks:
 // Malformed / parse failures
 // ---------------------------------------------------------------------------
 
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestLoad_Malformed_UnparseableYAML(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/bad/gate.yaml": "on: [ this is not valid",
@@ -1175,6 +1202,7 @@ func TestLoad_Malformed_UnparseableYAML(t *testing.T) {
 // A nature folder with no yaml inside is a half-written declaration — refused by
 // name rather than silently skipped, so the author sees the folder they meant to
 // fill.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestLoad_Malformed_FolderWithoutYAML(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "gate", "empty-folder"), 0o755))
@@ -1188,6 +1216,7 @@ func TestLoad_Malformed_FolderWithoutYAML(t *testing.T) {
 // One bad declaration does not disarm the others
 // ---------------------------------------------------------------------------
 
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestLoad_OneBadDoesNotDisarmOthers(t *testing.T) {
 	root := writeDecl(t, map[string]string{
 		"gate/good/gate.yaml": `
@@ -1213,6 +1242,7 @@ checks:
 
 // Every fault is reported, not just the first — an author fixing a declaration
 // sees all of it at once.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestLoad_ReportsEveryFault(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"gate/many/gate.yaml": `
@@ -1256,6 +1286,7 @@ checks:
 
 // But the on-kind check does NOT need a registry — a Post event on a gate is
 // refused even with a nil registry.
+// sr:proves loading/event-kinds-by-nature
 func TestLoad_NilRegistry_StillChecksOnKinds(t *testing.T) {
 	root := writeDecl(t, map[string]string{
 		"gate/late/gate.yaml": `
@@ -1282,6 +1313,7 @@ exit: ./exit.sh
 
 // `preventive:` was removed: a file-guard carrying it — with any value — is
 // refused at load, and the refusal says how to split it.
+// sr:proves loading/retired-file-guard-keys-are-refused
 func TestLoad_FileGuard_PreventiveIsRefusedWithTheSplit(t *testing.T) {
 	for _, value := range []string{"true", "false"} {
 		iv := loadOneInvalid(t, map[string]string{
@@ -1316,6 +1348,7 @@ func writeDeclFile(t *testing.T, path, content string) {
 // and enforced (its exec path refuses what it guards), and is reported in Degraded,
 // naming the file and the fix. Written with os.WriteFile directly: writeDeclFile
 // would repair them.
+// sr:proves loading/declared-script-fault-keeps-rule-enforced
 func TestLoad_Script_WithoutShebangOrExecBitStaysLoadedAndIsReported(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body string
@@ -1348,6 +1381,7 @@ func TestLoad_Script_WithoutShebangOrExecBitStaysLoadedAndIsReported(t *testing.
 
 // A script that does not exist is not this load check's concern (it is reported
 // where it is run), and an inline command is never inspected.
+// sr:proves loading/declared-script-fault-keeps-rule-enforced
 func TestLoad_Script_MissingFileStillLoads(t *testing.T) {
 	loadOK(t, map[string]string{
 		"file-guard/g/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - script: sr-checks\n  - script: ./nowhere.sh\n",
@@ -1356,6 +1390,7 @@ func TestLoad_Script_MissingFileStillLoads(t *testing.T) {
 
 // The same holds for every nature: a gate's check, a context's enter and exit and a rule's
 // subjects script stay loaded when the file loses its shebang or execute bit.
+// sr:proves loading/declared-script-fault-keeps-rule-enforced
 func TestLoad_Script_OtherNaturesStayLoadedAndReported(t *testing.T) {
 	root := writeDecl(t, map[string]string{
 		"gate/gt/gate.yaml":       "on:\n  - event: PreFileWrite\n    match: event.path endsWith \".md\"\nchecks:\n  - prepare: ./p.sh\n    judge: ./j.md.j2\n",
@@ -1380,6 +1415,7 @@ func TestLoad_Script_OtherNaturesStayLoadedAndReported(t *testing.T) {
 }
 
 // Degraded is reported in qualified-name order, whatever order the folders were read in.
+// sr:proves loading/declared-script-fault-keeps-rule-enforced
 func TestLoad_Degraded_IsSortedByQualifiedName(t *testing.T) {
 	files := map[string]string{}
 	for _, n := range []string{"zeta", "alpha", "mid"} {

@@ -66,6 +66,7 @@ func agentRecordPath(p HookPayload) string {
 // recordAgentSignal runs fn against the root session's registry for a sub-agent's hook. It never
 // refuses anything: the registry failing is reported on stderr, and the agent's work goes on (the
 // ranges of an agent the registry does not know are judged).
+// sr:invariant subagents/agent-registry-survives-compaction
 func recordAgentSignal(cmd *cobra.Command, p HookPayload, fn func(reg sessionstate.Store, rsID string, now time.Time) error) {
 	if !p.IsSubagent() || p.AgentID == "" {
 		return
@@ -158,6 +159,9 @@ type agentPlan struct {
 // modification of its own transcript.
 //
 // A registry that cannot be read waits for no one.
+// sr:invariant subagents/ranges-verified-at-the-parents-turn-end
+// sr:invariant subagents/running-background-agent-left-unjudged
+// sr:invariant subagents/silent-agent-stops-being-waited-for
 func settleAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string, p HookPayload, now time.Time) agentPlan {
 	plan := agentPlan{Waiting: map[string]bool{}, Silent: map[string]string{}}
 	silentAfter, staleAfter, err := declaration.SubagentThresholds(dotDir(p.Cwd))
@@ -244,6 +248,7 @@ func settleAgents(cmd *cobra.Command, root sessionstate.Store, sessionID string,
 // lastActivity is the latest sign of life of an agent: its own last hook, its start, the last
 // write to its own transcript. A time the registry never learned is zero, so an agent with no
 // sign at all reads as silent for ever and is escalated rather than waited for.
+// sr:invariant subagents/silent-agent-stops-being-waited-for
 func lastActivity(a sessionstate.Agent) time.Time {
 	last := a.LastSeenAt
 	if a.StartedAt.After(last) {

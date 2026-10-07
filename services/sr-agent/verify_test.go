@@ -213,6 +213,7 @@ func TestRunVerifier_UnrunnableVerifierFailsClosed(t *testing.T) {
 
 // The core promise: a rejected answer means the agent is asked AGAIN, and the
 // second attempt is told what the verifier complained about.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerified_RejectionRetriesAndTellsTheAgentWhy(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
@@ -245,6 +246,7 @@ exit 1
 
 // Exhausting the attempts reports failure rather than passing the bad answer
 // through — the whole point of a verifier is that its no is final.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerified_ExhaustedAttemptsFail(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
@@ -267,6 +269,7 @@ exit 0
 // A verifier exiting FinalRejectionExit rejects the answer as final: the agent
 // is asked once, not again. A judge's clean "no" is the case — re-asking it
 // doubled every refusal's cost and pushed the judge to reverse a correct verdict.
+// sr:proves judges/verdict-is-a-binary-pass
 func TestVerified_FinalRejectionIsNotRetried(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
@@ -547,6 +550,7 @@ func TestCLI_VerifyDryRunShowsBothCommands(t *testing.T) {
 // write outside it. MEASURED, not theorised: without --add-dir the agent reads
 // the file, computes the right answer, then says it needs permission — and the
 // verifier judges an empty file, turning a correct judgement into a failure.
+// sr:proves judges/judge-cannot-change-the-project
 func TestCLI_VerifyGrantsWriteAccessToTheOutputDirectory(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
@@ -598,6 +602,7 @@ func TestCLI_VerifyMergesAllowedToolsWithTheScopedAnswerGrant(t *testing.T) {
 // where claude's Read/Grep/Glob need no grant) and NOT WRITABLE (an Edit deny,
 // which beats any allow). Both halves must reach the harness, beside the answer
 // folder — which is just one more writable dir, in the same --add-dir.
+// sr:proves judges/judge-cannot-change-the-project
 func TestCLI_VerifyReadonlyDirIsReadableButDenied(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
@@ -650,6 +655,7 @@ func TestCLI_VerifyTMPDIRInsideTheProjectKeepsTheDenyAndMovesTheAnswer(t *testin
 }
 
 // A test-pinned output dir inside a readonly dir is refused, not silently used.
+// sr:proves judges/judge-cannot-change-the-project
 func TestCLI_VerifyOutputDirInsideAReadonlyDirIsRefused(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()

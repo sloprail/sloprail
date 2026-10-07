@@ -129,6 +129,7 @@ func TestT055_07_ASubagentOwesCommitsInItsOwnWorktreeOnly(t *testing.T) {
 
 // T055_08 (003_61b): a SubagentStop whose identity cannot be resolved still runs its folder's
 // rules: uncommitted guarded work there is refused, not passed silently.
+// sr:proves subagents/unidentifiable-subagent-still-judged
 func TestT055_08_ASubagentWithoutAnIdentityStillOwesItsCommits(t *testing.T) {
 	e, proj, _ := two(t)
 	e.FileGuard(proj, "docs", docsGuard, passing)

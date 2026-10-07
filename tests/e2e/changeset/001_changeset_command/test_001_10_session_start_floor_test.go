@@ -50,6 +50,7 @@ func TestT001_12_ARewrittenSessionStartIsReanchoredAtItsMergeBase(t *testing.T) 
 
 // T001_10: a repository rule that is not committed yet has no rule-age floor, so the range stays
 // the stated one: from the explicit base, not raised to anything.
+// sr:proves fileguard/rule-age-floor
 func TestT001_10_UncommittedRuleHasNoFloor(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -74,6 +75,7 @@ func TestT001_10_UncommittedRuleHasNoFloor(t *testing.T) {
 
 // T001_11: a plugin's rule lives in the plugin cache, not in this repository, so it has no
 // rule-age floor either: commits that touch other `.sloprail` folders do not stand in for one.
+// sr:proves fileguard/rule-age-floor
 func TestT001_11_PluginRuleHasNoFloor(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

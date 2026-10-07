@@ -28,6 +28,7 @@ func TestChangesetMarkers_AreFilemodsScanInTheChangesetsType(t *testing.T) {
 	assert.Empty(t, Markers("nothing here"))
 }
 
+// sr:proves matching/glob-or-expression
 func TestChangesetSelector_AGlobSelectsByPath(t *testing.T) {
 	sel := compileMatch(t, "docs/**")
 	ok, err := sel(changeset.Scope{Path: "docs/a.md"})
@@ -38,6 +39,7 @@ func TestChangesetSelector_AGlobSelectsByPath(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// sr:proves matching/scope-reads-its-own-facts
 func TestChangesetSelector_TheScopeCarriesStatusMarkersOldMarkersAndTrailers(t *testing.T) {
 	sel := compileMatch(t, `status == "M" && any(markers, {.kind == "invariant"}) && any(oldMarkers, {.fqn == "a.b"}) && "Sloprail-Refactor" in keys(trailers)`)
 	scope := changeset.Scope{
@@ -63,12 +65,15 @@ func TestChangesetSelector_NoMarkersIsFalseNotAnError(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// sr:proves matching/unevaluable-never-passes
+// sr:proves fileguard/unreadable-range-refuses
 func TestChangesetSelector_AMatchThatCannotDecideIsAnErrorNotAMiss(t *testing.T) {
 	sel := compileMatch(t, `trailers["Absent"][0] == "x"`)
 	_, err := sel(changeset.Scope{Path: "x.go", Status: "M"})
 	assert.Error(t, err, "a match that could not decide has not decided the file is none of the rule's business")
 }
 
+// sr:proves fileguard/rename-selected-by-either-path
 func TestChangesetSelector_ARenameIsAskedOnTheOldPathToo(t *testing.T) {
 	sel := compileMatch(t, "memories/**")
 	ok, err := changeset.Selects(sel, changeset.Scope{Path: "archive/x.md", OldPath: "memories/x.md", Status: "R"})

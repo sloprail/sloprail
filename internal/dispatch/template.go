@@ -118,6 +118,7 @@ var renderTimeout = 5 * time.Second
 func escapeClose(s string) string { return strings.ReplaceAll(s, "</", "<\\/") }
 
 // escapeStrings returns v with escapeClose applied to every string inside it.
+// sr:invariant judges/rendered-values-cannot-break-out
 func escapeStrings(v any) any {
 	switch t := v.(type) {
 	case string:
@@ -147,6 +148,7 @@ func escapeStrings(v any) any {
 // does not finish within renderTimeout is likewise reported as an error, so a
 // gonja pathology (an unterminated `{{` loops its lexer) refuses rather than
 // wedging the hook.
+// sr:invariant judges/unrenderable-template-refuses
 func renderTemplate(src string, vars map[string]any) (string, error) {
 	type result struct {
 		out string

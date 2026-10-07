@@ -35,6 +35,7 @@ checks:
 
 // T032_01: a gate whose script check refuses BLOCKS the write, and the write does
 // not land.
+// sr:proves gates/refusal-stops-the-action
 func TestT032_01_FailingScriptCheckBlocks(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -60,6 +61,7 @@ func TestT032_01_FailingScriptCheckBlocks(t *testing.T) {
 //
 // The control for T032_01: without it a gate that blocked everything would pass
 // T032_01 while being broken.
+// sr:proves gates/refusal-stops-the-action
 func TestT032_02_PassingScriptCheckAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

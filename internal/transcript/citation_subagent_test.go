@@ -78,6 +78,7 @@ func TestResolveCitationToolResultInANestedSubagentRecord(t *testing.T) {
 	assert.Equal(t, nested, got.Path)
 }
 
+// sr:proves citations/user-pool-is-the-root-conversation
 func TestResolveCitationUserPoolNeverReadsASubagent(t *testing.T) {
 	p := newProject(t)
 	rootPath, sub := dispatchedSession(t, p, nil, "SUBOUTPUTMARKER")
@@ -144,6 +145,7 @@ func TestResolveCitationPrefersTheCallersOwnRecord(t *testing.T) {
 
 // A quote the caller's own record does not hold, printed by two sub-agents, is
 // ambiguous: neither record is the caller's, and the two are indistinguishable.
+// sr:proves citations/quote-resolves-to-exactly-one-entry
 func TestResolveCitationIsAmbiguousAcrossRecords(t *testing.T) {
 	p := newProject(t)
 	rootPath, sub := dispatchedSession(t, p, nil, "retries: 5 with TWICEMARKER backoff")
@@ -246,6 +248,7 @@ func agentReply(uuid, parent, id, body string) string {
 
 // A sub-agent's reply is not tool output: a sub-agent told what to say says it,
 // and citing that as a tool's output would launder its words into evidence.
+// sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestResolveCitationExcludesASubagentsReply(t *testing.T) {
 	for _, tool := range []string{"Agent", "Task"} {
 		t.Run(tool, func(t *testing.T) {
@@ -383,6 +386,7 @@ func TestResolveSubagentCitationWithNoDerivableRoot(t *testing.T) {
 
 // A tool-output quote that is in the record, but in a result the tool-output
 // pool excludes, fails with a reason rather than "not there word for word".
+// sr:proves citations/unresolved-trailers-are-reported-not-dropped
 func TestUnresolvedToolResultSaysWhyAnExcludedResultIsNot(t *testing.T) {
 	p := newProject(t)
 	path := p.write("the-session",

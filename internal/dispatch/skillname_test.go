@@ -36,6 +36,7 @@ func TestSkillNameMatches_BareNameMatchesBare(t *testing.T) {
 // TestSkillNameMatches_PluginQualifiedMatchesBareDeclaration is the fix: a
 // plugin-qualified Skill tool_use (`sloprail:authoring-guardrails`) matches a
 // `require: [{skill: authoring-guardrails}]` naming the bare skill.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestSkillNameMatches_PluginQualifiedMatchesBareDeclaration(t *testing.T) {
 	call := toolCallWithSkill(t, "sloprail:authoring-guardrails")
 	assert.True(t, skillNameMatches(call, "authoring-guardrails"),
@@ -54,6 +55,7 @@ func TestSkillNameMatches_UnrelatedSkillDoesNotMatch(t *testing.T) {
 // Runner's own entry point) with a REAL plugin-qualified Skill tool_use in
 // the trajectory — the exact shape the sr-eval run that found this bug
 // produced — and requires it to satisfy a bare `require: [{skill}]`.
+// sr:proves checks/skill-requirement-reads-the-record
 func TestCheckSkill_PluginQualifiedSkillCallEndToEnd(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkillFile(t, workspace, "authoring-guardrails")

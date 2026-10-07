@@ -126,6 +126,7 @@ func StableSessionID(projectDir, path string) (string, error) {
 // any more, because Claude Code deletes transcripts older than its cleanup
 // period while a later continuation of the same conversation is still
 // resumable.
+// sr:invariant session/identity-survives-reissued-ids
 func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 	if path == "" {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %w", ErrNoTranscriptPath)

@@ -147,6 +147,7 @@ func exitReq() ContextExitRequest {
 
 // A clean exit (zero) means DONE — the context deactivates (the examples'
 // convention: exit 0 = "yes, done").
+// sr:proves contexts/exit-only-deactivates
 func TestExitContext_CleanExitIsDone(t *testing.T) {
 	r := Runner{
 		runScript: func(s scriptCall) (scriptResult, error) {
@@ -162,6 +163,7 @@ func TestExitContext_CleanExitIsDone(t *testing.T) {
 
 // A NON-ZERO exit means NOT done — the context stays active for another cycle.
 // And exit never refuses a Stop: done is a lifecycle flag, not a block.
+// sr:proves contexts/exit-only-deactivates
 func TestExitContext_NonZeroStaysActive(t *testing.T) {
 	r := Runner{
 		runScript: func(scriptCall) (scriptResult, error) {

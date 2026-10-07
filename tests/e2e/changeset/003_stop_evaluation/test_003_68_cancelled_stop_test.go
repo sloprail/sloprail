@@ -16,6 +16,7 @@ const slowRubric = "RULE=docs\n{{ change }}\n"
 // T003_68: a `sr-checks run` killed while the judge is still thinking (the user interrupted, the
 // harness timed out, the machine slept) decided nothing. It stores no pass: the next Stop reads
 // the range as not judged, the next run asks the judge again, and a judge that refuses refuses.
+// sr:proves cache/unfinished-never-stored
 func TestT003_68_AStopKilledMidJudgeIsNeverAPass(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -152,6 +152,7 @@ func installReviewGuard(e *harness.Env, proj, guardYAML string, files map[string
 // fire), and NO judge prompt was captured (the model was never rendered a prompt,
 // let alone invoked). Permitted because the one check abstained and nothing else
 // refused — the chain ends with no refusal, which is the default permit.
+// sr:proves checks/prepare-skip-abstains
 func TestT030_01_PrepareSkipAbstainsAndPermitsWithoutModel(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

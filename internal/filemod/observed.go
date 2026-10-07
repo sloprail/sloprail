@@ -130,6 +130,7 @@ type Observed interface {
 // Neither fact is inferred from what a tool call said. A write tool that
 // reported creating a file it in fact overwrote, and a shell command nothing
 // parsed, both land in the same two lookups.
+// sr:invariant events/post-changes-are-the-tree-diff
 func classify(existedBefore, existsNow bool) (string, bool) {
 	switch {
 	case !existedBefore && existsNow:

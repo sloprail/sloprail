@@ -18,6 +18,7 @@ import (
 // interpreter outside /bin and /usr/bin is REPORTED by `sr-file declarations` and at the next
 // session hook (the rule stays loaded and refuses what it guards), and a sound sibling is not
 // reported.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT001_20_AScriptWithoutShebangOrExecBitIsReported(t *testing.T) {
 	e, proj := session(t)
 	guard := "match: \"docs/**\"\nchecks:\n  - script: ./check.sh\n"

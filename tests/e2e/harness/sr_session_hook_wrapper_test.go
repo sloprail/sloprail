@@ -285,6 +285,7 @@ func noModuleDir(t *testing.T) string {
 // stance applied blindly: only pre-tool (the moment a real guardrail would have
 // refused something) blocks. See TestSrSessionHookWrapper_StartWarnsButDoesNotBlock
 // for why start/stop/subagent-stop do not.
+// sr:proves install/missing-engine-refuses-file-writes
 func TestSrSessionHookWrapper_PreToolBlocksLoudlyWhenBinaryMissing(t *testing.T) {
 	// /usr/bin:/bin only — no Go tooling, no dev machine's ~/.local/bin. This is
 	// exactly the PATH the smoke test used to reproduce the silent no-op.
@@ -310,6 +311,7 @@ func TestSrSessionHookWrapper_PreToolBlocksLoudlyWhenBinaryMissing(t *testing.T)
 // TestSrSessionHookWrapper_PreToolLetsBashInstall: with sr-session missing,
 // Bash is NOT refused — it is how the agent installs sr-session. Refusing it
 // would leave a session that can never repair itself.
+// sr:proves install/missing-engine-blocks-nothing-else
 func TestSrSessionHookWrapper_PreToolLetsBashInstall(t *testing.T) {
 	out, code := runHookScriptWith(t, "pre-tool", "/usr/bin:/bin", `{"tool_name":"Bash","tool_input":{"command":"sh install.sh"}}`)
 	if code != 0 {
@@ -323,6 +325,7 @@ func TestSrSessionHookWrapper_PreToolLetsBashInstall(t *testing.T) {
 // subagent-stop are not themselves guarded actions. Each warns loudly (this is
 // the SessionStart message a person reads, and it repeats at every turn boundary
 // so it cannot silently scroll by) and lets the session continue.
+// sr:proves install/missing-engine-blocks-nothing-else
 func TestSrSessionHookWrapper_StartWarnsButDoesNotBlock(t *testing.T) {
 	for _, subcommand := range []string{"start", "stop", "subagent-stop"} {
 		t.Run(subcommand, func(t *testing.T) {
@@ -386,6 +389,7 @@ func TestSrSessionHookWrapper_DispatchesNormallyWhenBinaryPresent(t *testing.T) 
 // own default and therefore the single most common way a real user hits this:
 // the binary sits in $HOME/.local/bin, that directory is NOT on $PATH, and the
 // wrapper must still find and run it rather than refusing.
+// sr:proves install/engine-found-outside-the-path
 func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
 	home := hookHOME(t)
 	localBin := filepath.Join(home, ".local", "bin")
@@ -502,6 +506,7 @@ func TestSrSessionHookWrapper_ShipsTheRepositoryInstallScript(t *testing.T) {
 // the plugin's version, checksum-verified by install.sh — tells the agent,
 // and then runs the freshly installed sr-session. A local release (stub
 // binaries, real archive + checksums shape) stands in for GitHub.
+// sr:proves install/session-start-installs-the-matching-release
 func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
 	platform := "sloprail-" + runtime.GOOS + "-" + runtime.GOARCH
 	release := t.TempDir()
@@ -570,6 +575,7 @@ func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
 // baseline that could not be recorded, the load check's own "N rules loaded"
 // summary — is never presented as a rule that failed to load; a real load
 // problem is.
+// sr:proves install/start-tells-the-agent-which-rules-did-not-load
 func TestSrSessionHookWrapper_StartRepeatsOnlyProblems(t *testing.T) {
 	stubWith := func(t *testing.T, stderrLines string) string {
 		dir := t.TempDir()

@@ -13,6 +13,7 @@ import (
 // The effective base is the later of the range's base and that floor; a range already
 // starting at or after the floor, a rule that already stood at the base, a rule committed nowhere on head's history, or a folder
 // outside the repository is returned as it was.
+// sr:invariant fileguard/rule-age-floor
 func RaiseBaseToRuleFloor(dir string, r Range, folder string) (Range, error) {
 	if strings.TrimSpace(folder) == "" || r.Head == "" || r.Base == r.Head {
 		return r, nil

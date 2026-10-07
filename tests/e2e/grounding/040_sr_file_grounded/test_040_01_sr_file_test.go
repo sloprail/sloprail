@@ -88,6 +88,7 @@ func TestT040_03_EditSemantics(t *testing.T) {
 
 // T040_04: a citation that does not resolve fails the command and writes
 // NOTHING — not even a file that the rest of the arguments describe correctly.
+// sr:proves citations/file-command-writes-nothing-unless-exact
 func TestT040_04_UnresolvedCitationWritesNothing(t *testing.T) {
 	e, proj, env := session(t, "s-040-04")
 	e.WriteFile(proj, "a.md", "keep\n")

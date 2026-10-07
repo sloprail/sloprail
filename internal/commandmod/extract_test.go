@@ -41,6 +41,7 @@ func equal(a, b []string) bool {
 // Every case is a way one command line hides a program from a rule matching
 // the string: an escape, a quote, a pipe, a chain, a subshell, a substitution,
 // a wrapper, a keyword. The point of the module is that none of them work.
+// sr:proves events/command-nesting-flattened
 func TestExtractCommand_Flattens(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -212,6 +213,7 @@ func TestExtractCommand_SurvivesAPanickingExpansion(t *testing.T) {
 // Not a test of output shape but of what did not happen: no command ran and no
 // directory was read. A guardrail that executes what it inspects is worse than
 // no guardrail.
+// sr:proves events/command-undecidable-not-guessed
 func TestExtractCommand_ResolvesNothingUnsafe(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "MARKER")
@@ -251,6 +253,7 @@ func TestExtractCommand_ResolvesNothingUnsafe(t *testing.T) {
 // each is survivable and that nothing is invented — a fabricated program name
 // is worse than a missing one, because a rule written against it would fire on
 // a command that never runs it.
+// sr:proves events/command-undecidable-not-guessed
 func TestExtractCommand_Undecidable(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -374,6 +377,7 @@ func TestExtractCommand_Undecidable(t *testing.T) {
 // TestExtractCommand_Malformed: a line that will not parse still yields an
 // event, because the raw text is what a rule about unreadable commands has to
 // match on. It must not panic and must not guess.
+// sr:proves events/command-undecidable-not-guessed
 func TestExtractCommand_Malformed(t *testing.T) {
 	for _, src := range []string{
 		`npm publish ; ; ;`,

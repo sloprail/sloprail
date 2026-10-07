@@ -41,6 +41,7 @@ func structureInvalid(t *testing.T, l Loaded) Invalid {
 
 // The validation matrix: each row is a plugin (or project) structure.yaml and
 // what the loader must say about it.
+// sr:proves loading/structure-scope-by-owner
 func TestStructureScope_ValidationMatrix(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -176,6 +177,7 @@ func TestStructureScope_ValidationMatrix(t *testing.T) {
 
 // A broken plugin structure is attributed to the plugin and keyed so the project
 // can switch it off: `acme/structure`.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestStructureScope_InvalidPluginStructureIsAttributed(t *testing.T) {
 	loaded := loadWithPlugin(t, nil, pluginStructure("allow:\n  - glob: \".mdmap/*.md\"\n"))
 	iv := structureInvalid(t, loaded)
@@ -238,6 +240,7 @@ func TestStructureScope_LiteralOverlapReportedNamingBoth(t *testing.T) {
 // `disabled: [<plugin>/structure]` drops that plugin's structure entirely — and
 // with it any overlap it caused — while the project's own and other plugins'
 // stay. The project's own key (`structure`) keeps working as before.
+// sr:proves loading/disabled-by-qualified-name
 func TestStructureScope_DisabledPluginStructureDropped(t *testing.T) {
 	a := pluginRoot(t, pluginStructure("scope:\n  - glob: \".mdmap/\"\nallow:\n  - glob: \".mdmap/*.md\"\n"))
 	b := pluginRoot(t, pluginStructure("scope:\n  - glob: \".mdmap/\"\nallow:\n  - glob: \".mdmap/*.yaml\"\n"))
@@ -267,6 +270,7 @@ func TestStructureScope_DisabledPluginStructureDropped(t *testing.T) {
 
 // A disabled INVALID plugin structure is silenced too (the invalid set is
 // filtered by the same key).
+// sr:proves loading/disabled-by-qualified-name
 func TestStructureScope_DisableReachesInvalidPluginStructure(t *testing.T) {
 	project := projectDotDir(t, map[string]string{"config.yaml": "disabled:\n  - acme/structure\n"})
 	plugin := pluginRoot(t, pluginStructure("allow:\n  - glob: \".mdmap/*.md\"\n")) // no scope
@@ -294,6 +298,7 @@ func TestStructureScope_AllSoundStructuresLoadTogether(t *testing.T) {
 
 // NewPlugin validates one plugin's declarations by the plugin rules with no
 // project: a scoped structure loads; an unscoped one is refused.
+// sr:proves loading/structure-scope-by-owner
 func TestNewPlugin_ValidatesPluginStructureByPluginRules(t *testing.T) {
 	ok := pluginRoot(t, pluginStructure("scope:\n  - glob: \".mdmap/\"\nallow:\n  - glob: \".mdmap/*.md\"\n"))
 	loaded, err := NewPlugin(Origin{Plugin: "mdmap", Root: ok}).Load(testRegistry(t))

@@ -21,6 +21,7 @@ require:
 // T041_60: a file written with a cited sr-file call and committed without the trailer is
 // refused, and the refusal lists the quote already recorded for it as the exact trailer
 // line and builds its amend from that quote. Running that command grounds the file.
+// sr:proves citations/unresolved-trailers-are-reported-not-dropped
 func TestT041_60_TheRefusalHandsBackTheQuoteAlreadyRecorded(t *testing.T) {
 	const ask = "adopt a decision log"
 	const sess = "s-041-60"
@@ -89,6 +90,7 @@ require:
 // T041_62: undoing the whole range is ONE command the refusal gives, and it needs no
 // citation: the file is then exactly as it was at the base, so there is nothing to
 // ground. A range whose net change is nil is not refused, however uncited its commits.
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestT041_62_RevertingTheRangeNeedsNoCitation(t *testing.T) {
 	const sess = "s-041-62"
 	e, proj := guardedUncited(t, userCiteGuard)

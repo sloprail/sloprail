@@ -34,6 +34,7 @@ exit 0
 // is blocked — the mechanism a "don't stop until done" rule uses to send the agent
 // round again. The refusal arrives as a blocking error on the record, which is
 // where a Stop refusal's text lands (not the result stream).
+// sr:proves gates/stop-refusal-continues-the-turn
 func TestT032_06_StopGateBlocksTheTurn(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

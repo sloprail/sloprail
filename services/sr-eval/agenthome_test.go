@@ -97,6 +97,7 @@ func TestBuildRelease_StagedBinariesSurvive(t *testing.T) {
 // environment into the workspace — TMPDIR for its tools, CLAUDE_CODE_TMPDIR for
 // Claude Code's own per-uid directory (the scratchpad), which on macOS ignores
 // TMPDIR — and drops the caller's own values rather than leaving two.
+// sr:proves authoring-tools/eval-agent-runs-isolated
 func TestBaseAgentEnv_TempRootsLandInTheWorkspace(t *testing.T) {
 	environ := []string{
 		"HOME=/Users/op", "TMPDIR=/var/folders/op/T/", "CLAUDE_CODE_TMPDIR=/tmp/op",
@@ -137,6 +138,7 @@ func TestBaseAgentEnv_FreshDropsInstallPointers(t *testing.T) {
 
 // The operator's own Claude Code session must not leak into the agent: its
 // identity variables go, while credential selectors and the rest stay.
+// sr:proves authoring-tools/eval-agent-runs-isolated
 func TestBaseAgentEnv_DropsAmbientSession(t *testing.T) {
 	got := baseAgentEnv([]string{
 		"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=x", "CLAUDE_CODE_ENTRYPOINT=cli",

@@ -3,6 +3,8 @@ package e2e
 import "testing"
 
 // T001_01: --base and --head are required; the caller states the range.
+// sr:proves fileguard/net-diff-of-commits
+// sr:proves cli/checks-range-is-stated-and-resolves
 func TestT001_01_BaseAndHeadAreRequired(t *testing.T) {
 	e, proj, _ := project(t, scriptRule, map[string]string{"check.sh": forbiddenCheck}, "")
 	for _, verb := range []string{"run", "verify"} {
@@ -17,6 +19,8 @@ func TestT001_01_BaseAndHeadAreRequired(t *testing.T) {
 }
 
 // T001_02: a revision that does not resolve is an error naming the flag, never an empty range.
+// sr:proves fileguard/net-diff-of-commits
+// sr:proves cli/checks-range-is-stated-and-resolves
 func TestT001_02_AnUnresolvableRevisionIsAnError(t *testing.T) {
 	e, proj, base := project(t, scriptRule, map[string]string{"check.sh": forbiddenCheck}, "")
 
@@ -35,6 +39,7 @@ func TestT001_02_AnUnresolvableRevisionIsAnError(t *testing.T) {
 
 // T001_03: the range is merge-base(base, head)..head, so a base that has moved on (a branch
 // the work was cut from) widens nothing and narrows nothing, and branch names work.
+// sr:proves fileguard/net-diff-of-commits
 func TestT001_03_TheRangeIsTheMergeBaseUpToHead(t *testing.T) {
 	e, proj, base := project(t, scriptRule, map[string]string{"check.sh": forbiddenCheck}, "")
 	e.Git(proj, "branch", "trunk") // trunk stays at the rule's commit
@@ -58,6 +63,8 @@ func TestT001_03_TheRangeIsTheMergeBaseUpToHead(t *testing.T) {
 }
 
 // T001_04: a refusal exits 1, a fix passes, and verify says the same without a model.
+// sr:proves cache/verify-read-only
+// sr:proves cli/checks-exit-status-is-the-verdict
 func TestT001_04_RunAndVerifyRefuseThenPass(t *testing.T) {
 	e, proj, base := project(t, scriptRule, map[string]string{"check.sh": forbiddenCheck}, "")
 	commitDoc(e, proj, "docs/a.md", "FORBIDDEN here\n", "add a")

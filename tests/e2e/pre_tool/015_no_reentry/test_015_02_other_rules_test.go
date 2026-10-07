@@ -43,6 +43,7 @@ exit 0
 // The launched agent tries to write under secrets/. The rule that launched it
 // (judge-notes) is correctly not enforced; the unrelated rule (no-secrets) must
 // still refuse.
+// sr:proves checks/check-launched-agent-does-not-reenter-its-rule
 func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -79,6 +80,7 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 // everything inside a launched agent". A judging agent exists to do work; a
 // guard that stopped its writes would make the launching rule useless in a
 // different way.
+// sr:proves checks/check-launched-agent-does-not-reenter-its-rule
 func TestT015_03_LaunchedAgentCanStillDoItsWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

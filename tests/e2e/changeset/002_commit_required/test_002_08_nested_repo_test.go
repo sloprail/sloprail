@@ -11,6 +11,7 @@ import (
 // work", even under a rule that selects everything but dot-files (`path != ""`; the mock keeps its own
 // scenario file in the tree). Its contents
 // never reach a rule; telling the agent to commit it as a gitlink would be wrong.
+// sr:proves fileguard/commit-required
 func TestT002_08_AnUntrackedNestedRepositoryIsNotOwedACommit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

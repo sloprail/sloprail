@@ -23,6 +23,7 @@ import (
 
 // ownsTree is a10n's rule: a sub-agent owns its tree iff its git top level differs
 // from the one the session began in.
+// sr:proves fileguard/commit-required
 func TestOwnsTree(t *testing.T) {
 	repo := initRepo(t)
 	commitFile(t, repo, "a.txt", "one")
@@ -134,6 +135,7 @@ func owed(t *testing.T, repo string, guards []declaration.FileGuard, store sessi
 	return commitRequired(discard(), HookPayload{Cwd: repo}, guards, store)
 }
 
+// sr:proves fileguard/commit-required
 func TestCommitRequired_AnUncommittedGuardedPathIsOwedACommitAndACleanTreeIsNot(t *testing.T) {
 	repo := crRepo(t, 0)
 	assert.Equal(t, "", owed(t, repo, docsGuard(), openStore(t)), "a clean tree owes nothing")
@@ -147,6 +149,7 @@ func TestCommitRequired_AnUncommittedGuardedPathIsOwedACommitAndACleanTreeIsNot(
 	assert.Contains(t, got, "Sloprail-Cites-User")
 }
 
+// sr:proves fileguard/commit-required
 func TestCommitRequired_NoGuardsNoRepositoryNoSubagentTreeOwesNothing(t *testing.T) {
 	repo := crRepo(t, 0)
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "docs", "b.md"), []byte("new"), 0o644))
@@ -168,6 +171,7 @@ func TestCommitRequired_AMatchThatCannotBeCompiledRefusesRatherThanPassing(t *te
 	assert.Contains(t, got, "must not be read as approval")
 }
 
+// sr:proves fileguard/commit-required
 func TestCommitRequired_ADeletionIsOwedOnlyWhenTheRuleAdmitsDeletions(t *testing.T) {
 	repo := crRepo(t, 0)
 	require.NoError(t, os.Remove(filepath.Join(repo, "docs", "a.md")))
@@ -193,6 +197,7 @@ func TestCommitRequired_ARenameOutOfAGuardedPathIsOwedACommit(t *testing.T) {
 	assert.Equal(t, "", owed(t, repo, docsGuard(), nil), "a rename between unguarded paths owes nothing")
 }
 
+// sr:proves fileguard/commit-required
 func TestUncommittedScope_ARenameKeepsItsOldPathAndMarkersOfBothSides(t *testing.T) {
 	repo := crRepo(t, 0)
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "docs", "a.md"), []byte("// sr:invariant a.b\nbody line one\nbody line two\nthree\n"), 0o644))
@@ -216,6 +221,7 @@ func TestUncommittedScope_ARenameKeepsItsOldPathAndMarkersOfBothSides(t *testing
 
 // An untracked nested repository (a clone the agent made to look at) is not this
 // repository's to commit, however guarded the path it sits under.
+// sr:proves fileguard/commit-required
 func TestCommitRequired_AnUntrackedNestedRepositoryIsNotOwed(t *testing.T) {
 	repo := crRepo(t, 0)
 	nested := filepath.Join(repo, "docs", "clone")
@@ -250,6 +256,7 @@ func TestCommitRequired_ARuleLaunchedByItsOwnCheckIsNotEnforced(t *testing.T) {
 	assert.Equal(t, "", owed(t, repo, docsGuard(), nil))
 }
 
+// sr:proves fileguard/commit-required
 func TestCommitRequired_ARefusalNamesAtMostTwentyPathsAndCountsTheRest(t *testing.T) {
 	repo := crRepo(t, 0)
 	for i := 0; i < 23; i++ {

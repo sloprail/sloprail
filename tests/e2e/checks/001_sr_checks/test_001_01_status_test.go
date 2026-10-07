@@ -29,6 +29,7 @@ func TestT001_01_NothingRecordedYet(t *testing.T) {
 
 // T001_02: show is a read: with no session at all it still lists what is stored (verify's
 // read-only needs none), and it does not refuse for want of one.
+// sr:proves cli/checks-exit-status-is-the-verdict
 func TestT001_02_NoSession(t *testing.T) {
 	e, proj := session(t)
 	base := judged(t, e, proj, verdictFail)

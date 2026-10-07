@@ -15,6 +15,7 @@ import (
 // judged by it, with the rule from the session's rule set; commits made on that branch
 // BEFORE the rule existed are not its debt. Skipping the whole branch because the rule
 // is absent from its history let any work done there after the rule arrived escape.
+// sr:proves fileguard/rule-age-floor
 func TestT003_60_AProjectRuleAddedOnMainJudgesLaterWorkOnAnOlderBranch(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

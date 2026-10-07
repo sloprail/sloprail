@@ -15,6 +15,7 @@ const judgeDelaySeconds = 5
 // judgeDelaySeconds to answer. One after another that is four times the delay;
 // concurrently the Stop costs about one. Every rule is still asked, and the
 // refusal of EVERY failing judge reaches the agent — none is lost to the overlap.
+// sr:proves fileguard/refusals-independent
 func TestT006_01_JudgesRunConcurrentlyAndEveryRefusalSurfaces(t *testing.T) {
 	e, proj := project(t, "a", "b", "c", "d")
 	judgeRule(e, proj, "ra", "a", true)
@@ -63,6 +64,7 @@ func TestT006_01_JudgesRunConcurrentlyAndEveryRefusalSurfaces(t *testing.T) {
 // T006_02: a script refusal in one rule does not hide the other rules' judges: the
 // judges of the rules whose cheap checks passed still run in the same Stop, and
 // their refusals surface beside the script's.
+// sr:proves fileguard/refusals-independent
 func TestT006_02_AScriptRefusalDoesNotHideOtherRulesJudges(t *testing.T) {
 	e, proj := project(t, "s", "j1", "j2")
 	e.FileGuard(proj, "script", "match: \"s/**\"\nchecks:\n  - script: ./check.sh\n", map[string]string{

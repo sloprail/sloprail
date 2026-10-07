@@ -21,6 +21,7 @@ import (
 // postEvents gathers the Post file events for a completed cycle: the tree
 // difference against this session's baseline. It returns the events and the
 // repository root their paths resolve against.
+// sr:invariant events/one-bad-path-keeps-the-rest
 func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) ([]event.Event, string) {
 	commit, ok, err := store.Meta(sessionstate.MetaBaselineCommit)
 	if err != nil {

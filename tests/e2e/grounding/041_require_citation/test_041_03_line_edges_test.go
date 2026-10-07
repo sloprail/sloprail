@@ -73,6 +73,7 @@ func TestT041_15_TrajectoryCannotBeSwapped(t *testing.T) {
 
 // T041_16: a tool output printed to look like an AskUserQuestion answer is the
 // tool's output, not the user's words.
+// sr:proves citations/user-pool-is-the-persons-own-words
 func TestT041_16_PrintedAnswerIsNotTheUser(t *testing.T) {
 	e, proj := guardedPre(t)
 
@@ -177,6 +178,7 @@ func TestT041_19_CiteChainForms(t *testing.T) {
 // T041_20: a symbolic link does not carry a change past the guard: the link's
 // path is not guarded, and sr-file refuses to write through it, so the guarded
 // file it points at is untouched.
+// sr:proves citations/file-command-writes-nothing-unless-exact
 func TestT041_20_NoWritingThroughALink(t *testing.T) {
 	e, proj := guardedPre(t)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n")

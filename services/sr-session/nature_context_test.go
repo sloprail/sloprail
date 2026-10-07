@@ -65,6 +65,7 @@ func TestContextStatePersistence(t *testing.T) {
 
 // A context marked inactive KEEPS its last payload — a later cycle can read what a
 // closed loop last measured (spec ContextState: payload survives inactivity).
+// sr:proves contexts/payload-survives-deactivation
 func TestContextStatePersistence_InactiveKeepsPayload(t *testing.T) {
 	store, err := sessionstate.Open(filepath.Join(t.TempDir(), "state.db"))
 	require.NoError(t, err)
@@ -184,6 +185,7 @@ func TestContextCitationRequireReadsTheHistory(t *testing.T) {
 
 // An enter that cannot run is returned as a refusal (the caller denies the trigger), never
 // silently dropped as a decline; one that runs and declines refuses nothing.
+// sr:proves contexts/unrunnable-enter-refuses-trigger
 func TestRunContextEnters_UnrunnableEnterIsRefusedDeclineIsNot(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)

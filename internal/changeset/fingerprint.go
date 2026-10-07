@@ -28,6 +28,7 @@ import (
 //
 // No commit SHA, run id, timestamp, session id or path of a snapshot is part of it. Parts
 // are length-prefixed, so two parts cannot be re-cut into another pair.
+// sr:invariant cache/verdict-identity
 func GuardFingerprint(files, subjectFP, citations string) string {
 	var buf []byte
 	for _, part := range []string{files, subjectFP, citations} {

@@ -74,6 +74,7 @@ type Result struct {
 }
 
 // StatusFor maps an exit code and a timeout to a status.
+// sr:invariant authoring-tools/test-run-passes-only-when-every-case-passes
 func StatusFor(exit int, timedOut bool) string {
 	switch {
 	case timedOut:
@@ -176,6 +177,7 @@ func runCase(root string, c Case, opt Options, mu *sync.Mutex) Result {
 	proj := filepath.Join(dir, "project")
 	casePath := filepath.Join(dir, "case")
 	eventsFile := filepath.Join(dir, "events.jsonl")
+	// sr:invariant authoring-tools/test-case-environment-is-hermetic
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		return finish(Error, err.Error())
 	}

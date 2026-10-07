@@ -83,6 +83,7 @@ func mustNotPermit(t *testing.T, session, gate, script string) {
 // present and cannot be run, here there is no file at all — a rule whose script
 // was renamed, or whose declaration names the wrong one. Both are ways an
 // author disarms their own rule by accident, and neither may read as consent.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT019_01_AMissingHookRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -105,6 +106,7 @@ func TestT019_01_AMissingHookRefuses(t *testing.T) {
 // process produced no exit status of its own. Nothing about that is a verdict,
 // and treating it as one would mean a rule whose check crashes on some inputs
 // silently permits exactly those inputs.
+// sr:proves checks/check-that-cannot-answer-refuses
 func TestT019_02_AHookKilledBySignalRefuses(t *testing.T) {
 	mustNotPermit(t, "s-019-02", "killed", "#!/bin/sh\ncat >/dev/null\nkill -9 $$\n")
 }
@@ -216,6 +218,7 @@ func TestT019_06_ASymlinkedHookRunsAndItsRefusalGoverns(t *testing.T) {
 // check author who writes this has not made their rule advisory, they have made
 // it silent, and the write lands with no trace of the objection anywhere the
 // agent can see.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT019_07_ARefusalPrintedAtExitZeroPermitsAndIsNotDelivered(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -249,6 +252,7 @@ func TestT019_07_ARefusalPrintedAtExitZeroPermitsAndIsNotDelivered(t *testing.T)
 // the shape closest to the failures above — if any of them were implemented as
 // "output means refusal" rather than "status means refusal", this is the test
 // that catches it.
+// sr:proves checks/exit-status-is-the-verdict
 func TestT019_08_APermittingHookIsStillPermitted(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

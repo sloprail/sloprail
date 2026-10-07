@@ -13,6 +13,8 @@ const skillRule = "match: \"docs/**\"\nrequire:\n  - citation: {source_types: [u
 // range. Stop 1 refuses on the unmet citation requirement; Stop 2, with nothing
 // changed, must refuse again and the row must still be `fail` in `sr-checks status`
 // — it is never rewritten to a stale `skip` while the file is in base..head.
+// sr:proves checks/requirements-before-checks
+// sr:proves cache/finished-verdicts-reused
 func TestT003_27_ARefusedRequireStaysFailed(t *testing.T) {
 	e, proj, _ := project(t, skillRule)
 

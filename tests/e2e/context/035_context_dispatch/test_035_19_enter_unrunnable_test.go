@@ -52,6 +52,7 @@ func wantAll(t *testing.T, what, got string, wants ...string) {
 
 // T035_19 (a): a non-executable enter on a Pre trigger refuses the write, naming the context,
 // the script and the fix.
+// sr:proves contexts/unrunnable-enter-refuses-trigger
 func TestT035_19_UnrunnableEnterRefusesThePreTrigger(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -71,6 +72,7 @@ func TestT035_19_UnrunnableEnterRefusesThePreTrigger(t *testing.T) {
 
 // T035_20 (b), the control: an enter that RUNS and exits non-zero is a decline and refuses
 // nothing.
+// sr:proves contexts/nonzero-enter-declines
 func TestT035_20_DecliningEnterDoesNotRefuse(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -132,6 +134,7 @@ func TestT035_21_GateReadingTheContextIsNotSilentlySkipped(t *testing.T) {
 
 // T035_22 (d): a Post* trigger cannot deny (the work is done); the Stop that handled it is
 // refused, naming context, script and fix, and the next Stop passes once the script is fixed.
+// sr:proves contexts/unrunnable-enter-refuses-trigger
 func TestT035_22_UnrunnableEnterOnPostTriggerRefusesTheStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -161,6 +164,7 @@ func TestT035_22_UnrunnableEnterOnPostTriggerRefusesTheStop(t *testing.T) {
 
 // T035_23: a context that is never triggered but whose enter (or exit) cannot run is still named
 // at Stop, and the Stop passes after the fix.
+// sr:proves contexts/broken-script-refuses-the-turn
 func TestT035_23_NeverTriggeredBrokenScriptsRefuseTheStop(t *testing.T) {
 	for _, role := range []string{"enter", "exit"} {
 		t.Run(role, func(t *testing.T) {
@@ -191,6 +195,7 @@ func TestT035_23_NeverTriggeredBrokenScriptsRefuseTheStop(t *testing.T) {
 }
 
 // T035_24: a PostTagWrite trigger whose enter cannot run refuses the Stop too.
+// sr:proves contexts/unrunnable-enter-refuses-trigger
 func TestT035_24_UnrunnableEnterOnTagRefusesTheStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -219,6 +224,7 @@ exit: ./exit.sh
 // T035_25: a non-executable enter on a broad trigger: a write elsewhere is refused, `chmod +x`
 // on the script is PERMITTED, then the next write is permitted, the context is active and the
 // Stop passes.
+// sr:proves contexts/broken-script-refuses-the-turn
 func TestT035_25_ChmodRepairIsNeverRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -255,6 +261,7 @@ func TestT035_25_ChmodRepairIsNeverRefused(t *testing.T) {
 }
 
 // T035_26: a script that lost its shebang is repaired by a write to it.
+// sr:proves contexts/broken-script-refuses-the-turn
 func TestT035_26_WriteRepairIsNeverRefused(t *testing.T) {
 	// The plugin's own gate wants its docs read before a rule file is touched; not what this tests.
 	e := harness.New(t, harness.WithoutShippedFileGuards(), harness.WithoutShipped("sloprail/gate/read-script-checks-doc"))

@@ -34,6 +34,7 @@ func twoRuleHashes() []Run {
 // The same input judged under two rule hashes is two results in an old store and one after the
 // migration: the newest. The new key (no rule hash) finds it; a second run, in this process or
 // a fresh one, writes nothing.
+// sr:proves cache/store-failures-not-misses
 func TestMigrateKeys_OldResultsUnderTwoRuleHashesBecomeTheNewest(t *testing.T) {
 	s := legacyStore(t, twoRuleHashes()...)
 
@@ -72,6 +73,7 @@ func TestMigrateKeys_OldResultsUnderTwoRuleHashesBecomeTheNewest(t *testing.T) {
 
 // A build that speaks the previous directory refuses the migrated ref rather than reading a
 // store it would only half understand.
+// sr:proves cache/store-failures-not-misses
 func TestMigrateKeys_AnOldBinaryRefusesTheNewDirectory(t *testing.T) {
 	s := legacyStore(t, twoRuleHashes()...)
 	_, err := s.MigrateKeys()
@@ -86,6 +88,7 @@ func TestMigrateKeys_AnOldBinaryRefusesTheNewDirectory(t *testing.T) {
 
 // A write into an unmigrated store migrates first, so the old results are not hidden by the
 // fresh directory the write would otherwise create.
+// sr:proves cache/store-failures-not-misses
 func TestMigrateKeys_APutMigratesFirst(t *testing.T) {
 	s := legacyStore(t, twoRuleHashes()...)
 	require.NoError(t, s.Put([]Run{run("2026-03-01T00:00:00Z", judge("fresh", StatusPass))}))
@@ -95,6 +98,7 @@ func TestMigrateKeys_APutMigratesFirst(t *testing.T) {
 }
 
 // Old segments are recognised by their old index keys, never called corrupt.
+// sr:proves cache/store-failures-not-misses
 func TestMigrateKeys_LegacySegmentsAreNotCorrupt(t *testing.T) {
 	s := legacyStore(t, twoRuleHashes()...)
 	s.dir = legacySchemaDir

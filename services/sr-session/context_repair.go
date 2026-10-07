@@ -27,6 +27,7 @@ import (
 // call does is a sibling event. The call is a repair when it does at least one file write or
 // command, and every one it does is a repair. workspace is what a relative path resolves against
 // (an invocation's own cwd is joined onto it).
+// sr:invariant contexts/broken-script-refuses-the-turn
 func repairsContext(events []event.Event, c declaration.Context, workspace string) bool {
 	folder := absPath(c.Dir, "")
 	if folder == "" {

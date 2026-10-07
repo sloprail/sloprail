@@ -43,6 +43,7 @@ func newSessionPreToolCmd() *cobra.Command {
 // session's point is first recorded. It comes ahead of the registry so that a
 // build whose modules fail to load still records where the session began: the
 // difference Stop measures does not depend on this tool call's rules.
+// sr:invariant gates/broken-declaration-denies-nothing
 func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
 	if skipWithoutTranscript(cmd, p, false) {
@@ -71,6 +72,7 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	if reason := subagentUserCitationRefusal(p); reason != "" {
 		return deny(cmd, reason)
 	}
+	// sr:invariant gates/refusal-stops-the-action
 	if reason := natureDispatchPreTool(cmd, p, reg, store); reason != "" {
 		return deny(cmd, reason)
 	}

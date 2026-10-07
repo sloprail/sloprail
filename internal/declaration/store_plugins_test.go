@@ -129,6 +129,7 @@ func TestNewWithPlugins_ProjectDeclarationHasNoPluginOrigin(t *testing.T) {
 // The project's own declaration wins over a plugin's of the same (nature, name),
 // and the displaced plugin rule is reported as Shadowed rather than dropped
 // silently.
+// sr:proves loading/precedence-and-shadowing
 func TestNewWithPlugins_ProjectShadowsPlugin(t *testing.T) {
 	project := projectDotDir(t, map[string]string{
 		"file-guard/dup/file-guard.yaml": pluginFileGuardYAML,
@@ -201,6 +202,7 @@ allow:
 // Between two plugins that ship the same (nature, name), the EARLIER-listed one
 // wins and the later is shadowed — so the order the resolver is handed is the
 // precedence, and it must not be re-sorted.
+// sr:proves loading/precedence-and-shadowing
 func TestNewWithPlugins_EarlierPluginWinsOverLater(t *testing.T) {
 	project := projectDotDir(t, nil)
 	first := pluginRoot(t, map[string]string{
@@ -230,6 +232,7 @@ func TestNewWithPlugins_EarlierPluginWinsOverLater(t *testing.T) {
 // A project can switch off a plugin's declaration from its own config, keyed on
 // the qualified name — the only remedy that survives a reinstall, since the
 // plugin's file is in an install cache.
+// sr:proves loading/disabled-by-qualified-name
 func TestNewWithPlugins_DisablePluginDeclaration(t *testing.T) {
 	project := projectDotDir(t, map[string]string{
 		"config.yaml": "disabled:\n  - acme/file-guard/slop\n",
@@ -248,6 +251,7 @@ func TestNewWithPlugins_DisablePluginDeclaration(t *testing.T) {
 // Disabling is per RULE and keyed on the qualified name: disabling a plugin's
 // `acme/gate/x` must NOT disable a project's own `gate/x`. They are different
 // rules with different authors.
+// sr:proves loading/disabled-by-qualified-name
 func TestNewWithPlugins_DisableIsKeyedOnQualifiedName(t *testing.T) {
 	// Both the project and the plugin ship a gate `x`. The project's own wins
 	// precedence; but to prove the disable key discriminates, give them DIFFERENT
@@ -273,6 +277,7 @@ func TestNewWithPlugins_DisableIsKeyedOnQualifiedName(t *testing.T) {
 // A plugin root that does not exist (or ships no `.sloprail`) is handled — no
 // error, no declarations — the ordinary state of most plugins, which ship no
 // guardrails at all.
+// sr:proves loading/rule-discovery
 func TestNewWithPlugins_AbsentPluginRootIsHandled(t *testing.T) {
 	project := projectDotDir(t, map[string]string{
 		"file-guard/mine/file-guard.yaml": pluginFileGuardYAML,
@@ -294,6 +299,7 @@ func TestNewWithPlugins_AbsentPluginRootIsHandled(t *testing.T) {
 // with the plugin origin so the report names where the unreadable file lives, and
 // the consumer can switch it off from their own config (the file is not theirs to
 // fix). This mirrors the old format's handling of a broken plugin guardrail.
+// sr:proves loading/one-broken-rule-disables-only-itself
 func TestNewWithPlugins_BrokenPluginDeclarationIsInvalidAndAttributed(t *testing.T) {
 	project := projectDotDir(t, nil)
 	plugin := pluginRoot(t, map[string]string{
@@ -317,6 +323,7 @@ func TestNewWithPlugins_BrokenPluginDeclarationIsInvalidAndAttributed(t *testing
 // matters most, since a plugin shipping one unparseable declaration would
 // otherwise keep a consuming project's logs noisy with a report it has no way to
 // silence (the file is in an install cache it must not edit).
+// sr:proves loading/disabled-by-qualified-name
 func TestNewWithPlugins_DisableReachesBrokenPluginDeclaration(t *testing.T) {
 	project := projectDotDir(t, map[string]string{
 		"config.yaml": "disabled:\n  - acme/gate/broken\n",
@@ -335,6 +342,7 @@ func TestNewWithPlugins_DisableReachesBrokenPluginDeclaration(t *testing.T) {
 // A config that exists and cannot be parsed refuses the whole load, rather than
 // silently re-enabling every declaration the project switched off — the
 // fail-closed the old format's LoadConfig takes.
+// sr:proves loading/unreadable-config-fails-the-load
 func TestNewWithPlugins_UnparseableConfigRefusesLoad(t *testing.T) {
 	project := projectDotDir(t, map[string]string{
 		"config.yaml": "disabled: [unterminated\n",
@@ -375,6 +383,7 @@ checks:
 
 // A gate that ships off (`enabled: false`) is inert until the project lists it under
 // `enabled:` in its config.
+// sr:proves loading/shipped-disabled-needs-enabled
 func TestNewWithPlugins_AGateShippedOffNeedsTheProjectToEnableIt(t *testing.T) {
 	gate := "enabled: false\non:\n  - event: PreCommandInvoke\nchecks:\n  - script: ./c.sh\n"
 	plugin := pluginRoot(t, map[string]string{"gate/judge/gate.yaml": gate, "gate/judge/c.sh": "exit 0\n"})

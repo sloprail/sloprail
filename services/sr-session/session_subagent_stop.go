@@ -91,6 +91,7 @@ import (
 // An ISOLATED sub-agent does not have this problem, because its Pre events fire
 // in a different tree and key a different store regardless of which session id
 // they carry.
+// sr:invariant subagents/unidentifiable-subagent-still-judged
 func newSessionSubagentStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "subagent-stop",

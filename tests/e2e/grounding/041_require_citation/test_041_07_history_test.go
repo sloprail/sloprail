@@ -95,6 +95,7 @@ func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
 // citation grounds the commit it is in, not the later one, so Stop refuses and names
 // the file. The controls: the cited change alone passes, and a cited commit ON TOP of
 // an uncited one grounds the file as it now stands.
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
 func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
 	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-34", prompt, Turns("done",
@@ -131,6 +132,7 @@ func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
 // only the first commit cites: the rule refuses, naming the second file and not the
 // first — one citation in the range does not ground a file it did not ride on. Citing
 // the second file in a commit that changes it passes.
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
 	e, proj := guardedUncited(t, afterCitationGuard)
 	e.Run(proj, "s-041-53", prompt, Turns("done",

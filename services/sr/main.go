@@ -151,6 +151,7 @@ To write a guardrail, use the authoring-guardrails skill.`,
 // validate -c x.md` would fail here rather than reaching sr-file, and `sr
 // session start --help` would print this command's help instead of the
 // service's. Every token after the service word belongs to the service.
+// sr:invariant cli/proxy-forwards-unchanged
 func newProxyCmd(s service) *cobra.Command {
 	return &cobra.Command{
 		Use:                s.name + " ...",

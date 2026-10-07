@@ -34,6 +34,7 @@ func TestT042_09_RevertOfUncitedEditsNeedsNoCitation(t *testing.T) {
 }
 
 // T042_10: undoing a CITED change (the user approved it) still needs the user's words.
+// sr:proves citations/trailer-grounds-only-the-last-changing-commit
 func TestT042_10_RevertOfACitedChangeStillNeedsGrounding(t *testing.T) {
 	e := NewUncited(t)
 	proj := project(t, e)

@@ -35,6 +35,7 @@ func subagentStopNow(t *testing.T, e *Env, proj, sess, wt, agent string) harness
 // T003_75: the refusal names commands that work. Backing up and reverting leaves the sub-agent's
 // branch clean (its Stop passes); the parent applies the patch cleanly, is refused for it
 // uncited, and passes once the commit carries the user's answer as the trailer.
+// sr:proves subagents/citation-refusal-hands-the-change-back
 func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(t *testing.T) {
 	e, proj, _ := uncitedProject(t, citingRule)
 	const sess = "s-003-75"
@@ -104,6 +105,7 @@ func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(
 }
 
 // T003_75: the root keeps the plain instruction (ask the user now): no hand-back.
+// sr:proves subagents/citation-refusal-hands-the-change-back
 func TestT003_75_TheRootIsToldToCiteNotToHandBack(t *testing.T) {
 	e, proj, _ := project(t, citingRule)
 	e.Run(proj, "s-003-75r", handbackPrompt, Turns("done", harness.CommitFile("c1", "docs/release.md", "the steps", "document the release")))

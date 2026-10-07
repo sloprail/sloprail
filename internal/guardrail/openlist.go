@@ -36,6 +36,7 @@ func newAbsentListIsEmpty() *absentListIsEmpty {
 	return &absentListIsEmpty{made: map[ast.Node]bool{}}
 }
 
+// sr:invariant matching/flag-values-are-lists
 func (v *absentListIsEmpty) Visit(node *ast.Node) {
 	switch n := (*node).(type) {
 	case *ast.BinaryNode:

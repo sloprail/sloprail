@@ -9,6 +9,7 @@ import (
 
 // T003_45: an abandon. A left branch is judged until the agent untracks it with a reason (no reason
 // does not drop it); the untracking holds only while the tip stays: new commits judge it again.
+// sr:proves session/untracked-range-returns-when-tip-moves
 func TestT003_45_AGroundedAbandonDropsABranchUntilItsTipMoves(t *testing.T) {
 	e, proj, _ := project(t, docsRule)
 	main := e.Git(proj, "branch", "--show-current")

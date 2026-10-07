@@ -55,6 +55,7 @@ func TestSetState_ValueIsOpaque(t *testing.T) {
 	}
 }
 
+// sr:proves session/state-is-the-guardrails-own
 func TestState_ScopedToItsGuardrail(t *testing.T) {
 	// What makes ordering between guardrails unobservable: no rule can read
 	// another's entries, so no rule can depend on when another ran.
@@ -303,6 +304,7 @@ func TestListStateOwned_DoesNotDisturbTheCallersOwnEntries(t *testing.T) {
 	assert.Equal(t, []Entry{{Key: "shared", Value: "caller-value"}}, callerList)
 }
 
+// sr:proves session/state-is-the-guardrails-own
 func TestListStateOwned_IsReadOnly_NoOwnedSetExists(t *testing.T) {
 	// The owned read opens no owned WRITE. There is no ListStateOwned
 	// counterpart for set: a caller can read another guardrail's list, and there

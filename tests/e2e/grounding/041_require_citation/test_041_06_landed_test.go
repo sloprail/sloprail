@@ -66,6 +66,8 @@ func TestT041_33_AFailedCitedCallGroundsNothing(t *testing.T) {
 // through an uncited change `when` waives — the tasks shape: the ask stands
 // committed before the range, and a later status flip made with a plain edit needs
 // none. An uncited change `when` does NOT waive is refused.
+// sr:proves checks/when-waives-only-on-exit-one
+// sr:proves citations/citation-at-stop-charges-every-uncited-part
 func TestT041_35_WhenDecidesAnUncitedChangeSince(t *testing.T) {
 	const whenGuard = `match: "memories/**"
 require:

@@ -22,6 +22,7 @@ exit 1
 
 // T001_32: three judged rules, one outage: one "judges unavailable" refusal naming the cause,
 // each judge tried twice, and a later run with a working judge passes (nothing was cached).
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestT001_32_AJudgeOutageIsReportedOnceWithItsCause(t *testing.T) {
 	e, proj := session(t)
 	ledger := filepath.Join(t.TempDir(), "ledger")

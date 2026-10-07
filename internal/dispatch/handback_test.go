@@ -17,6 +17,7 @@ import (
 // hand the change back — a patch file, a revert, a report to its parent — and
 // never to ask the user or to leave it for a merge trailer; the root keeps the
 // plain instruction.
+// sr:proves subagents/citation-refusal-hands-the-change-back
 func TestCitationRefusalForASubagentHandsTheChangeBack(t *testing.T) {
 	userOnly := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}
 	cs := &changeset.Payload{Changeset: changeset.Changeset{Base: "abc123", Files: []changeset.File{{Path: "docs/a.md"}, {Path: "docs/b c.md"}}}}

@@ -126,6 +126,7 @@ wait
 `
 
 // T001_34: the same for a judge: the model call sr-agent started goes down with the run.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
 func TestT001_34_SIGTERMLeavesNoJudgeModelCallRunning(t *testing.T) {
 	e, proj := session(t)
 	pids := filepath.Join(t.TempDir(), "pids")

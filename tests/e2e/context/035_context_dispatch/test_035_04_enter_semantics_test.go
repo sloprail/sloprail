@@ -43,6 +43,7 @@ exit 1
 //
 // Three tool calls in one cycle each fire PreToolUse, so enter runs three times,
 // each reading the prior count and writing count+1. The final payload is 3.
+// sr:proves contexts/enter-activates-and-replaces-payload
 func TestT035_08_EnterFiresEveryOccurrenceAndReplacesPayload(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

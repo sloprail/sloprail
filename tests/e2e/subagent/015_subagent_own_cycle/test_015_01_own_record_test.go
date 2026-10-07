@@ -287,6 +287,7 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 // part of the test rather than a separate one: the root's second hook must read back the
 // root's FIRST note. Without that, "the root did not read the sub-agent's note" is equally
 // true of a store that never worked at all, and the whole test would be vacuous.
+// sr:proves subagents/own-session
 func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -357,6 +358,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 // exhibits it, and unlike the parent/child direction it cannot be explained away by a tree
 // boundary: both sub-agents are the same KIND of thing, dispatched the same way, by the
 // same session. Each writes a note keyed to its own work. Neither may see the other's.
+// sr:proves subagents/own-session
 func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

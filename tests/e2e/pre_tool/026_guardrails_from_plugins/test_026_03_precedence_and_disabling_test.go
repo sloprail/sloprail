@@ -41,6 +41,7 @@ exit 0
 // That the shadowing is also REPORTED is asserted in internal/declaration rather
 // than on this stream; the note below the test says why this stream cannot carry
 // it.
+// sr:proves loading/precedence-and-shadowing
 func TestT026_03_ProjectRuleTakesPrecedenceOverThePlugins(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -133,6 +134,7 @@ func TestT026_04_ADisabledPluginRuleIsInert(t *testing.T) {
 // Here the project's own authoring-slop gate REFUSES, so its being in force
 // is visible on the stream. (It shadows the plugin's anyway; the disable of the
 // plugin's qualified name must leave the project's untouched.)
+// sr:proves loading/disabled-by-qualified-name
 func TestT026_05_DisablingAPluginRuleLeavesTheProjectsOwnInForce(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -320,6 +320,7 @@ func landedOf(pending []pendingChange) []pendingChange {
 // and its next hook no tool of the agent's ran, so what changed there — the
 // user's edit, a branch switch, a file already dirty when the session began —
 // is not the agent's to cite.
+// sr:invariant citations/between-turn-changes-are-charged-only-with-running-work
 func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPath, others []string) error {
 	if store == nil {
 		return nil

@@ -11,6 +11,7 @@ import (
 // SubagentStop is not refused for it (a10n blocked a read-only sub-agent 17
 // times in a row for the root's uncommitted work) — while the root, who owns
 // the tree, still is.
+// sr:proves fileguard/commit-required
 func TestT002_06_ASubagentInTheRootsTreeIsNotGated(t *testing.T) {
 	e, proj := project(t)
 	sub := harness.SubagentScript(t, Turns("sub done",
@@ -37,6 +38,7 @@ func TestT002_06_ASubagentInTheRootsTreeIsNotGated(t *testing.T) {
 
 // T002_07: a sub-agent in a worktree of its own owns that tree and is gated on
 // it, in the tree it was bound to.
+// sr:proves fileguard/commit-required
 func TestT002_07_AnIsolatedSubagentOwnsItsTreeAndIsGated(t *testing.T) {
 	e, proj := project(t)
 	sub := harness.SubagentScript(t, Turns("sub done",

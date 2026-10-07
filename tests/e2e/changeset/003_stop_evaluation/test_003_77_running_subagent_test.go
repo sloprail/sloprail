@@ -35,6 +35,7 @@ func appendRecord(t *testing.T, path string, lines ...string) {
 // shapes harness-mocks pins: an "Async agent launched" receipt, a queued_command
 // attachment with commandMode task-notification), and the Stop is run directly. Missing in
 // the mock: a way to read a Stop hook's non-blocking output (systemMessage) from a run.
+// sr:proves subagents/running-background-agent-left-unjudged
 func TestT003_77_TheParentsStopLeavesARunningBackgroundAgentsRangeForLater(t *testing.T) {
 	e, proj, _ := uncitedProject(t, citingRule)
 	const sess = "s-003-77"

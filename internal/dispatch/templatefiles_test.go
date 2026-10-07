@@ -167,6 +167,7 @@ func fenceRun(line string) string {
 
 // The source check catches a value in a fence however the fence is written, and
 // passes a template whose fences hold only literal text.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestFencedInterpolations(t *testing.T) {
 	for _, src := range []string{
 		"```\n{{ event.newContent }}\n```\n",
@@ -227,6 +228,7 @@ func markValues(v any) any {
 
 // A fence the template produces with an expression is invisible to the source
 // scan and caught by the render-time one.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestFenceProducedAtRenderTimeIsCaught(t *testing.T) {
 	src := "{{ '```' }}\n{{ event.newContent }}\n{{ '```' }}\n"
 	assert.Empty(t, fencedInterpolations(src), "the source scan cannot see a produced fence")
@@ -436,6 +438,7 @@ func standInAdditionalContext() map[string]any {
 // the prompt as JSON — not as the `<float64 Value>` / `<map[string]interface {}
 // Value>` placeholders a map printed straight into the template gives — and a
 // closing tag inside them must still not survive.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestActionProofTemplate_StructuredValuesRenderAsJSON(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(repoTemplatesRoot(t), "action-proof", ".sloprail", "gate",
 		"screenshot-proves-fields", "screenshot-shows-all-fields.md.j2"))
@@ -461,6 +464,7 @@ func TestActionProofTemplate_StructuredValuesRenderAsJSON(t *testing.T) {
 // `| tojson` hands the judge the value itself: `&`, `<` and `>` as written (no
 // `\u0026` to decode), a closing tag broken only as JSON's own `<\/` escape, and
 // the block json.Unmarshal's back to exactly what the prepare supplied.
+// sr:proves judges/rendered-values-cannot-break-out
 func TestActionProofTemplate_ToJSONRoundTrips(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(repoTemplatesRoot(t), "action-proof", ".sloprail", "gate",
 		"screenshot-proves-fields", "screenshot-shows-all-fields.md.j2"))

@@ -16,6 +16,7 @@ import (
 // local copy is used. With write (`run`) it then also imports an older engine's stores and
 // pushes what is pending; without it (`verify`, `show`) it only reads: nothing is pushed,
 // migrated or written.
+// sr:invariant cache/verify-read-only
 func OpenCache(w io.Writer, root string, write bool) (*checkcache.Store, error) {
 	opt := checkcache.Options{Dir: root}
 	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").Output(); err == nil && strings.TrimSpace(string(out)) != "" {

@@ -18,6 +18,7 @@ const structureYAML = `allow:
 // and — the claim a test about prevention must actually check — the file does not
 // exist afterwards. Reading the stream for a refusal marker is not enough; the tree
 // is what says the write was prevented.
+// sr:proves structure/deny-by-default
 func TestT033_01_WriteOutsideAllowlistIsBlocked(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -84,6 +85,7 @@ func TestT033_03_WriteMatchingRegexIsAllowed(t *testing.T) {
 // path under the allow but inside the deny is refused, while a sibling under the
 // allow but outside the deny still passes. This is the deny-subtracts-from-allow
 // semantics the spec fixes.
+// sr:proves structure/deny-subtracts-from-allow
 func TestT033_04_DenyCarvesException(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

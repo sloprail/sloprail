@@ -90,6 +90,7 @@ func TestT005_03_CommittingDoesNotMoveThePoint(t *testing.T) {
 // The branch it switches to is prepared off the root, so it genuinely does not
 // contain the session's point. Switching to a branch created from where the
 // tree already is leaves nothing behind, and is T005_06.
+// sr:proves session/baseline-moves-only-on-leaving-history
 func TestT005_04_LeavingTheHistoryRetakesThePoint(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

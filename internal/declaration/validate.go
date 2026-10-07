@@ -64,6 +64,9 @@ type Env struct {
 // meaningful without any checks — the engine evaluates `require` before any check
 // and refuses the write when it is unmet — so forcing it to carry a pass-through
 // check solely to satisfy the validator was pure boilerplate).
+// sr:invariant loading/rule-must-decide-something
+// sr:invariant loading/retired-file-guard-keys-are-refused
+// sr:invariant loading/trigger-match-compiles-at-load
 func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	var problems []Problem
 
@@ -121,6 +124,7 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 // PreFileWrite alias), each trigger's `match` compiles against the GATE scope for
 // the kind it names, and it must carry AT LEAST ONE of require/checks — the one
 // rule unique to gates, since a gate with neither would wake and do nothing.
+// sr:invariant loading/rule-must-decide-something
 func ValidateGate(g Gate, env Env) []Problem {
 	var problems []Problem
 
@@ -154,6 +158,7 @@ func ValidateGate(g Gate, env Env) []Problem {
 // against the CONTEXT scope, and `enter` and `exit` are both required and
 // non-empty (a context with no enter cannot activate; with no exit cannot decide
 // it is done).
+// sr:invariant loading/rule-must-decide-something
 func ValidateContext(c Context, env Env) []Problem {
 	var problems []Problem
 
@@ -211,6 +216,7 @@ func ValidateStructureGate(s StructureGate, _ Env) []Problem {
 // validateGateTrigger checks one gate trigger: its `event` is a valid gate kind
 // or alias, and its `match` compiles against the gate scope for each concrete
 // kind the event resolves to.
+// sr:invariant loading/event-kinds-by-nature
 func validateGateTrigger(t GateTrigger, i int, env Env) []Problem {
 	where := fmt.Sprintf("on %d", i)
 	if strings.TrimSpace(t.Event) == "" {
@@ -229,6 +235,7 @@ func validateGateTrigger(t GateTrigger, i int, env Env) []Problem {
 
 // validateContextTrigger checks one context trigger the same way, against the
 // context vocabulary and the context scope.
+// sr:invariant loading/event-kinds-by-nature
 func validateContextTrigger(t ContextTrigger, i int, env Env) []Problem {
 	where := fmt.Sprintf("on %d", i)
 	if strings.TrimSpace(t.Event) == "" {
@@ -261,6 +268,8 @@ func validateContextTrigger(t ContextTrigger, i int, env Env) []Problem {
 // The compiler is passed in (CompileGateMatch or CompileContextMatch) rather than
 // branched on, because the two differ only in which scope they build and the
 // caller already knows which nature it is validating.
+// sr:invariant loading/trigger-match-compiles-at-load
+// sr:invariant matching/checked-at-load
 func compileTriggerMatch(
 	match, where string,
 	kinds []string,
@@ -438,6 +447,7 @@ func validateChecks(checks []Check) []Problem {
 // file is fixed. Dropping the rule instead would disarm it on a `chmod -x` (not a
 // write, so no hook sees it) until the next session hook reported it. A script
 // that does not exist is not this check's business: absence surfaces where it is run.
+// sr:invariant loading/declared-script-fault-keeps-rule-enforced
 func validateScripts(dir, where, script string) []Problem {
 	if err := scriptexec.VerifyDeclared(dir, script); err != nil {
 		p := prob(ErrBadScript, where, "%v", err)

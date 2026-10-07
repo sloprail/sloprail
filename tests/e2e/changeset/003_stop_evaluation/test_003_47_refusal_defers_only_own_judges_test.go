@@ -10,6 +10,7 @@ import (
 // T003_47: a cheap-check refusal in rule A defers only A's own judges. Rule B's
 // judge still runs and its refusal surfaces in the same Stop. A's deferred judge
 // is a visible skip row in `sr-checks verify`, not a silent absence.
+// sr:proves fileguard/refusals-independent
 func TestT003_47_ARefusalDefersOnlyItsOwnJudges(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

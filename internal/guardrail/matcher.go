@@ -56,6 +56,7 @@ func CompileMatcherFor(src string, kind module.KindDecl) (*Matcher, error) {
 	return m, nil
 }
 
+// sr:invariant matching/checked-at-load
 func compile(src string, opts ...expr.Option) (*Matcher, error) {
 	if src == "" {
 		return &Matcher{}, nil
@@ -148,6 +149,7 @@ func (m *Matcher) Match(e event.Event) (bool, error) {
 // A field carried at the WRONG type errors rather than filling in. See fill:
 // absence and disagreement are different facts, and only the first has a right
 // answer.
+// sr:invariant matching/absent-field-is-zero
 func (m *Matcher) env(e event.Event) (map[string]any, error) {
 	env := make(map[string]any, len(e.Fields)+len(m.declared))
 	for k, v := range e.Fields {
@@ -200,6 +202,7 @@ func (m *Matcher) env(e event.Event) (map[string]any, error) {
 // A carried value of the RIGHT type is never replaced. Completing a structure is
 // supplying what is missing from it; overwriting what arrived would make the
 // matcher answer about something other than the occurrence it was handed.
+// sr:invariant matching/absent-field-is-zero
 func fill(f module.FieldDecl, carried any) (any, error) {
 	// Absence, in both its spellings. Checked before the type switch so every
 	// branch below is about a value that actually arrived.

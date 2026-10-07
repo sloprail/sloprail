@@ -337,6 +337,8 @@ exit 0
 //   - the refusal is not carried into later cycles;
 //   - the `deletions: only` observer is never handed the delete: the range is
 //     judged as its net change, and a file added and deleted inside it is not in it.
+//
+// sr:proves fileguard/deletions-filter
 func TestT038_06_AFileAddedAndDeletedInOneRangeIsNotJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

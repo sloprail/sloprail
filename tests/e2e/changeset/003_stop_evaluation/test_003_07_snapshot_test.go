@@ -11,6 +11,7 @@ import (
 // T003_07: checks read a read-only snapshot of head (SR_TREE), never the working
 // tree: an uncommitted edit and an untracked file are invisible to them, they
 // cannot write into what they judge, and the snapshot is gone afterwards.
+// sr:proves fileguard/net-diff-of-commits
 func TestT003_07_ChecksReadAReadOnlySnapshotOfHead(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

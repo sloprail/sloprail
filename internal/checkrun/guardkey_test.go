@@ -29,6 +29,7 @@ func twoFilePayload(extra bool) (changeset.Payload, changeset.Payload) {
 
 // #291: a commit that touches none of a subject's files, whatever citation it carries, must
 // not move that subject's key, for a rule that requires a citation and one that does not.
+// sr:proves cache/verdict-identity
 func TestGuardKey_ACommitOutsideTheSubjectDoesNotMoveItsKey(t *testing.T) {
 	for _, g := range []declaration.FileGuard{
 		{},
@@ -47,6 +48,7 @@ func TestGuardKey_ACommitOutsideTheSubjectDoesNotMoveItsKey(t *testing.T) {
 }
 
 // What grounds the subject's own files still moves its key.
+// sr:proves cache/verdict-identity
 func TestGuardKey_TheSubjectsOwnCitationsMoveItsKey(t *testing.T) {
 	g := declaration.FileGuard{}
 	key := func(p changeset.Payload) string {

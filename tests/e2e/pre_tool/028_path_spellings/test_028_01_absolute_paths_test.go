@@ -78,6 +78,7 @@ func refuseWithReason(reason string) string {
 // Asserted as byte equality against the relative spelling rather than as
 // "contains docs/", which would pass on an engine handing over the absolute
 // path unchanged — the failure this test exists for.
+// sr:proves events/path-inside-or-absolute
 func TestT028_01_AnAbsolutePathInsideTheWorkspaceIsReportedRelative(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -135,6 +136,7 @@ func TestT028_02_ARelativeMatcherAdmitsAnAbsolutelyAnnouncedWrite(t *testing.T) 
 //
 // Three spellings of the same path, each on its own turn. All three must be
 // reported identically.
+// sr:proves events/path-inside-or-absolute
 func TestT028_03_SpellingsOfOneFileAgree(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -176,6 +178,7 @@ func TestT028_03_SpellingsOfOneFileAgree(t *testing.T) {
 //
 // This test drives the bypass directly: the refusal must reach the agent and
 // nothing must land.
+// sr:proves events/path-inside-or-absolute
 func TestT028_03b_ADotRelativeSpellingDoesNotEvadeANarrowedRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -208,6 +211,7 @@ func TestT028_03b_ADotRelativeSpellingDoesNotEvadeANarrowedRule(t *testing.T) {
 // The assertion is that the reported path is ABSOLUTE and names the outside
 // file, not merely that it differs from some relative form. An engine reporting
 // `../outside/note.md` would fail this, which is the point.
+// sr:proves events/path-inside-or-absolute
 func TestT028_04_APathOutsideTheWorkspaceStaysAbsolute(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -240,6 +244,7 @@ func TestT028_04_APathOutsideTheWorkspaceStaysAbsolute(t *testing.T) {
 // paths: the outside write would be reported as `secret/keys.md`, the prefix
 // would match, and a rule about this project would be refusing writes in
 // someone else's tree.
+// sr:proves events/path-inside-or-absolute
 func TestT028_05_AProjectMatcherDoesNotReachOutsideTheProject(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -294,6 +299,7 @@ func TestT028_05_AProjectMatcherDoesNotReachOutsideTheProject(t *testing.T) {
 // where `reportable` can be called directly with a root and a path. Recording
 // the limit here rather than leaving a reader to assume the test is stronger
 // than it is.
+// sr:proves events/path-inside-or-absolute
 func TestT028_06_ASymlinkEscapingTheRepositoryIsNotReportedAsInside(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -331,6 +337,7 @@ func TestT028_06_ASymlinkEscapingTheRepositoryIsNotReportedAsInside(t *testing.T
 // Distinct from T028_06 rather than a restatement: that one reads the spelling
 // off the payload, this one goes through the match, and an engine could report
 // one spelling to the check while narrowing on another.
+// sr:proves events/path-inside-or-absolute
 func TestT028_06b_AProjectMatcherDoesNotAdmitAnEscapedWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -369,6 +376,7 @@ checks:
 // Without this, an engine reporting every symlinked path as absolute would
 // satisfy T028_06 and would quietly stop enforcing rules on a large class of
 // real repositories.
+// sr:proves events/path-inside-or-absolute
 func TestT028_07_ASymlinkInsideTheRepositoryStaysInside(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -418,6 +426,7 @@ func TestT028_07_ASymlinkInsideTheRepositoryStaysInside(t *testing.T) {
 //
 // The write still fails, and it fails as the harness's own error about a real
 // filesystem condition rather than as a guardrail verdict — which T028_09 pins.
+// sr:proves events/pre-file-change-only-for-writes
 func TestT028_08_AWriteAimedAtADirectoryProducesNoFileEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -446,6 +455,7 @@ func TestT028_08_AWriteAimedAtADirectoryProducesNoFileEvent(t *testing.T) {
 // The project has a rule bound to creations, so an engine that emitted an event
 // here would reach a check; the check refuses, which is what makes a refusal
 // visible if one is ever produced.
+// sr:proves events/pre-file-change-only-for-writes
 func TestT028_09_ADirectoryWriteIsNotAGuardrailRefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

@@ -315,6 +315,8 @@ type Runner struct {
 // passes; a pure-checks rule refuses on the first failing check. A rule with
 // neither passes — the loaders guarantee a gate has at least one, so that case is
 // a caller's, not this runner's, to forbid.
+// sr:invariant checks/requirements-before-checks
+// sr:invariant checks/first-refusal-ends-the-run
 func (r Runner) Run(req Request) (Verdict, error) {
 	r = r.withDefaults()
 

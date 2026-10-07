@@ -128,6 +128,7 @@ func TestInvariant_judged_on_its_own_record(t *testing.T) {
 // tree is the case that matters: a sub-agent that did NOT get its own worktree
 // has the same workspace as its parent, so the id is the only thing separating
 // them.
+// sr:proves subagents/own-session
 func TestInvariant_subagent_state_is_its_own(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 

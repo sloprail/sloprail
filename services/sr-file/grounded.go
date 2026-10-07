@@ -96,6 +96,7 @@ func newDeleteCmd() *cobra.Command {
 		"Delete a file. It must exist and be a regular file.")
 }
 
+// sr:invariant citations/file-command-writes-nothing-unless-exact
 func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) (err error) {
 	abs, err := filepath.Abs(fc.Path)
 	if err != nil {

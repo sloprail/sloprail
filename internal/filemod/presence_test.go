@@ -51,6 +51,7 @@ func TestObserved_UnstattablePathIsNotReportedAsADelete(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnreadableTree)
 }
 
+// sr:proves events/one-bad-path-keeps-the-rest
 func TestObserved_UnstattablePathDoesNotSilenceTheRest(t *testing.T) {
 	// One path the machine cannot answer about is not a reason to withhold the
 	// classification of the ones beside it.
@@ -221,6 +222,7 @@ func TestLookAt_SeesTheLinkNotItsTarget(t *testing.T) {
 
 // --- a path that is not repository-relative is refused, not normalised (F4) --
 
+// sr:proves events/path-inside-or-absolute
 func TestObserved_PathsOutsideTheRepositoryAreRefused(t *testing.T) {
 	// filepath.Join folds "../outside.md" away and stats a real file outside
 	// the repository, while the event still carries the raw spelling — which no
@@ -280,6 +282,7 @@ func escapeTree(t *testing.T) string {
 	return root
 }
 
+// sr:proves events/path-inside-or-absolute
 func TestObserved_SymlinkedParentDirectoryIsRefused(t *testing.T) {
 	// The worst version of the escape, and the one no string check can see.
 	// "escape/id_rsa" is relative, has no "..", and cleans to itself — yet
@@ -318,6 +321,7 @@ func TestObserved_SymlinkedParentEscapeIsRefusedAtEveryDepth(t *testing.T) {
 	}
 }
 
+// sr:proves events/one-bad-path-keeps-the-rest
 func TestObserved_SymlinkedParentEscapeDoesNotSilenceTheRest(t *testing.T) {
 	root := escapeTree(t)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "real.md"), []byte("x\n"), 0o644))
@@ -819,6 +823,7 @@ func TestResolve_ContainmentRefusesWhatItCannotEstablish(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot resolve")
 }
 
+// sr:proves events/one-bad-path-keeps-the-rest
 func TestObserved_RefusedPathDoesNotSilenceTheRest(t *testing.T) {
 	root := tree(t, "real.md")
 
