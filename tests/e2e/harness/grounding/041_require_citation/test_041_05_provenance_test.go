@@ -108,7 +108,7 @@ func TestT041_45_AnAgentTranscriptReadBackIsNotToolOutput(t *testing.T) {
 		Bash("b1", `sr-file write memories/read.md --cite:tool_result 'AGENTTEXT-5150 all 40 tests pass' --content '# x'`),
 		Bash("b2", `sr-file write memories/plain.md --cite:tool_result 'PLAINTEXT-5151 ok' --content '# y'`),
 	))
-	if !res.Saw("b2") {
+	if !res.Saw("memories/plain.md") {
 		t.Fatalf("the citing calls never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/read.md") {
@@ -168,7 +168,7 @@ func TestT041_32_AnAnswerIsNotToolOutput(t *testing.T) {
 		Bash("b1", `sr-file write memories/budget.md --cite:tool_result 'ANSWER-E2E-6120 five retries' --content '# budget'`),
 		Bash("b2", `sr-file write notes/budget.md --cite:user 'ANSWER-E2E-6120 five retries' --content '# budget'`),
 	))
-	if !res.Saw("b2") {
+	if !res.Saw("memories/plain.md") {
 		t.Fatalf("the citing calls never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/budget.md") {
@@ -194,6 +194,7 @@ func readFile(t *testing.T, path string) string {
 // sr-file failing the same way is left to say its own words.
 // sr:proves citations/user-pool-is-the-root-conversation
 func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -214,15 +215,7 @@ func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
 	for _, sub := range e.SubagentRecordPaths(proj, "s-041-31") {
 		record += "\n" + readFile(t, sub)
 	}
-	var subResult, rootResult string
-	for _, l := range strings.Split(record, "\n") {
-		switch {
-		case strings.Contains(l, `"tool_use_id":"sb1`):
-			subResult = l
-		case strings.Contains(l, `"tool_use_id":"b1`):
-			rootResult = l
-		}
-	}
+	subResult, rootResult := e.ResultRecord(record, "sb1"), e.ResultRecord(record, "b1")
 	for _, want := range []string{"hook", "That quote is from your dispatch prompt, written by the parent agent.", "You are a sub-agent: your prompt is the parent agent's, not the user's."} {
 		if !strings.Contains(subResult, want) {
 			t.Errorf("the sub-agent's refusal does not say %q:\n%s", want, subResult)

@@ -57,8 +57,25 @@ const (
 	KindPre = "pre"
 	// KindPost is a call's outcome (postToolUse, or postToolUseFailure with IsError).
 	KindPost = "post"
+	// KindRoot marks the conversation as the session's own root: its sessionStart fired.
+	// Cursor fires sessionStart for the session only, never for a sub-agent's conversation,
+	// whose tool hooks nonetheless fire under its own conversation_id (recorded in
+	// harness-mocks runs/subagent-lifecycle-hooks, nested-subagents, foreground-subagent-result,
+	// subagent-transcripts). No payload and no transcript line names a conversation's parent,
+	// so this is the only recorded way to tell the root from a sub-agent.
+	KindRoot = "root"
 	// KindContent is the bytes of a file a Read is about to return (beforeReadFile).
 	KindContent = "content"
+	// KindFollowup is a followup_message sloprail's stop hook emitted (Output): Cursor
+	// writes it into the transcript as a user record, which is then harness-injected,
+	// not the person's words.
+	KindFollowup = "followup"
+	// KindCompact marks that the conversation was compacted (preCompact fired). Cursor
+	// then writes the prompt into the transcript again, mid-turn, as a user record
+	// byte-identical to the person's (recorded: harness-mocks cursor-mock runs/
+	// compaction-transcript-continuity, where a <dynamic_tools> user record is also
+	// written there): the harness writing, not the person.
+	KindCompact = "compact"
 )
 
 // StoredLine is one line of the file.
@@ -271,6 +288,7 @@ func sweep(dir string) {
 type slot struct {
 	id, tool, key, path, gen string
 	at                       time.Time
+	started                  int // the store line index of its pre
 
 	// where the outcome text is: the line index (1-based, the line's number in the store,
 	// which is what the result is cited under), its offset and length in the file.
@@ -305,6 +323,15 @@ func (s *slot) result() (r ref, isErr bool, ok bool) {
 type store struct {
 	path  string
 	byKey map[string][]*slot
+
+	// root: a KindRoot line was seen, so the conversation is the session's own.
+	root bool
+
+	// followups: the texts sloprail's stop hook emitted as followup_message.
+	followups map[string]bool
+
+	// compacted: a KindCompact line was seen.
+	compacted bool
 }
 
 // loadStore streams the file, keeping per line only where it is (not its text: outputs
@@ -354,20 +381,29 @@ func loadStore(conversationID string) *store {
 							break
 						}
 						open = without(open, s)
-						*s = slot{id: s.id, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at}
+						*s = slot{id: s.id, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at, started: where.idx}
 						if s.tool == "Read" && s.path != "" {
 							s.open = true
 							open = append(open, s)
 						}
 						break
 					}
-					s := &slot{id: l.ToolUseID, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at}
+					s := &slot{id: l.ToolUseID, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at, started: where.idx}
 					byID[s.id] = s
 					all = append(all, s)
 					if s.tool == "Read" && s.path != "" {
 						s.open = true
 						open = append(open, s)
 					}
+				case KindRoot:
+					st.root = true
+				case KindCompact:
+					st.compacted = true
+				case KindFollowup:
+					if st.followups == nil {
+						st.followups = map[string]bool{}
+					}
+					st.followups[l.Output] = true
 				case KindPost:
 					s := byID[l.ToolUseID]
 					if s == nil || s.postRecorded || toolClass(l.Tool) != toolClass(s.tool) {
@@ -457,6 +493,15 @@ func (st *store) pairing(callCounts map[string]int) map[string][]*slot {
 		ok := true
 		for _, extra := range slots[calls:] {
 			if extra.postRecorded || extra.bound {
+				ok = false
+			}
+		}
+		// Calls pair with slots by START order, which is the transcript's order only if
+		// the calls did not overlap: each must have finished before the next began.
+		// Two running together (parallel identical commands) may have started in either
+		// order relative to the transcript, so their outputs could swap: no result.
+		for i := 0; ok && i+1 < calls; i++ {
+			if !slots[i].postRecorded || slots[i].post.idx > slots[i+1].started {
 				ok = false
 			}
 		}

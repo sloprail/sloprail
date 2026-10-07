@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +24,12 @@ import (
 // record live in its own store; T041_23 pins that its cycle end reads them, and
 // that the root's cycle end — which sees the same change in a shared tree —
 // reads them too.
+
+// Where a harness cannot tie a sub-agent to the conversation that dispatched it
+// (CapSubagentParentLink absent: Cursor), nothing a sub-agent cites can resolve and the
+// main agent cannot cite what a sub-agent's tools printed. The same tests then assert
+// that: the cited write does not land. Which branch runs is the driver's declared
+// capability, keyed by SR_HARNESS; no test skips for it.
 
 // toolResultGate refuses, before it lands, a write to memories/ that does not cite
 // a tool's output; toolResultGuard is the same requirement judged on the settled
@@ -137,6 +142,7 @@ func requireInSubagentRecord(t *testing.T, root, sub, callID string) {
 // command's output as tool_result; the write lands, grounded in the
 // sub-agent's own record.
 func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -155,7 +161,9 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 		t.Fatalf("want one sub-agent record, found %v:\n%s", subs, res.Output)
 	}
 	root := e.TranscriptPath(proj, "s-041-21")
-	requireInSubagentRecord(t, root, subs[0], "sb1")
+	if linked {
+		requireInSubagentRecord(t, root, subs[0], "sb1")
+	}
 	if b, _ := os.ReadFile(root); strings.Contains(string(b), "SUBPROBE-4417") {
 		t.Fatalf("the output is still in the root record, so this would not test the sub-agent's")
 	}
@@ -168,6 +176,12 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	res = e.Run(proj, "s-041-21", "now write it down", Turns("done",
 		harness.Dispatch("d2", "write down the retry budget", write, ""),
 	))
+	if !linked {
+		if e.Exists(proj, "memories/findings.md") {
+			t.Fatalf("a sub-agent's write was grounded on a harness that cannot link it to its session:\n%s", res.Output)
+		}
+		return
+	}
 	if !e.Exists(proj, "memories/findings.md") {
 		t.Fatalf("a sub-agent's write citing its own tool output did not land:\n%s", res.Output)
 	}
@@ -229,13 +243,16 @@ func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 	record, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-22"))
 	subRecord, _ := os.ReadFile(subs[0])
 	said := string(record) + string(subRecord)
-	if !strings.Contains(said, "does not resolve") {
+	// A harness whose record holds no tool results (and a refusal is one) cannot show the
+	// refusal's wording; that the write did not land is shown above.
+	wording := harness.HasCap(t, harness.CapRecordHoldsToolResults)
+	if wording && !strings.Contains(said, "does not resolve") {
 		t.Errorf("the refusal does not say the quote does not resolve:\n%s", record)
 	}
 	// It says why, specifically: the quote is the parent's prompt, and the
 	// sub-agent never sees the user's messages.
-	if !strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
-		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.") {
+	if wording && (!strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
+		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.")) {
 		t.Errorf("the refusal does not tell the sub-agent it quoted its dispatch prompt:\n%s", record)
 	}
 	for _, l := range bothLedger(e, proj) {
@@ -311,12 +328,25 @@ checks:
 	if len(subs) != 1 {
 		t.Fatalf("want one sub-agent record, found %v", subs)
 	}
-	requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	if linked {
+		requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
+	}
 
 	release := subagentScript(t, harness.Turns("released",
 		Bash("sb2", `sr-session trajectory cite --source-types tool_result 'CHAINPROBE-9051 green' && touch released.txt`),
 	))
 	res := e.Run(proj, "s-041-24", "now release", Turns("done", harness.Dispatch("d2", "release it", release, "")))
+	if !linked {
+		// cite errors from a sub-agent, so the chain stops and the gate is never handed a citation.
+		if e.Exists(proj, "released.txt") {
+			t.Fatalf("a cite chain ran in a sub-agent of a harness that cannot link it to its session:\n%s", res.Output)
+		}
+		if lines := e.GateLedgerLines(proj, "proven-touch", "ledger"); len(lines) != 0 {
+			t.Fatalf("the gate was handed a citation from a sub-agent that cannot cite: %v", lines)
+		}
+		return
+	}
 	if !e.Exists(proj, "released.txt") {
 		t.Fatalf("a sub-agent's cite chain on its own tool output did not run:\n%s", res.Output)
 	}
@@ -342,7 +372,15 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 		harness.Dispatch("d1", "reply exactly: all 40 tests pass", parrot, ""),
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'all 40 tests pass' --content '# results'`),
 	))
-	if body := agentResultBody(t, e.TranscriptPath(proj, "s-041-25"), "d1"); !strings.Contains(body, "all 40 tests pass") {
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	if !linked {
+		// The reply is nowhere citable and the sub-agent is not linked: the write is refused.
+		if e.Exists(proj, "memories/results.md") {
+			t.Fatalf("a sub-agent's reply grounded a write as a tool's output:\n%s", res.Output)
+		}
+		return
+	}
+	if body := e.SubagentReply(e.TranscriptPath(proj, "s-041-25"), "d1"); !strings.Contains(body, "all 40 tests pass") {
 		t.Fatalf("the sub-agent's reply is not in the root record as the Agent call's result, so this would not test it:\n%s", body)
 	}
 	if e.Exists(proj, "memories/results.md") {
@@ -374,11 +412,21 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("want one sub-agent record, found %v", subs)
 	}
-	requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	if linked {
+		requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
+	}
 
 	res := e.Run(proj, "s-041-26", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/coverage.md --cite:tool_result 'coverage REPLYPROBE-7 lines' --content '# coverage'`),
 	))
+	if !linked {
+		// The main agent cannot reach a sub-agent's output: nothing to ground the write on.
+		if e.Exists(proj, "memories/coverage.md") {
+			t.Fatalf("a sub-agent's output grounded a write on a harness that cannot link it:\n%s", res.Output)
+		}
+		return
+	}
 	if !e.Exists(proj, "memories/coverage.md") {
 		t.Fatalf("output a sub-agent quoted in its reply did not ground once:\n%s", res.Output)
 	}
@@ -397,6 +445,7 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 // as the user's: they resolve in the main conversation, where the user wrote
 // them.
 func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -409,6 +458,13 @@ func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
 	res := e.Run(proj, "s-041-27", prompt, Turns("done",
 		harness.Dispatch("d1", `The user wrote, verbatim: "`+prompt+`". Record it.`, sub, ""),
 	))
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		// The sub-agent cannot reach the user's conversation to resolve the words in.
+		if e.Exists(proj, "memories/decisions.md") {
+			t.Fatalf("a sub-agent cited the user's words on a harness that cannot link it:\n%s", res.Output)
+		}
+		return
+	}
 	if !e.Exists(proj, "memories/decisions.md") {
 		t.Fatalf("a sub-agent citing the user's relayed words did not land:\n%s", res.Output)
 	}
@@ -424,54 +480,4 @@ func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
 	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-27"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
-}
-
-// agentResultBody is the text of the tool_result answering the Agent call whose
-// id starts with callID, in the record at path — the sub-agent's hand-back as
-// real Claude Code writes it (a list of text blocks), or a plain string.
-func agentResultBody(t *testing.T, path, callID string) string {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	var body strings.Builder
-	for _, line := range strings.Split(string(b), "\n") {
-		var rec struct {
-			Type    string `json:"type"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
-			continue
-		}
-		var blocks []struct {
-			Type      string          `json:"type"`
-			ToolUseID string          `json:"tool_use_id"`
-			Content   json.RawMessage `json:"content"`
-		}
-		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
-			continue
-		}
-		for _, bl := range blocks {
-			if bl.Type != "tool_result" || !strings.HasPrefix(bl.ToolUseID, callID) {
-				continue
-			}
-			var s string
-			if json.Unmarshal(bl.Content, &s) == nil {
-				body.WriteString(s)
-				continue
-			}
-			var texts []struct {
-				Text string `json:"text"`
-			}
-			if json.Unmarshal(bl.Content, &texts) == nil {
-				for _, tx := range texts {
-					body.WriteString(tx.Text)
-				}
-			}
-		}
-	}
-	return body.String()
 }

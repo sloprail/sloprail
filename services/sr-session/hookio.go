@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/harness"
@@ -27,7 +29,13 @@ func deny(cmd *cobra.Command, reason string) error {
 }
 
 // block refuses to let a cycle end, in the shape the harness expects.
-func block(cmd *cobra.Command, reason string) error {
+func block(cmd *cobra.Command, p HookPayload, reason string) error {
+	if rec, ok := harness.Current().(harness.BlockRecorder); ok {
+		// the record may write the refusal back as a user message: say which text is ours
+		if err := rec.RecordBlock(p, reason); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: refusal not recorded:", err)
+		}
+	}
 	return respond(cmd, harness.HookResponse{Decision: harness.Block, Reason: reason})
 }
 

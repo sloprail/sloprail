@@ -1,0 +1,9 @@
+Excerpts of real recorded Codex 0.159.3 runs, copied unmodified from
+sloprail/harness-mocks @ ef10d81e (ci: publish claude, codex and cursor mocks as a10n-* (#275)):
+
+ file-tools.payloads.jsonl                codex-mock/snapshots/runs/file-tools/samples/20261003-144647/payloads.jsonl
+ file-tools.rollout.jsonl                 codex-mock/snapshots/runs/file-tools/samples/20261003-144647/transcript/rollout-2026-10-03T16-46-51-01a1023b-6884-70e1-97e5-09a47aeb4af5.jsonl
+ background-agent.payloads.jsonl          codex-mock/snapshots/runs/background-agent/samples/20261003-145116/payloads.jsonl
+ subagent-lifecycle.payloads.jsonl        codex-mock/snapshots/runs/subagent-lifecycle-hooks/samples/20261003-151504/payloads.jsonl
+
+<RUN> and <TMP> are the recordings' own placeholders; tests substitute a temp directory.

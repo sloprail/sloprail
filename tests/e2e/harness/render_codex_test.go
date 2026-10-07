@@ -24,7 +24,7 @@ func TestCodexRendersWhatCodexCanDo(t *testing.T) {
 		`"name":"Bash"`,
 		`"name":"spawn_agent"`,
 		`"name":"wait_agent"`,
-		`{"type":"result","subtype":"success","result":"fin"}`,
+		`{"text":"fin","type":"text"}`,
 	} {
 		if !strings.Contains(script, frag) {
 			t.Errorf("script lacks %s:\n%s", frag, script)

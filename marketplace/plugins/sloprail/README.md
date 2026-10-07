@@ -1,73 +1,96 @@
 # The sloprail plugin
 
-This plugin is the whole of what is Claude-Code-specific about sloprail. It maps
-that harness's lifecycle names onto `sr-session`'s subcommands, so nothing inside
-the engine has to know whose lifecycle it is running under.
+This plugin is the whole of what is harness-specific about sloprail's hooks. It
+maps a harness's lifecycle names (Claude Code, Cursor and Codex each spell them
+their own way) onto `sr-session`'s subcommands, so nothing inside the engine has
+to know whose lifecycle it is running under. What holds for every harness comes
+first; what holds for only one is under its own heading.
 
 It also ships guardrails — new-format ones under `.sloprail/file-guard/` (and,
 when it grows them, `.sloprail/gate/` and `.sloprail/context/`), the same layout
-a project uses for its own — and this file records what a reader of `hooks.json`
-would otherwise have to guess, since JSON carries no comments: how a shipped rule
-reaches a project, and why that no longer has anything to do with the hooks below
-it.
+a project uses for its own — and this file records what a reader of the hook
+manifests would otherwise have to guess, since JSON carries no comments: how a
+shipped rule reaches a project, and why that no longer has anything to do with
+the hooks below it.
 
 ## How a shipped guardrail is found
 
-Nothing in this file makes it happen, and that is the point.
+Nothing in the hook manifests makes it happen, and that is the point.
 
-The engine reads the PROJECT's `.claude/settings.json` and
-`.claude/settings.local.json`, takes whatever `enabledPlugins` turns on, and
-resolves each plugin to its installation directory itself. The nature loader then
+The engine asks the running harness's adapter (`internal/harness`) which plugins
+are enabled for the project and where each is installed, then the nature loader
 reads each enabled plugin's own `.sloprail/` the same way it reads the project's
 (see `internal/declaration` `NewWithPlugins` and `pluginDotDir`). A project that
-has enabled `sloprail@sloprail-marketplace` gets
-`.sloprail/file-guard/authoring-slop/` from inside this installation, without
-copying anything and without this plugin telling the engine where it lives.
+has enabled the sloprail plugin gets `.sloprail/file-guard/authoring-slop/` from
+inside this installation, without copying anything and without this plugin
+telling the engine where it lives.
 
-So `hooks.json` maps lifecycle names to subcommands and does nothing else,
-through a small wrapper (`hooks/sr-session-hook.sh`, resolved via
-`${CLAUDE_PLUGIN_ROOT}` since a plugin's hook command is not run from its own
-directory) that exists for exactly one reason: `/plugin install` registers
-these hooks whether or not the `sr*` binaries are anywhere on the consumer's
-machine, and calling `sr-session` bare made that gap silent — the session ran
-completely unguarded, no error, no warning. So the wrapper checks for
-`sr-session` first. If it is missing, `start` installs it: the release matching
-this plugin's version, checksum-verified, via the `hooks/install.sh` copy of
-the repository's installer, announced in the session (`SLOPRAIL_NO_AUTO_INSTALL=1`
-opts out). If it is still missing, `pre-tool` refuses file writes with the
-install command (exit 2, the only code Claude Code treats as a refusal) and
-lets Bash through so it can be installed, and `start`/`stop`/`subagent-stop`/`worktree-remove`
-warn rather than brick the session outright. See the script's own header
-comment for the full reasoning, and
-`../../../docs/getting-started/install.mdx` for the consumer-facing install
-sequence this exists to make unmissable if it's ever skipped.
+So the hook manifests map lifecycle names to subcommands and do nothing else,
+through a small wrapper (`hooks/sr-session-hook.sh`; a plugin's hook command is
+not run from its own directory, so each manifest locates the wrapper through its
+harness's plugin-root variable or working directory) that exists for exactly one
+reason: installing the plugin registers these hooks whether or not the `sr*`
+binaries are anywhere on the consumer's machine, and calling `sr-session` bare
+made that gap silent — the session ran completely unguarded, no error, no
+warning. So the wrapper checks for `sr-session` first. If it is missing, `start`
+installs it: the release matching this plugin's version, checksum-verified, via
+the `hooks/install.sh` copy of the repository's installer, announced in the
+session (`SLOPRAIL_NO_AUTO_INSTALL=1` opts out). If it is still missing,
+`pre-tool` refuses file writes with the install command (exit 2, the refusal
+code every supported harness honours) and lets Bash through so it can be
+installed, and `start`/`stop`/`subagent-stop`/`worktree-remove` warn rather than
+brick the session outright. See the script's own header comment for the full
+reasoning, and `../../../docs/getting-started/install.mdx` for the consumer-facing
+install sequence this exists to make unmissable if it's ever skipped.
 
-    "${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh" pre-tool
+### Per harness
 
-### Why discovery is not done from here
+**Claude Code.** `hooks/hooks.json` carries the lifecycle mapping, and each
+command is `"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh" <subcommand>`. The
+engine reads the PROJECT's `.claude/settings.json` and
+`.claude/settings.local.json`, takes whatever `enabledPlugins` turns on, and
+resolves each plugin to its installation directory itself. The manifest is
+`.claude-plugin/plugin.json`. This Claude Code knowledge — the settings
+filenames, the `enabledPlugins` shape, the cache layout, the manifest schema — is
+quarantined in `internal/harness/claudecode/plugins.go`.
 
-**This `${CLAUDE_PLUGIN_ROOT}` use is unrelated to the one rejected below** — it
-only locates a file inside this plugin's own installation to exec, and is never
-passed to the engine or used to discover anything. The design rejected here is
-a different one: an earlier attempt had each hook pass `${CLAUDE_PLUGIN_ROOT}`
-*to the engine* in an environment variable, as the mechanism for finding a
-plugin's *guardrails*. It kept the engine free of any Claude Code paths, and it
-was wrong for a reason no amount of isolation fixes: **it only discovers a
-plugin that fired a hook.**
+**Cursor.** `hooks/cursor-hooks.json` carries the mapping for every event except `stop` and `sessionStart`, which a Cursor plugin cannot receive (its `stop` never fires and a local plugin loads after `sessionStart`; measured in harness-mocks #287). Those two are written into the project's `.cursor/hooks.json` by the install (`sr-session project-hooks install`, merged with the entries already there, `remove` to undo; the code is `internal/harness/cursor/projecthooks.go`); its commands run from
+the plugin directory and go through `hooks/sr-session-hook-cursor.sh`, which sets
+`SLOPRAIL_HARNESS=cursor`, delegates to the shared wrapper, and adapts only what
+Cursor's hook contract does differently (`sessionStart` output must be a JSON
+document). The manifest is `.cursor-plugin/plugin.json`. Plugin discovery
+(`CURSOR_PLUGIN_ROOT`, `~/.cursor/plugins/local`) is in
+`internal/harness/cursor/plugins.go`.
+
+**Codex.** The same shape: an adapter package beside the others under
+`internal/harness/`, a hook manifest mapping onto the same `sr-session`
+subcommands, and the shared wrapper unchanged. Nothing in the engine or in the
+rest of this file changes for it.
+
+A harness's quirks live in its adapter package, the way
+`internal/transcript/claudecode.go` has always been the only place naming Claude
+Code's JSONL spellings.
+
+### Why discovery is not done from the hook
+
+**The plugin-root variable a manifest uses to find the wrapper is unrelated to
+the design rejected here** — it only locates a file inside this plugin's own
+installation to exec, and is never passed to the engine or used to discover
+anything. The rejected design is a different one: an earlier attempt had each
+hook pass its plugin's root (`${CLAUDE_PLUGIN_ROOT}` in Claude Code) *to the
+engine* in an environment variable, as the mechanism for finding a plugin's
+*guardrails*. It kept the engine free of any harness paths, and it was wrong for
+a reason no amount of isolation fixes: **it only discovers a plugin that fired a
+hook.**
 
 A plugin that ships guardrails and registers no hooks would be invisible. Worse,
 discovery became a property of what happened to RUN rather than of what the repo
 INSTALLED — and those are different sets. The repo is the thing that made the
-decision to install a plugin, and it wrote that decision down in its settings, so
-the settings are the answer to "which plugins are in force here". Anything else
-is an inference that is sometimes right.
-
-The Claude Code knowledge that this buys — the settings filenames, the
-`enabledPlugins` shape, the cache layout, the manifest schema — is real, and it
-is quarantined in one file named for what it is:
-`internal/harness/claudecode.go`. A second harness gets a second file beside it,
-exactly as `internal/transcript/claudecode.go` has always been the only place
-naming Claude Code's JSONL spellings.
+decision to install a plugin, and it wrote that decision down in its harness
+configuration, so that configuration is the answer to "which plugins are in force
+here". Anything else is an inference that is sometimes right. (Where a harness
+records nothing a hook can read, as with Cursor's marketplace installs, the
+adapter says what it cannot know instead of guessing.)
 
 And because those assumptions can go stale, an enabled plugin that cannot be
 located is REPORTED by name, at every hook point, rather than skipped. A schema
@@ -78,7 +101,7 @@ would be an embarrassing one to ship inside it.
 ### Precedence
 
 The project's own rules win over any plugin's, and between plugins the order is
-the settings key order — stable, and predictable from something the consumer can
+the order the harness lists them — stable, and predictable from something the consumer can
 see. A displaced rule is reported rather than silently dropped.
 
 ## A shipped hook's dependencies

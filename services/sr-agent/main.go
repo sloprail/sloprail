@@ -154,8 +154,14 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Read the prompt from standard input, for one too large for a command line (the OS bounds argv and environment together)")
 	cmd.Flags().String("harness", "",
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
+	cmd.Flags().Bool("agent-run", false,
+		"Run as the agent UNDER TEST rather than as a judge: the project's hooks and plugins stay live and the run is unattended (what sr-eval launches)")
+	cmd.Flags().String("resume", "",
+		"With --agent-run: resume the session with this exact id (the harness's own session/thread/chat id), so a multi-turn run lands in one record")
 	cmd.Flags().String("claude-args", "",
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
+	cmd.Flags().String("codex-args", "",
+		`Codex's own settings as a JSON object, passed through untouched (e.g. '{"config":"model_reasoning_effort=low"}')`)
 	cmd.Flags().String("allowed-tools", "",
 		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
 	cmd.Flags().String("disallowed-tools", "",
@@ -185,6 +191,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	promptFlag, _ := cmd.Flags().GetString("prompt")
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
+	codexArgs, _ := cmd.Flags().GetString("codex-args")
 	allowedToolsFlag, _ := cmd.Flags().GetString("allowed-tools")
 	disallowedToolsFlag, _ := cmd.Flags().GetString("disallowed-tools")
 	// Read through the flag's own slice, not GetStringArray: that one round-trips
@@ -235,10 +242,30 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	agentRun, _ := cmd.Flags().GetBool("agent-run")
+	resumeID, _ := cmd.Flags().GetString("resume")
+	if resumeID != "" && !agentRun {
+		return errors.New("--resume resumes the agent under test's session, so it goes with --agent-run")
+	}
+	if agentRun {
+		if cmd.Flags().Changed("verify") {
+			return errors.New("--agent-run is the agent under test; --verify is for a judge, so pass only one")
+		}
+		if spec, err = spec.forAgentRun(resumeID); err != nil {
+			return err
+		}
+	}
+
 	// Checked before the model set, so a caller who got BOTH wrong hears about
 	// the harness mismatch first — it is the one that explains the other.
 	if cmd.Flags().Changed("claude-args") {
 		if err := CheckHarnessArgs("--claude-args", ClaudeCode, spec); err != nil {
+			return err
+		}
+	}
+
+	if cmd.Flags().Changed("codex-args") {
+		if err := CheckHarnessArgs("--codex-args", Codex, spec); err != nil {
 			return err
 		}
 	}
@@ -253,7 +280,11 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	harnessArgs, err := ParseHarnessArgs(claudeArgs)
+	argsJSON := claudeArgs
+	if spec.name == Codex {
+		argsJSON = codexArgs
+	}
+	harnessArgs, err := ParseHarnessArgs(argsJSON)
 	if err != nil {
 		return err
 	}
@@ -298,12 +329,12 @@ func runAgent(cmd *cobra.Command, args []string) error {
 
 	// Outside --verify there is no answer file: the grant carries only the
 	// caller's own dirs and tools.
-	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: addDirs, Tools: allowedTools, DenyTools: disallowedTools})
+	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: addDirs, Tools: allowedTools, DenyTools: disallowedTools, AgentRun: agentRun})
 	if err != nil {
 		return err
 	}
 	harnessArgs = append(harnessArgs, grantArgs...)
-	grantEnv, envArgs, cleanupGrant, err := harnessGrantEnv(spec, accessGrant{Dirs: addDirs, Tools: allowedTools, DenyTools: disallowedTools})
+	grantEnv, envArgs, cleanupGrant, err := harnessGrantEnv(spec, accessGrant{Dirs: addDirs, Tools: allowedTools, DenyTools: disallowedTools, AgentRun: agentRun})
 	if err != nil {
 		return err
 	}

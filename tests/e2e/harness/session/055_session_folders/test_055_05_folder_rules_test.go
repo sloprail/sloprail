@@ -166,6 +166,13 @@ func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
 		harness.Dispatch("d1", "write the doc elsewhere", script, ""),
 	))
 	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		// The sub-agent's record names no parent, so its range is not the root's to report.
+		if strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
+			t.Fatalf("a sub-agent linked to no parent had its range reported by the root's Stop:\n%s", got)
+		}
+		return
+	}
 	if !strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
 		t.Fatalf("the root's Stop did not verify the sub-agent's tracked range when the root declares no rule:\n%s", got)
 	}

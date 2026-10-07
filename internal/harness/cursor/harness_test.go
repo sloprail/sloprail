@@ -11,6 +11,19 @@ import (
 	"github.com/sloprail/sloprail/internal/harness"
 )
 
+func TestPluginsResolveFromTheProjectHooksTheInstallWrote(t *testing.T) {
+	plugin := filepath.Join(t.TempDir(), "with space", "sloprail")
+	require.NoError(t, os.MkdirAll(filepath.Join(plugin, ".cursor-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(plugin, ".cursor-plugin", "plugin.json"), []byte(`{"name":"sloprail"}`), 0o644))
+	project := t.TempDir()
+	require.NoError(t, Harness{}.InstallProjectHooks(project, plugin))
+	res, err := New().ResolvePlugins(project, t.TempDir())
+	require.NoError(t, err)
+	require.Len(t, res.Roots, 1, "%+v", res.Unresolved)
+	assert.Equal(t, "sloprail", res.Roots[0].Plugin.Name)
+	assert.Equal(t, plugin, res.Roots[0].Dir)
+}
+
 func TestEnvScrubKeepsCredentialsAndDropsTheSession(t *testing.T) {
 	env := []string{"CURSOR_AGENT=1", "CURSOR_CONVERSATION_ID=x", "CURSOR_PROJECT_DIR=/p", "CLAUDE_PROJECT_DIR=/p",
 		"CURSOR_API_KEY=k", "PATH=/bin", "SR_X=1", "XDG_DATA_HOME=/d"}
@@ -36,6 +49,25 @@ func TestPluginsResolveFromTheLocalPluginDirectory(t *testing.T) {
 	empty, err := New().ResolvePlugins("/proj", t.TempDir())
 	require.NoError(t, err)
 	assert.Empty(t, empty.Roots)
+}
+
+func TestAPluginInstalledTwiceIsOnePlugin(t *testing.T) {
+	manifest := []byte(`{"name":"sloprail"}`)
+	plugin := filepath.Join(t.TempDir(), "sloprail")
+	require.NoError(t, os.MkdirAll(filepath.Join(plugin, ".cursor-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(plugin, ".cursor-plugin", "plugin.json"), manifest, 0o644))
+	project := t.TempDir()
+	require.NoError(t, Harness{}.InstallProjectHooks(project, plugin))
+
+	home := t.TempDir()
+	local := filepath.Join(home, ".cursor", "plugins", "local", "sloprail")
+	require.NoError(t, os.MkdirAll(filepath.Join(local, ".cursor-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(local, ".cursor-plugin", "plugin.json"), manifest, 0o644))
+
+	res, err := New().ResolvePlugins(project, home)
+	require.NoError(t, err)
+	require.Len(t, res.Roots, 1, "the project hooks' copy and the local copy are one plugin: %+v", res.Roots)
+	assert.Equal(t, plugin, res.Roots[0].Dir, "the one the project's hooks run stands for it")
 }
 
 func TestProcessesAreNeverReadAsGone(t *testing.T) {
@@ -92,4 +124,12 @@ func splitLines(b []byte) [][]byte {
 		out = append(out, b[start:])
 	}
 	return out
+}
+
+// cursor-agent runs a plugin's hook from the plugin's directory, so a pending command's
+// relative paths are resolved against the folder the payload names.
+func TestCommandDirIsTheFolderOfThePayload(t *testing.T) {
+	d, ok := New().(harness.HookDir)
+	require.True(t, ok)
+	assert.Equal(t, "/ws", d.CommandDir(harness.HookInput{Cwd: "/ws"}))
 }

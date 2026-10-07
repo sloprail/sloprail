@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,35 +193,19 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 		t.Errorf("the fallback store measures from %q, want HEAD at its first tool call %q", got, moved)
 	}
 
-	record, err := os.ReadFile(e.TranscriptPath(proj, "fork-03"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Counted per hook run: each hook that printed leaves one attachment.
-	reports := 0
-	for _, l := range strings.Split(string(record), "\n") {
-		var rec struct {
-			Attachment struct {
-				HookEvent string `json:"hookEvent"`
-				Stdout    string `json:"stdout"`
-				Stderr    string `json:"stderr"`
-			} `json:"attachment"`
+	// Counted per hook run: each hook that printed is one report.
+	reports := e.HookReports(proj, "fork-03", "sloprail: identity:")
+	for _, rep := range reports {
+		// A record that names no event (Codex's) cannot say which hook it was.
+		if rep.Event != "" && rep.Event != "SessionStart" {
+			t.Errorf("the fallback identity was reported by a %s hook, where nobody sees it", rep.Event)
 		}
-		if json.Unmarshal([]byte(l), &rec) != nil {
-			continue
-		}
-		if strings.Contains(rec.Attachment.Stdout+rec.Attachment.Stderr, "sloprail: identity:") {
-			reports++
-			if rec.Attachment.HookEvent != "SessionStart" {
-				t.Errorf("the fallback identity was reported by a %s hook, where nobody sees it", rec.Attachment.HookEvent)
-			}
-			if !strings.Contains(rec.Attachment.Stdout, "earlier transcript is gone") {
-				t.Errorf("the SessionStart report is not on stdout, the channel that is seen")
-			}
+		if !strings.Contains(rep.Stdout, "earlier transcript is gone") {
+			t.Errorf("the SessionStart report is not on stdout, the channel that is seen")
 		}
 	}
-	if reports != 1 {
-		t.Errorf("the fallback identity must be reported by exactly one hook run, got %d", reports)
+	if len(reports) != 1 {
+		t.Errorf("the fallback identity must be reported by exactly one hook run, got %d", len(reports))
 	}
 }
 
@@ -249,7 +232,15 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	})
 
 	if _, err := os.Stat(e.TranscriptPath(sub, "moved-04")); err == nil {
-		t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+		if harness.HasCap(t, harness.CapResumeFromOtherDirectory) {
+			t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+		}
+		// This harness names a conversation by an id of its own, whichever directory a turn
+		// runs in: resumed from below, the session still resolves to the one it began as.
+		if got, want := e.SessionIdentity(sub, "moved-04"), e.SessionIdentity(proj, "moved-04"); got != want || want == "" {
+			t.Errorf("resumed from below, the session resolves to %q, want %q", got, want)
+		}
+		return
 	}
 	// Asked with the path the harness reports from below — which does not
 	// exist — the engine finds the record where the session began.

@@ -14,7 +14,6 @@ import (
 // main package chooses the harness by importing that package (blank import), and
 // no other package may import an implementation (tests/repo enforces it). A main
 // may import several; which one a process runs is decided by Current. A main
-// may import several; which one a process runs is decided by Current.
 //
 // The interface is deliberately small: what generic code (the engine, gates,
 // file-guards, sr-checks) needs to be harness-independent, and nothing a single
@@ -22,7 +21,7 @@ import (
 // launching `claude`, sr-session reading Claude hook payloads) imports the
 // implementation package itself; that is the wiring, not a leak.
 type Harness interface {
-	// Name is the harness's short name ("claudecode").
+	// Name is the harness's one identifier ("claude", "codex", "cursor"), the same everywhere: SLOPRAIL_HARNESS, sr-agent --harness, SR_HARNESS.
 	Name() string
 
 	// ResolvePlugins reads a project's enabled plugins from the harness's own
@@ -76,6 +75,51 @@ type ChildEnvBlocklist interface {
 	ChildEnvBlocklist() []string
 }
 
+// TranscriptOwner is what a Harness MAY implement to say that a session file is its
+// own by the file's name, so the record is read with ITS format whatever harness the
+// process otherwise runs under. A process told nothing about its harness (a test's
+// `sr-session id`, a CLI run from a plain shell) is handed a record by path and must
+// not read a Codex rollout as a Claude Code transcript.
+type TranscriptOwner interface {
+	OwnsTranscript(path string) bool
+}
+
+// ForTranscript is the harness whose format the session file at path is in: the first
+// registered one (by name) that claims it, else Current.
+func ForTranscript(path string) Harness {
+	mu.RLock()
+	for _, name := range sortedNames() {
+		if o, ok := registry[name].(TranscriptOwner); ok && o.OwnsTranscript(path) {
+			h := registry[name]
+			mu.RUnlock()
+			return h
+		}
+	}
+	mu.RUnlock()
+	return Current()
+}
+
+// SkillDirs is what a Harness MAY implement to name where a project keeps its own
+// skills, relative to the project root. A harness that does not is taken to use
+// DefaultSkillDir.
+type SkillDirs interface {
+	ProjectSkillDirs() []string
+}
+
+// DefaultSkillDir is where a project's own skills live for a harness that names none
+// (Claude Code's layout).
+const DefaultSkillDir = ".claude/skills"
+
+// ProjectSkillDirs is h's project-relative skill directories.
+func ProjectSkillDirs(h Harness) []string {
+	if s, ok := h.(SkillDirs); ok {
+		if dirs := s.ProjectSkillDirs(); len(dirs) > 0 {
+			return dirs
+		}
+	}
+	return []string{DefaultSkillDir}
+}
+
 // JudgeGate is what a Harness MAY implement when it cannot confine a launched judge
 // by its own permissions alone (Cursor's cannot say "writable only here"): the engine's
 // pre-tool hook, which fires inside the judge too, asks it whether the pending call
@@ -93,6 +137,24 @@ type ToolResultRecorder interface {
 	RecordToolResult(in HookInput) error
 }
 
+// BlockRecorder is what a Harness MAY implement when its session record writes a
+// Stop hook's refusal back as an ordinary user message (Cursor: the followup_message
+// becomes the next prompt). The engine hands it each refusal it emits, so the record
+// can tell that message from one the person typed (the same standing Claude Code's
+// isMeta records have). in is the Stop hook's payload.
+type BlockRecorder interface {
+	RecordBlock(in HookInput, reason string) error
+}
+
+// HookDir is what a Harness MAY implement when its hooks do not run where the agent's
+// commands do (Cursor runs a plugin's hook from the plugin's directory): the directory
+// a pending command's relative paths are resolved against, "" when the hook already runs
+// there. The engine's pre-tool hook works from it, so `> notes.md` names the file the
+// command will write and not one beside the plugin.
+type HookDir interface {
+	CommandDir(in HookInput) string
+}
+
 // CurrentTranscriptLocator is what a Harness MAY implement so a tool the agent runs
 // (`cite` from a Bash call, the cite-before-commit gate) finds the CURRENT session's
 // own transcript from its environment, where Claude Code's logic (CLAUDE_CODE_SESSION_ID
@@ -106,12 +168,29 @@ type CurrentTranscriptLocator interface {
 }
 
 // Default is the harness a process runs under when nothing selects another.
-const Default = "claudecode"
+const Default = "claude"
 
 // SelectEnv names, when set, the harness a process runs under, overriding
 // detection. It is how a harness's plugin wires its hooks explicitly (the hook
 // command sets it), where the environment alone would not say.
 const SelectEnv = "SLOPRAIL_HARNESS"
+
+// deprecatedNames are spellings an earlier release gave a harness, still accepted
+// where a name is read (SLOPRAIL_HARNESS, sr-agent --harness, a stored archive).
+// This is the one place they are known; everything else says "claude".
+var deprecatedNames = map[string]string{
+	"claude-code": "claude",
+	"claudecode":  "claude",
+}
+
+// Canonical is the harness identifier a name stands for: its own, or the one a
+// deprecated spelling maps to.
+func Canonical(name string) string {
+	if c, ok := deprecatedNames[name]; ok {
+		return c
+	}
+	return name
+}
 
 var (
 	mu       sync.RWMutex
@@ -152,7 +231,7 @@ func Select(environ []string) Harness {
 	}
 	for _, kv := range environ {
 		if v, ok := strings.CutPrefix(kv, SelectEnv+"="); ok && v != "" {
-			h, found := registry[v]
+			h, found := registry[Canonical(v)]
 			if !found {
 				panic(fmt.Sprintf("harness: %s=%q names no registered harness (registered: %s)", SelectEnv, v, names()))
 			}

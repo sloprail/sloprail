@@ -12,28 +12,36 @@ import (
 
 // T057_07: the temp dir is found from the transcript, which names it, even where the operator's
 // environment says nothing about Claude Code's temp root (no CLAUDE_CODE_TMPDIR, and the default
-// roots hold nothing of this session).
+// roots hold nothing of this session). A harness with no temp dir has nothing to find, and the
+// archive neither invents one nor reports one missing.
 func TestT057_07_TheTempDirIsFoundFromTheTranscript(t *testing.T) {
 	w := newWorld(t)
 	const sess = "s-057-07"
-	w.session(t, sess, background(sess))
-	mustWrite(t, filepath.Join(w.tempDir(t, sess), "scratchpad", "plan.md"), "named by the transcript\n")
+	w.session(t, sess, background(t, sess))
+	sid := w.id(sess)
+	if keepsTempDir(t) {
+		mustWrite(t, filepath.Join(w.tempDir(t, sess), "scratchpad", "plan.md"), "named by the transcript\n")
+	}
 
-	r := w.e.CLIDirectEnv(w.proj, w.e.SessionEnv(""), "sr-eval", "archive", "--session", sess, "--into", w.into)
+	r := w.e.CLIDirectEnv(w.proj, w.e.SessionEnv(""), "sr-eval", "archive", "--session", sid, "--into", w.into)
 	if r.Code != 0 {
 		t.Fatalf("archive: exit %d:\n%s", r.Code, r.Output)
 	}
 	dir := strings.TrimSpace(r.Output)
-	if got := readFile(t, filepath.Join(dir, sess, "tmp", "scratchpad", "plan.md")); got != "named by the transcript\n" {
-		t.Fatalf("scratchpad: %q", got)
-	}
 	m := readManifest(t, dir)
-	if how := m.Sources.Scratchpad[sess]; !strings.Contains(how, "named in the transcript") {
-		t.Fatalf("the temp dir was not found through the transcript: %q", how)
+	if keepsTempDir(t) {
+		if got := readFile(t, filepath.Join(dir, sid, "tmp", "scratchpad", "plan.md")); got != "named by the transcript\n" {
+			t.Fatalf("scratchpad: %q", got)
+		}
+		if how := m.Sources.Companions[sid]["scratchpad and tasks"]; !strings.Contains(how, "named in the transcript") {
+			t.Fatalf("the temp dir was not found through the transcript: %q", how)
+		}
+	} else if exists(filepath.Join(dir, sid, "tmp")) {
+		t.Fatalf("a temp dir was invented for a harness that keeps none")
 	}
 	for _, s := range m.Skipped {
-		// the session has no sub-agents or tool results, so its session dir is rightly absent
-		if s.Item != "session dir (subagents, tool-results)" {
+		// the session has no tool results, so its session dir is rightly absent
+		if s.Item != "session dir (tool-results)" {
 			t.Errorf("skipped: %+v", s)
 		}
 	}
@@ -54,10 +62,11 @@ func TestT057_08_WhatIsGoneIsReportedNotFatal(t *testing.T) {
 	if err := os.RemoveAll(other); err != nil {
 		t.Fatal(err)
 	}
+	sid := w.id(sess)
 
 	dir := w.archive(t, "--session", sess)
 
-	if !exists(filepath.Join(dir, sess, "transcript.jsonl")) || len(stateFiles(t, dir, sess)) != 1 {
+	if !exists(filepath.Join(dir, sid, "transcript.jsonl")) || len(stateFiles(t, dir, sid)) != 1 {
 		t.Fatalf("the session is not whole")
 	}
 	m := readManifest(t, dir)
@@ -66,29 +75,40 @@ func TestT057_08_WhatIsGoneIsReportedNotFatal(t *testing.T) {
 	}
 	var tmpGone, repoGone bool
 	for _, s := range m.Skipped {
-		tmpGone = tmpGone || (s.Session == sess && s.Item == "scratchpad and tasks")
+		tmpGone = tmpGone || (s.Session == sid && s.Item == "scratchpad and tasks")
 		repoGone = repoGone || (strings.HasPrefix(s.Item, "checks of ") && strings.HasSuffix(s.Item, filepath.Base(other)) && strings.Contains(s.Reason, "gone"))
 	}
-	if !tmpGone || !repoGone {
-		t.Fatalf("want the missing temp dir and the gone repository reported, got %+v", m.Skipped)
+	// a harness with a temp dir reports its absence; one with none has nothing to report
+	if tmpGone != keepsTempDir(t) || !repoGone {
+		t.Fatalf("want the gone repository reported, and the missing temp dir exactly where the harness keeps one (%v), got %+v", keepsTempDir(t), m.Skipped)
 	}
-	if exists(filepath.Join(dir, sess, "tmp")) {
+	if exists(filepath.Join(dir, sid, "tmp")) {
 		t.Fatalf("a temp dir was invented")
 	}
 }
 
 // T057_09: a session whose transcript is a continuation (a fork, a resume into a new file) keeps its
 // state store under the conversation's origin, not under the transcript's own id; the archive
-// finds it there.
+// finds it there. A harness whose sessions cannot be forked (no CapForkSessions) continues one by
+// resuming it: the conversation is the same session, and its state is archived under it.
 func TestT057_09_AContinuationsStateIsKeyedByItsOrigin(t *testing.T) {
 	w := newWorld(t)
 	const old, cont = "s-057-09-old", "s-057-09-new"
 	w.session(t, old)
-	w.e.Fork(w.proj, old, cont)
+
+	if !harness.HasCap(t, harness.CapForkSessions) {
+		w.e.Run(w.proj, old, "carry on", harness.Turns("done"))
+		dir := w.archive(t, "--session", old)
+		if files := stateFiles(t, dir, w.id(old)); len(files) != 1 {
+			t.Fatalf("want the resumed session's state.db archived, got %v", files)
+		}
+		return
+	}
+	w.e.RunForked(w.proj, old, cont, "carry on", harness.Turns("done"))
 
 	dir := w.archive(t, "--session", cont)
 
-	files := stateFiles(t, dir, cont)
+	files := stateFiles(t, dir, w.id(cont))
 	if len(files) != 1 {
 		t.Fatalf("want the origin's state.db archived for the continuation, got %v", files)
 	}
@@ -106,11 +126,12 @@ func TestT057_10_TheDefaultArchiveLocation(t *testing.T) {
 	w := newWorld(t)
 	const sess = "s-057-10"
 	w.session(t, sess)
+	sid := w.id(sess)
 
 	xdg := t.TempDir()
 	envDir := filepath.Join(t.TempDir(), "by-env")
 	env := append(w.archiveEnv(), "XDG_DATA_HOME="+xdg, "SLOPRAIL_SESSION_ARCHIVE_DIR="+envDir)
-	r := w.e.CLIDirectEnv(w.proj, env, "sr-eval", "archive", "--session", sess)
+	r := w.e.CLIDirectEnv(w.proj, env, "sr-eval", "archive", "--session", sid)
 	if r.Code != 0 || !strings.HasPrefix(strings.TrimSpace(r.Output), envDir) {
 		t.Fatalf("env override: exit %d:\n%s", r.Code, r.Output)
 	}
@@ -118,7 +139,7 @@ func TestT057_10_TheDefaultArchiveLocation(t *testing.T) {
 		t.Fatalf("commits: %s", n)
 	}
 
-	r = w.e.CLIDirectEnv(w.proj, append(w.archiveEnv(), "XDG_DATA_HOME="+xdg, "SLOPRAIL_SESSION_ARCHIVE_DIR="), "sr-eval", "archive", "--session", sess)
+	r = w.e.CLIDirectEnv(w.proj, append(w.archiveEnv(), "XDG_DATA_HOME="+xdg, "SLOPRAIL_SESSION_ARCHIVE_DIR="), "sr-eval", "archive", "--session", sid)
 	want := filepath.Join(xdg, "sloprail", "session-archives")
 	if r.Code != 0 || !strings.HasPrefix(strings.TrimSpace(r.Output), want) {
 		t.Fatalf("XDG default: exit %d, want under %s:\n%s", r.Code, want, r.Output)
@@ -131,21 +152,21 @@ func TestT057_11_ASessionWithoutAStateStoreAndTheToolVersions(t *testing.T) {
 	w := newWorld(t)
 	const sess = "s-057-12"
 	w.session(t, "s-057-12-other")
-	mustWrite(t, w.e.TranscriptPath(w.proj, sess),
-		fmt.Sprintf(`{"type":"user","uuid":"u-%s","parentUuid":null,"cwd":%q,"message":{"role":"user","content":"hi"}}`+"\n", sess, w.proj))
+	w.e.ForgeBareTranscript(w.proj, sess)
+	sid := w.id(sess)
 
 	dir := w.archive(t, "--session", sess)
 
-	if !exists(filepath.Join(dir, sess, "transcript.jsonl")) {
+	if !exists(filepath.Join(dir, sid, "transcript.jsonl")) {
 		t.Fatalf("the transcript is not archived")
 	}
-	if len(stateFiles(t, dir, sess)) != 0 {
-		t.Fatalf("a state store was invented: %v", stateFiles(t, dir, sess))
+	if len(stateFiles(t, dir, sid)) != 0 {
+		t.Fatalf("a state store was invented: %v", stateFiles(t, dir, sid))
 	}
 	m := readManifest(t, dir)
 	var absent bool
 	for _, s := range m.Skipped {
-		absent = absent || (s.Session == sess && s.Item == "sloprail state store")
+		absent = absent || (s.Session == sid && s.Item == "sloprail state store")
 	}
 	if !absent {
 		t.Fatalf("the missing state store is not reported: %+v", m.Skipped)

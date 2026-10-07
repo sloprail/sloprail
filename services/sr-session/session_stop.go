@@ -69,7 +69,7 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 				countStopRefusal(cmd, counter)
 			}
 			note := fmt.Sprintf("\n(sloprail's session state could not be opened, so this Stop was judged without it: %v)", err)
-			if berr := block(cmd, reason+note); berr != nil {
+			if berr := block(cmd, p, reason+note); berr != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", berr)
 			}
 		}
@@ -143,7 +143,7 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		if note := notices.text(); note != "" {
 			reason += "\n" + note
 		}
-		if err := block(cmd, reason); err != nil {
+		if err := block(cmd, p, reason); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
 		countStopRefusal(cmd, store)

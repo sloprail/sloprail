@@ -58,10 +58,20 @@ func TestT058_01_NoTranscriptSwitchesTheSessionOff(t *testing.T) {
 	for name, transcript := range map[string]any{"missing file": missing, "null path": nil} {
 		session := "s-058-01-" + strings.ReplaceAll(name, " ", "-")
 		res := e.CLIDirectStdinEnv(proj, preToolPayload(t, proj, session, transcript), e.SessionEnv(session), "sr-session", "pre-tool")
+		if transcript == nil && !harness.HasCap(t, harness.CapNullTranscriptPath) {
+			// On this harness a payload without a path is ordinary (the transcript is
+			// located, not reported), so the session is not one without a transcript:
+			// the rule keeps firing.
+			if !strings.Contains(res.Output, "RULE-FIRED") || notice(t, res.Output) {
+				t.Errorf("%s: a null path switched guardrails off on a harness that locates its transcript:\n%s", name, res.Output)
+			}
+			continue
+		}
 		if res.Code != 0 || strings.Contains(res.Output, "RULE-FIRED") || strings.Contains(res.Output, "deny") {
 			t.Errorf("%s: a rule fired (or the hook failed) in a session with no transcript:\n%s", name, res.Output)
 		}
-		if !notice(t, res.Output) || !strings.Contains(res.Output, `"systemMessage"`) {
+		// Without a way to show the person a note on an allow, the notice reaches stderr only.
+		if !notice(t, res.Output) || (harness.HasCap(t, harness.CapAllowNotice) && !strings.Contains(res.Output, `"systemMessage"`)) {
 			t.Errorf("%s: no visible notice that guardrails are off:\n%s", name, res.Output)
 		}
 		// Once on the screen: the second hook of the session adds no second systemMessage but

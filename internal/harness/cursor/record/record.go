@@ -39,6 +39,14 @@ type cursorLine struct {
 	// SloprailLine is the number a merged tool_result line is cited under (opener.go);
 	// Cursor's own lines have none.
 	SloprailLine int `json:"sloprail_line"`
+
+	// SloprailSidechain marks a line of a conversation not proven to be the session's own
+	// root (opener.go markSidechain): its user lines are not the user's words.
+	SloprailSidechain bool `json:"sloprail_sidechain"`
+
+	// SloprailMeta marks a user line that is a followup_message sloprail's own stop hook
+	// emitted (opener.go markInjected): the harness writing, not the person (isMeta).
+	SloprailMeta bool `json:"sloprail_meta"`
 }
 
 // ErrNotARecord: the line is JSON but neither a conversation message nor a
@@ -61,7 +69,7 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 		return harness.Record{}, err
 	}
 	sum := sha256.Sum256(line)
-	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: canonicalMessage(l.Message), Timestamp: l.Timestamp, Line: l.SloprailLine}
+	r := harness.Record{UUID: hex.EncodeToString(sum[:16]), Message: withRole(canonicalMessage(l.Message), l.Role), Timestamp: l.Timestamp, Line: l.SloprailLine, IsSidechain: l.SloprailSidechain, IsMeta: l.SloprailMeta}
 	switch {
 	case l.Role == "user":
 		r.Type = string(harness.EntryUser)
@@ -111,3 +119,24 @@ func (Transcripts) EncodeProjectDir(dir string) string { return EncodeProjectDir
 
 // ProjectDir implements harness.Transcripts.
 func (Transcripts) ProjectDir(configDir, dir string) string { return ProjectDir(configDir, dir) }
+
+// SubagentsUnlinkable implements harness.SubagentsUnlinkable. Cursor writes a sub-agent as
+// a conversation of its own beside the session's and names its parent nowhere: not in the
+// transcript, not in the layout, and not in a hook. The hooks that would, subagentStart's
+// parent_conversation_id and subagentStop's agent_transcript_path, are documented but
+// confirmed broken: parent_conversation_id always equals conversation_id and a sub-agent's
+// conversation has no link back (reported, unresolved:
+// https://forum.cursor.com/t/subagentstart-hook-parent-conversation-id-always-equals-conversation-id-and-subagent-conversations-have-no-link-back-to-their-parent/163054),
+// and neither fires in print mode in any recording (harness-mocks cursor-mock
+// subagent-transcripts, subagent-lifecycle-hooks). The Task call's result carries the
+// sub-agent's id (taskToolCall.result.success.agentId) only in the output stream, which
+// hooks never see; no hook payload for the Task call has it either (a Task has only a
+// preToolUse). Matching a dispatch prompt to a sub-agent's first message would be a
+// heuristic, so there is no link.
+//
+// A sub-agent is still told from the root: the root alone has its sessionStart marker
+// (KindRoot; sessionStart fires once per session, for the root, also when the hook is the
+// project's own .cursor/hooks.json: recordings with three conversations, one sessionStart).
+// Re-record with subagentStart / subagentStop once they carry the link, then implement
+// harness.SubagentLocator from them and drop this.
+func (Transcripts) SubagentsUnlinkable() bool { return true }

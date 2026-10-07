@@ -238,8 +238,19 @@ requires or judges a citation: [grounding.md](grounding.md).
 
 | field | type |
 |---|---|
-| `tool` | string — the tool's name as the harness reports it (`tool == "WebFetch"`) |
-| `input` | **open map** — the tool's arguments, shape is the tool's own |
+| `tool` | string — the tool's **canonical** name, the same on every harness (`tool == "WebFetch"`) |
+| `nativeTool` | string — the name the harness itself reported (equal to `tool` where nothing was renamed) |
+| `input` | **open map** — the tool's arguments, under the canonical keys for a canonical tool, otherwise as the harness gave them |
+
+The canonical names are Claude Code's spelling: `Bash` (`input.command`), `Write`
+(`file_path`, `content`), `Edit` (`file_path`, `old_string`, `new_string`), `Read`
+(`file_path`), `Grep`, `Glob`, `WebFetch` (`url`, `prompt`), `WebSearch` (`query`),
+`Agent` (spawn a sub-agent: `prompt`, `description`, `subagent_type`), and an MCP tool
+as `mcp__<server>__<tool>` on every harness. A harness renames its own tools onto these:
+Claude's older `Task` and Codex's `spawn_agent` (its `message` becoming `prompt`) are
+`Agent`, `nativeTool` keeping what they were called. A tool with no canonical
+equivalent keeps a stable name and its own input (Codex's `apply_patch` reports its
+file changes as the file module's events, as every write does).
 
 The harness-native pre-action moment, for gating a tool no file or command event
 covers (an MCP call, a web fetch, a bespoke tool) or activating a context from

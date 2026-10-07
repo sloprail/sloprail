@@ -22,7 +22,7 @@ import (
 // otherwise see its own session's real CLAUDE_CODE_EXECPATH leak into these
 // dry-run assertions and print the parent's actual binary path instead of the
 // bare "claude" every assertion below expects. t.Setenv clears it (and the two
-// detect variables, since --harness=claude-code above already picks the
+// detect variables, since --harness=claude above already picks the
 // harness explicitly and does not need them either) so these tests keep the
 // property the package comment above promises: passing the same whether run in
 // CI or inside a session.
@@ -43,7 +43,7 @@ func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
 // --harness is passed everywhere below so these tests do not depend on the
 // environment they happen to run in — they must pass in CI as well as inside a
 // Claude Code session.
-const underClaude = "--harness=claude-code"
+const underClaude = "--harness=claude"
 
 // --- prompt --------------------------------------------------------------
 
@@ -97,7 +97,7 @@ func TestCLI_MissingModelIsRefused(t *testing.T) {
 func TestCLI_ModelSetResolvingToNothingIsRefused(t *testing.T) {
 	_, stderr, err := runCLI(t, underClaude, "--model", "gpt-5,gemini-2", "--dry-run", "q")
 	require.ErrorIs(t, err, ErrNoModelAvailable)
-	assert.NotContains(t, stderr, "harness claude-code, model",
+	assert.NotContains(t, stderr, "harness claude, model",
 		"nothing may be reported as chosen when the set matched nothing")
 }
 
@@ -152,7 +152,7 @@ func TestCLI_DashLeadingPromptWorksViaBothEscapes(t *testing.T) {
 }
 
 func TestCLI_UnknownHarnessIsRefused(t *testing.T) {
-	_, _, err := runCLI(t, "--harness", "codex", "--model", "size-md", "--dry-run", "q")
+	_, _, err := runCLI(t, "--harness", "no-such-harness", "--model", "size-md", "--dry-run", "q")
 	require.ErrorIs(t, err, ErrUnknownHarness)
 }
 

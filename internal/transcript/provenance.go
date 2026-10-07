@@ -462,7 +462,7 @@ func whyExcluded(body string, calls map[string]recordCall, id string) string {
 	case echoesRecord(call):
 		return "Those words are in the output of a command that prints agent-written text back (git log/show, or one of sloprail's own tools: sr-checks, sr-session, sr-file, ...; their output carries commit messages, citations and judges' model-written reasoning), so they are not citable as tool output; cite the output of the command that produced the evidence, or the user's words"
 	case len(extractAnswers(body)) > 0:
-		return "Those words are an AskUserQuestion answer — the user's own words, not a tool's output; cite them with --cite:user"
+		return "Those words are an " + questionTool() + " answer — the user's own words, not a tool's output; cite them with --cite:user"
 	}
 	return ""
 }

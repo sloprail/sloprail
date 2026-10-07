@@ -86,7 +86,14 @@ rule.
 
     This installs the binaries and copies the plugin into
     `~/.cursor/plugins/local/sloprail`, the directory Cursor loads local plugins
-    from when it starts. **Cursor has no project-scope plugin install**: plugins
+    from when it starts. Run from the project root, it also adds sloprail's
+    `stop` and `sessionStart` hooks to the project's `.cursor/hooks.json`:
+    Cursor never fires a plugin's `stop` hook and loads a local plugin after
+    `sessionStart`, but it fires both from the project's hooks file. The merge
+    keeps your other entries and is safe to repeat (`sr-session project-hooks
+    install --plugin-dir ~/.cursor/plugins/local/sloprail`, and `sr-session
+    project-hooks remove` takes them out). **Cursor has no project-scope plugin
+    install**: plugins
     are per user. The closest thing to a project scope is that sloprail does
     nothing in a project without a `.sloprail/` directory, and, for a single run,
     `cursor-agent --plugin-dir <path>` loads a plugin from any directory
@@ -97,9 +104,10 @@ rule.
 
     ```bash
     ls ~/.cursor/plugins/local/sloprail/.cursor-plugin/plugin.json
+    grep sr-session-hook-cursor .cursor/hooks.json
     ```
 
-    lists the file. Then start `cursor-agent` in a project that has a rule, write
+    list the file and the two entries. Then start `cursor-agent` in a project that has a rule, write
     a file the rule forbids, and watch the write be refused: that is the hooks
     running. (A turn-end gate shows up only in the interactive terminal UI; see
     below.)
@@ -117,8 +125,8 @@ the harnesses themselves differ.
 
 | | Claude Code | Codex | Cursor |
 |---|---|---|---|
-| Scope | project (`--scope project`) | enabled per project, installed per user | per user |
-| Hooks | run once the plugin is enabled | run only once **trusted** (`sr-session codex-trust`) | run once the plugin is loaded |
+| Scope | project (`--scope project`) | enabled per project, installed per user | per user, plus the project's `.cursor/hooks.json` for stop and sessionStart |
+| Hooks | run once the plugin is enabled | run only once **trusted** (`sr-session codex-trust`) | run once the plugin is loaded (stop and sessionStart: from the project's `.cursor/hooks.json`) |
 | Turn-end gates (Stop) | every session | every session | only in the interactive terminal UI, **not** in `cursor-agent -p` |
 | Skills | loaded with the Skill tool | loaded with the Skill tool | there is no Skill tool: a skill counts as loaded when its `SKILL.md` is read |
 

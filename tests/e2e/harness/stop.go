@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -31,12 +32,37 @@ func (e *Env) hookEnv(sessionID string) []string {
 // ran: the session's id and the config dir its transcript is under.
 func (e *Env) SessionEnv(sessionID string) []string { return e.hookEnv(sessionID) }
 
+// IdentityPayload is a hook payload naming only the session and its project folder.
+func (e *Env) IdentityPayload(projDir, sessionID string) string {
+	return e.driver.IdentityPayload(e, projDir, sessionID)
+}
+
 // StopNow runs `sr-session stop` the way the harness does at the end of a turn.
 // active is the payload's stop_hook_active: true for the retry after a refusal.
 func (e *Env) StopNow(projDir, sessionID string, active bool) Result {
 	e.t.Helper()
 	payload := e.driver.StopPayload(e, projDir, sessionID, active)
 	return e.CLIDirectStdinEnv(projDir, payload, e.hookEnv(""), "sr-session", "stop")
+}
+
+// StopFrom is StopNow for a hook that reports another folder as its own (the agent moved to
+// another worktree) while its record still names the project the session began in: the
+// payload is the session's own Stop payload with the folder it names swapped for dir, and
+// the hook runs there.
+func (e *Env) StopFrom(projDir, sessionID, dir string) Result {
+	e.t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(e.driver.StopPayload(e, projDir, sessionID, false)), &payload); err != nil {
+		e.t.Fatalf("harness: stop payload: %v", err)
+	}
+	if _, ok := payload["cwd"]; ok {
+		payload["cwd"] = dir
+	}
+	if _, ok := payload["workspace_roots"]; ok {
+		payload["workspace_roots"] = []string{resolveWorkDir(dir)}
+	}
+	body, _ := json.Marshal(payload)
+	return e.CLIDirectStdinEnv(dir, string(body), e.hookEnv(""), "sr-session", "stop")
 }
 
 // StopCmd is the command StopNow would run, built and not started, for a test that must

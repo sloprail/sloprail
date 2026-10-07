@@ -10,15 +10,19 @@ name: test
 # clock and twice the runner minutes.
 on:
   push:
+  # The full suite on any branch, on demand: `gh workflow run test --ref <branch>`.
+  # That is how integration/* gets its full run (at checkpoints, not on every merge).
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 # A second push to the same branch cancels the first. The old run is answering a
-# question about code nobody will merge.
+# question about code nobody will merge. A dispatched full run is never cancelled
+# (its own group, by run id): it answers for the commit it started on.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   # changes decides whether this push touched anything unit/e2e/install-sh
@@ -64,11 +68,10 @@ jobs:
     # An [e2e-only: ...] commit runs ONLY the e2e-adhoc job below (every other
     # job's steps skip) — see the adhoc step.
     outputs:
-      # The full suite runs on main and integration/* only. A branch merged into an
-      # integration branch is reviewed and tested locally (targeted packages), and
-      # uses [e2e-only: ...] commits for CI repros; the integration branch's own PR
-      # runs everything once for the whole stack instead of once per sub-branch.
-      code-changed: ${{ (steps.adhoc.outputs.adhoc == 'true' || (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/integration/'))) && 'false' || steps.diff.outputs.code-changed }}
+      # The full suite runs on a push to main, or when dispatched (workflow_dispatch) on
+      # any branch: an integration/* branch is run that way at checkpoints, not on every
+      # merge into it. Other pushes skip it; [e2e-only: ...] commits run a subset.
+      code-changed: ${{ (steps.adhoc.outputs.adhoc == 'true' || (github.ref != 'refs/heads/main' && github.event_name != 'workflow_dispatch')) && 'false' || steps.diff.outputs.code-changed }}
       adhoc: ${{ steps.adhoc.outputs.adhoc }}
       adhoc-harness: ${{ steps.adhoc.outputs.harness }}
       adhoc-pkgs: ${{ steps.adhoc.outputs.pkgs }}
@@ -306,7 +309,7 @@ jobs:
   # or fail on what Codex support does today. `plugins` is left out: those modules
   # drive the Claude mock. The shards must stay a subset of the Makefile's (the
   # guard in tests/repo checks it).
-  # Runs on main and integration/* only (each step's if:). On a branch, drive Codex or Cursor with an
+  # Runs on a main push or a dispatched full run only (each step's if:). On a branch, drive Codex or Cursor with an
   # [e2e-only: harness=codex|cursor pkgs=... run=...] commit (e2e-adhoc), which runs
   # just the chosen packages instead of 14 full shards on every push.
   e2e-codex:
@@ -320,17 +323,17 @@ jobs:
         codex-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: e2e (codex)
         shell: bash
         env:
@@ -360,17 +363,17 @@ jobs:
         cursor-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/integration/'))
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: e2e (cursor)
         shell: bash
         env:

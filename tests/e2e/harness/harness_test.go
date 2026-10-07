@@ -44,14 +44,14 @@ func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 			// The channel this engine uses: permissionDecision "deny", exit 0.
 			// Real Claude Code answers the call with this tool_result.
 			name:    "refused via permissionDecision",
-			output:  `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"PreToolUse:Write hook error: guarded/ is off limits","is_error":true}]}}`,
+			output:  mustDriver().RefusalOutput("guarded/ is off limits"),
 			refused: true,
 		},
 		{
 			// Exit 2: the same tool_result, the reason quoted as
 			// "[<command>]: <stderr>".
 			name:    "refused via exit 2 on stderr",
-			output:  `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"PreToolUse:Write hook error: [sr-session pre-tool]: guarded/ is off limits","is_error":true}]}}`,
+			output:  mustDriver().RefusalOutput("[sr-session pre-tool]: guarded/ is off limits"),
 			refused: true,
 		},
 		{

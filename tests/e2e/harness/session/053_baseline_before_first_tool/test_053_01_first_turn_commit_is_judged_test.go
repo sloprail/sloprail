@@ -42,8 +42,16 @@ exit 0
 // attachment only when nothing was written before the hook ran. If a mock ever
 // wrote the record early again, these tests would pass without testing
 // anything; this makes them fail instead.
+//
+// Only for a harness whose record is written after SessionStart (CapRecordAfterSessionStart):
+// Codex opens the rollout with its session_meta when the thread starts, so there the
+// order this guards does not exist and the tests still hold the baseline to the commit
+// the session began on.
 func requireRecordUnwrittenAtSessionStart(t *testing.T, e *Env, proj, sess string) {
 	t.Helper()
+	if !harness.HasCap(t, harness.CapRecordAfterSessionStart) {
+		return
+	}
 	body, err := os.ReadFile(e.TranscriptPath(proj, sess))
 	if err != nil {
 		t.Fatalf("read the session's record: %v", err)

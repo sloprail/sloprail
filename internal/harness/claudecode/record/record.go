@@ -5,12 +5,39 @@ package record
 
 import (
 	"encoding/json"
+	"io/fs"
+	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Transcripts is Claude Code's harness.Transcripts.
 type Transcripts struct{}
+
+// SubagentFiles implements harness.SubagentLocator: every file under
+// <session>/subagents/, nested workflow directories included, records and meta files.
+func (Transcripts) SubagentFiles(transcriptPath string) []harness.SubagentFile {
+	if !strings.HasSuffix(transcriptPath, ".jsonl") {
+		return nil
+	}
+	root := filepath.Join(strings.TrimSuffix(transcriptPath, ".jsonl"), "subagents")
+	var out []harness.SubagentFile
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		out = append(out, harness.SubagentFile{Path: path, Rel: rel})
+		return nil
+	})
+	return out
+}
+
+// ParentRecord implements harness.SubagentLocator. A Claude Code sub-agent's record names
+// no parent of its own: where it is filed (<session>/subagents/agent-<id>.jsonl, read by
+// internal/transcript's layout rules) and its meta file do, so there is nothing to say here.
+func (Transcripts) ParentRecord(string) (string, bool) { return "", false }
 
 // claudeRecord is one line of Claude Code's JSONL, in the fields we keep.
 //
@@ -31,6 +58,11 @@ type claudeRecord struct {
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
 	Attachment        json.RawMessage `json:"attachment"`
 
+	// Subtype and HookErrors are those of a system record
+	// of subtype stop_hook_summary, the harness's account of one Stop hook run.
+	Subtype    string   `json:"subtype"`
+	HookErrors []string `json:"hookErrors"`
+
 	// SessionID is the id the harness wrote this record under. Kept only so
 	// that a path GUESSED from a session id can be checked against what the
 	// file it landed on says about itself — see BelongsToSession.
@@ -49,7 +81,15 @@ func (Transcripts) ParseRecord(line []byte) (harness.Record, error) {
 	if err := json.Unmarshal(line, &r); err != nil {
 		return harness.Record{}, err
 	}
+	var stop *harness.StopHook
+	if r.Type == "system" && r.Subtype == "stop_hook_summary" {
+		stop = &harness.StopHook{
+			Refused: len(r.HookErrors) > 0,
+			Reasons: r.HookErrors,
+		}
+	}
 	return harness.Record{
+		StopHook:          stop,
 		Type:              r.Type,
 		UUID:              r.UUID,
 		ParentUUID:        r.ParentUUID,

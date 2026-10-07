@@ -69,7 +69,8 @@ func (e *Env) setHarnessID(id, harnessID string) { e.harnessIDs[id] = harnessID 
 
 // Env is one isolated end-to-end environment.
 type Env struct {
-	harnessIDs map[string]string // the session ids of a test, by the harness's own (Driver.Observe)
+	prompts    map[string][]string // the prompts each session was launched with, in order (Driver.BlockingErrors)
+	harnessIDs map[string]string   // the session ids of a test, by the harness's own (Driver.Observe)
 	t          *testing.T
 	driver     Driver // the agent harness under test, selected by SR_HARNESS
 	binDir     string // holds every built service binary, prepended to PATH so the plugin finds them
@@ -372,6 +373,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		origins:      map[string]string{},
 		published:    map[string]bool{},
 		harnessIDs:   map[string]string{},
+		prompts:      map[string][]string{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -482,6 +484,30 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
+// InstallJudgeScript puts a test's own stand-in for the judge's agent binary (body, a
+// script) where the judge resolves it: under the name the current harness's binary has.
+func (e *Env) InstallJudgeScript(body string) {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimScript, Body: body})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge shim: %v", err)
+	}
+}
+
+// InstallJudgeUsageLimit installs a judge that appends a line to $LEDGER per call and dies
+// the way the current harness does at a usage limit.
+func (e *Env) InstallJudgeUsageLimit() {
+	e.t.Helper()
+	name, script := e.driver.JudgeShim(JudgeShim{Kind: JudgeShimUsageLimit})
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write usage-limit judge shim: %v", err)
+	}
+}
+
+// JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
+// judge's agent launched so that the project's and plugins' hooks do not run in it.
+func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
@@ -513,6 +539,25 @@ func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
 		e.t.Fatalf("harness: write recording judge claude shim: %v", err)
 	}
 }
+
+// MediumJudgeModelArgs is the flag and value a judge on the default size-md reaches the
+// harness's argv with.
+func (e *Env) MediumJudgeModelArgs() (flag, value string) { return e.driver.MediumJudgeModelArgs() }
+
+// JudgeAccess is what the judge recorded by InstallJudgeClaudeRecordingArgv was granted. A
+// run that recorded nothing fails the test: the judge was never invoked.
+func (e *Env) JudgeAccess(argvFile string) JudgeAccess {
+	e.t.Helper()
+	a, err := e.driver.JudgeAccess(argvFile)
+	if err != nil {
+		e.t.Fatalf("the recording shim captured no judge launch (was the judge invoked?): %v", err)
+	}
+	return a
+}
+
+// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+// harness's argv with, in the recording of InstallJudgeClaudeRecordingArgv.
+func (e *Env) LargeJudgeModelArgs() (flag, value string) { return e.driver.LargeJudgeModelArgs() }
 
 // InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
 // the judge was asked, so a test can assert what the template actually rendered.
@@ -904,6 +949,15 @@ func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 	return e.runBin(dir, "", binary, args...)
 }
 
+// SessionCLIEnv is the environment a service binary needs to read the record the harness
+// under test itself wrote (CLIDirectEnv): nil when the host environment already says so.
+func (e *Env) SessionCLIEnv() []string {
+	if d, ok := e.driver.(interface{ CLIEnv(e *Env) []string }); ok {
+		return d.CLIEnv(e)
+	}
+	return nil
+}
+
 // CLIDirectEnv runs one service binary by name with extra environment variables
 // set, and no stdin — for the agent-facing commands that read the environment
 // rather than a hook payload.
@@ -960,6 +1014,9 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 	// on it.
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
 	cmd.Env = append(cmd.Env, e.autoWatchEnv()...)
+	if d, ok := e.driver.(interface{ CLIEnv(e *Env) []string }); ok {
+		cmd.Env = append(cmd.Env, d.CLIEnv(e)...)
+	}
 	// extraEnv is appended LAST so a caller-supplied variable wins over any
 	// ambient one — a test exercising cite's environment fallback sets
 	// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR this way.
@@ -1255,6 +1312,18 @@ func (e *Env) TranscriptPath(projDir, sessionID string) string {
 	return e.transcriptPath(projDir, sessionID)
 }
 
+// SubagentReply is the text the root record at path holds of the reply the sub-agent
+// dispatched by the call whose id starts with callID handed back, as the harness
+// records it.
+func (e *Env) SubagentReply(path, callID string) string {
+	e.t.Helper()
+	reply, err := e.driver.SubagentReply(path, callID)
+	if err != nil {
+		e.t.Fatalf("read the sub-agent's reply from %s: %v", path, err)
+	}
+	return reply
+}
+
 // ConfigDir is the isolated stand-in for ~/.claude the mock wrote this run's
 // transcripts under. A test that drives a `trajectory` command through cite's
 // ENVIRONMENT fallback (no --path, no payload) hands this to the binary as
@@ -1267,6 +1336,49 @@ func (e *Env) ConfigDir() string {
 // TmpDir is the mock's CLAUDE_CODE_TMPDIR: the root under which Claude Code keeps a session's
 // scratchpad and task outputs (<TmpDir>/claude-<uid>/<project dir>/<session>/).
 func (e *Env) TmpDir() string { return e.tmpDir }
+
+// HarnessSessionID is the id the harness gave the session a test calls id: the same id
+// for a harness that takes the caller's, the one the run printed for one that names its
+// sessions itself (what a tool run beside the harness, such as `sr-eval archive`, names it by).
+func (e *Env) HarnessSessionID(id string) string {
+	if v := e.harnessID(id); v != "" {
+		return v
+	}
+	return id
+}
+
+// SubagentRecordPath is where the record of the session's sub-agent is kept, "" for a
+// harness whose sub-agent record names no parent (see Driver.SubagentRecordPath).
+func (e *Env) SubagentRecordPath(projDir, sessionID, agentID string) string {
+	e.t.Helper()
+	return e.driver.SubagentRecordPath(e, projDir, sessionID, agentID)
+}
+
+// ForgeSubagentRecord writes the sub-agent's record in the harness's own shape and returns
+// its path, "" (nothing written) where the harness cannot tie one to its parent.
+func (e *Env) ForgeSubagentRecord(projDir, sessionID, agentID, cwd, prompt string) string {
+	e.t.Helper()
+	return e.driver.ForgeSubagentRecord(e, projDir, sessionID, agentID, cwd, prompt)
+}
+
+// SubagentHookPayload is a sub-agent hook's payload in the harness's own field shape.
+func (e *Env) SubagentHookPayload(projDir, sessionID, agentID, event, cwd string, extra map[string]any) string {
+	e.t.Helper()
+	return e.driver.SubagentHookPayload(e, projDir, sessionID, agentID, event, cwd, extra)
+}
+
+// ForgeBareTranscript writes a session record that holds one prompt and nothing else.
+func (e *Env) ForgeBareTranscript(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.driver.ForgeBareTranscript(e, projDir, sessionID)
+}
+
+// Companions are the files the harness keeps for the session beside its record
+// (archive-relative path -> content), nil where it keeps none.
+func (e *Env) Companions(projDir, sessionID string) map[string]string {
+	e.t.Helper()
+	return e.driver.Companions(e, projDir, sessionID)
+}
 
 // HomeDir is the HOME every process of this Env runs with (and so where sloprail's
 // state stores live).
@@ -1379,6 +1491,28 @@ func (e *Env) WrapBinary(name, body string) {
 	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write %s wrapper: %v", name, err)
 	}
+}
+
+// Written is the bytes the selected harness's file tool leaves on disk when the agent
+// writes content: what a test compares a file (or the content a rule was handed) to.
+func (e *Env) Written(content string) string { return e.driver.WrittenBytes(content) }
+
+// ResultRecord is the line of a session record holding the result of the call the scenario
+// named id (see Driver.ResultRecord).
+func (e *Env) ResultRecord(record, id string) string { return e.driver.ResultRecord(record, id) }
+
+// ScenarioError is the error the selected harness gives for a scenario it cannot take
+// (an *UnsupportedError naming the step), or nil when it can render it.
+func (e *Env) ScenarioError(s Scenario) error {
+	_, err := e.driver.RenderScript(s)
+	return err
+}
+
+// ForHarness fills `{{harness}}` in a check script with the name of the selected
+// harness, for a script that launches an agent through `sr-agent --harness`: the agent
+// it runs is then the one this run's shim (InstallClaudeShim) stands in for.
+func (e *Env) ForHarness(script string) string {
+	return strings.ReplaceAll(script, "{{harness}}", e.driver.Name())
 }
 
 // Exists reports whether a path is present in a project.
@@ -1823,12 +1957,14 @@ const MockPreambleLines = 3
 
 // SessionStartAttachments is the number of records a fresh session's SessionStart
 // leaves ahead of the prompt. The mock writes a fresh transcript in the order real
-// Claude Code does: nothing while SessionStart runs, then one hook_success attachment
-// per SessionStart hook that printed anything, then the prompt. The plugin's start
-// hook always prints (rules-first.md, the one standing instruction it gives the
-// agent), so every session this harness drives opens with exactly one — and that
-// attachment, not the prompt, is the session's origin.
-const SessionStartAttachments = 1
+// Claude Code does: nothing while SessionStart runs, then, for each SessionStart hook
+// that printed anything, a hook_success attachment and, because the plugin's start
+// hook hands its text over as hookSpecificOutput.additionalContext (sr-session
+// emit-context), a hook_additional_context attachment, then the prompt. The plugin's
+// start hook always prints (rules-first.md, the one standing instruction it gives the
+// agent), so every session this harness drives opens with exactly those two — and the
+// first of them, not the prompt, is the session's origin.
+const SessionStartAttachments = 2
 
 // RootMessageLine is the 1-based PHYSICAL line the prompt record sits on in a
 // session's transcript: after the preamble and the SessionStart attachment.
@@ -1840,7 +1976,19 @@ const SessionStartAttachments = 1
 // citation's own output — read it from the file the mock wrote instead; this is the
 // up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	return MockPreambleLines + SessionStartAttachments + 1
+	pre, start := e.driver.RecordLayout()
+	return pre + start + 1
+}
+
+// NextPromptLine is the 1-based physical line the prompt of the next Run of sessionID
+// (a resume) will sit on, given the transcript as it stands.
+func (e *Env) NextPromptLine(proj, sessionID string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(e.TranscriptPath(proj, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: read transcript for the next prompt's line: %v", err)
+	}
+	return e.driver.NextPromptLine(string(body))
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation
@@ -1982,12 +2130,21 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 	e.driver.ForkTranscript(e, cwd, oldSessionID, newSessionID)
 }
 
+// originReader is what a Driver implements when its record does not open on a uuid-keyed
+// record with no parent (Claude's layout, the default): the id of where the file begins.
+type originReader interface {
+	OriginRecord(record string) string
+}
+
 // OriginRecord is the uuid of the first record in a session's transcript with no
 // parent — where that FILE begins, read straight off the file. Not the identity
 // walk: a test uses it to name what the walk should land on, and the walk is
 // asked of the engine (SessionIdentity).
 func (e *Env) OriginRecord(projDir, sessionID string) string {
 	e.t.Helper()
+	if o, ok := e.driver.(originReader); ok {
+		return o.OriginRecord(e.transcript(projDir, sessionID))
+	}
 	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
 		var rec struct {
 			UUID       string  `json:"uuid"`
@@ -2090,7 +2247,7 @@ func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) 
 
 	// Only what the hooks refused: the output of the harness's own pre-Stop `sr-checks run` is
 	// never read as a Stop refusal.
-	out := e.driver.BlockingErrors(e.transcript(projDir, sessionID), hookEvent, dedupe)
+	out := e.driver.BlockingErrors(e.transcript(projDir, sessionID), e.prompts[sessionID], hookEvent, dedupe)
 	return out
 }
 
@@ -2114,7 +2271,7 @@ func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) 
 // "two results" is not something a person reading the conversation ever sees.
 func (e *Env) StopContinuations(projDir, sessionID string) []string {
 	e.t.Helper()
-	return e.driver.StopContinuations(e.transcript(projDir, sessionID))
+	return e.driver.StopContinuations(e.transcript(projDir, sessionID), e.prompts[sessionID])
 }
 
 // SubagentBlockingErrors returns the text of every SubagentStop refusal
@@ -2444,6 +2601,7 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, mode SessionMod
 		SkipIfUnsupported(e.t, err)
 		e.t.Fatalf("harness: write scenario: %v", err)
 	}
+	e.prompts[sessionID] = append(e.prompts[sessionID], prompt)
 	cmd := e.driver.Command(e, Launch{
 		ProjDir: projDir, WorkDir: workDir, ScriptPath: scriptPath, Prompt: prompt,
 		Mode: mode, SessionID: sessionID, FromSessionID: fromSessionID,

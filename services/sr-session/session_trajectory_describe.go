@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -77,20 +80,14 @@ func runSessionTrajectoryDescribe(cmd *cobra.Command, _ []string) error {
 	}
 
 	desc := TrajectoryDescription{
-		IsSubagent:    transcript.IsSubagentTranscript(path),
+		IsSubagent:    transcript.IsSubagentRecord(path),
 		SubagentPaths: []string{},
 	}
 
 	// The sub-agents this trajectory spawned — the inverse correlation, and the
 	// one a root asks. Present for a sub-agent too, since a sub-agent may have
 	// dispatched sub-agents of its own.
-	subs, err := transcript.SubagentPaths(path)
-	if err != nil {
-		return err
-	}
-	if len(subs) > 0 {
-		desc.SubagentPaths = subs
-	}
+	desc.SubagentPaths = subagentRecords(path)
 
 	// The immediate parent — derived only when this is a sub-agent whose meta
 	// file names the dispatching call. A root, or a sub-agent whose parent cannot
@@ -100,10 +97,36 @@ func runSessionTrajectoryDescribe(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
+		if parent == "" {
+			if l, ok := harness.Current().Transcripts().(harness.SubagentLocator); ok {
+				// A harness whose sub-agent record names its parent says so itself.
+				parent, _ = l.ParentRecord(path)
+			}
+		}
 		desc.ParentPath = parent
 	}
 
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)
 	return enc.Encode(desc)
+}
+
+// subagentRecords is the sub-agent session records the current harness can tie to
+// the trajectory at path, sorted — whatever its layout (Claude Code nests them under
+// <session>/subagents/, Codex writes a rollout per sub-agent naming its parent). A
+// harness with no way to tie them (it does not implement harness.SubagentLocator)
+// has none to list. Companion files (meta.json) are not records and are left out.
+func subagentRecords(path string) []string {
+	out := []string{}
+	l, ok := harness.Current().Transcripts().(harness.SubagentLocator)
+	if !ok {
+		return out
+	}
+	for _, f := range l.SubagentFiles(path) {
+		if strings.HasSuffix(f.Path, ".jsonl") {
+			out = append(out, f.Path)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

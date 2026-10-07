@@ -109,7 +109,7 @@ func TestSetUp_SetupThatCommitsStillGetsRulesLast(t *testing.T) {
 	}
 	project := initProject(t)
 	writeIn(t, filepath.Join(project, ".sloprail", "gate", "g", "gate.yaml"), "name: g\n")
-	env := append(baseAgentEnv(os.Environ(), t.TempDir(), t.TempDir(), false), "PATH="+os.Getenv("PATH"))
+	env := append(baseAgentEnv(testHarness(t, "claude"), os.Environ(), t.TempDir(), t.TempDir(), false), "PATH="+os.Getenv("PATH"))
 
 	w := &workspace{root: t.TempDir(), project: project}
 	if err := w.setUp(context.Background(), fx, env); err != nil {

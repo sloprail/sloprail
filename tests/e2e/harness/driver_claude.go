@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"github.com/sloprail/sloprail/internal/harnessmock"
 )
@@ -24,7 +25,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript}
+		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapShellDenyBesideGrant, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText, CapProseWithCallInOneEntry}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -276,6 +277,11 @@ func (claudeDriver) HookEnv(e *Env, sessionID string) []string {
 	}
 }
 
+// IdentityPayload is the session id and the working directory.
+func (claudeDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	return `{"session_id":"` + sessionID + `","cwd":"` + projDir + `"}`
+}
+
 // StopBlocked reports whether a Stop's output refuses the turn: the blocking form the
 // harness honours.
 func (claudeDriver) StopBlocked(output string) bool {
@@ -301,6 +307,15 @@ func (claudeDriver) AgentShim(e *Env, projDir string) (string, string) {
 		"  \"launched agent\" </dev/null\n"
 	return "claude", script
 }
+
+// SkillDir: Claude Code's project skills.
+func (claudeDriver) SkillDir() string { return harness.ProjectSkillDirs(claudecode.New())[0] }
+
+// LargeJudgeModelArgs: size-lg is Claude Code's `opus` alias.
+func (claudeDriver) LargeJudgeModelArgs() (string, string) { return "--model", "opus" }
+
+// MediumJudgeModelArgs: size-md is sonnet.
+func (claudeDriver) MediumJudgeModelArgs() (string, string) { return "--model", "sonnet" }
 
 // JudgeShim is the stand-in for the `claude` the judge (sr-agent) runs by name.
 func (claudeDriver) JudgeShim(s JudgeShim) (string, string) {
@@ -389,6 +404,15 @@ JUDGE_VERDICT_EOF
 fi
 exit 0
 `
+	case JudgeShimScript:
+		script = s.Body
+	case JudgeShimUsageLimit:
+		// claude reports a usage limit on stdout, status 1.
+		script = `#!/bin/sh
+echo call >>"$LEDGER"
+echo "Claude AI usage limit reached|1760000000"
+exit 1
+`
 	case JudgeShimSlow:
 		script = `#!/bin/sh
 out=""
@@ -417,6 +441,18 @@ exit 0
 }
 
 // TranscriptPath is where claude keeps a session's transcript: <config>/projects/<encoded project dir>/<session>.jsonl.
+// RecordLayout: the mock's preamble lines, then the SessionStart attachments, then the prompt.
+func (claudeDriver) RecordLayout() (int, int) { return MockPreambleLines, SessionStartAttachments }
+
+// NextPromptLine: the resume's SessionStart attachments are written first, the prompt after.
+func (claudeDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + SessionStartAttachments + 1
+}
+
+func (claudeDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	e.seedTranscriptFile(projDir, sessionID, `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}`)
+}
+
 func (claudeDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
@@ -592,6 +628,25 @@ func resultTexts(raw json.RawMessage) []string {
 }
 
 // Refusals reads the PreToolUse refusals out of the stream's tool_result records (see Result.Refusals).
+func (claudeDriver) WrittenBytes(content string) string { return content }
+
+// ResultRecord: a tool_result block names the call it answers by tool_use_id.
+func (claudeDriver) ResultRecord(record, id string) string {
+	found := ""
+	for _, l := range strings.Split(record, "\n") {
+		if strings.Contains(l, `"tool_use_id":"`+id) {
+			found = l
+		}
+	}
+	return found
+}
+
+// RefusalOutput is the tool_result real Claude Code answers a refused call with.
+func (claudeDriver) RefusalOutput(reason string) string {
+	body, _ := json.Marshal("PreToolUse:Write hook error: " + reason)
+	return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":` + string(body) + `,"is_error":true}]}}`
+}
+
 func (claudeDriver) Refusals(output string) []string {
 	var out []string
 	for _, line := range strings.Split(output, "\n") {
@@ -686,6 +741,55 @@ func (c claudeDriver) SubagentBlockingErrors(records []string) []string {
 	return out
 }
 
+// SubagentReply is the text of the tool_result answering the Agent call whose id
+// starts with callID, in the record at path: the sub-agent's hand-back as real
+// Claude Code writes it (a list of text blocks), or a plain string.
+func (claudeDriver) SubagentReply(path, callID string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var reply strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, bl := range blocks {
+			if bl.Type != "tool_result" || !strings.HasPrefix(bl.ToolUseID, callID) {
+				continue
+			}
+			var s string
+			if json.Unmarshal(bl.Content, &s) == nil {
+				reply.WriteString(s)
+				continue
+			}
+			var texts []struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(bl.Content, &texts) == nil {
+				for _, tx := range texts {
+					reply.WriteString(tx.Text)
+				}
+			}
+		}
+	}
+	return reply.String(), nil
+}
+
 // SubagentFeedbackCount counts the "Stop hook feedback" turns in the sub-agents' transcripts.
 func (claudeDriver) SubagentFeedbackCount(records []string) int {
 	n := 0
@@ -708,12 +812,14 @@ func (claudeDriver) SubagentFeedbackCount(records []string) int {
 }
 
 // BlockingErrors reads the hook_blocking_error attachments of a transcript.
-func (claudeDriver) BlockingErrors(record, hookEvent string, dedupe bool) []string {
+func (claudeDriver) BlockingErrors(record string, _ []string, hookEvent string, dedupe bool) []string {
 	return blockingErrorsIn(record, hookEvent, dedupe)
 }
 
 // StopContinuations reads the Stop refusals a transcript shows the agent went on past.
-func (claudeDriver) StopContinuations(record string) []string { return stopContinuationsIn(record) }
+func (claudeDriver) StopContinuations(record string, _ []string) []string {
+	return stopContinuationsIn(record)
+}
 
 // AnySubagentBlockingErrors reads every SubagentStop refusal recorded, told or not.
 func (claudeDriver) AnySubagentBlockingErrors(records []string) []string {
@@ -770,3 +876,9 @@ func (claudeDriver) ConfigEnv(e *Env) []string { return []string{"CLAUDE_CONFIG_
 
 // Observe: Claude sessions are named by the caller (--session-id), so there is nothing to learn.
 func (claudeDriver) Observe(*Env, Launch, string) {}
+
+// JudgeHooksOff: the judge's claude is launched with disableAllHooks in its settings, the only
+// switch that stops the project's and plugins' hooks (empty hooks/enabledPlugins objects merge).
+func (claudeDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, `"disableAllHooks":true`)
+}
