@@ -374,6 +374,14 @@ func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 
 func (codexDriver) ConfigEnv(e *Env) []string { return []string{"CODEX_HOME=" + e.configDir} }
 
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say (a Codex shell's
+// CODEX_THREAD_ID is only there inside a session), and the config dir the mock keeps its
+// rollouts in.
+func (c codexDriver) CLIEnv(e *Env) []string {
+	return append([]string{"SLOPRAIL_HARNESS=codex"}, c.ConfigEnv(e)...)
+}
+
 // ShellEnv: the mock's shell tool carries the harness's identity itself.
 func (codexDriver) ShellEnv() string { return "" }
 
