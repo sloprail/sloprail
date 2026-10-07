@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp/>\n<user_query>\nUse your Task/sub-agent tool to spawn one sub-agent that replies with the word PONG; wait for it. If you have no sub-agent tool, say so. Then reply only DONE.\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Spawning one sub-agent and waiting for it to reply with PONG."},{"type":"tool_use","name":"Task","input":{"description":"Reply with PONG","prompt":"Reply with exactly the word PONG and nothing else.","subagent_type":"generalPurpose","run_in_background":false}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"DONE"}]}}
+{"type":"turn_ended","status":"success"}

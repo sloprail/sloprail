@@ -90,6 +90,9 @@ func merge(r io.Reader, w io.Writer, st *store, side *os.File, slots map[string]
 	seen := map[string]int{}
 	return eachLine(r, func(n int, line []byte) error {
 		out, calls := augment(line, n)
+		if !st.root {
+			out = markSidechain(out)
+		}
 		if _, err := w.Write(append(out, '\n')); err != nil {
 			return err
 		}
@@ -209,4 +212,26 @@ func augment(line []byte, n int) ([]byte, []call) {
 		return line, nil
 	}
 	return out, calls
+}
+
+// markSidechain marks a user line as not the user's words. A conversation that cannot be
+// proven to be the session's own root (no sessionStart was seen for it, KindRoot) is a
+// sub-agent's, or unknown: its "user" lines are a dispatch prompt, and must never ground a
+// citation as the user's. This is the same treatment Claude Code's isSidechain records get.
+func markSidechain(line []byte) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return line
+	}
+	var role string
+	_ = json.Unmarshal(top["role"], &role)
+	if role != "user" {
+		return line
+	}
+	top["sloprail_sidechain"] = json.RawMessage("true")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return out
 }

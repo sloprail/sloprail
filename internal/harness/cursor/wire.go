@@ -97,6 +97,9 @@ func toolOutputText(tool, raw string) string {
 //   - beforeReadFile: the bytes of a file a Read is about to return.
 func (Harness) RecordToolResult(in harness.HookInput) error {
 	switch in.Event {
+	case string(SessionStart):
+		// the session's own conversation (see record.KindRoot): never fired for a sub-agent's
+		return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindRoot})
 	case string(PreToolUse):
 		if in.ToolUseID == "" || in.ToolName == "" {
 			return nil
