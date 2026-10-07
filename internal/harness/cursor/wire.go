@@ -90,6 +90,14 @@ func toolOutputText(tool, raw string) string {
 // tool_result, so the outcome the post-tool hook reports is kept in sloprail's own
 // store, from which the record the engine reads is merged (record.OpenRecord).
 func (Harness) RecordToolResult(in harness.HookInput) error {
+	// A Read about to run is noted, so the file content a later beforeReadFile reports
+	// can be told from a read that is not this Read's (an attachment, an edit tool's):
+	// only content that arrives while a Read of that file is pending is its result.
+	if in.Event == string(PreToolUse) && in.ToolName == harness.ToolRead {
+		return record.AppendToolResult(in.SessionID, record.StoredResult{
+			Kind: record.KindPendingRead, ToolUseID: in.ToolUseID, Tool: in.ToolName, Input: in.ToolInput,
+		})
+	}
 	if in.Result == nil {
 		return nil
 	}

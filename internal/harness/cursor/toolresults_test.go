@@ -128,11 +128,10 @@ func TestFileToolResultsMatchByFileEvenThoughAnEditIsAWriteInTheHook(t *testing.
 			}
 		}
 	}
-	// The Write and the StrReplace (the hook saw a Write) have their outcomes. The Read's
-	// result is the file's content from beforeReadFile, which fired twice in this run (the
-	// edit tool reads the file too) and is one result.
-	assert.Contains(t, strings.Join(results, "\n"), "cursor-L3-0 hi\n")
-	assert.Len(t, results, 3)
+	// The Write and the StrReplace (the hook saw a Write) have their outcomes. The Read has
+	// none: this run fired beforeReadFile twice but no Read preToolUse/postToolUse, so
+	// neither read is attributable to the Read call and the bytes are not claimed for it.
+	assert.Len(t, results, 2)
 	assert.Contains(t, strings.Join(results, "\n"), `cursor-L2-1 {"file_path":"<RUN>/note.txt","success":true}`)
 	assert.Contains(t, strings.Join(results, "\n"), `cursor-L4-0 {"file_path":"<RUN>/note.txt","success":true}`, "the StrReplace is the canonical Edit, answered by the hook's Write")
 }

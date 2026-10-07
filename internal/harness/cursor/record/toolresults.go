@@ -62,6 +62,10 @@ type StoredResult struct {
 	At string `json:"at"`
 }
 
+// KindPendingRead marks a StoredResult that is no outcome: a Read that was about to run
+// (its preToolUse), which is what lets a beforeReadFile be attributed to it.
+const KindPendingRead = "pending-read"
+
 // KindContent marks a StoredResult that is a file's content, not an outcome.
 const KindContent = "content"
 
@@ -158,13 +162,15 @@ func loadResults(conversationID string) []*pendingResult {
 	defer f.Close()
 	var out []*pendingResult
 	seen := map[string]bool{}
-	// open is, per file, the Read result made from beforeReadFile's bytes that no Read
-	// postToolUse has claimed yet. The hook fires just before the Read's own
-	// postToolUse (which carries only the length), so that post is the same call and
-	// adds nothing; a second beforeReadFile for the file with none between is the same
-	// read seen twice (the agent's edit tool reads the file too, recorded: runs/file-tools)
-	// and replaces it. A cursor-agent that fires no postToolUse for a Read (that
-	// recording) still has the content as the Read's result.
+	// A beforeReadFile is a Read's result only while a Read of that file is pending (its
+	// preToolUse seen, its postToolUse not yet): otherwise the read was not the Read tool's
+	// (an @-attachment, the edit tool reading the file it edits, recorded: runs/file-tools)
+	// and its bytes are dropped, so a citation never grounds on bytes the Read did not
+	// return. open is, per file, the Read result made from such content that no Read
+	// postToolUse has claimed yet: the hook fires between the Read's pre and post (measured,
+	// cursor-agent 2026.10.01), the post carries only the length and is the same call, and a
+	// second beforeReadFile while the Read is still pending replaces the first.
+	pending := map[string]int{}
 	open := map[string]*pendingResult{}
 	br := bufio.NewReader(f)
 	for {
@@ -176,7 +182,14 @@ func loadResults(conversationID string) []*pendingResult {
 				_ = json.Unmarshal(r.Input, &in)
 				arg := primaryArg(r.Tool, in)
 				switch {
+				case r.Kind == KindPendingRead:
+					if arg != "" {
+						pending[arg]++
+					}
 				case r.Kind == KindContent:
+					if pending[arg] == 0 {
+						break // not a Read's: dropped
+					}
 					if p := open[arg]; p != nil {
 						p.Output = r.Output
 					} else {
@@ -186,10 +199,18 @@ func loadResults(conversationID string) []*pendingResult {
 					}
 				case r.ToolUseID != "" && seen[r.ToolUseID]:
 					// the same hook registered twice
-				case r.Tool == "Read" && arg != "" && !r.IsError && open[arg] != nil:
+				case r.Tool == "Read" && arg != "":
 					seen[r.ToolUseID] = r.ToolUseID != ""
-					open[arg].ToolUseID = r.ToolUseID
-					delete(open, arg) // claimed: its content is this Read's result
+					if pending[arg] > 0 {
+						pending[arg]--
+					}
+					if p := open[arg]; p != nil && !r.IsError {
+						p.ToolUseID = r.ToolUseID
+						delete(open, arg) // claimed: its content is this Read's result
+					} else {
+						delete(open, arg)
+						out = append(out, &pendingResult{StoredResult: r, arg: arg})
+					}
 				default:
 					seen[r.ToolUseID] = r.ToolUseID != ""
 					out = append(out, &pendingResult{StoredResult: r, arg: arg})

@@ -8,14 +8,15 @@ import (
 	"github.com/sloprail/sloprail/internal/harness"
 )
 
-// newSessionPostToolCmd is the hook point after a tool call has run. It decides nothing
+// newSessionPostToolCmd is the hook point after a tool call has run (and, for a Read, the
+// one before it, which marks it pending). It decides nothing
 // and never answers: its one job is to hand the call's outcome to a harness whose own
 // session record does not keep it (harness.ToolResultRecorder: Cursor's transcript has
 // no tool_result), so a citation of a tool's output has something to ground against.
 func newSessionPostToolCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "post-tool",
-		Short: "After a tool call: keep its output where the session record lacks it",
+		Short: "Around a tool call: keep its output (and which Read it is) where the session record lacks it",
 		Args:  cobra.NoArgs,
 		RunE:  runSessionPostTool,
 	}
