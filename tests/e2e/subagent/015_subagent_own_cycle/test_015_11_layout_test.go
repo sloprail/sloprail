@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,14 +144,15 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 		t.Fatalf("a cycle hit the harness's retry cap:\n%s", res.Output)
 	}
 
-	// The outer stream carries exactly one announcement — the root's own
-	// dispatch. The nested one is announced in the MIDDLE sub-agent's stream,
-	// which this run never sees. Asserted so nobody reads this count as evidence
-	// about nesting again: it is 1 whether nesting happens or not, which is
-	// precisely why 014_07's conclusion from it does not follow.
-	if ids := agentIDs(res.Output); len(ids) != 1 {
-		t.Fatalf("the outer stream announced %d dispatch(es) (%v), want the root's one. A nested "+
-			"dispatch is announced in the sub-agent's own stream, not here", len(ids), ids)
+	// The root's own record carries exactly one announcement — its own dispatch. The
+	// stream also carries the sub-agents' frames, as real Claude Code's does, each marked with
+	// the parent_tool_use_id of the dispatch it ran under: the nested dispatch is announced in
+	// one of those, so only the frames with no parent are the root's. Asserted so nobody reads
+	// this count as evidence about nesting again: it is 1 whether nesting happens or not,
+	// which is precisely why 014_07's conclusion from it does not follow.
+	if ids := agentIDs(rootFrames(res.Output)); len(ids) != 1 {
+		t.Fatalf("the root's own frames announced %d dispatch(es) (%v), want the root's one. A nested "+
+			"dispatch is announced in a sub-agent's frame, which names its parent", len(ids), ids)
 	}
 
 	// Everything below reads the MIDDLE sub-agent's worktree, which is where
@@ -233,4 +235,21 @@ func agentIDs(output string) []string {
 			ids = append(ids, id)
 		}
 	}
+}
+
+// rootFrames is the stream's lines that are the root agent's own: those with no
+// parent_tool_use_id. A sub-agent's frames (the mock streams them, as Claude Code
+// does) carry the id of the dispatch they ran under.
+func rootFrames(output string) string {
+	var keep []string
+	for _, line := range strings.Split(output, "\n") {
+		var rec struct {
+			Parent *string `json:"parent_tool_use_id"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &rec) == nil && rec.Parent != nil {
+			continue
+		}
+		keep = append(keep, line)
+	}
+	return strings.Join(keep, "\n")
 }
