@@ -9,14 +9,14 @@ fields:
     constraint_expr: default size-md; a list matching nothing under the running harness is refused
   - name: timeout
     type: string
-    doc: How long the judge may take before it is stopped; valid only on a judge.
+    doc: The time limit on one judge's answer.
     constraint_expr: default 600 seconds; a positive duration
   - name: pass
     type: bool
     doc: The verdict the model's answer carries.
   - name: reasoning
     type: string
-    doc: The model's stated reason; shown to the agent when the verdict is false.
+    doc: The model's stated reason for its verdict.
   - name: attempts
     type: int32
     doc: How many times the model may be asked before a malformed answer fails the judge.
