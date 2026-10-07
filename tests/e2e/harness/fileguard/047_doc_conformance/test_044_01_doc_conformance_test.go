@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -86,12 +87,16 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
-	if !harness.HasCap(t, harness.CapScopedToolRules) {
-		// The example's judge is limited to `Bash(curl -sL https://…/*)`, a scoped rule this
-		// harness cannot grant: sr-agent refuses the run rather than round the grant up, so
-		// the judge is never launched and no prompt is rendered.
+	if !harness.HasCap(t, harness.CapScopedToolRules) || !harness.HasCap(t, harness.CapShellDenyBesideGrant) {
+		// The example's judge is limited to `Bash(curl -sL https://…/*)` with a deny taking back
+		// extra words: a scoped rule, and a shell deny beside a shell grant. A harness that
+		// cannot grant the one or enforce the other is refused by sr-agent rather than rounded
+		// up, so the judge is never launched, no prompt is rendered, and the reason is told.
 		if prompt != "" {
-			t.Fatalf("a harness without scoped tool rules launched a judge whose grant is scoped:\n%s", prompt)
+			t.Fatalf("a harness that cannot express the judge's tool grant launched it anyway:\n%s", prompt)
+		}
+		if joined := strings.Join(e.CheckRun(proj, "s-044-04a"), "\n"); !containsStr(joined, "cannot express") {
+			t.Errorf("a judge whose grant this harness cannot express was not refused with the reason:\n%s", joined)
 		}
 		return
 	}

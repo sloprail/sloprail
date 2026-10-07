@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/cursor"
 )
 
@@ -117,8 +118,8 @@ func cursorRules(g accessGrant) (allow, deny []string, err error) {
 	for _, t := range g.DenyTools {
 		for _, tok := range cursorToken(t) {
 			if strings.HasPrefix(tok, "Shell(") && shellAllowed {
-				return nil, nil, fmt.Errorf("%w: cursor does not enforce a shell deny beside a shell grant (measured), so %q cannot be promised; drop it or the shell grant",
-					ErrModeUnsupported, t)
+				return nil, nil, fmt.Errorf("%w: %w: cursor does not enforce a shell deny beside a shell grant (measured), so %q cannot be promised; drop it or the shell grant",
+					ErrModeUnsupported, harness.ErrToolUnsupported, t)
 			}
 			deny = append(deny, tok)
 		}
