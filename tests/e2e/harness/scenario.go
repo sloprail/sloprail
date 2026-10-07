@@ -109,6 +109,15 @@ func Say(id, text string) Turn {
 // tool WITH a produced artifact a check reads back — a screenshot whose image an
 // audit inspects — uses ToolUseWithResult instead, which supplies that field.
 func ToolUse(id, name string, input map[string]string) Turn {
+	// A text replacement is every harness's edit, however it spells the tool (Claude's Edit,
+	// Codex's apply_patch hunk): it is the Edit turn, which each driver renders its own way.
+	if _, ok := input["file_path"]; ok && name == "Edit" && len(input) == 3 {
+		if o, ok := input["old_string"]; ok {
+			if n, ok := input["new_string"]; ok {
+				return Edit(id, input["file_path"], o, n)
+			}
+		}
+	}
 	return Turn{act: Action{Kind: ActToolUse, ID: id, Tool: name, Input: input}}
 }
 
