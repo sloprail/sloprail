@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/harness/claudecode"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -173,7 +173,7 @@ var claudeCodeSpec = harnessSpec{
 	argsFlag: "--claude-args",
 
 	// The isolation settings sr-agent ALWAYS gives Claude Code
-	// (harness.IsolationSettings): the launched agent carries none of the caller's
+	// (claudecode.IsolationSettings): the launched agent carries none of the caller's
 	// session wiring. No hooks fire inside it, no plugins load, no MCP servers
 	// connect. They are what the hand-rolled judge scripts passed before the
 	// judge-check migration, lifted here so a judge check gets the isolation for
@@ -205,7 +205,7 @@ var claudeCodeSpec = harnessSpec{
 	// refused. (The readonly project's deny held either way; under
 	// `acceptEdits` nothing outside was writable.) A caller that wants another
 	// mode says so in --claude-args, which comes later and wins.
-	baseArgs: []string{"--settings", harness.IsolationSettings, "--permission-mode", "default"},
+	baseArgs: []string{"--settings", claudecode.IsolationSettings, "--permission-mode", "default"},
 
 	// The file access a run gets. Every line of this was MEASURED against the real
 	// CLI (claude 2.1.282, haiku, `claude -p` in a clean environment, 2026-09-27)

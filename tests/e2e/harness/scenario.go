@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -68,6 +69,14 @@ func Bash(id, command string) Turn {
 	return Turn{jsonl: toolUse(id, "Bash", map[string]string{"command": command})}
 }
 
+// WebFetch returns a turn where the agent fetches a page: the real tool's url and
+// prompt, plus the mock's own mock_result, the page text the scripted call is
+// answered with (the mock reaches no web). The mock refuses a url that is not an
+// http or https address with a host, so a malformed one cannot be sent here.
+func WebFetch(id, url, prompt string) Turn {
+	return ToolUseJSON(id, "WebFetch", fmt.Sprintf(`{"url":%s,"prompt":%s,"mock_result":{"result":"(the fetched page)"}}`, jsonStr(url), jsonStr(prompt)))
+}
+
 // Say returns a turn where the agent writes plain prose — an assistant message
 // carrying a text block rather than a tool call.
 //
@@ -101,7 +110,9 @@ func Say(id, text string) Turn {
 // state, exactly the violation such a rule catches.
 //
 // input values are strings, which is what these representative tools take; a
-// check reading the input as JSON (`.input.email`) reads them as such.
+// check reading the input as JSON (`.input.email`) reads them as such. (For the
+// tools the mock models, inputs real Claude Code types as booleans or numbers are
+// written typed: see typedInputs.)
 //
 // The mock's own synthesised result for the tool carries no `toolUseResult`, so a
 // tool WITH a produced artifact a check reads back — a screenshot whose image an
@@ -158,22 +169,16 @@ func ToolUseJSON(id, name, inputJSON string) Turn {
 // toolUseResultJSON is a raw JSON value (an object, a string — whatever the artifact
 // is), placed verbatim under `toolUseResult`.
 func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJSON string) (Turn, Turn) {
+	return toolUseWithResultRaw(id, name, inputObject(name, input), toolUseResultJSON)
+}
+
+// toolUseWithResultRaw is ToolUseWithResult with the input already a JSON object.
+func toolUseWithResultRaw(id, name, inputJSON, toolUseResultJSON string) (Turn, Turn) {
 	// The tool_use, with a top-level `id` as the marker anchor so the block's own
 	// `id` stays clean and equal to `id`.
-	var ib strings.Builder
-	ib.WriteByte('{')
-	first := true
-	for k, v := range input {
-		if !first {
-			ib.WriteByte(',')
-		}
-		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
-	}
-	ib.WriteByte('}')
 	use := Turn{jsonl: fmt.Sprintf(
 		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		id+"#u", "e2e-turn-"+id+"u", id, name, ib.String())}
+		id+"#u", "e2e-turn-"+id+"u", id, name, inputJSON)}
 	// The artifact record: a user tool_result for the same id, carrying the
 	// `toolUseResult`. Its top-level `id` is the marker anchor; `tool_use_id` stays
 	// clean and equal to `id` so it correlates to the tool_use above.
@@ -262,11 +267,16 @@ func AnswerQuestion(id string, qa ...[2]string) Turn {
 // so an answer without its question cannot show that an answer is kept out of
 // the tool-output pool because it is the user's words.
 //
-// The mock does not implement AskUserQuestion and answers the tool_use with its
-// own error result; the answer envelope follows it for the same id, the way the
-// harness writes the person's selection.
+// The tool_use carries the input real Claude Code sends (a questions array with
+// options), which the mock models; it has no user to ask, so it answers the call
+// with its own error result, and the answer envelope follows it for the same id,
+// the way the harness writes the person's selection. The harness runs the mock
+// with a permission host (--permission-prompt-tool stdio), which is what offers
+// AskUserQuestion to a non-interactive run.
 func AskUserQuestion(id, question, answer string) (Turn, Turn) {
-	use, _ := ToolUseWithResult(id, "AskUserQuestion", map[string]string{"question": question}, "null")
+	input := fmt.Sprintf(`{"questions":[{"question":%s,"header":"Question","multiSelect":false,"options":[{"label":%s,"description":%s},{"label":"other","description":"another answer"}]}]}`,
+		jsonStr(question), jsonStr(answer), jsonStr(answer))
+	use, _ := toolUseWithResultRaw(id, "AskUserQuestion", input, "null")
 	return use, AnswerQuestion(id, [2]string{question, answer})
 }
 
@@ -488,6 +498,12 @@ fi
 // uuid and an explicit null parent — and inventing a plausible parent chain
 // here would be this file asserting a shape it does not maintain.
 func toolUse(id, name string, input map[string]string) string {
+	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, id, name, inputObject(name, input))
+}
+
+// inputObject is a tool's input as a JSON object, each value typed by inputValue.
+func inputObject(name string, input map[string]string) string {
 	var ib strings.Builder
 	ib.WriteByte('{')
 	first := true
@@ -496,11 +512,39 @@ func toolUse(id, name string, input map[string]string) string {
 			ib.WriteByte(',')
 		}
 		first = false
-		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
+		fmt.Fprintf(&ib, "%q:%s", k, inputValue(name, k, v))
 	}
 	ib.WriteByte('}')
-	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		"e2e-turn-"+id, id, name, ib.String())
+	return ib.String()
+}
+
+// typedInputs lists, for the tools the mock models, the inputs real Claude Code
+// sends as JSON booleans or numbers rather than strings. A scenario still gives
+// every input as a string; toolUse writes these as the typed JSON a real agent
+// sends, so a hook or the mock sees `"run_in_background": true`, not `"true"`.
+// Tools the mock does not model yet are left as strings.
+var typedInputs = map[string]map[string]string{
+	"Bash":  {"run_in_background": "bool", "timeout": "number", "dangerouslyDisableSandbox": "bool"},
+	"Read":  {"limit": "number", "offset": "number"},
+	"Edit":  {"replace_all": "bool"},
+	"Agent": {"run_in_background": "bool"},
+	"Task":  {"run_in_background": "bool"},
+}
+
+// inputValue is v as the JSON value of the named input of tool: typed when
+// typedInputs says so and v parses as that type, a string otherwise.
+func inputValue(tool, key, v string) string {
+	switch typedInputs[tool][key] {
+	case "bool":
+		if b, err := strconv.ParseBool(v); err == nil {
+			return strconv.FormatBool(b)
+		}
+	case "number":
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return strconv.FormatInt(n, 10)
+		}
+	}
+	return jsonStr(v)
 }
 
 func result(text string) string {
@@ -664,7 +708,7 @@ func CompactNamingUnwrittenParent(id string) Turn {
 // own CLAUDE_CODE_TMPDIR, so the task's output file is inside the test's
 // sandbox, not the shared /tmp.
 func Background(id, name string, input map[string]string) Turn {
-	in := map[string]string{"run_in_background": "true"}
+	in := map[string]string{"run_in_background": "true"} // written as the JSON boolean, see typedInputs
 	for k, v := range input {
 		in[k] = v
 	}

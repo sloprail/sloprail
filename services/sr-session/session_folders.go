@@ -50,13 +50,13 @@ func resolveRootSession(p HookPayload) (rootSession, error) {
 		if err != nil {
 			return rs, err
 		}
-		path, err := sessionDBPath(p.stateCwd(), id)
+		path, err := sessionDBPath(p.StateCwd(), id)
 		if err != nil {
 			return rs, err
 		}
 		return rootSession{ID: id, Cwd: p.Cwd, Path: path}, nil
 	}
-	record, err := p.sessionRecord()
+	record, err := p.SessionRecord()
 	if err != nil {
 		return rs, err
 	}

@@ -135,7 +135,7 @@ func (m *Matcher) Match(e event.Event) (bool, error) {
 // list, so a typo was announced once at session start and then silently disarmed
 // its rule for every action after it, which made this paragraph false of the
 // thing anyone actually runs. See refuseForBroken in services/sr-session, and
-// tests/e2e/pre_tool/013_broken_declaration_is_not_silent, which fails if that
+// tests/e2e/harness/pre_tool/013_broken_declaration_is_not_silent, which fails if that
 // link is removed again.
 //
 // The fill-in reaches exactly as deep as the type check does. matcherEnv and

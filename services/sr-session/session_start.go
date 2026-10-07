@@ -146,7 +146,7 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 // ahead and reports why — this only ever silences the one case that is known
 // to be harmless.
 func recordNotYetWritten(p HookPayload) bool {
-	path, err := p.record()
+	path, err := p.Record()
 	if err != nil || path == "" {
 		return false
 	}

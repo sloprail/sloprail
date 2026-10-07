@@ -357,7 +357,7 @@ reaches the check and records nothing.
 
 ## Proof
 
-- e2e: `tests/e2e/examples/038_keyword_coverage_registry/` — the context and
+- e2e: `tests/e2e/harness/examples/038_keyword_coverage_registry/` — the context and
   registry (T038_01–03), coverage (T038_04–07), keywords-hold (T038_08–12), the
   research gates incl. every wrapped `gh` form and the searches no spelling
   list named (T038_13–20), scanner deletion and the obligation surviving an

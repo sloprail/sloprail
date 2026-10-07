@@ -40,7 +40,7 @@ import (
 //
 // What is true now: session_subagent_stop.go dispatches through completeCycle,
 // and the coverage that paragraph described as "what would be needed" exists —
-// tests/e2e/subagent/015_subagent_own_cycle runs the same guardrail in parent
+// tests/e2e/harness/subagent/015_subagent_own_cycle runs the same guardrail in parent
 // and sub-agent and asserts each was handed its own turns and reached its own
 // state, which is judged_on_its_own_record and subagent_state_is_its_own
 // observed end to end rather than argued structurally.
@@ -100,20 +100,20 @@ func TestInvariant_judged_on_its_own_record(t *testing.T) {
 	// rather than instead of it, so a reader taking transcript_path answers for
 	// the parent — and judges this cycle against the spawning session's record,
 	// which interleaves the sub-agent's work with its own.
-	got, err := HookPayload{TranscriptPath: parent, AgentTranscriptPath: own, AgentID: "abc"}.record()
+	got, err := HookPayload{TranscriptPath: parent, AgentTranscriptPath: own, AgentID: "abc"}.Record()
 	require.NoError(t, err)
 	assert.Equal(t, own, got, "a sub-agent's cycle would be judged against its parent's record")
 
 	// Reconstructed. A harness naming the sub-agent by id only must reach the
 	// same file, or the same cycle is judged against different records depending
 	// on which fields happened to be reported.
-	viaID, err := HookPayload{TranscriptPath: parent, AgentID: "abc"}.record()
+	viaID, err := HookPayload{TranscriptPath: parent, AgentID: "abc"}.Record()
 	require.NoError(t, err)
 	assert.Equal(t, own, viaID, "the id route reached a different record than the path route")
 
 	// And the converse, which is the other half of the spec's why: a root must
 	// not be judged against a sub-agent's record either.
-	rootRecord, err := HookPayload{TranscriptPath: parent}.record()
+	rootRecord, err := HookPayload{TranscriptPath: parent}.Record()
 	require.NoError(t, err)
 	assert.Equal(t, parent, rootRecord, "a root session was pointed at something other than its own record")
 }

@@ -37,7 +37,7 @@ func sessionHasNoTranscript(p HookPayload, atStart bool) bool {
 	if p.SessionID == "" {
 		return false
 	}
-	path, err := p.sessionRecord()
+	path, err := p.SessionRecord()
 	if err != nil {
 		return false
 	}
