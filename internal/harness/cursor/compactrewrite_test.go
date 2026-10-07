@@ -44,7 +44,13 @@ const (
 func TestPromptRewrittenMidTurnAfterACompactionIsHarnessInjected(t *testing.T) {
 	p := userLine("<timestamp/>\n<user_query>\nship it\n</user_query>")
 	body := p + asstLine + p + userLine("<dynamic_tools>\nx\n</dynamic_tools>") + p + endLine
-	assert.Equal(t, []bool{false, true, true, true}, compactedFlags(t, "k1", body, true))
+	assert.Equal(t, []bool{false, true, false, true}, compactedFlags(t, "k1", body, true))
+}
+
+func TestADifferentMessageMidTurnAfterACompactionIsTheUsers(t *testing.T) {
+	p := userLine("<timestamp/>\n<user_query>\nship it\n</user_query>")
+	q := userLine("<timestamp/>\n<user_query>\nactually, stop\n</user_query>")
+	assert.Equal(t, []bool{false, true, false}, compactedFlags(t, "k4", p+asstLine+p+q, true))
 }
 
 func TestMidTurnUserLineWithoutACompactionIsTheUsers(t *testing.T) {

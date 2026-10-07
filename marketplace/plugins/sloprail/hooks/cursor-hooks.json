@@ -11,9 +11,6 @@
     "postToolUseFailure": [
       { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
     ],
-    "preCompact": [
-      { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
-    ],
     "beforeReadFile": [
       { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
     ],
