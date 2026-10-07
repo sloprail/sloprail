@@ -73,3 +73,15 @@ func ProvisionerOf(h Harness) (Provisioner, error) {
 	}
 	return p, nil
 }
+
+// ProjectHooks is what a Harness MAY implement when its plugin cannot carry every hook
+// (Cursor's plugin stop and sessionStart hooks never fire, its project hooks do): the
+// project's own hooks file gets sloprail's entries for those events, merged with
+// whatever the project already has. Installing is idempotent and never replaces an
+// entry that is not sloprail's; Remove takes only sloprail's back out.
+type ProjectHooks interface {
+	// InstallProjectHooks registers the hooks, running the plugin installed at pluginDir.
+	InstallProjectHooks(project, pluginDir string) error
+	// RemoveProjectHooks unregisters them.
+	RemoveProjectHooks(project string) error
+}

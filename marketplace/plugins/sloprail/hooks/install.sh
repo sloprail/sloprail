@@ -26,7 +26,9 @@
 #   claude  prints the project-scope install commands; the plugin is added by
 #           `claude plugin ...`, not by this script (unchanged behaviour)
 #   cursor  copies the plugin into ~/.cursor/plugins/local/sloprail, where
-#           cursor-agent and the editor load a user's local plugins
+#           cursor-agent and the editor load a user's local plugins, and adds its
+#           stop and sessionStart hooks to the project's .cursor/hooks.json (a
+#           plugin's never fire in Cursor)
 #   codex   the Codex-specific steps (trusting the plugin's hooks)
 #
 # The plugin's own hooks call this script with --binaries-only to fetch the
@@ -61,7 +63,8 @@ Per harness, from the project root (sloprail is installed per project):
           codex plugin add sloprail@sloprail-marketplace
           then enable it in the project's .codex/config.toml (a trusted project)
   cursor  this script copies the plugin into ~/.cursor/plugins/local/sloprail
-          (Cursor plugins are per user; there is no project scope)
+          (Cursor plugins are per user; there is no project scope) and, from the
+          project root, adds the stop and sessionStart hooks to .cursor/hooks.json
 
 Environment: SLOPRAIL_INSTALL_DIR (binaries, default ~/.local/bin),
 SLOPRAIL_CURSOR_PLUGINS_DIR (default ~/.cursor/plugins/local).
@@ -397,6 +400,18 @@ install_cursor() {
   rm -rf "${plugins_dir}/sloprail"
   mv "${plugins_dir}/.sloprail.new" "${plugins_dir}/sloprail"
   say "sloprail install: Cursor — plugin installed into ${plugins_dir}/sloprail (per user: Cursor has no project-scope plugin install)"
+  # A plugin's stop hook never fires in Cursor and a local plugin loads after sessionStart,
+  # so those two hooks go in the project's .cursor/hooks.json (merged with its own entries).
+  project="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$project" ]; then
+    say "sloprail install: Cursor — WARNING: not run inside a project (git repository), so the project's stop and sessionStart hooks are not set up; from the project's root run:"
+    say "  SLOPRAIL_HARNESS=cursor sr-session project-hooks install --plugin-dir ${plugins_dir}/sloprail"
+  elif SLOPRAIL_HARNESS=cursor "${INSTALL_DIR}/sr-session" project-hooks install --dir "$project" --plugin-dir "${plugins_dir}/sloprail"; then
+    say "sloprail install: Cursor — stop and sessionStart hooks added to ${project}/.cursor/hooks.json (other entries kept)"
+  else
+    say "sloprail install: Cursor — WARNING: could not update ${project}/.cursor/hooks.json; run: SLOPRAIL_HARNESS=cursor sr-session project-hooks install --plugin-dir ${plugins_dir}/sloprail"
+    return 1
+  fi
 }
 
 if [ -z "$BINARIES_ONLY" ]; then

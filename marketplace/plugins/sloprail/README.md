@@ -54,7 +54,7 @@ resolves each plugin to its installation directory itself. The manifest is
 filenames, the `enabledPlugins` shape, the cache layout, the manifest schema — is
 quarantined in `internal/harness/claudecode/plugins.go`.
 
-**Cursor.** `hooks/cursor-hooks.json` carries the mapping; its commands run from
+**Cursor.** `hooks/cursor-hooks.json` carries the mapping for every event except `stop` and `sessionStart`, which a Cursor plugin cannot receive (its `stop` never fires and a local plugin loads after `sessionStart`; measured in harness-mocks #287). Those two are written into the project's `.cursor/hooks.json` by the install (`sr-session project-hooks install`, merged with the entries already there, `remove` to undo; the code is `internal/harness/cursor/projecthooks.go`); its commands run from
 the plugin directory and go through `hooks/sr-session-hook-cursor.sh`, which sets
 `SLOPRAIL_HARNESS=cursor`, delegates to the shared wrapper, and adapts only what
 Cursor's hook contract does differently (`sessionStart` output must be a JSON

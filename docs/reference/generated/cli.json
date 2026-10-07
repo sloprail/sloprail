@@ -53,7 +53,7 @@
     "path": "sr-session",
     "use": "sr-session",
     "short": "Session lifecycle — the hook points a harness calls",
-    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session post-tool      a tool has run (its output is kept where the harness's record lacks it)\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session plugins        the plugins the harness resolves for this project (JSON lines)\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n  sr-session codex-trust           trust sloprail's plugin hooks in Codex (it skips untrusted ones silently)\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session post-tool      a tool has run (its output is kept where the harness's record lacks it)\n  sr-session stop           a turn has ended\n  sr-session subagent-start a subagent is starting (recorded in the sub-agent registry)\n  sr-session subagent-stop  a subagent's turn has ended\n  sr-session worktree-remove  a worktree is being removed (never blocks it)\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session refs list|track|untrack   the ranges of commits the session answers for\n  sr-session agents list    the sub-agents the session dispatched, and which still run\n  sr-session plugins        the plugins the harness resolves for this project (JSON lines)\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n  sr-session codex-trust           trust sloprail's plugin hooks in Codex (it skips untrusted ones silently)\n  sr-session project-hooks         register the hooks a plugin cannot carry in the project (Cursor: stop, sessionStart)\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
     "children": [
       {
         "path": "sr-session agents",
@@ -122,6 +122,36 @@
         "path": "sr-session pre-tool",
         "use": "pre-tool",
         "short": "Before a tool call: run the guardrails bound to what it would do"
+      },
+      {
+        "path": "sr-session project-hooks",
+        "use": "project-hooks",
+        "short": "Register, or remove, the hooks a harness's plugin cannot carry, in the project's hooks file",
+        "long": "Cursor's plugins never fire a stop hook and load too late for sessionStart, but\nthe project's .cursor/hooks.json fires both. This merges sloprail's entries for those\nevents into that file (keeping every other entry, idempotent) or removes only them.\nThe harness is the running one (SLOPRAIL_HARNESS); one whose plugin carries every\nhook does nothing.\n\n  sr-session project-hooks install --plugin-dir <installed plugin>\n  sr-session project-hooks remove",
+        "flags": [
+          {
+            "name": "dir",
+            "usage": "the project directory (default: the current one)"
+          }
+        ],
+        "children": [
+          {
+            "path": "sr-session project-hooks install",
+            "use": "install",
+            "short": "Merge sloprail's entries into the project's hooks file",
+            "flags": [
+              {
+                "name": "plugin-dir",
+                "usage": "the installed sloprail plugin directory"
+              }
+            ]
+          },
+          {
+            "path": "sr-session project-hooks remove",
+            "use": "remove",
+            "short": "Remove sloprail's entries from the project's hooks file"
+          }
+        ]
       },
       {
         "path": "sr-session query",

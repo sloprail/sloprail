@@ -40,6 +40,11 @@ func (Harness) InstallPlugins(_ context.Context, in harness.PluginInstall) error
 		if err := copyDir(src, dst); err != nil {
 			return fmt.Errorf("install cursor plugin %s: %w", name, err)
 		}
+		if name == "sloprail" {
+			if err := (Harness{}).InstallProjectHooks(in.Project, dst); err != nil {
+				return fmt.Errorf("install cursor project hooks: %w", err)
+			}
+		}
 	}
 	return nil
 }
