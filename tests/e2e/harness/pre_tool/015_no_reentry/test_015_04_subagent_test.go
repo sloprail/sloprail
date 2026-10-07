@@ -30,7 +30,7 @@ if [ "$D" -ge 6 ]; then
 fi
 SLOP_TEST_DEPTH=$((D + 1))
 export SLOP_TEST_DEPTH
-sr-agent --harness {{harness}} --model size-xs "judge" >/dev/null 2>&1
+sr-agent --harness {{harness}} --agent-run --model size-xs "judge" >/dev/null 2>&1
 exit 0
 `
 
