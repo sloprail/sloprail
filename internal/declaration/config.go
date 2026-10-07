@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // This file is the new-format counterpart to internal/guardrail's config.go: the
@@ -74,11 +76,22 @@ func (c config) isEnabled(qualified string) bool {
 	return false
 }
 
-// DefaultStopHookBlockCap mirrors Claude Code's own CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
-// default: after 8 consecutive blocks the harness overrides the hook and ends the
-// turn anyway, so a cap the engine sets any higher is one the harness never lets
-// it reach unless the operator raises that variable too.
-const DefaultStopHookBlockCap = 8
+// FallbackStopHookBlockCap is the finite cap of a harness with none of its own.
+// The engine's cap is the loop breaker for a Stop gate that cannot be satisfied
+// (a limit of 0 means it never lets go), so the default must never be 0: a
+// harness that would block forever (Codex kept going through 30) still gets this.
+const FallbackStopHookBlockCap = 8
+
+// DefaultStopHookBlockCap is the cap a project that sets none gets: the current
+// harness's own cap on consecutive Stop blocks (harness.StopBlockCap) when that is
+// smaller than FallbackStopHookBlockCap, since a higher engine cap is one the
+// harness never lets it reach; otherwise FallbackStopHookBlockCap.
+func DefaultStopHookBlockCap() int {
+	if n := harness.StopBlockCap(harness.Current()); n > 0 && n < FallbackStopHookBlockCap {
+		return n
+	}
+	return FallbackStopHookBlockCap
+}
 
 // StopHookBlockCap reads the project's `stop_hook_block_cap` from the config in
 // root (a `.sloprail` directory): how many consecutive refusals a Stop may take
@@ -93,18 +106,18 @@ const DefaultStopHookBlockCap = 8
 //	stop_hook_block_cap: 1   # refuse once, then let the retry end un-judged
 //	stop_hook_block_cap: 0   # no engine cap (the harness's own cap still applies)
 //
-// Absent means DefaultStopHookBlockCap. A negative value is an error, and so is a
-// config that exists and cannot be read; the caller decides what an error costs.
+// Absent means DefaultStopHookBlockCap (the harness's own cap when smaller than 8, else 8).
+// A negative value is an error, and so is a config that exists and cannot be read; the caller decides what an error costs.
 func StopHookBlockCap(root string) (int, error) {
 	c, err := loadConfig(root)
 	if err != nil {
-		return DefaultStopHookBlockCap, err
+		return DefaultStopHookBlockCap(), err
 	}
 	if c.StopHookBlockCap == nil {
-		return DefaultStopHookBlockCap, nil
+		return DefaultStopHookBlockCap(), nil
 	}
 	if *c.StopHookBlockCap < 0 {
-		return DefaultStopHookBlockCap, fmt.Errorf("declaration: %s: stop_hook_block_cap must be 0 or more, got %d",
+		return DefaultStopHookBlockCap(), fmt.Errorf("declaration: %s: stop_hook_block_cap must be 0 or more, got %d",
 			filepath.Join(root, configFile), *c.StopHookBlockCap)
 	}
 	return *c.StopHookBlockCap, nil
