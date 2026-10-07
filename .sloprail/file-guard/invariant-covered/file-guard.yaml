@@ -1,0 +1,10 @@
+# Every feature invariant is implemented and proven [deterministic], over the
+# whole committed tree: deleting a proving test, or adding an invariant, breaks
+# coverage in files the change may not touch.
+match: >-
+  path startsWith "spec/invariants/"
+  or any(markers, .kind == "invariant" or .kind == "proves")
+  or any(oldMarkers, .kind == "invariant" or .kind == "proves")
+deletions: include
+checks:
+  - script: ./covered.sh

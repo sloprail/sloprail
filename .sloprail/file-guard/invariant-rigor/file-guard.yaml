@@ -1,0 +1,12 @@
+# The tests of an invariant, together, rigorously prove it [judge]. One subject per
+# invariant touched (its spec file, a test proving it, or code upholding it changed;
+# subjects.sh), so a change to one invariant leaves another's verdict alone. The judge
+# sees the statement and EVERY test that proves it; prepare.sh builds that context.
+match: >-
+  path startsWith "spec/invariants/"
+  or any(markers, .kind == "invariant" or .kind == "proves")
+  or any(oldMarkers, .kind == "invariant" or .kind == "proves")
+subjects: ./subjects.sh
+checks:
+  - prepare: ./prepare.sh
+    judge: ./tests-prove-statement.md.j2
