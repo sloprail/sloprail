@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T036_06: a skip DECLARED IN A LATER CYCLE still excuses an EARLIER cycle's
@@ -54,7 +52,7 @@ func TestT036_06_SkipDeclaredLaterCycleExcusesEarlierMessage(t *testing.T) {
 	// it is read from the transcript the mock already wrote for cycle 1. The
 	// resume's SessionStart attachment is written first, as real Claude Code
 	// writes it, and the prompt after it.
-	nextLine := transcriptLineCount(t, e.TranscriptPath(proj, sess)) + harness.SessionStartAttachments + 1
+	nextLine := transcriptLineCount(t, e.TranscriptPath(proj, sess)) + e.SessionStartRecords() + 1
 
 	// ---- Cycle 2: skip the FIRST message's line AND this cycle's own resumed
 	// prompt, declaring no new work of its own. ----

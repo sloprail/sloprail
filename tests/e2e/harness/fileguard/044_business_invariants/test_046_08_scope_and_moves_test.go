@@ -82,7 +82,7 @@ func TestT046_31_ShellEditsOutsideAPinsReachAreAdmitted(t *testing.T) {
 	res = e.Run(proj, "s-046-31b", "allow goodwill refunds", Turns("done",
 		Bash("b1", "sed -i.bak 's/charge amount\\./charge amount, except goodwill refunds./' SPEC.md"),
 	).ThenCommit("write the files"))
-	if !res.Refused() || !res.Saw(`gate \"pinned-spec-holds\"`) {
+	if !res.Refused() || !res.SawInRefusal(`gate "pinned-spec-holds"`) {
 		t.Fatalf("a shell edit of a pinned spec line was not refused before it landed, by the gate:\n%s", res.Output)
 	}
 	// The hint names the cases a result is unknown in, including the one where it

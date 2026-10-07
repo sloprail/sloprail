@@ -411,8 +411,8 @@ func cursorConversationID(e *Env, sessionID string) string {
 }
 
 // SeedRecord is the one line of a Cursor transcript: a user message, in Cursor's own shape.
-func (cursorDriver) SeedRecord() string {
-	return `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nwork\n</user_query>"}]}}`
+func (cursorDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	e.seedTranscriptFile(projDir, sessionID, `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nwork\n</user_query>"}]}}`)
 }
 
 // TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
