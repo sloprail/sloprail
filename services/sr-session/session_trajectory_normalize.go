@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/tagmod"
@@ -144,7 +146,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// inherits the last one written (the mock writes cwd on the first record
 	// only). Computed before slicing so a slice starting mid-session still
 	// knows where its first entries ran.
-	roots, dirs := entryRoots(lined, p.Root())
+	roots, dirs := entryRoots(lined, workspaceFallback(p))
 
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 	pathGiven := cmd.Flags().Changed("path")
@@ -178,6 +180,23 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)
 	return enc.Encode(out)
+}
+
+// workspaceFallback is the workspace a record that names none is read against: the
+// payload's, and for a bare --path (no payload) the repository this command runs in. A
+// harness whose records carry no cwd (Cursor's) leaves nothing else to go on, and file
+// paths are looked up from the process's directory in that case anyway, so they must be
+// reported against its repository too.
+func workspaceFallback(p HookPayload) string {
+	if root := p.Root(); root != "" {
+		return root
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if root, err := gitrepo.Root(wd); err == nil {
+			return root
+		}
+	}
+	return ""
 }
 
 // entryRoots is the workspace each record's file paths are resolved against,
@@ -314,6 +333,16 @@ func (c pendingCall) Root() string               { return c.root }
 // Dir is where the recorded command ran (filemod.DirPending): its relative
 // paths are looked up there, not in this process's working directory.
 func (c pendingCall) Dir() string { return c.dir }
+
+// FileEffects implements filemod.EffectPending: the effects the current harness states
+// for a tool of its own whose arguments do not name its files (Codex's apply_patch), the
+// same seam a live hook's payload is filled from.
+func (c pendingCall) FileEffects() []harness.FileEffect {
+	if fe, ok := harness.Current().(harness.FileEffecter); ok {
+		return fe.FileEffects(c.name, c.input, c.dir)
+	}
+	return nil
+}
 
 // kindSet is the set of event kinds an entry's events are narrowed to.
 type kindSet map[string]bool

@@ -91,6 +91,11 @@ const (
 	// WebFetch(domain:...)) and denied one. Codex has no per-tool permission list, only a
 	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
 	CapScopedToolRules = "scoped-tool-rules"
+
+	// CapProseWithCallInOneEntry: a turn that says something and calls a tool is ONE entry
+	// of the record (a text block beside the tool_use). Codex's rollout writes the message
+	// and the call as separate records, so the prose and the call are two entries.
+	CapProseWithCallInOneEntry = "prose-with-call-in-one-entry"
 )
 
 // SessionMode is how a launch relates to the session id it names.
