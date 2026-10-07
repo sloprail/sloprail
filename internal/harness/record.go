@@ -111,6 +111,14 @@ type SubagentsUnlinkable interface {
 	SubagentsUnlinkable() bool
 }
 
+// ParentLocator is implemented by a Transcripts whose sub-agent record names the session
+// that dispatched it by a link the file itself holds (Codex: the first line's
+// parent_thread_id), where Claude Code's is derived from a companion's tool-use id. The
+// parent is the dispatching agent's record, "" when path is a root or the link is dead.
+type ParentLocator interface {
+	ParentRecord(transcriptPath string) string
+}
+
 // Transcripts is how a harness's session record is parsed and located: its line
 // format and its on-disk layout. Everything above this (walking a chain, citing,
 // the identity of a conversation) is harness-neutral and lives in internal/transcript.
@@ -131,6 +139,14 @@ type Transcripts interface {
 	// ProjectDir is where the harness keeps the session files of every session
 	// run in dir (already symlink-resolved); empty when configDir is empty.
 	ProjectDir(configDir, dir string) string
+}
+
+// RecordLister is implemented by a Transcripts whose project directory (ProjectDir) is not
+// one flat directory of session files: Codex keeps every session in a date-sharded tree, so
+// the conversation's other transcripts are found by walking it. ListRecords is every session
+// file under projectDir, in no particular order.
+type RecordLister interface {
+	ListRecords(projectDir string) []string
 }
 
 // RecordOpener is what a Transcripts MAY implement when the record the engine should

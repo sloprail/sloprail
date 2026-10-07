@@ -121,8 +121,8 @@ func containsAny(lines []string, needle string) bool {
 	return false
 }
 
-// rawBlockRecords counts the UN-deduplicated refusals recorded for a session whose text
-// contains needle.
+// rawBlockRecords counts the UN-deduplicated refusals in a session's record whose
+// text contains needle.
 //
 // BlockingErrorsFrom de-dupes by text and accumulates across cycles, so a gate
 // that refuses with the SAME words on two different Stops reads as one entry
@@ -130,13 +130,13 @@ func containsAny(lines []string, needle string) bool {
 // contrast, gains one entry per blocked Stop attempt, so a strict increase in
 // this count across two cycles is proof the gate genuinely RE-FIRED and blocked
 // the second Stop, not merely that its earlier verdict is still on file. Read
-// through the harness's reader of its own record, independent of the code under
-// test's own de-dup.
+// off the record the harness wrote (in its own format, through the driver),
+// independent of the code under test's own de-dup.
 func rawBlockRecords(t *testing.T, e *harness.Env, proj, sess, needle string) int {
 	t.Helper()
 	n := 0
-	for _, b := range e.AllBlockingErrorsFrom(proj, sess, "") {
-		if strings.Contains(b, needle) {
+	for _, reason := range e.AllBlockingErrorsFrom(proj, sess, "") {
+		if strings.Contains(reason, needle) {
 			n++
 		}
 	}

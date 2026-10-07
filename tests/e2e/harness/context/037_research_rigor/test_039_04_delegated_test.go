@@ -53,7 +53,6 @@ func TestT039_09_ShallowDelegatedResearchRefused(t *testing.T) {
 // T039_10: the same dispatch, whose sub-agent clones and reads two source files,
 // admits: the sub-agent's work counts as this run's research.
 func TestT039_10_DeepDelegatedResearchAdmits(t *testing.T) {
-	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")
@@ -62,6 +61,10 @@ func TestT039_10_DeepDelegatedResearchAdmits(t *testing.T) {
 		Read("sr1", filepath.Join(dst, "lib", "retry.js")),
 		Bash("sb2", "head -n 20 "+filepath.Join(dst, "index.js")),
 	})
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		requireUnlinkedRefusal(t, blocks)
+		return
+	}
 	if len(blocks) != 0 {
 		t.Fatalf("delegated deep research was refused:\n%s", strings.Join(blocks, "\n"))
 	}
@@ -71,7 +74,6 @@ func TestT039_10_DeepDelegatedResearchAdmits(t *testing.T) {
 // research split across two trajectories still admits, because the gate judges
 // the clones and the reads of every trajectory together.
 func TestT039_11_SubAgentCloneDispatcherReadsAdmits(t *testing.T) {
-	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")
@@ -80,7 +82,21 @@ func TestT039_11_SubAgentCloneDispatcherReadsAdmits(t *testing.T) {
 		Read("r1", filepath.Join(dst, "lib", "retry.js")),
 		Read("r2", filepath.Join(dst, "lib", "backoff.js")),
 	)
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		requireUnlinkedRefusal(t, blocks)
+		return
+	}
 	if len(blocks) != 0 {
 		t.Fatalf("a sub-agent's clone read by the dispatcher was refused:\n%s", strings.Join(blocks, "\n"))
+	}
+}
+
+// requireUnlinkedRefusal: a harness whose sub-agent record names no parent cannot tie the
+// sub-agent's clone to the run that dispatched it, so the dispatcher's research stands alone
+// and is refused for the clone it does not hold.
+func requireUnlinkedRefusal(t *testing.T, blocks []string) {
+	t.Helper()
+	if !strings.Contains(strings.Join(blocks, "\n"), "has not cloned a repository") {
+		t.Fatalf("a sub-agent linked to no parent was counted in the run's research; refusals:\n%s", strings.Join(blocks, "\n"))
 	}
 }

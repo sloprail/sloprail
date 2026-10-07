@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470's mock grows
@@ -84,6 +86,15 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !harness.HasCap(t, harness.CapScopedToolRules) {
+		// The example's judge is limited to `Bash(curl -sL https://…/*)`, a scoped rule this
+		// harness cannot grant: sr-agent refuses the run rather than round the grant up, so
+		// the judge is never launched and no prompt is rendered.
+		if prompt != "" {
+			t.Fatalf("a harness without scoped tool rules launched a judge whose grant is scoped:\n%s", prompt)
+		}
+		return
+	}
 	if prompt == "" {
 		t.Fatalf("the judge never ran, so nothing about the wiring can be concluded")
 	}

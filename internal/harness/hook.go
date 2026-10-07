@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
-	"strings"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
@@ -153,27 +152,7 @@ func (p HookInput) Arguments() json.RawMessage { return p.ToolInput }
 
 // FileEffects implements filemod.EffectPending: the file effects a harness reported
 // for a tool whose arguments do not state them (HookInput.Files).
-//
-// With no repository root (Root is ""), no workspace is named, and filemod then leaves
-// a path as the harness spelled it. A harness that reports absolute paths there would
-// have every project-relative matcher miss, where a harness reporting the relative
-// spelling a Write tool is given does not; so effects under the cwd are handed back
-// relative to it, the spelling the invocation was given.
-func (p HookInput) FileEffects() []FileEffect {
-	if len(p.Files) == 0 || p.Cwd == "" || p.Root() != "" {
-		return p.Files
-	}
-	out := make([]FileEffect, len(p.Files))
-	for i, f := range p.Files {
-		if filepath.IsAbs(f.Path) {
-			if rel, err := filepath.Rel(p.Cwd, f.Path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				f.Path = rel
-			}
-		}
-		out[i] = f
-	}
-	return out
-}
+func (p HookInput) FileEffects() []FileEffect { return p.Files }
 
 // Root implements filemod.Pending: the workspace an absolute `file_path` is
 // reported relative to.
@@ -185,20 +164,23 @@ func (p HookInput) FileEffects() []FileEffect {
 // PreFileCreate and PostFileCreate with a single matcher would match on one and not
 // the other.
 //
-// A directory outside any repository is its own workspace (sessionpath.WorkspaceAnchor
-// says the same): a harness that reports ABSOLUTE paths (Cursor does, for every
-// write) would otherwise leave them absolute in a project without a repository, and
-// no rule bound to a workspace-relative path would ever match. Only a payload that
-// names no cwd yields "", which filemod reads as "no workspace named" and leaves
-// the path as the harness spelled it.
+// A folder that is no repository has no top to be below, so the folder the hook fired
+// in (Cwd, the project folder every adapter reports) is the workspace: otherwise a
+// harness that reports absolute paths (every one does for a write tool) would have each
+// project-relative matcher miss there, and a deny-by-default structure gate refuse
+// everything. Only an unusable Cwd yields "", which filemod reads as "no workspace
+// named" and leaves the path as the harness spelled it.
 func (p HookInput) Root() string {
 	if p.Cwd == "" {
 		return ""
 	}
-	if root, err := gitrepo.Root(p.Cwd); err == nil && root != "" {
+	if root, err := gitrepo.Root(p.Cwd); err == nil {
 		return root
 	}
-	return p.Cwd
+	if filepath.IsAbs(p.Cwd) {
+		return filepath.Clean(p.Cwd)
+	}
+	return ""
 }
 
 // HeadContent implements filemod.HeadReader: a workspace-relative file's bytes in

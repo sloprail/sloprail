@@ -147,6 +147,17 @@ func TestJudgeRefusalReason_OlderSrAgentIsNamed(t *testing.T) {
 	assert.NotContains(t, got, "If that was meant")
 }
 
+// A tool grant the harness cannot express (Codex has a sandbox, no per-tool list) is named,
+// not reported as a judge that died for no reason.
+// sr:proves judges/failed-judge-refuses-in-fixed-words
+func TestJudgeRefusalReason_InexpressibleToolGrantIsNamed(t *testing.T) {
+	stderr := []byte("sr-agent: harness codex, model gpt-6.1-sol (from \"size-md\")\n" +
+		"harness cannot honour an --add-dir mode: codex: tool rule not expressible in this harness: codex cannot allow the shell for some commands only (Bash(git status:*))\n")
+	got := judgeRefusalReason(nil, stderr)
+	assert.Contains(t, got, "cannot express")
+	assert.NotContains(t, got, "git status")
+}
+
 // A verifier's own reasoning still wins over both.
 // sr:proves judges/verdict-is-a-binary-pass
 func TestJudgeRefusalReason_VerifierReasoningWins(t *testing.T) {

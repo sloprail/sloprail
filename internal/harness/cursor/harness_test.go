@@ -11,6 +11,19 @@ import (
 	"github.com/sloprail/sloprail/internal/harness"
 )
 
+func TestPluginsResolveFromTheProjectHooksTheInstallWrote(t *testing.T) {
+	plugin := filepath.Join(t.TempDir(), "with space", "sloprail")
+	require.NoError(t, os.MkdirAll(filepath.Join(plugin, ".cursor-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(plugin, ".cursor-plugin", "plugin.json"), []byte(`{"name":"sloprail"}`), 0o644))
+	project := t.TempDir()
+	require.NoError(t, Harness{}.InstallProjectHooks(project, plugin))
+	res, err := New().ResolvePlugins(project, t.TempDir())
+	require.NoError(t, err)
+	require.Len(t, res.Roots, 1, "%+v", res.Unresolved)
+	assert.Equal(t, "sloprail", res.Roots[0].Plugin.Name)
+	assert.Equal(t, plugin, res.Roots[0].Dir)
+}
+
 func TestEnvScrubKeepsCredentialsAndDropsTheSession(t *testing.T) {
 	env := []string{"CURSOR_AGENT=1", "CURSOR_CONVERSATION_ID=x", "CURSOR_PROJECT_DIR=/p", "CLAUDE_PROJECT_DIR=/p",
 		"CURSOR_API_KEY=k", "PATH=/bin", "SR_X=1", "XDG_DATA_HOME=/d"}

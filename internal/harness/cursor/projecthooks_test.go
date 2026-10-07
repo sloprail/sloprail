@@ -49,8 +49,11 @@ func TestInstallProjectHooksCreatesTheFile(t *testing.T) {
 	if got := commands(f, "sessionStart"); len(got) != 1 || !strings.HasSuffix(got[0], "sr-session-hook-cursor.sh start") {
 		t.Errorf("sessionStart = %v", got)
 	}
-	if len(f.Hooks) != 2 {
-		t.Errorf("only stop and sessionStart belong in the project: %v", f.Hooks)
+	if got := commands(f, "preCompact"); len(got) != 1 || !strings.HasSuffix(got[0], "sr-session-hook-cursor.sh post-tool") {
+		t.Errorf("preCompact = %v", got)
+	}
+	if len(f.Hooks) != 3 {
+		t.Errorf("only stop, sessionStart and preCompact belong in the project: %v", f.Hooks)
 	}
 }
 

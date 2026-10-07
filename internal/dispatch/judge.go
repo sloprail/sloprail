@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // This file runs a judge check's model call. A judge is a rendered prompt plus a
@@ -480,6 +482,11 @@ func judgeRefusalReason(stdout, stderr []byte) string {
 	}
 	if strings.Contains(errText, "unknown flag: --add-dir") || strings.Contains(errText, "unknown flag: --disallowed-tools") {
 		return "the judge could not run: the sr-agent on PATH is older than this engine and does not know the flags a judge needs (--add-dir:readonly, --disallowed-tools). Install sloprail's matching binaries."
+	}
+	// sr-agent's own refusal (before any harness runs) of a tool grant the harness has no way
+	// to say: Codex has a sandbox, not a per-tool permission list, so a scoped rule cannot be given.
+	if strings.Contains(errText, harness.ErrToolUnsupported.Error()) {
+		return "the judge could not run: its allowed_tools or disallowed_tools hold a rule this harness cannot express (a scoped Bash(...), WebFetch(domain:...) or other path/domain scope). Grant the plain tool (Read, Bash) in the check, or run a harness that can scope tools."
 	}
 	// Anything else is the judge failing without an answer: fixed words, never what it printed.
 	return "the judge exited without a verdict and without a reason"

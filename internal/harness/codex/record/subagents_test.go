@@ -45,3 +45,46 @@ func TestSubagentFiles_FindsRolloutsNamingTheThreadAsParent(t *testing.T) {
 		t.Fatalf("a sub-agent's own children, got %v", again)
 	}
 }
+
+// A sub-agent's rollout says so in its session_meta (thread_source), and names the rollout
+// of the thread that dispatched it (parent_thread_id): recorded in harness-mocks codex-mock
+// nested-subagents.
+func TestParentRecordAndSidechain(t *testing.T) {
+	const parent = "01a10278-caa7-76c1-ad6e-2ee53c4a55eb"
+	const child = "01a10279-067c-7cf3-bbdb-327ccb5126e2"
+	cfg := t.TempDir()
+	dir := filepath.Join(cfg, "sessions", "2026", "10", "03")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(id, meta string) string {
+		p := filepath.Join(dir, "rollout-2026-10-03T17-53-53-"+id+".jsonl")
+		if err := os.WriteFile(p, []byte(meta+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	root := write(parent, `{"type":"session_meta","payload":{"id":"`+parent+`","session_id":"`+parent+`","parent_thread_id":null,"thread_source":"user"}}`)
+	sub := write(child, `{"type":"session_meta","payload":{"id":"`+child+`","session_id":"`+parent+`","parent_thread_id":"`+parent+`","thread_source":"subagent"}}`)
+
+	if got := (Transcripts{}).ParentRecord(sub); got != root {
+		t.Fatalf("the sub-agent's parent = %q, want the root rollout %q", got, root)
+	}
+	if got := (Transcripts{}).ParentRecord(root); got != "" {
+		t.Fatalf("a root has no parent, got %q", got)
+	}
+
+	for path, want := range map[string]bool{root: false, sub: true} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := Transcripts{}.ParseRecord(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.IsSidechain != want {
+			t.Fatalf("%s: IsSidechain = %v, want %v", filepath.Base(path), rec.IsSidechain, want)
+		}
+	}
+}

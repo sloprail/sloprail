@@ -21,7 +21,7 @@ func TestRootIsTheCwdOutsideARepository(t *testing.T) {
 
 	repo := t.TempDir()
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
-		t.Skipf("no repository to test with: %v: %s", err, out)
+		t.Fatalf("no repository to test with: %v: %s", err, out)
 	}
 	sub := filepath.Join(repo, "a", "b")
 	if err := os.MkdirAll(sub, 0o755); err != nil {

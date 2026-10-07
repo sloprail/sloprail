@@ -32,10 +32,6 @@ const (
 	// the file it will write, so there it is an ordinary payload and guardrails stay on.
 	CapNullTranscriptPath = "null-transcript-path"
 
-	// CapSessionStartAttachment: the record holds the SessionStart hook's own entry as its
-	// first, so a test can read off it that the record did not exist before the hook ran.
-	CapSessionStartAttachment = "session-start-attachment"
-
 	// CapRecordHoldsHookContext: the record holds the context a start hook added (the plugin's
 	// rules-first text), as it holds the user's words. Cursor writes it nowhere in the
 	// transcript: the mock hands it to the scripted agent in A10N_MOCK_ADDITIONAL_CONTEXT
@@ -79,6 +75,22 @@ const (
 	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
 	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
 	CapRecordPreamble = "record-preamble"
+
+	// CapRecordNamesStartDir: the session's record names the directory the session began in,
+	// so a hook that reports another folder (the agent `cd`'d into a worktree) is still the
+	// same session's. Cursor's transcript names none (only a lossy project slug), and its
+	// hooks report the workspace the conversation was opened in, not a shell's directory.
+	CapRecordNamesStartDir = "record-names-start-dir"
+
+	// CapRecordAfterSessionStart: a fresh session's record does not exist while the
+	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
+	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
+	CapRecordAfterSessionStart = "record-after-session-start"
+
+	// CapScopedToolRules: a judge can be granted a scoped tool rule (Bash(git show:*),
+	// WebFetch(domain:...)) and denied one. Codex has no per-tool permission list, only a
+	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
+	CapScopedToolRules = "scoped-tool-rules"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -110,10 +122,12 @@ type Launch struct {
 type JudgeShimKind int
 
 const (
-	JudgeShimPlain     JudgeShimKind = iota // writes Verdict where the prompt says
-	JudgeShimRecording                      // plain, plus the argv recorded to ArgvFile
-	JudgeShimCapturing                      // plain, plus the prompt captured under PromptFile
-	JudgeShimSlow                           // delays, decides by the prompt, logs to LogFile
+	JudgeShimPlain      JudgeShimKind = iota // writes Verdict where the prompt says
+	JudgeShimRecording                       // plain, plus the argv recorded to ArgvFile
+	JudgeShimCapturing                       // plain, plus the prompt captured under PromptFile
+	JudgeShimSlow                            // delays, decides by the prompt, logs to LogFile
+	JudgeShimScript                          // Body as it is: a test's own stand-in, under the harness's binary name
+	JudgeShimUsageLimit                      // counts its calls in $LEDGER and dies the way the harness does at a usage limit
 )
 
 // JudgeShim parameterises Driver.JudgeShim.
@@ -124,6 +138,7 @@ type JudgeShim struct {
 	PromptFile   string // JudgeShimCapturing: absolute path
 	LogFile      string // JudgeShimSlow
 	DelaySeconds int    // JudgeShimSlow
+	Body         string // JudgeShimScript
 }
 
 // Driver is everything in the e2e harness that is specific to one agent
@@ -181,12 +196,24 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// JudgeHooksOff reports whether the argv the judge's agent was launched with (one
+	// argument per line) keeps the project's and plugins' hooks from running in it.
+	JudgeHooksOff(argv, projDir string) bool
+
+	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+	// harness's argv with.
+	LargeJudgeModelArgs() (flag, value string)
 
 	// IdentityPayload is a hook payload that names only the session and the project
 	// folder it runs in: no transcript path, so a reader resolves the session's record
 	// from the two, as the first hooks of a session make it.
 	IdentityPayload(e *Env, projDir, sessionID string) string
 
+	// SeedTranscript gives a session that has run no turn the record its agent would have (a
+	// user message, in the harness's own shape): a refusal reached without a transcript is stored
+	// for no key. A harness that names its own sessions has no path to write at before a turn
+	// ran, so it seeds under an id of its own.
+	SeedTranscript(e *Env, projDir, sessionID string)
 	// TranscriptPath is where the harness keeps a session's root transcript.
 	TranscriptPath(e *Env, projDir, sessionID string) string
 	// RecordLayout is what a fresh record holds ahead of the first prompt: the lines the
@@ -276,6 +303,10 @@ func implemented() string {
 	sort.Strings(names)
 	return strings.Join(names, ", ")
 }
+
+// ShellEnv is the environment assignments (each followed by a space, or "") a command the
+// agent runs in its shell is prefixed with to run as the current harness's session.
+func ShellEnv() string { return mustDriver().ShellEnv() }
 
 // mustDriver is the selected Driver for code with no *testing.T at hand. New has
 // already failed the test on a bad selection, so reaching the panic means a

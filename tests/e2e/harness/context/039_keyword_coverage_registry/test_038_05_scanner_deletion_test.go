@@ -21,14 +21,13 @@ import (
 // context stays open while coverage is refused, and the gate refuses from its
 // registry whether or not the file survives.
 
-// coverageRefusals counts the coverage gate's refusals recorded for the session — every
-// attempt, not deduplicated, so a later turn's refusal is told apart from an earlier
-// turn's identical one. Read through the harness's own reader of its record, which is
-// where this harness keeps a refusal.
+// coverageRefusals counts the coverage gate's Stop refusals in the record — every
+// attempt, not deduplicated, so a later turn's refusal is told apart from an
+// earlier turn's identical one.
 func coverageRefusals(e *harness.Env, proj, sess string) int {
 	n := 0
-	for _, b := range e.AllBlockingErrorsFrom(proj, sess, "") {
-		if strings.Contains(b, coverageRefusal) {
+	for _, text := range e.AllBlockingErrorsFrom(proj, sess, "Stop") {
+		if strings.Contains(text, coverageRefusal) {
 			n++
 		}
 	}

@@ -47,7 +47,6 @@ checks:
 `
 
 func TestT030_03_ARetrysPostEventsMarkWhatTheRefusedStopWasShown(t *testing.T) {
-	harness.RequireCap(t, harness.CapScriptedRetryText)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -91,6 +90,15 @@ func TestT030_03_ARetrysPostEventsMarkWhatTheRefusedStopWasShown(t *testing.T) {
 		}
 		n := int(ev["stop"].(float64))
 		byStop[n] = append(byStop[n], ev)
+	}
+	if !harness.HasCap(t, harness.CapScriptedRetryText) {
+		// This harness's agent cannot be scripted to answer the refusal with text of its own: the
+		// one reply it gives is the text the refused Stop was shown, so at the retry every tag in
+		// it was already handed over.
+		assertTag(t, byStop[1], "alpha", true, "the retry re-sends the reply the refused Stop was shown")
+		assertTag(t, byStop[1], "beta", true, "the retry has no text of its own, so #beta was shown before too")
+		assertFile(t, byStop[1], "notes.md", true, "notes.md is unchanged since the refused Stop")
+		return
 	}
 	if len(byStop[0]) == 0 || len(byStop[1]) == 0 {
 		t.Fatalf("expected events at the refused Stop (0) and the retry (1), got stops %v", keys(byStop))
