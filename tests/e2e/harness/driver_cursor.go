@@ -495,6 +495,9 @@ func (c cursorDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []s
 	return out
 }
 
+// OriginOfSession: a Cursor conversation is the chat id the harness named it by.
+func (cursorDriver) OriginOfSession(e *Env, sessionID string) string { return e.harnessID(sessionID) }
+
 func (cursorDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
 	e.t.Skipf("harness cursor: a fork of a conversation is not modelled")
 }

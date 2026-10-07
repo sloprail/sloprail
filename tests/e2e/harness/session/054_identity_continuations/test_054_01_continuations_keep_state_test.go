@@ -115,13 +115,15 @@ func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 		harness.Commit("k1", "first"),
 		Compact("c1"),
 	))
-	e.RunForked(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
+	// A harness with no fork continues the conversation by resuming it each time.
+	first := e.RunContinued(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
+	var second string
 	readsBack(t, ledger, "the second fork", func() {
-		e.RunForked(proj, "z-original", "a-fork-2", "resume again", Turns("done",
+		second = e.RunContinued(proj, "z-original", "a-fork-2", "resume again", Turns("done",
 			Write("w2", "two.md", "second"),
 		).ThenCommit("second"))
 	})
-	sameConversation(t, e, proj, "z-original", "a-fork-1", "a-fork-2")
+	sameConversation(t, e, proj, "z-original", first, second)
 }
 
 // T054_02 is the "continuation missing" mode that was not a lost file: 115 real
@@ -166,6 +168,17 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 	moved := e.Git(proj, "rev-parse", "HEAD")
 	if moved == start {
 		t.Fatalf("the original session did not commit, so the baselines below cannot be told apart")
+	}
+	if !harness.HasCap(t, harness.CapForkSessions) {
+		// A harness that cannot fork resumes the one session: no continuation has a predecessor
+		// to lose, so what holds is the half before any deletion — the resumed session is the
+		// conversation, keeps its store and its baseline.
+		e.Run(proj, "orig-03", "resume", Turns("done"))
+		sameConversation(t, e, proj, "orig-03")
+		if got := e.Meta(proj, "orig-03", sessionstate.MetaBaselineCommit); got != start {
+			t.Fatalf("the resumed session measures from %q, want the conversation's baseline %q", got, start)
+		}
+		return
 	}
 	e.RunForked(proj, "orig-03", "fork-03", "resume", Turns("done"))
 
