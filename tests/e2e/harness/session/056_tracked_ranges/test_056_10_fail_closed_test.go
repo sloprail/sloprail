@@ -105,13 +105,26 @@ func TestT056_13_ARemovedWorktreeWithNoBranchKeepsItsRangePinned(t *testing.T) {
 		Bash("b1", "git switch -q -c sub-gone"),
 		harness.CommitFile("c1", "docs/a.md", "the release is Friday", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
 
 	var wt string
 	for _, f := range e.SessionFolders(proj, sess) {
 		if f.Role == sessionstate.FolderSubagentWorktree {
 			wt = f.Path
 		}
+	}
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// No worktree option on this harness: the sub-agent worked in the root's tree, so there is
+		// no worktree of its own to register or remove; its commits sit in the root's own range,
+		// the only one tracked, and the root's Stop refuses them.
+		if wt != "" {
+			t.Fatalf("a harness without sub-agent worktrees registered one: %+v", e.SessionFolders(proj, sess))
+		}
+		res := e.StopNow(proj, sess, false)
+		if !harness.Blocked(res) || !strings.Contains(res.Output, failedText) {
+			t.Fatalf("the root's Stop let the failing range of the sub-agent's commits go:\n%s", res.Output)
+		}
+		return
 	}
 	if wt == "" {
 		t.Fatalf("premise: no sub-agent worktree is registered: %+v", e.SessionFolders(proj, sess))
