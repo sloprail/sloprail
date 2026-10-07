@@ -59,15 +59,31 @@ func AddSnapshot(dir, parent, commit string) (*Snapshot, error) {
 // addWorktree runs `git worktree add` under the repository's worktree lock. A failed attempt
 // is cleaned up (half-made directory, its registration) before the error, which carries git's
 // stderr, is returned.
+//
+// Only the registration is made under the lock (`--no-checkout`, a few milliseconds): writing
+// the files is the dear step, and it needs no lock, since nothing else touches a registration
+// that is not its own. So snapshots made at once are populated side by side, not one after another.
 func addWorktree(dir, path, commit string) error {
-	return withWorktreeLock(dir, func() error {
-		_, err := run(dir, "worktree", "add", "--detach", "--force", path, commit)
+	undo := func() {
+		_ = os.RemoveAll(path)
+		_, _ = run(dir, "worktree", "prune")
+	}
+	err := withWorktreeLock(dir, func() error {
+		_, err := run(dir, "worktree", "add", "--detach", "--force", "--no-checkout", path, commit)
 		if err != nil {
-			_ = os.RemoveAll(path)
-			_, _ = run(dir, "worktree", "prune")
+			undo()
 		}
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	// The checkout `worktree add` would have made: the commit's files, with the attribute filters.
+	if _, err := run(path, "read-tree", "--reset", "-u", "HEAD"); err != nil {
+		_ = withWorktreeLock(dir, func() error { undo(); return nil })
+		return err
+	}
+	return nil
 }
 
 // Remove deletes the snapshot and its worktree registration. Safe to call twice.
@@ -80,23 +96,15 @@ func (s *Snapshot) Remove() error {
 	if err := setWritable(s.Path, true); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, err)
 	}
-	errs = append(errs, withWorktreeLock(s.repo, func() error {
-		var errs []error
-		if _, err := run(s.repo, "worktree", "remove", "--force", s.Path); err != nil {
-			// Already gone is fine; the directory removal and prune below finish the job.
-			errs = append(errs, err)
-		}
-		if err := os.RemoveAll(s.root); err != nil {
-			errs = append(errs, err)
-		}
-		if _, err := run(s.repo, "worktree", "prune"); err != nil {
-			errs = append(errs, err)
-		}
-		return errors.Join(errs...)
-	}))
-	if err := os.RemoveAll(s.root); err != nil { // also when the lock itself failed
+	// The files go first, outside the lock (deleting a tree is the dear step and touches nothing
+	// shared); then the registration, which the prune finds dangling, under it.
+	if err := os.RemoveAll(s.root); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, withWorktreeLock(s.repo, func() error {
+		_, err := run(s.repo, "worktree", "prune")
+		return err
+	}))
 	s.root = ""
 	return errors.Join(errs...)
 }

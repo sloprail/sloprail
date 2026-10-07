@@ -27,9 +27,8 @@ import (
 //	sr2: no rule hash.
 //	sr3: the fingerprint no longer covers citations.
 //
-// Changing what a key is made of means bumping this AND SchemaDir (and listing the old
-// directory in schemaHistory): MigrateKeys then rebuilds the old directory's keys, by the
-// rebuild its caller supplies, so nothing is judged again.
+// Changing what a key is made of means bumping this AND SchemaDir: the older directory is left
+// as it is and the new one starts empty.
 const SchemaVersion = "sr3"
 
 // Key is what a check's result is a fact about.

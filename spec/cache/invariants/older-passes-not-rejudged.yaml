@@ -1,6 +1,0 @@
-predicate: >-
-  A {@ent:cache:StoredVerdict} pass stored under an older
-  {@fld:cache:StoredVerdict.schema_version} is rebuilt under the current key
-  from the repository alone, without any judge or transcript, so upgrading
-  never judges a stored pass again.
-why: Every upgrade that changes the key pays for all past judgements a second time.

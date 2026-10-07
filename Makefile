@@ -80,15 +80,10 @@ where:
 	elif [ -n "$(INSTALLED_SR)" ]; then echo "  because: sr is already installed at $(INSTALLED_SR)"; \
 	else echo "  because: no sr on \$$PATH — defaulting to the Go bin dir"; fi
 
-# Before rolling out a build that changes the check-results key (checkcache.SchemaDir /
-# SchemaVersion), verify the migration on a COPY of the real store, never the store itself:
-#   git clone --no-local --bare <repo> /tmp/mig.git       # carries the sloprail/checks branch
-#   git -C /tmp/mig.git fetch origin 'refs/heads/sloprail/checks:refs/sloprail/checks'
-#   (cd /tmp/mig.git && sr-checks log)                    # read-only: old results, old directory
-#   go test ./internal/checkcache -run MigrateKeys        # the migration itself
-# then run `sr-checks run` once in a scratch clone of the repository with the new build: it
-# migrates the checks ref (one commit, v2026-10-03 left in place) and pushes it. CI's installed
-# sr-checks MUST be upgraded in the same release: an older sr-checks refuses the new directory.
+# A build that changes the check-results key (checkcache.SchemaDir / SchemaVersion) starts a
+# new, empty directory in the checks ref; the older one stays untouched and everything is judged
+# again. CI's installed sr-checks MUST be upgraded in the same release: an older sr-checks
+# refuses the new directory.
 #
 # distribute-local installs the whole set into ONE directory, which is what
 # sibling resolution requires: `sr session start` execs the sr-session next to

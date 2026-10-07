@@ -111,7 +111,7 @@ func runLog(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), filepath.Clean(root), false, nil) // read-only, like verify
+	cache, err := checkrun.OpenCache(cmd.ErrOrStderr(), filepath.Clean(root), false) // read-only, like verify
 	if err != nil {
 		return err
 	}

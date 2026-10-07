@@ -2,6 +2,7 @@ package changeset
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
@@ -90,36 +91,57 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 	trailers := TrailerScope(commits)
 
 	cs := Changeset{Base: r.Base, Head: r.Head, Commits: commits, Files: []File{}, Others: []Other{}, Citations: []Citation{}}
-	for _, d := range deltas {
+	// Reading a delta's two sides is a git process each, and independent of every other delta's:
+	// the admitted ones are read concurrently, then walked in git's order as before.
+	read := make([]File, len(deltas))
+	readErr := make([]error, len(deltas))
+	var admitted []int
+	for i, d := range deltas {
+		if Admits(o.Deletions, d.Status) {
+			admitted = append(admitted, i)
+		}
+	}
+	each(admitted, o.Lean, func(i int) { read[i], readErr[i] = readFile(dir, r, deltas[i], o.Scan, o.Lean, o.RawBlobs) })
+	var selected []int // indexes into deltas, in order, of what `match` selected
+	for i, d := range deltas {
 		status := string(d.Status)
 		if !Admits(o.Deletions, d.Status) {
 			cs.Others = append(cs.Others, Other{Path: d.Path, Status: status})
 			continue
 		}
-		f, err := readFile(dir, r, d, o.Scan, o.Lean, o.RawBlobs)
-		if err != nil {
-			return Changeset{}, err
+		if readErr[i] != nil {
+			return Changeset{}, readErr[i]
 		}
+		f := read[i]
 		// A deleted file has no result, so the markers it is matched on are the
 		// ones it carried.
 		markers := f.NewMarkers
 		if d.Status == 'D' {
 			markers = f.OldMarkers
 		}
-		selected, err := Selects(o.Select, Scope{Path: f.Path, OldPath: f.OldPath, Status: status, Markers: markers, OldMarkers: f.OldMarkers, Trailers: trailers})
+		ok, err := Selects(o.Select, Scope{Path: f.Path, OldPath: f.OldPath, Status: status, Markers: markers, OldMarkers: f.OldMarkers, Trailers: trailers})
 		if err != nil {
 			return Changeset{}, fmt.Errorf("changeset: match on %q: %w", f.Path, err)
 		}
-		if !selected {
+		if !ok {
 			cs.Others = append(cs.Others, Other{Path: d.Path, Status: status})
 			continue
 		}
-		if !o.Lean && !o.NoPatch {
-			if f.Diff, err = gitrepo.PatchOf(dir, r.Base, r.Head, d); err != nil {
+		cs.Files = append(cs.Files, f)
+		selected = append(selected, i)
+	}
+	if !o.Lean && !o.NoPatch {
+		patchErr := make([]error, len(selected))
+		idx := make([]int, len(selected))
+		for n := range selected {
+			idx[n] = n
+		}
+		each(idx, false, func(n int) { cs.Files[n].Diff, patchErr[n] = gitrepo.PatchOf(dir, r.Base, r.Head, deltas[selected[n]]) })
+		for _, err := range patchErr {
+			if err != nil {
 				return Changeset{}, err
 			}
 		}
-		cs.Files = append(cs.Files, f)
 	}
 	if !o.SkipHistory {
 		if err := attachCommits(dir, r, &cs); err != nil {
@@ -127,6 +149,32 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 		}
 	}
 	return cs, nil
+}
+
+// readWorkers bounds how many of a changeset's files are read at once.
+const readWorkers = 8
+
+// each runs fn on every item, at most readWorkers at a time (one after the other when serial),
+// and returns when all are done.
+func each(items []int, serial bool, fn func(i int)) {
+	if serial || len(items) < 2 {
+		for _, i := range items {
+			fn(i)
+		}
+		return
+	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, readWorkers)
+	for _, i := range items {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
 }
 
 // attachCommits says, for each selected file, which commits of the range changed

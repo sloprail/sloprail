@@ -65,9 +65,8 @@ func TestGuardKey_TheSubjectsOwnCitationsDoNotMoveItsKeyButItsContentDoes(t *tes
 }
 
 // The key's exact bytes, for fixed inputs. IF THIS FAILS, YOU CHANGED THE KEY: bump
-// checkcache.SchemaDir (and SchemaVersion), add the old directory to schemaHistory, and make
-// sure the rebuild migration (RebuildKeys) covers the change, or every stored verdict is
-// judged again. Only then update the ids below.
+// checkcache.SchemaDir (and SchemaVersion): every stored verdict is judged again. Only then
+// update the ids below.
 // sr:proves cache/verdict-identity
 func TestGuardKey_FixedInputsHaveFixedKeys(t *testing.T) {
 	payload := func(files []changeset.File, subject changeset.Subject) changeset.Payload {
