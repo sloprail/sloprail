@@ -367,6 +367,9 @@ func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
 	if spec.grant != nil {
 		return spec.grant(g), nil
 	}
+	if spec.grantEnv != nil {
+		return nil, nil // expressed through the environment: see harnessGrantEnv
+	}
 	if len(g.DenyTools) > 0 {
 		return nil, fmt.Errorf("%w: %s has no permission model to deny tools in; drop --disallowed-tools or run a harness that has one",
 			ErrModeUnsupported, spec.name)
@@ -381,6 +384,20 @@ func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
 		return []string{"--allowed-tools", strings.Join(g.Tools, " ")}, nil
 	}
 	return nil, nil
+}
+
+// harnessGrantEnv is harnessGrant for a harness that takes its permissions from a
+// configuration it reads (harnessSpec.grantEnv). Its error is what harnessGrant
+// would have refused. cleanup is never nil.
+func harnessGrantEnv(spec harnessSpec, g accessGrant) (env, args []string, cleanup func(), err error) {
+	if spec.grantEnv == nil {
+		return nil, nil, func() {}, nil
+	}
+	env, args, cleanup, err = spec.grantEnv(g)
+	if cleanup == nil {
+		cleanup = func() {}
+	}
+	return env, args, cleanup, err
 }
 
 // CheckHarnessArgs reports a harness-args flag given while a different harness
@@ -411,6 +428,10 @@ type Invocation struct {
 	// Stdin, when non-empty, is the prompt, fed on the harness's standard input
 	// because it is too large to be an argument (see harnessSpec.stdinPromptAbove).
 	Stdin string
+
+	// Env is added to the environment the harness runs in, after the sanitized
+	// parent's: what a harness reads its per-run permissions from.
+	Env []string
 }
 
 // String renders the invocation for diagnostics. Arguments containing spaces

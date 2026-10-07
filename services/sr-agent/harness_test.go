@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,7 +63,7 @@ func TestDetectHarness_UnknownEnvironmentIsRefused(t *testing.T) {
 		}},
 		// A harness that exists but is not supported yet must fail detection,
 		// not fall through to Claude Code.
-		{"an unsupported harness", map[string]string{"CURSOR_AGENT": "1", "CODEX_SANDBOX": "1"}},
+		{"an unsupported harness", map[string]string{"CODEX_SANDBOX": "1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,7 +147,7 @@ func TestResolveHarness_OverrideIsCaseSensitiveAndExact(t *testing.T) {
 }
 
 func TestSupportedNames_ListsTheRegistry(t *testing.T) {
-	assert.Equal(t, []string{"claude-code"}, supportedNames())
+	assert.Equal(t, []string{"claude-code", "cursor"}, supportedNames())
 }
 
 func TestLookupSpec(t *testing.T) {
@@ -315,4 +316,76 @@ func TestWithin(t *testing.T) {
 	assert.True(t, within(filepath.Join(root, "a", "b"), root))
 	assert.False(t, within(filepath.Dir(root), root))
 	assert.False(t, within(root+"-sibling", root), "a shared prefix is not containment")
+}
+
+// Cursor sets CURSOR_AGENT=1 and CURSOR_INVOKED_AS in the environment of every
+// command the agent runs (harness-mocks cursor-mock/snapshots/runs/subprocess-session-env),
+// and CLAUDE_PROJECT_DIR too, which must not read as Claude Code.
+func TestDetectHarness_Cursor(t *testing.T) {
+	for _, vars := range []map[string]string{
+		{"CURSOR_AGENT": "1"},
+		{"CURSOR_INVOKED_AS": "cursor-agent"},
+		{"CURSOR_AGENT": "1", "CLAUDE_PROJECT_DIR": "/p"},
+	} {
+		spec, err := DetectHarness(envOf(vars))
+		require.NoError(t, err)
+		assert.Equal(t, Cursor, spec.name)
+		assert.Equal(t, "cursor-agent", spec.binary)
+	}
+}
+
+func TestCursorSpec_Invocation(t *testing.T) {
+	require.NoError(t, aliasesComplete())
+	inv := BuildInvocation(cursorSpec, "auto", nil, "hello", func(string) string { return "" })
+	assert.Equal(t, []string{"-p", "--model", "auto", "--trust", "--", "hello"}, inv.Args)
+	assert.True(t, cursorSpec.offers("auto"))
+	assert.True(t, cursorSpec.offers("cursor-grok-4.5-high"))
+	assert.True(t, cursorSpec.offers("claude-sonnet-5-5-medium"))
+	assert.False(t, cursorSpec.offers("haiku"), "a Claude Code family alias is not a Cursor model")
+
+	big := strings.Repeat("x", cursorSpec.stdinPromptAbove+1)
+	inv = BuildInvocation(cursorSpec, "auto", nil, big, func(string) string { return "" })
+	assert.Equal(t, big, inv.Stdin, "a large prompt goes on stdin (measured: cursor-agent -p reads it there)")
+	assert.NotContains(t, inv.Args, big)
+
+	// A readonly dir is a deny in the run's private config, not a refusal.
+	g := accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}, {Path: "/w", Mode: dirWritable}}}
+	args, err := harnessGrant(cursorSpec, g)
+	require.NoError(t, err)
+	assert.Empty(t, args)
+	env, _, cleanup, err := harnessGrantEnv(cursorSpec, g)
+	require.NoError(t, err)
+	defer cleanup()
+	require.Len(t, env, 2)
+	assert.Equal(t, `SLOPRAIL_JUDGE_GRANT={"writable":["/w"],"readonly":["/p"]}`, env[1])
+	dir := strings.TrimPrefix(env[0], "CURSOR_CONFIG_DIR=")
+	raw, err := os.ReadFile(filepath.Join(dir, "cli-config.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"permissions":{"allow":[],"deny":["Write(/p/**)"]}}`, string(raw))
+	cleanup()
+	_, statErr := os.Stat(dir)
+	assert.True(t, os.IsNotExist(statErr), "the private config dir is removed")
+}
+
+func TestCursorRules_ToolMapping(t *testing.T) {
+	allow, deny, err := cursorRules(accessGrant{Tools: []string{"Read", "WebFetch", "Bash(curl:*)", "Edit(//abs/x/**)"}, DenyTools: []string{"Write(//abs/y/**)"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Read(**)", "WebFetch(*)", "Shell(curl)", "Write(/abs/x/**)"}, allow)
+	assert.Equal(t, []string{"Write(/abs/y/**)"}, deny)
+
+	_, _, err = cursorRules(accessGrant{Tools: []string{"Bash"}, DenyTools: []string{"Bash(rm:*)"}})
+	assert.ErrorIs(t, err, ErrModeUnsupported, "a shell deny beside a shell grant was not enforced by cursor-agent (measured)")
+}
+
+func TestCursorSizesAreCatalogueModels(t *testing.T) {
+	for alias, model := range cursorSpec.sizes {
+		assert.True(t, cursorSpec.offers(model), "%s -> %s", alias, model)
+	}
+	assert.NotContains(t, cursorSpec.sizes[SizeXXL], "fable", "Fable is listed NO ZDR in cursor-agent --list-models")
+}
+
+func TestSanitizeChildEnvStripsCursorSessionIdentity(t *testing.T) {
+	t.Setenv("SLOPRAIL_HARNESS", "cursor") // the strip is the running harness's (ChildEnvBlocklist)
+	out := sanitizeChildEnv([]string{"CURSOR_CONVERSATION_ID=c", "CURSOR_REQUEST_ID=r", "CURSOR_TRANSCRIPT_PATH=/t", "CURSOR_AGENT=1", "CURSOR_API_KEY=k"})
+	assert.Equal(t, []string{"CURSOR_AGENT=1", "CURSOR_API_KEY=k"}, out)
 }
