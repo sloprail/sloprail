@@ -30,6 +30,13 @@ func TestCodexSpec_IsDetectedFromWhatCodexSetsAndYieldsToClaudeMarkers(t *testin
 	assert.Equal(t, ClaudeCode, spec.name)
 }
 
+// The plugin hook wrapper exports the internal/harness registry name.
+func TestDetectHarness_AcceptsTheNameThePluginHooksExport(t *testing.T) {
+	spec, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": "claudecode"}))
+	require.NoError(t, err)
+	assert.Equal(t, ClaudeCode, spec.name)
+}
+
 func TestCodexSpec_BuildsAnExecInvocationThatLoadsNoHooks(t *testing.T) {
 	inv := BuildInvocation(codexSpec, "gpt-6.1-sol", nil, "question", envOf(nil))
 	assert.Equal(t, "codex", inv.Binary)

@@ -611,6 +611,11 @@ func DetectHarness(getenv func(string) string) (harnessSpec, error) {
 	// An explicit SLOPRAIL_HARNESS names the session's harness: a judge runs on the
 	// harness that triggered it.
 	if name := getenv("SLOPRAIL_HARNESS"); name != "" {
+		// The plugin hooks export the internal/harness registry name, which spells
+		// Claude Code "claudecode"; --harness spells it "claude-code".
+		if name == "claudecode" {
+			name = string(ClaudeCode)
+		}
 		if spec, ok := lookupSpec(Harness(name)); ok {
 			return spec, nil
 		}
