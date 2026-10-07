@@ -26,7 +26,9 @@ const (
 	// CapSubagentParentLink: a sub-agent's conversation names the session that dispatched
 	// it, so what the sub-agent can cite (the user's words, a sibling's tool output) and
 	// what the root can cite of it are resolvable. Cursor records no parent anywhere (hook
-	// payloads, transcripts and layout hold none: harness-mocks runs/subagent-transcripts).
+	// payloads, transcripts and layout hold none: harness-mocks runs/subagent-transcripts;
+	// a confirmed Cursor bug, https://forum.cursor.com/t/163054). Tests branch on it: where
+	// it is absent a sub-agent's citations always error and describe names no link.
 	CapSubagentParentLink = "subagent-parent-link"
 
 	// CapRecordHoldsToolResults: the session's own record (transcript) holds the tools'
