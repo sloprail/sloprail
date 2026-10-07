@@ -47,10 +47,7 @@ func TestT029_15_NoPathResolvesCurrentSessionFromEnv(t *testing.T) {
 	// Claude Code filed the transcript under), CLAUDE_CODE_SESSION_ID names the
 	// session, CLAUDE_CONFIG_DIR points at the config dir the mock wrote to. NO
 	// --path, NO stdin.
-	env := []string{
-		"CLAUDE_CODE_SESSION_ID=" + sessionID,
-		"CLAUDE_CONFIG_DIR=" + e.ConfigDir(),
-	}
+	env := e.SessionEnv(sessionID)
 	res := e.CLIDirectEnv(proj, env, "sr-session", "trajectory", "cite", "auth module")
 	if res.Code != 0 {
 		t.Fatalf("cite with no --path (env-resolved) exited %d, want 0:\n%s", res.Code, res.Output)

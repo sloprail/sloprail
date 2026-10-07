@@ -1,10 +1,10 @@
 package harness
 
 import (
-	"github.com/sloprail/sloprail/internal/harness"
-	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"encoding/json"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
+	cursorharness "github.com/sloprail/sloprail/internal/harness/cursor"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,15 +72,6 @@ func cursorLine(content ...map[string]any) string {
 // cursorWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
 const cursorWorkspaceMark = "@@WORKSPACE@@"
 
-// The two Read sizes recorded in harness-mocks (cursor-mock toolexec ReadCarriedBytes,
-// ReadOmittedBytes): a file up to the first is carried whole, from the second on it is
-// named by an id. Between them the mock fails the Read rather than guess, so a step
-// that reads such a file is unsupported.
-const (
-	cursorReadCarriedBytes = 7602
-	cursorReadOmittedBytes = 53900
-)
-
 // cursorPassthrough are the tools a generic ToolUse may name: those the mock runs with string inputs.
 var cursorPassthrough = map[string]bool{"Read": true, "Grep": true, "Delete": true, "Shell": true}
 
@@ -115,11 +106,6 @@ func (c cursorDriver) render(a Action) (string, error) {
 		}
 		if !cursorPassthrough[a.Tool] {
 			return "", c.unsupported(a, "the mock runs no "+a.Tool+" tool")
-		}
-		if a.Tool == "Read" {
-			if st, err := os.Stat(a.Input["file_path"]); err == nil && st.Size() > cursorReadCarriedBytes && st.Size() < cursorReadOmittedBytes {
-				return "", c.unsupported(a, fmt.Sprintf("cursor-mock does not model a Read of a %d-byte file: Cursor's cut-off between %d and %d bytes is unrecorded", st.Size(), cursorReadCarriedBytes, cursorReadOmittedBytes))
-			}
 		}
 		in := map[string]any{}
 		for k, v := range a.Input {
@@ -205,7 +191,9 @@ func (c cursorDriver) Command(e *Env, l Launch) *exec.Cmd {
 		cmd.Env = append(cmd.Env, "SLOPRAIL_CHECK_TIMEOUT="+e.checkTimeout)
 	}
 	if l.Mode == SessionResume {
-		if p := c.TranscriptPath(e, l.ProjDir, l.SessionID); fileExists(p) {
+		// Cursor files the conversation under the workspace the run was opened on, which a
+		// session started from a subdirectory makes that subdirectory, not the project root.
+		if p := c.TranscriptPath(e, l.WorkDir, l.SessionID); fileExists(p) {
 			if b, err := os.ReadFile(p); err == nil {
 				n := strings.Count(string(b), `"type":"tool_use"`) + strings.Count(string(b), `"role":"user"`)
 				// the base is of THIS session's file only: a sub-agent inherits the environment
@@ -315,8 +303,13 @@ func (cursorDriver) syncPlugins(e *Env) {
 // HookEnv names the harness outright, as the plugin's own hook wrapper does.
 func (c cursorDriver) HookEnv(e *Env, sessionID string) []string {
 	c.syncPlugins(e)
-	return []string{"SLOPRAIL_HARNESS=cursor",
+	env := []string{"SLOPRAIL_HARNESS=cursor",
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+	if sessionID != "" {
+		// a shell tool's environment names its conversation (recorded, subprocess-session-env)
+		env = append(env, "CURSOR_CONVERSATION_ID="+e.harnessID(sessionID))
+	}
+	return env
 }
 
 // CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
@@ -353,6 +346,17 @@ func (c cursorDriver) StopPayload(e *Env, projDir, sessionID string, active bool
 		"hook_event_name": "stop", "cursor_version": "2026.09.28-64d2043",
 		"workspace_roots": []string{resolveWorkDir(projDir)}, "user_email": nil,
 		"transcript_path": c.TranscriptPath(e, projDir, sessionID), "status": "completed", "loop_count": loop,
+	})
+	return string(payload)
+}
+
+// IdentityPayload is the conversation and the workspace, with no transcript path: null at
+// sessionStart and the first events (recorded).
+func (cursorDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	id := e.harnessID(sessionID)
+	payload, _ := json.Marshal(map[string]any{
+		"conversation_id": id, "session_id": id, "transcript_path": nil,
+		"workspace_roots": []string{resolveWorkDir(projDir)},
 	})
 	return string(payload)
 }
