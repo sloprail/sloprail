@@ -404,6 +404,19 @@ func HasCap(t testing.TB, cap string) bool {
 	return false
 }
 
+// OwnTree is the isolation a dispatch gets when a test asks for the sub-agent's own tree:
+// "worktree" where the harness isolates its sub-agents (CapWorktrees), "" where it has no such
+// option (Codex's spawn_agent, Cursor's Task) and the sub-agent works in the root's tree. A test
+// that needs a tree of its own asks for this and branches on HasCap(CapWorktrees) for what it
+// then asserts.
+func OwnTree(t testing.TB) string {
+	t.Helper()
+	if HasCap(t, CapWorktrees) {
+		return "worktree"
+	}
+	return ""
+}
+
 // RequireCap skips the test unless the selected harness has every capability named.
 func RequireCap(t testing.TB, caps ...string) {
 	t.Helper()
