@@ -84,6 +84,34 @@ func (e *Env) SubagentStopBlocked(projDir, sessionID, text string) bool {
 	return false
 }
 
+// SubagentStopFeedbackCount is how many times the session's sub-agents were sent round again after a
+// refused Stop: the "Stop hook feedback" turns in their own transcripts, counted without the
+// de-duplication SubagentBlockingErrors does (a refusal repeated with the same words counts again).
+func (e *Env) SubagentStopFeedbackCount(projDir, sessionID string) int {
+	e.t.Helper()
+	n := 0
+	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
+		b, err := os.ReadFile(sub)
+		if err != nil {
+			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			var rec struct {
+				Type    string `json:"type"`
+				Message struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"message"`
+			}
+			var text string
+			if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" &&
+				json.Unmarshal(rec.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:\n") {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // NoSubagentStopBlock reports that no sub-agent of the session was refused at its Stop: the strict
 // negative (AnySubagentBlockingErrors), which a refusal recorded without its feedback cannot satisfy.
 func (e *Env) NoSubagentStopBlock(projDir, sessionID string) bool {

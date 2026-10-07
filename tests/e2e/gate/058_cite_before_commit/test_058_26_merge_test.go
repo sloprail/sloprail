@@ -78,7 +78,13 @@ func TestT058_28_ConflictResolutionIsTheOnlyCitedPart(t *testing.T) {
 		t.Fatalf("a merge commit with an uncited resolution was not refused:\n%s", res.Output)
 	}
 	has(t, res.Output, "docs/seed.md")
-	if strings.Contains(res.Output[strings.Index(res.Output, "hook error"):], "docs/side.md") {
+	var refusals []string
+	for _, r := range res.ToolResults() {
+		if strings.Contains(r, "hook error") {
+			refusals = append(refusals, r)
+		}
+	}
+	if strings.Contains(strings.Join(refusals, "\n"), "docs/side.md") {
 		t.Fatalf("the refusal names a file that only came in from the side:\n%s", res.Output)
 	}
 
