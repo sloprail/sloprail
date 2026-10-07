@@ -46,7 +46,11 @@ var (
 // is what a Read turn or a `cat` Bash turn must name to satisfy a `files` entry.
 func writeProjectSkill(t *testing.T, proj, name, subpage string) string {
 	t.Helper()
+<<<<<<< HEAD
+	dir := filepath.Join(proj, filepath.FromSlash(harness.ProjectSkillDir(t)), name)
+=======
 	dir := filepath.Join(proj, harness.SkillDir(t), name)
+>>>>>>> origin/integration/multi-harness
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir skill dir: %v", err)
 	}

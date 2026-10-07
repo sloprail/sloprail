@@ -42,6 +42,8 @@ func (cursorDriver) Name() string { return "cursor" }
 // background task (spec/capabilities, providers.cursor of harness-mocks). The stop hook is
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
+func (cursorDriver) SkillLoadTool() string { return "Read" }
+
 func (cursorDriver) Caps() []string {
 	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapProseWithCallInOneEntry}
 }
