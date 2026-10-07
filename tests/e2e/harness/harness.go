@@ -1386,6 +1386,24 @@ func (e *Env) WrapBinary(name, body string) {
 	}
 }
 
+// Written is the bytes the selected harness's file tool leaves on disk when the agent
+// writes content: what a test compares a file (or the content a rule was handed) to.
+func (e *Env) Written(content string) string { return e.driver.WrittenBytes(content) }
+
+// ScenarioError is the error the selected harness gives for a scenario it cannot take
+// (an *UnsupportedError naming the step), or nil when it can render it.
+func (e *Env) ScenarioError(s Scenario) error {
+	_, err := e.driver.RenderScript(s)
+	return err
+}
+
+// ForHarness fills `{{harness}}` in a check script with the name of the selected
+// harness, for a script that launches an agent through `sr-agent --harness`: the agent
+// it runs is then the one this run's shim (InstallClaudeShim) stands in for.
+func (e *Env) ForHarness(script string) string {
+	return strings.ReplaceAll(script, "{{harness}}", e.driver.Name())
+}
+
 // Exists reports whether a path is present in a project.
 //
 // How a test asks what actually happened to the tree, as opposed to what came
