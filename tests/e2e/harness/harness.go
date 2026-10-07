@@ -1883,15 +1883,6 @@ const MockPreambleLines = 3
 // first of them, not the prompt, is the session's origin.
 const SessionStartAttachments = 2
 
-// SessionStartRecords is how many records the session's SessionStart leaves ahead of a
-// prompt, a resumed one included: SessionStartAttachments unless the harness records fewer.
-func (e *Env) SessionStartRecords() int {
-	if d, ok := e.driver.(interface{ SessionStartRecords() int }); ok {
-		return d.SessionStartRecords()
-	}
-	return SessionStartAttachments
-}
-
 // RootMessageLine is the 1-based PHYSICAL line the prompt record sits on in a
 // session's transcript: after the preamble and the SessionStart attachment.
 //
@@ -1902,10 +1893,19 @@ func (e *Env) SessionStartRecords() int {
 // citation's own output — read it from the file the mock wrote instead; this is the
 // up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	if d, ok := e.driver.(interface{ RootMessageLine() int }); ok {
-		return d.RootMessageLine()
+	pre, start := e.driver.RecordLayout()
+	return pre + start + 1
+}
+
+// NextPromptLine is the 1-based physical line the prompt of the next Run of sessionID
+// (a resume) will sit on, given the transcript as it stands.
+func (e *Env) NextPromptLine(proj, sessionID string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(e.TranscriptPath(proj, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: read transcript for the next prompt's line: %v", err)
 	}
-	return MockPreambleLines + SessionStartAttachments + 1
+	return e.driver.NextPromptLine(string(body))
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation

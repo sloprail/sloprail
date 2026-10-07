@@ -217,9 +217,19 @@ func cursorHostEnv() []string {
 	return out
 }
 
+// mockUnmodeledStep matches the mock's refusal of a scripted tool call it does not model.
+var mockUnmodeledStep = regexp.MustCompile(`cursor-mock: the scenario script's tool call is refused: [^\n]*is not modeled[^\n]*`)
+
 // Observe records the session id the mock's first frame names.
 func (c cursorDriver) Observe(e *Env, l Launch, output string) {
 	c.syncPluginsBack(e)
+	// A step the mock itself declares unmodeled (it refuses the call rather than guess a
+	// frame no recording shows) is a step this harness cannot take here: skip naming it, as
+	// for any step a harness lacks. The mock's own words are the reason, so nothing here
+	// restates which forms it models.
+	if m := mockUnmodeledStep.FindString(output); m != "" {
+		e.t.Skipf("harness cursor: %s", m)
+	}
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
 		return
 	}
@@ -416,6 +426,25 @@ func (cursorDriver) SeedTranscript(e *Env, projDir, sessionID string) {
 }
 
 // TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
+// RecordLayout: the conversation's first line is the prompt, and Cursor writes nothing for a
+// session's start (the context a start hook adds is not in the transcript: harness-mocks
+// runs/additional-context).
+func (cursorDriver) RecordLayout() (int, int) { return 0, 0 }
+
+// NextPromptLine: a turn ends the record with a closing line ({"type":"turn_ended"}) that a
+// resume continues past (harness-mocks cursor-mock runner, transcript-record-envelope), so
+// the prompt takes its place.
+func (cursorDriver) NextPromptLine(record string) int {
+	if record == "" {
+		return 1
+	}
+	lines := strings.Split(strings.TrimSuffix(record, "\n"), "\n")
+	if strings.Contains(lines[len(lines)-1], `"turn_ended"`) {
+		lines = lines[:len(lines)-1]
+	}
+	return len(lines) + 1
+}
+
 func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	id := cursorConversationID(e, sessionID)
 	project := cursorNonAlnum.ReplaceAllString(strings.TrimPrefix(resolveWorkDir(projDir), "/"), "-")

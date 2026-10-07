@@ -32,6 +32,7 @@ type world struct {
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
+	harness.RequireCap(t, harness.CapSessionArchive)
 	e := harness.New(t, harness.WithoutShippedFileGuards())
 	proj := e.Project()
 	e.GitInit(proj)

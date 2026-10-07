@@ -39,7 +39,7 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText, CapSessionArchive}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -472,6 +472,14 @@ func rolloutPath(e *Env, threadID string) string {
 
 // TranscriptPath is the session's rollout; before the session has run there is none, and
 // the path where it would be named after the session.
+// RecordLayout: the rollout opens with its session_meta, then the context the SessionStart
+// hook added (one developer message), then the prompt.
+func (codexDriver) RecordLayout() (int, int) { return 1, 1 }
+
+func (codexDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + 1 + 1
+}
+
 func (codexDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	if p := rolloutPath(e, e.harnessID(sessionID)); p != "" {
 		return p
@@ -692,10 +700,3 @@ func (codexDriver) SeedTranscript(e *Env, projDir, sessionID string) {
 	}
 	e.setHarnessID(sessionID, thread)
 }
-
-// RootMessageLine is the line of the session's first prompt in a rollout: the session_meta,
-// the context the SessionStart hook added (a developer message), then the prompt.
-func (codexDriver) RootMessageLine() int { return 3 }
-
-// SessionStartRecords: the context the SessionStart hook adds is one developer message.
-func (codexDriver) SessionStartRecords() int { return 1 }
