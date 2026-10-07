@@ -1,9 +1,12 @@
-package transcript
+package claudecode
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/harness/claudecode/record"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // A run in a repository outside the tree the session started in still resolves the
@@ -16,7 +19,7 @@ func TestCurrentSessionPathFindsTheRecordByIDOutsideItsTree(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
 	t.Setenv(SessionIDEnv, id)
 
-	dir := ProjectDir(config, start)
+	dir := record.ProjectDir(config, start)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -26,10 +29,10 @@ func TestCurrentSessionPathFindsTheRecordByIDOutsideItsTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := CurrentSessionPath(start); got != rec {
+	if got := transcript.CurrentSessionPath(start); got != rec {
 		t.Fatalf("inside the start tree: got %q, want %q", got, rec)
 	}
-	if got := CurrentSessionPath(other); got != rec {
+	if got := transcript.CurrentSessionPath(other); got != rec {
 		t.Fatalf("outside the start tree: got %q, want %q", got, rec)
 	}
 
@@ -38,12 +41,12 @@ func TestCurrentSessionPathFindsTheRecordByIDOutsideItsTree(t *testing.T) {
 	if err := os.WriteFile(rec, []byte(other2), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := CurrentSessionPath(other); got != "" {
+	if got := transcript.CurrentSessionPath(other); got != "" {
 		t.Fatalf("a record of another session resolved: %q", got)
 	}
 
 	t.Setenv(SessionIDEnv, "")
-	if got := CurrentSessionPath(other); got != "" {
+	if got := transcript.CurrentSessionPath(other); got != "" {
 		t.Fatalf("without an id: got %q", got)
 	}
 }

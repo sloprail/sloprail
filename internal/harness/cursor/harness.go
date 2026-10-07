@@ -27,6 +27,10 @@ func New() harness.Harness { return Harness{} }
 // Name implements harness.Harness.
 func (Harness) Name() string { return "cursor" }
 
+// CommandDir implements harness.HookDir: cursor-agent runs a plugin's hooks from the
+// plugin's directory, while a Shell command runs in the workspace folder the payload names.
+func (Harness) CommandDir(in harness.HookInput) string { return in.Cwd }
+
 // ResolvePlugins implements harness.Harness.
 func (Harness) ResolvePlugins(projectDir, home string) (harness.Resolution, error) {
 	return Resolve(projectDir, home)

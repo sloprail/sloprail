@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -388,4 +389,22 @@ func TestSanitizeChildEnvStripsCursorSessionIdentity(t *testing.T) {
 	t.Setenv("SLOPRAIL_HARNESS", "cursor") // the strip is the running harness's (ChildEnvBlocklist)
 	out := sanitizeChildEnv([]string{"CURSOR_CONVERSATION_ID=c", "CURSOR_REQUEST_ID=r", "CURSOR_TRANSCRIPT_PATH=/t", "CURSOR_AGENT=1", "CURSOR_API_KEY=k"})
 	assert.Equal(t, []string{"CURSOR_AGENT=1", "CURSOR_API_KEY=k"}, out)
+}
+
+// A plugin's hook wrapper names its harness with SLOPRAIL_HARNESS and sets none of the
+// markers the harness puts on its own shell commands, so a judge launched from it must
+// resolve the harness from that name alone.
+func TestDetectHarness_NamedBySloprailHarness(t *testing.T) {
+	for name, want := range map[string]Harness{
+		"cursor":      Cursor,
+		"claude-code": ClaudeCode,
+	} {
+		spec, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": name}))
+		if err != nil || spec.name != want {
+			t.Errorf("SLOPRAIL_HARNESS=%s: got %q, %v; want %q", name, spec.name, err, want)
+		}
+	}
+	if _, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": "nope"})); !errors.Is(err, ErrUnknownHarness) {
+		t.Errorf("an unknown SLOPRAIL_HARNESS must be refused, got %v", err)
+	}
 }

@@ -566,6 +566,15 @@ func supportedNames() []string {
 //
 // The environment is read through a lookup so a test can supply one directly.
 func DetectHarness(getenv func(string) string) (harnessSpec, error) {
+	// An explicit SLOPRAIL_HARNESS names the session's harness: a judge runs on the
+	// harness that triggered it.
+	if name := getenv("SLOPRAIL_HARNESS"); name != "" {
+		if spec, ok := lookupSpec(Harness(name)); ok {
+			return spec, nil
+		}
+		return harnessSpec{}, fmt.Errorf("%w: SLOPRAIL_HARNESS=%q. Supported: %s",
+			ErrUnknownHarness, name, strings.Join(supportedNames(), ", "))
+	}
 	for _, spec := range harnesses {
 		if spec.detect(getenv) {
 			return spec, nil

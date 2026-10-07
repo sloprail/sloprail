@@ -97,7 +97,8 @@ find_sr_session() {
 
 sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 
-# plugin_version reads THIS plugin's own version out of its plugin.json — the
+# plugin_version reads THIS plugin's own version out of its Claude manifest
+# (.claude-plugin/plugin.json; the Cursor manifest carries the same version) — the
 # minimum an installed sr-session is required to meet, since the two are
 # bumped in lockstep (scripts/bump-version.sh) and a release always ships the
 # sr* binaries matching the tag it was cut from.
@@ -116,7 +117,7 @@ plugin_version() {
 run_auto_install() {
   tag="${1:-v$(plugin_version)}"
   install_log="$(mktemp)"
-  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" </dev/null >"$install_log" 2>&1; then
+  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" --binaries-only </dev/null >"$install_log" 2>&1; then
     sr_session_bin="$(find_sr_session)" || sr_session_bin=""
   fi
   if [ -n "$sr_session_bin" ]; then
@@ -257,6 +258,12 @@ Then start a new session — this one will keep warning until sr-session is foun
       exit 0
       ;;
     esac
+    ;;
+  post-tool)
+    # After a tool has run, nothing is guarded and nothing is answered; pre-tool and the
+    # turn boundaries already say the engine is missing, at every call. Staying quiet
+    # here keeps that from being said again after each one.
+    exit 0
     ;;
   *)
     # sr:invariant install/missing-engine-blocks-nothing-else

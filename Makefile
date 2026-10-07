@@ -123,6 +123,10 @@ distribute-local: build
 # shipping them separately would make install.sh reassemble what this target
 # could just ship pre-assembled.
 #
+# The archive also carries the sloprail plugin (plugin/), the same files for every platform:
+# install.sh puts it into Cursor's local plugins directory, so the plugin always matches
+# the binaries it came with.
+#
 # No CGO: sqlite (modernc.org/sqlite) is already pure Go, so CGO_ENABLED=0 is
 # free and is what makes a linux/arm64 binary buildable from a darwin/amd64 CI
 # runner with no cross toolchain installed.
@@ -190,7 +194,8 @@ verify-version:
 		exit 1; \
 	fi
 	@want="$${TAG#v}"; \
-	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json \( -path '*/.claude-plugin/*' -o -path '*/.cursor-plugin/*' \)); do \
+	. scripts/plugin-manifest-dirs.sh; \
+	for f in $$(plugin_manifests .); do \
 		got="$$(jq -r .version "$$f")"; \
 		if [ "$$got" != "$$want" ]; then \
 			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run make cut-release VERSION='$$want' instead of tagging by hand" >&2; \
@@ -224,6 +229,7 @@ release:
 		for s in $(SERVICES); do \
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o "$$outdir/$$s" ./services/$$s || exit 1; \
 		done; \
+		cp -R marketplace/plugins/sloprail "$$outdir/plugin"; \
 		tar -C $(RELEASE_DIR) -czf $(RELEASE_DIR)/sloprail-$$os-$$arch.tar.gz sloprail-$$os-$$arch; \
 		rm -rf "$$outdir"; \
 	done

@@ -1,5 +1,10 @@
 package harness
 
+import (
+	"io"
+	"time"
+)
+
 // Record is one parsed line of a harness's session file: an Entry's fields plus
 // what the identity and relocation walks read and Entry deliberately does not
 // carry. ParentUUID is a pointer because the distinction that matters is null
@@ -19,6 +24,10 @@ type Record struct {
 	ToolUseResult     []byte
 	Attachment        []byte
 
+	// StopHook is the outcome of a Stop hook run the harness recorded, nil for a
+	// record that is not one.
+	StopHook *StopHook
+
 	// SessionID is the id the harness wrote this record under. Kept only so
 	// that a path GUESSED from a session id can be checked against what the
 	// file it landed on says about itself.
@@ -26,6 +35,13 @@ type Record struct {
 
 	// Cwd is the working directory the harness ran this turn in.
 	Cwd string
+
+	// Line, when non-zero, is the line number this record is cited under instead of its
+	// physical place in the stream, and the record is not counted in the physical
+	// numbering. A harness whose opened stream (RecordOpener) carries lines of sloprail's
+	// own gives them numbers of their own, so that adding one never renumbers a line a
+	// citation already names.
+	Line int
 }
 
 // Entry converts a record into the canonical shape.
@@ -42,6 +58,7 @@ func (r Record) Entry() Entry {
 		Message:                   r.Message,
 		ToolUseResult:             r.ToolUseResult,
 		Attachment:                r.Attachment,
+		StopHook:                  r.StopHook,
 		Cwd:                       r.Cwd,
 	}
 	if r.ParentUUID != nil {
@@ -86,4 +103,41 @@ type Transcripts interface {
 	// ProjectDir is where the harness keeps the session files of every session
 	// run in dir (already symlink-resolved); empty when configDir is empty.
 	ProjectDir(configDir, dir string) string
+}
+
+// RecordOpener is what a Transcripts MAY implement when the record the engine should
+// read is the harness's session file PLUS what sloprail itself kept beside it: Cursor's
+// transcript holds no tool_result at all, so sloprail records each tool's output from
+// the post-tool hook and the opener merges those back in as tool_result records.
+//
+// The engine reads every record through it (internal/transcript): physical line
+// numbers are the opened stream's, so a citation's `<path>:<line>` resolves against the
+// same stream it was made from. The stream is only ever appended to.
+type RecordOpener interface {
+	// OpenRecord opens the record at path as the engine reads it: JSON lines in this
+	// harness's own format (ParseRecord reads each).
+	OpenRecord(path string) (io.ReadCloser, error)
+
+	// RecordVersion identifies the opened stream's current content cheaply, changing
+	// whenever OpenRecord's output would (it keys the engine's parsed-record cache).
+	RecordVersion(path string) (size int64, mod time.Time, err error)
+}
+
+// UserAnswerer is what a Transcripts MAY implement when the harness has a tool that
+// asks the user a question and returns the answer as a tool_result (Claude Code's
+// AskUserQuestion). The answer is the user's own words, so the engine cites it as
+// the user's and never counts it as a tool's output. A harness without such a tool
+// does not implement it.
+type UserAnswerer interface {
+	// QuestionTool is the name of the tool that asks the user.
+	QuestionTool() string
+
+	// IsAnswerEnvelope reports whether resultText is that tool's answer envelope,
+	// whether or not any answer can be read out of it.
+	IsAnswerEnvelope(resultText string) bool
+
+	// ExtractAnswers returns only the user's answers out of that tool's result
+	// text (never the questions or the harness's boilerplate); nil when the text is
+	// not an answer envelope.
+	ExtractAnswers(resultText string) []string
 }
