@@ -118,7 +118,12 @@ func TestT003_75_TheRootIsToldToCiteNotToHandBack(t *testing.T) {
 func TestT003_75_AStashedUncitedChangeIsNotJudgedUntilItIsCommitted(t *testing.T) {
 	e, proj, _ := project(t, citingRule)
 	const sess = "s-003-75s"
+	// The sub-agent first commits a file the rule does not match: a worktree left clean with no
+	// commit is removed when the sub-agent ends (the stash lives in the repository's shared
+	// refs/stash, not in the worktree), and this test needs the folder to still be there to
+	// pop the stash in.
 	sub := harness.SubagentScript(t, Turns("sub done",
+		harness.CommitFile("c0", "notes/unrelated.txt", "not a doc", "an unrelated change"),
 		Bash("w1", "mkdir -p docs && echo steps > docs/release.md"),
 		Bash("w2", "git stash push -u -q"),
 	))
