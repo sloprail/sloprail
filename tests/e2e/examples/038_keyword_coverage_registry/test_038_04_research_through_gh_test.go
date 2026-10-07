@@ -1,6 +1,10 @@
 package e2e
 
 import (
+	"encoding/json"
+	"errors"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,7 +89,6 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		"HTTPS://GitHub.COM/owner/repo",
 		"http://github.com:443/owner/repo",
 		"https://user@github.com/owner/repo",
-		"github.com/owner/repo",
 		"https://github.com",
 		// The fully-qualified spelling, and the two GitHub content hosts the
 		// list missed.
@@ -94,11 +97,6 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		"https://raw.github.com/owner/repo/main/README.md",
 		"https://uploads.github.com/repos/owner/repo/releases/1/assets",
 		// Spellings a browser parses to the same host.
-		"https:github.com/owner/repo",
-		"https:/github.com/owner/repo",
-		`https:\\github.com\owner\repo`,
-		"https://git%68ub.com/owner/repo",
-		"https://GITHUB.com%2E/owner/repo",
 		// Literal addresses in GitHub's published ranges.
 		"https://140.82.112.6/repos/owner/repo",
 		"https://[2606:50c0:8000::154]/owner/repo",
@@ -106,13 +104,51 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		t.Run(url, func(t *testing.T) {
 			e, proj := researchProject(t)
 			res := e.Run(proj, "s-038-14", "research auth token leaks", Turns("done",
-				harness.ToolUse("t1", "WebFetch", map[string]string{"url": url, "prompt": "summarize"}),
+				harness.WebFetch("t1", url, "summarize"),
 			))
 			if !res.Refused() {
 				t.Fatalf("WebFetch %s was not refused:\n%s", url, res.Output)
 			}
 			if !res.Saw(webRefusal) || !res.Saw("github-research-through-gh") {
 				t.Errorf("the refusal does not carry the remedy and gate name:\n%s", res.Output)
+			}
+		})
+	}
+}
+
+// T038_14b: the spellings of a GitHub URL a browser reads as GitHub but the mock's
+// WebFetch will not take (it refuses a url that is not an http or https address
+// with a host, as the real tool's input validation does) never reach a hook through
+// a scripted run. The rule is run directly on the event the engine hands it, so
+// what 038_14 proves of these spellings (host parsed the way a browser parses it,
+// not matched by a regex over the raw text) is still proved: each is refused, with
+// the remedy.
+func TestT038_14b_MalformedSpellingsOfAGitHubURLAreRefused(t *testing.T) {
+	script := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail", "gate", "github-research-through-gh", "use-gh.sh")
+	for _, url := range []string{
+		"github.com/owner/repo",
+		"https:github.com/owner/repo",
+		"https:/github.com/owner/repo",
+		`https:\\github.com\owner\repo`,
+		"https://git%68ub.com/owner/repo",
+		"https://GITHUB.com%2E/owner/repo",
+	} {
+		t.Run(url, func(t *testing.T) {
+			event, err := json.Marshal(map[string]any{"event": map[string]any{
+				"kind": "PreToolUse", "tool": "WebFetch", "input": map[string]any{"url": url, "prompt": "summarize"},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", script)
+			cmd.Stdin = strings.NewReader(string(event))
+			out, err := cmd.Output()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Fatalf("WebFetch %s was not refused (err %v):\n%s", url, err, out)
+			}
+			if !strings.Contains(string(out), webRefusal) || !strings.Contains(string(out), "Fetching GitHub content") {
+				t.Errorf("the refusal does not carry the remedy:\n%s", out)
 			}
 		})
 	}
@@ -133,7 +169,7 @@ func TestT038_15_WebFetchElsewhereAllowed(t *testing.T) {
 		t.Run(url, func(t *testing.T) {
 			e, proj := researchProject(t)
 			res := e.Run(proj, "s-038-15", "read about token leaks", Turns("done",
-				harness.ToolUse("t1", "WebFetch", map[string]string{"url": url, "prompt": "summarize"}),
+				harness.WebFetch("t1", url, "summarize"),
 			))
 			if res.Refused() {
 				t.Fatalf("WebFetch %s was refused:\n%s", url, res.Output)

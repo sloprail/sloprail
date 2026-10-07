@@ -69,6 +69,14 @@ func Bash(id, command string) Turn {
 	return Turn{jsonl: toolUse(id, "Bash", map[string]string{"command": command})}
 }
 
+// WebFetch returns a turn where the agent fetches a page: the real tool's url and
+// prompt, plus the mock's own mock_result, the page text the scripted call is
+// answered with (the mock reaches no web). The mock refuses a url that is not an
+// http or https address with a host, so a malformed one cannot be sent here.
+func WebFetch(id, url, prompt string) Turn {
+	return ToolUseJSON(id, "WebFetch", fmt.Sprintf(`{"url":%s,"prompt":%s,"mock_result":{"result":"(the fetched page)"}}`, jsonStr(url), jsonStr(prompt)))
+}
+
 // Say returns a turn where the agent writes plain prose — an assistant message
 // carrying a text block rather than a tool call.
 //
