@@ -101,6 +101,12 @@ const (
 	// in the same run. Cursor does not enforce a shell deny beside a shell grant (measured), so
 	// sr-agent refuses such a run rather than promise a confinement it cannot give.
 	CapShellDenyBesideGrant = "shell-deny-beside-grant"
+
+	// CapSubagentLifecycleHooks: the harness fires a sub-agent's start and stop hooks, which is
+	// what feeds the session's sub-agent registry (`sr-session agents list`). Cursor's
+	// subagentStart/subagentStop never fire in print mode (harness-mocks runs/subagent-lifecycle-hooks),
+	// so its registry stays empty.
+	CapSubagentLifecycleHooks = "subagent-lifecycle-hooks"
 )
 
 // SessionMode is how a launch relates to the session id it names.

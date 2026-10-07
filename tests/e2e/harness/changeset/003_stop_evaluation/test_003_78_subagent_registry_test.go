@@ -43,6 +43,22 @@ func TestT003_78_ADispatchedSubagentIsInTheRegistryAcrossACompaction(t *testing.
 	))
 	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
 	rows := registryOf(t, e, proj, sess)
+	if !harness.HasCap(t, harness.CapSubagentLifecycleHooks) {
+		// The registry is fed by the harness's sub-agent start and stop hooks. Where they never
+		// fire there is nothing to record: the registry stays empty, a compaction leaves it so,
+		// and the sub-agent's branch is the root's own range.
+		if len(rows) != 0 {
+			t.Fatalf("a harness that fires no sub-agent hooks has a registry row: %+v", rows)
+		}
+		if !trackedIn(sessionRanges(t, e, proj, sess), proj, "sub-a") {
+			t.Fatalf("the sub-agent's branch is not answered for in the root's folder")
+		}
+		e.Run(proj, sess, "go on", Turns("again", harness.Compact("k1")))
+		if again := registryOf(t, e, proj, sess); len(again) != 0 {
+			t.Fatalf("a compaction put a row in the registry: %+v", again)
+		}
+		return
+	}
 	if len(rows) != 1 {
 		t.Fatalf("want the one dispatched sub-agent in the registry, got %+v", rows)
 	}
