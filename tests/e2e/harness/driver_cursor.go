@@ -583,6 +583,20 @@ func copyTree(src, dst string) error {
 
 // syncPluginsBack copies what the run wrote inside the loaded plugins (a check's ledger in
 // its plugin's own folder) back to the plugin's root, where the test reads it.
+// JudgeHooksOff: the judge's cursor-agent runs in a scratch workspace of its own, not the
+// project's. Cursor discovers project hooks from the workspace, so none of them fire there
+// (measured; see sr-agent's cursor_grant.go).
+func (cursorDriver) JudgeHooksOff(argv, projDir string) bool {
+	lines := strings.Split(argv, "\n")
+	for i, l := range lines {
+		if l == "--workspace" && i+1 < len(lines) {
+			ws := lines[i+1]
+			return ws != "" && ws != projDir && ws != resolveWorkDir(projDir)
+		}
+	}
+	return false
+}
+
 func (cursorDriver) syncPluginsBack(e *Env) {
 	for _, p := range e.extraPlugins {
 		_ = copyTree(filepath.Join(e.home, ".cursor", "plugins", "local", p.name), p.root)

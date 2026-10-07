@@ -272,6 +272,12 @@ func codexHostEnv() []string {
 
 var codexThread = regexp.MustCompile(`"thread_id":"([^"]+)"`)
 
+// JudgeHooksOff: the judge's codex is launched with the hooks feature disabled
+// (`--disable hooks`, one argument per line in the recorded argv).
+func (codexDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, "--disable\nhooks\n")
+}
+
 // Observe records the thread a run started: the id Codex gave the session.
 func (codexDriver) Observe(e *Env, l Launch, output string) {
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {

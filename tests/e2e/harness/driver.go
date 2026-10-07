@@ -143,6 +143,9 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// JudgeHooksOff reports whether the argv the judge's agent was launched with (one
+	// argument per line) keeps the project's and plugins' hooks from running in it.
+	JudgeHooksOff(argv, projDir string) bool
 
 	// IdentityPayload is a hook payload that names only the session and the project
 	// folder it runs in: no transcript path, so a reader resolves the session's record

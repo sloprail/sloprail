@@ -777,3 +777,9 @@ func (claudeDriver) ConfigEnv(e *Env) []string { return []string{"CLAUDE_CONFIG_
 
 // Observe: Claude sessions are named by the caller (--session-id), so there is nothing to learn.
 func (claudeDriver) Observe(*Env, Launch, string) {}
+
+// JudgeHooksOff: the judge's claude is launched with disableAllHooks in its settings, the only
+// switch that stops the project's and plugins' hooks (empty hooks/enabledPlugins objects merge).
+func (claudeDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, `"disableAllHooks":true`)
+}

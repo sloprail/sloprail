@@ -484,6 +484,10 @@ func (e *Env) InstallJudgeClaude(verdict string) {
 	}
 }
 
+// JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
+// judge's agent launched so that the project's and plugins' hooks do not run in it.
+func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
