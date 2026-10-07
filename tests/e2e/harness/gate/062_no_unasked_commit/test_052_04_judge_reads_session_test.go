@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T052_11: the rendered judge prompt carries the session record's path, the
@@ -34,6 +36,18 @@ func TestT052_11_JudgePromptPointsAtTheSessionRecord(t *testing.T) {
 		Bash("b1", `git add -A`),
 		Bash("b2", `sr-session trajectory cite `+shq(prompt)+` && git commit -m "fix null check"`),
 	))
+	if !harness.HasCap(t, harness.CapScopedToolRules) {
+		// The example grants its judge read-only git as scoped Bash rules, which a harness
+		// with a sandbox and no per-tool list (Codex) cannot give: the judge is not run on a
+		// wider grant, and the commit is refused with that reason.
+		if !res.Refused() || !res.Saw("cannot express") {
+			t.Fatalf("a judge whose scoped tool grant this harness cannot give was not refused with the reason:\n%s", res.Output)
+		}
+		if e.JudgePrompt(proj, "judge-prompt.txt") != "" {
+			t.Fatalf("the harness was asked to judge on a grant wider than the rule's")
+		}
+		return
+	}
 	if res.Refused() {
 		t.Fatalf("the cited commit was refused under a passing judge:\n%s", res.Output)
 	}

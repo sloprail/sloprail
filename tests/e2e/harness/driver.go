@@ -50,6 +50,11 @@ const (
 	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
 	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
 	CapRecordAfterSessionStart = "record-after-session-start"
+
+	// CapScopedToolRules: a judge can be granted a scoped tool rule (Bash(git show:*),
+	// WebFetch(domain:...)) and denied one. Codex has no per-tool permission list, only a
+	// sandbox, so sr-agent refuses a run whose grant asks for one rather than round it up.
+	CapScopedToolRules = "scoped-tool-rules"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -155,6 +160,9 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+	// harness's argv with.
+	LargeJudgeModelArgs() (flag, value string)
 
 	// IdentityPayload is a hook payload that names only the session and the project
 	// folder it runs in: no transcript path, so a reader resolves the session's record
