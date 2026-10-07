@@ -85,6 +85,14 @@ type JudgeGate interface {
 	JudgeRefusal(in HookInput, getenv func(string) string) string
 }
 
+// ToolResultRecorder is what a Harness MAY implement when its own session record
+// holds no tool results: the engine's post-tool hook hands it each call's outcome
+// (HookInput.Result) to keep, and its Transcripts' RecordOpener merges them back into
+// the record the engine reads. in.Event names the hook.
+type ToolResultRecorder interface {
+	RecordToolResult(in HookInput) error
+}
+
 // Default is the harness a process runs under when nothing selects another.
 const Default = "claudecode"
 

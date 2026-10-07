@@ -3,7 +3,6 @@ package transcript
 import (
 	"bytes"
 	"io"
-	"os"
 )
 
 // A quote is looked for in a record's text only after its raw bytes say the
@@ -60,7 +59,7 @@ func fileMayContain(path string, needle []byte) bool {
 	if needle == nil {
 		return true
 	}
-	f, err := os.Open(path)
+	f, err := openRecord(path)
 	if err != nil {
 		return true
 	}

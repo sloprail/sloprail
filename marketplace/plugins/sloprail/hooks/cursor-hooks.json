@@ -7,6 +7,12 @@
     "preToolUse": [
       { "command": "./hooks/sr-session-hook-cursor.sh pre-tool", "timeout": 3600 }
     ],
+    "postToolUse": [
+      { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
+    ],
+    "postToolUseFailure": [
+      { "command": "./hooks/sr-session-hook-cursor.sh post-tool", "timeout": 60 }
+    ],
     "stop": [
       { "command": "./hooks/sr-session-hook-cursor.sh stop", "timeout": 3600 }
     ],

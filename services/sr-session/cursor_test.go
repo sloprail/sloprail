@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,4 +53,23 @@ func newSessionPreToolCmdWithStdin(in string) *cobra.Command {
 	cmd := newSessionPreToolCmd()
 	cmd.SetIn(strings.NewReader(in))
 	return cmd
+}
+
+// `sr-session post-tool` keeps a Cursor call's output for the record the engine reads, and
+// answers nothing.
+func TestCursorPostToolKeepsTheOutput(t *testing.T) {
+	t.Setenv("SLOPRAIL_HARNESS", "cursor")
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	cmd := newSessionPostToolCmd()
+	var out bytes.Buffer
+	cmd.SetIn(strings.NewReader(`{"hook_event_name":"postToolUse","conversation_id":"abc","session_id":"abc","workspace_roots":["/ws"],"tool_name":"Shell","tool_input":{"command":"echo hi"},"tool_output":"{\"output\":\"hi\\n\",\"exitCode\":0}","tool_use_id":"u1"}`))
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(t, cmd.RunE(cmd, nil))
+	assert.Empty(t, out.String())
+	b, err := os.ReadFile(filepath.Join(data, "sloprail", "cursor-tool-results", "abc.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"tool":"Bash"`)
+	assert.Contains(t, string(b), `"output":"hi\n"`)
 }

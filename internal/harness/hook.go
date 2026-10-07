@@ -72,6 +72,10 @@ type HookInput struct {
 	// modules then read ToolInput as they always did.
 	Files []FileEffect `json:"files,omitempty"`
 
+	// Result is what a tool returned, on a post-tool hook of a harness that reports it
+	// (Cursor's postToolUse / postToolUseFailure); nil on every other event.
+	Result *ToolResult `json:"result,omitempty"`
+
 	// StopHookActive is true when a Stop hook fires because an earlier Stop hook
 	// already kept the turn going.
 	StopHookActive bool `json:"stop_hook_active"`
@@ -82,6 +86,14 @@ type HookInput struct {
 	// report them.
 	BackgroundTasks json.RawMessage `json:"background_tasks,omitempty"`
 	SessionCrons    json.RawMessage `json:"session_crons,omitempty"`
+}
+
+// ToolResult is one tool call's outcome as a post-tool hook reports it. Output is the
+// tool's output text; for a failed call it is the harness's error message and IsError
+// is set.
+type ToolResult struct {
+	Output  string `json:"output"`
+	IsError bool   `json:"is_error,omitempty"`
 }
 
 // FileEffectKind is what a pending tool call does to one file.

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
 )
 
 // A citation is a reference the agent can hand back to a person, and a reference
@@ -38,7 +37,7 @@ type LinedEntry struct {
 // not parse, is not an entry — but it is still counted, so the lines that follow
 // it keep the numbers the file gives them.
 func ReadLines(path string) ([]LinedEntry, error) {
-	f, err := os.Open(path)
+	f, err := openRecord(path)
 	if err != nil {
 		return nil, fmt.Errorf("transcript: open %s: %w", path, err)
 	}

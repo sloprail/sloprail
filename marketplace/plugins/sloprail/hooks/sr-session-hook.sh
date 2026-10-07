@@ -258,6 +258,12 @@ Then start a new session — this one will keep warning until sr-session is foun
       ;;
     esac
     ;;
+  post-tool)
+    # After a tool has run, nothing is guarded and nothing is answered; pre-tool and the
+    # turn boundaries already say the engine is missing, at every call. Staying quiet
+    # here keeps that from being said again after each one.
+    exit 0
+    ;;
   *)
     # sr:invariant install/missing-engine-blocks-nothing-else
     # start / stop / subagent-stop: not a guarded action by itself. Warn

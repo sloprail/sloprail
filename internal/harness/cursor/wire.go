@@ -53,7 +53,46 @@ func (Harness) ParseHook(r io.Reader) harness.HookInput {
 			in.Files = []harness.FileEffect{{Kind: harness.FileDelete, Path: d.FilePath}}
 		}
 	}
+	switch p.HookEventName {
+	case PostToolUse:
+		in.Result = &harness.ToolResult{Output: toolOutputText(p.ToolName, p.ToolOutput)}
+	case PostToolUseFailure:
+		in.Result = &harness.ToolResult{Output: p.ErrorMessage, IsError: true}
+	}
 	return in
+}
+
+// toolOutputText is a postToolUse's output as the text the tool printed. A Shell's is
+// {"output","exitCode"} (recorded) and the text is "output"; every other tool's is its
+// own JSON document (Write {"file_path","success"}, Read {"file_path","content_length"}),
+// kept as it came.
+func toolOutputText(tool, raw string) string {
+	if tool != toolShell {
+		return raw
+	}
+	var o struct {
+		Output *string `json:"output"`
+	}
+	if json.Unmarshal([]byte(raw), &o) != nil || o.Output == nil {
+		return raw
+	}
+	return *o.Output
+}
+
+// RecordToolResult implements harness.ToolResultRecorder: Cursor's transcript holds no
+// tool_result, so the outcome the post-tool hook reports is kept in sloprail's own
+// store, from which the record the engine reads is merged (record.OpenRecord).
+func (Harness) RecordToolResult(in harness.HookInput) error {
+	if in.Result == nil {
+		return nil
+	}
+	return record.AppendToolResult(in.SessionID, record.StoredResult{
+		ToolUseID: in.ToolUseID,
+		Tool:      in.ToolName,
+		Input:     in.ToolInput,
+		Output:    in.Result.Output,
+		IsError:   in.Result.IsError,
+	})
 }
 
 // RenderHook implements harness.HookWire: Cursor's hook output.
