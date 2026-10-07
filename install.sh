@@ -18,6 +18,20 @@
 #      back if this step was skipped, so this is not the only place a stranger
 #      hears it
 #
+#   5. sets up the agent harnesses it finds (or the one you name), see below
+#
+# Harnesses (--harness claude|codex|cursor|all, comma-separated allowed; default:
+# every one that is present on this machine; --binaries-only: none):
+#
+#   claude  prints the project-scope install commands; the plugin is added by
+#           `claude plugin ...`, not by this script (unchanged behaviour)
+#   cursor  copies the plugin into ~/.cursor/plugins/local/sloprail, where
+#           cursor-agent and the editor load a user's local plugins
+#   codex   the Codex-specific steps (trusting the plugin's hooks)
+#
+# The plugin's own hooks call this script with --binaries-only to fetch the
+# binaries: a Claude session must not install into another harness.
+#
 # Deliberately NOT `go install ./services/...`: that is kept as a documented
 # fallback for a contributor who already has Go, but it is not what this
 # script does, because requiring a Go toolchain is the opposite of "a stranger
@@ -26,6 +40,33 @@ set -eu
 
 REPO="sloprail/sloprail"
 INSTALL_DIR="${SLOPRAIL_INSTALL_DIR:-$HOME/.local/bin}"
+
+HARNESS_IDS="claude codex cursor"
+HARNESS_ARG=""
+BINARIES_ONLY=""
+
+usage() {
+  cat <<'USAGE'
+usage: install.sh [--harness claude|codex|cursor|all] [--binaries-only]
+
+Installs the sr* binaries, then sets up each agent harness found on this machine
+(or the one named; several: --harness claude,cursor). --binaries-only skips the
+harness step.
+
+Per harness, from the project root (sloprail is installed per project):
+
+  claude  claude plugin marketplace add sloprail/sloprail --scope project
+          claude plugin install sloprail@sloprail-marketplace --scope project
+  codex   codex plugin marketplace add sloprail/sloprail
+          codex plugin add sloprail@sloprail-marketplace
+          then enable it in the project's .codex/config.toml (a trusted project)
+  cursor  this script copies the plugin into ~/.cursor/plugins/local/sloprail
+          (Cursor plugins are per user; there is no project scope)
+
+Environment: SLOPRAIL_INSTALL_DIR (binaries, default ~/.local/bin),
+SLOPRAIL_CURSOR_PLUGINS_DIR (default ~/.cursor/plugins/local).
+USAGE
+}
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
@@ -145,6 +186,49 @@ if [ "${1:-}" = "--harness-mock-only" ]; then
   exit 0
 fi
 
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --harness)
+    [ $# -ge 2 ] || die "--harness needs a value: claude, codex, cursor or all"
+    HARNESS_ARG="$2"
+    shift 2
+    ;;
+  --harness=*)
+    HARNESS_ARG="${1#--harness=}"
+    shift
+    ;;
+  --binaries-only)
+    BINARIES_ONLY=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    die "unknown argument: $1"
+    ;;
+  esac
+done
+
+# Validate --harness before anything is downloaded.
+HARNESSES=""
+if [ -n "$HARNESS_ARG" ]; then
+  for h in $(printf '%s' "$HARNESS_ARG" | tr ',' ' '); do
+    case "$h" in
+    all) HARNESSES="$HARNESS_IDS" ;;
+    claude | codex | cursor)
+      case " $HARNESSES " in
+      *" $h "*) ;;
+      *) HARNESSES="${HARNESSES:+$HARNESSES }$h" ;;
+      esac
+      ;;
+    *) die "unknown harness '$h' (ids are exactly claude, codex, cursor, or all)" ;;
+    esac
+  done
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -255,6 +339,82 @@ if command -v codex >/dev/null 2>&1; then
 fi
 
 say "sloprail install: installed ${tag} (sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks) into ${INSTALL_DIR}"
+
+# --- harnesses -----------------------------------------------------------------
+# One function per harness. A step runs after the binaries are in INSTALL_DIR, so it
+# may call them.
+
+harness_present() {
+  case "$1" in
+  claude) command -v claude >/dev/null 2>&1 || [ -d "$HOME/.claude" ] ;;
+  codex) command -v codex >/dev/null 2>&1 || [ -d "${CODEX_HOME:-$HOME/.codex}" ] ;;
+  cursor) command -v cursor-agent >/dev/null 2>&1 || [ -d "$HOME/.cursor" ] ;;
+  esac
+}
+
+# Claude Code: the plugin is added by `claude plugin`, per project. Nothing is installed here.
+install_claude() {
+  say "sloprail install: Claude Code — from each project's root run:"
+  say "  claude plugin marketplace add sloprail/sloprail --scope project"
+  say "  claude plugin install sloprail@sloprail-marketplace --scope project"
+}
+
+# Codex.
+# ---------------------------------------------------------------------------------
+# SLOT for the Codex-specific steps (PR #344): `sr-session codex-trust` goes here,
+# guarded by `command -v codex`, calling "${INSTALL_DIR}/sr-session".
+# ---------------------------------------------------------------------------------
+install_codex() {
+  say "sloprail install: Codex — from each project's root run:"
+  say "  codex plugin marketplace add sloprail/sloprail"
+  say "  codex plugin add sloprail@sloprail-marketplace"
+  say "  and enable it in the project's .codex/config.toml (it loads in a trusted project only)"
+}
+
+# Cursor: cursor-agent and the editor load every directory under ~/.cursor/plugins/local
+# at start. The plugin comes from the release archive (the same version as the binaries
+# just installed); a checkout this script runs from is the fallback for an old release.
+install_cursor() {
+  plugins_dir="${SLOPRAIL_CURSOR_PLUGINS_DIR:-$HOME/.cursor/plugins/local}"
+  src=""
+  # $0 is "sh" under `curl | sh`: a checkout is only the fallback when this is a real file.
+  here=""
+  [ -f "$0" ] && here="$(dirname "$0")"
+  for cand in "${tmp}/sloprail-${platform}/plugin" "${here:-/nonexistent}/marketplace/plugins/sloprail"; do
+    if [ -f "$cand/.cursor-plugin/plugin.json" ]; then
+      src="$cand"
+      break
+    fi
+  done
+  if [ -z "$src" ]; then
+    say "sloprail install: Cursor — WARNING: release ${tag} carries no Cursor plugin (it predates it); not installed"
+    return 1
+  fi
+  mkdir -p "$plugins_dir"
+  # Copy beside, then swap: a running cursor-agent never sees a half-written plugin.
+  rm -rf "${plugins_dir}/.sloprail.new"
+  cp -R "$src" "${plugins_dir}/.sloprail.new"
+  rm -rf "${plugins_dir}/sloprail"
+  mv "${plugins_dir}/.sloprail.new" "${plugins_dir}/sloprail"
+  say "sloprail install: Cursor — plugin installed into ${plugins_dir}/sloprail (per user: Cursor has no project-scope plugin install)"
+}
+
+if [ -z "$BINARIES_ONLY" ]; then
+  auto=""
+  if [ -z "$HARNESSES" ]; then
+    auto=1
+    for h in $HARNESS_IDS; do
+      if harness_present "$h"; then HARNESSES="${HARNESSES:+$HARNESSES }$h"; fi
+    done
+    [ -n "$HARNESSES" ] || say "sloprail install: no agent harness found (looked for claude, codex, cursor-agent); pass --harness to set one up anyway"
+  fi
+  harness_failed=""
+  for h in $HARNESSES; do
+    "install_${h}" || harness_failed="${harness_failed} ${h}"
+  done
+  # A harness named outright that failed fails the install; one found by itself only warns.
+  [ -z "$harness_failed" ] || [ -n "$auto" ] || die "could not set up:${harness_failed}"
+fi
 
 case ":$PATH:" in
 *":${INSTALL_DIR}:"*) ;;

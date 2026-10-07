@@ -448,6 +448,29 @@ jobs:
           "$RUNNER_TEMP/sloprail-installed/sr-session" start </dev/null >/dev/null
           echo "sr-session runs after install.sh"
 
+      # --harness: the flag picks what gets set up beyond the binaries. cursor-agent needs a
+      # login, so CI cannot run it; what it can prove is that the plugin lands where Cursor
+      # loads local plugins from, whole and executable, and that its hook runs against the
+      # installed binaries and answers in the JSON Cursor requires.
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install.sh --harness cursor
+        run: |
+          export SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-cursor-bin"
+          export SLOPRAIL_HARNESS_MOCK_URL="http://127.0.0.1:8931/none"
+          if HOME="$RUNNER_TEMP/bogus-home" /tmp/install-under-test.sh --harness bogus; then echo "an unknown harness id was accepted"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/binonly-home" "$RUNNER_TEMP/cursor-home"
+          HOME="$RUNNER_TEMP/binonly-home" /tmp/install-under-test.sh --binaries-only
+          if [ -e "$RUNNER_TEMP/binonly-home/.cursor" ]; then echo "--binaries-only touched ~/.cursor"; exit 1; fi
+          HOME="$RUNNER_TEMP/cursor-home" /tmp/install-under-test.sh --harness cursor
+          plugin="$RUNNER_TEMP/cursor-home/.cursor/plugins/local/sloprail"
+          test -f "$plugin/.cursor-plugin/plugin.json"
+          test -x "$plugin/hooks/sr-session-hook-cursor.sh"
+          test -f "$plugin/.claude-plugin/plugin.json"
+          # Cursor runs a plugin hook from the plugin's directory with CURSOR_PLUGIN_ROOT set.
+          out="$(cd "$plugin" && CURSOR_PLUGIN_ROOT="$plugin" PATH="$RUNNER_TEMP/sloprail-cursor-bin:$PATH" SLOPRAIL_NO_AUTO_INSTALL=1 ./hooks/sr-session-hook-cursor.sh start </dev/null)"
+          printf '%s\n' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["additional_context"]'
+          echo "cursor plugin installed and its sessionStart hook answers"
+
       - if: needs.changes.outputs.code-changed == 'true'
         name: tampered download is rejected
         run: |
