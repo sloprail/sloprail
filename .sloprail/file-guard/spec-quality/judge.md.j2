@@ -8,6 +8,9 @@ Two rules of this project come on top of the skills:
   path of one agent harness (Claude Code, Codex, Cursor). What a harness provides is cited in
   the invariant's optional `needs:` list instead.
 - Invariants in this bucket must not duplicate or contradict each other.
+- An invariant is a promise a rule author or the person running the agent can observe and
+  relies on. A predicate worded as behaviour but describing a mechanism they cannot observe
+  (concurrency slots, locks, where or when results are stored or pushed) is not one.
 
 ## Rules for invariants
 <invariant_rules>

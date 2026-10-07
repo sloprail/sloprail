@@ -1,48 +1,80 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# spec-quality on the CI path: an invariant that breaks spec.cue (no typed mention, an unknown key)
-# or cites an entity that does not exist is refused before any judge; 27 well-formed invariants
-# citing one entity are split into two buckets (25 + 3 with the entity), each judged once, and pass.
+# spec-quality on the CI path (sr-checks run over a committed range), each refusal beside its
+# nearest permitted neighbour:
+# 1. an invariant breaking spec.cue (no typed mention, an unknown key) is refused by the shape
+#    check, naming spec.cue and the field; the same invariant made well-formed passes.
+# 2. a mention of an entity that does not exist is refused naming the missing entity file;
+#    with the entity committed, the same invariant passes.
+# 3. the judge decides: an invariant naming a harness event is refused with the judge's
+#    reasoning; the same invariant reworded neutrally passes.
+# 4. bucketing: 27 invariants citing one entity are judged as two buckets (25 and 3 files).
 git init -q .
 mkdir -p .sloprail/file-guard .claude/skills
 cp -R "$SR_TEST_SLOPRAIL_DIR/file-guard/spec-quality" .sloprail/file-guard/
 rm -rf .sloprail/file-guard/spec-quality/tests
 cp -R "$SR_TEST_SLOPRAIL_DIR/../.claude/skills/document-invariant" "$SR_TEST_SLOPRAIL_DIR/../.claude/skills/document-entity" .claude/skills/
 printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
+mkdir -p spec/demo/entities
+printf 'doc: A demo thing.\nfields:\n  - name: on\n    type: bool\n' > spec/demo/entities/Thing.yaml
 git add -A && git -c user.name=t -c user.email=t@t commit -q -m rules
 BASE=$(git rev-parse HEAD)
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
 export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
 export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
-export JUDGE_LOG="$PWD/judge.log"
-export SR_CHECKS_JUDGE_MOCKS=$(jq -nc --arg p "$SR_TEST_CASE_DIR/judge-pass.sh" '{"file-guard/spec-quality/judge": $p}')
-refused() { jq -es --arg w "$1" 'any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="refused" and (.reason|contains($w)))' "$SR_EVENTS_FILE" >/dev/null; }
+export JUDGE_LOG="$(mktemp)"
+export SR_CHECKS_JUDGE_MOCKS=$(jq -nc --arg p "$SR_TEST_CASE_DIR/judge-mock.sh" '{"file-guard/spec-quality/judge": $p}')
 
-# 1a. malformed shape: no typed mention, an unknown key
-: > "$SR_EVENTS_FILE"; : > "$JUDGE_LOG"
+commit() { git add -A && git -c user.name=t -c user.email=t@t commit -q -m "$1"; }
+run() { : > "$SR_EVENTS_FILE"; : > "$JUDGE_LOG"; sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1; }
+dump() { jq -c . "$SR_EVENTS_FILE" >&2; echo "$1" >&2; exit 1; }
+# refused WORD...: one spec-quality refusal whose reason carries every WORD
+refused() { jq -es --args 'any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="refused" and (.reason as $r | $ARGS.positional | all(. as $w | $r | contains($w))))' "$@" < "$SR_EVENTS_FILE" >/dev/null; }
+passed() { jq -es 'any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="passed") and (any(.[]; .kind=="FileGuardChecked" and .rule=="spec-quality" and .outcome=="refused") | not)' "$SR_EVENTS_FILE" >/dev/null; }
+
+# 1. shape
 git checkout -q -b shape "$BASE"
 mkdir -p spec/demo/invariants
-printf 'predicate: no anchor here\nwhy: w\nextra: 1\n' > spec/demo/invariants/bad-shape.yaml
-git add -A && git -c user.name=t -c user.email=t@t commit -q -m bad-shape
-if sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1; then echo "a malformed invariant passed" >&2; exit 1; fi
-refused "bad-shape.yaml" || { jq -c . "$SR_EVENTS_FILE" >&2; echo "no refusal naming bad-shape.yaml" >&2; exit 1; }
+printf 'predicate: no anchor here\nwhy: w\nextra: 1\n' > spec/demo/invariants/a.yaml
+commit bad-shape
+if run; then dump "1: a malformed invariant passed"; fi
+refused "do not match spec.cue" "spec/demo/invariants/a.yaml" "#Invariant.predicate" || dump "1: no shape refusal naming spec.cue and the predicate"
+[ ! -s "$JUDGE_LOG" ] || dump "1: the judge ran on a bucket the shape check refused"
+printf 'predicate: A {@fld:demo:Thing.on} thing holds.\nwhy: w\n' > spec/demo/invariants/a.yaml
+commit fixed-shape
+run || dump "1: the well-formed neighbour was refused"
+passed || dump "1: no passed verdict for the well-formed neighbour"
 
-# 1b. a mention of an entity that does not exist
-: > "$SR_EVENTS_FILE"
+# 2. a mention of a missing entity
 git checkout -q -b mention "$BASE"
 mkdir -p spec/demo/invariants
-printf 'predicate: A {@ent:demo:Missing} holds.\nwhy: w\n' > spec/demo/invariants/bad-mention.yaml
-git add -A && git -c user.name=t -c user.email=t@t commit -q -m bad-mention
-if sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1; then echo "an unresolved mention passed" >&2; exit 1; fi
-refused "spec/demo/entities/Missing.yaml" || { jq -c . "$SR_EVENTS_FILE" >&2; echo "no refusal naming the missing entity" >&2; exit 1; }
-[ ! -s "$JUDGE_LOG" ] || { echo "the judge ran on a bucket the deterministic checks refused" >&2; exit 1; }
+printf 'predicate: A {@ent:demo:Missing} holds.\nwhy: w\n' > spec/demo/invariants/b.yaml
+commit bad-mention
+if run; then dump "2: an unresolved mention passed"; fi
+refused "do not resolve" "spec/demo/entities/Missing.yaml" || dump "2: no refusal naming the missing entity file"
+[ ! -s "$JUDGE_LOG" ] || dump "2: the judge ran on a bucket the mention check refused"
+printf 'doc: A missing thing, now present.\nfields:\n  - name: on\n    type: bool\n' > spec/demo/entities/Missing.yaml
+commit entity-added
+run || dump "2: the invariant with its entity present was refused"
+passed || dump "2: no passed verdict once the entity exists"
 
-# 2. well-formed: one entity, 27 invariants citing it -> two buckets, both judged, both pass
-: > "$SR_EVENTS_FILE"; : > "$JUDGE_LOG"
-git checkout -q -b good "$BASE"
-mkdir -p spec/demo/entities spec/demo/invariants
-printf 'doc: A demo thing.\nfields:\n  - name: on\n    type: bool\n' > spec/demo/entities/Thing.yaml
+# 3. the judge decides
+git checkout -q -b judge "$BASE"
+mkdir -p spec/demo/invariants
+printf 'predicate: A {@fld:demo:Thing.on} thing refuses PreToolUse.\nwhy: w\n' > spec/demo/invariants/c.yaml
+commit harness-word
+if run; then dump "3: an invariant naming a harness event passed"; fi
+refused "MOCK: names the harness event PreToolUse" || dump "3: no refusal carrying the judge's reasoning"
+printf 'predicate: A {@fld:demo:Thing.on} thing refuses an action before it happens.\nwhy: w\n' > spec/demo/invariants/c.yaml
+commit neutral
+run || dump "3: the neutral rewording was refused"
+passed || dump "3: no passed verdict for the neutral rewording"
+
+# 4. bucketing
+git checkout -q -b buckets "$BASE"
+mkdir -p spec/demo/invariants
 for i in $(seq -w 1 27); do printf 'predicate: A {@fld:demo:Thing.on} thing %s holds.\nwhy: w\n' "$i" > spec/demo/invariants/i$i.yaml; done
-git add -A && git -c user.name=t -c user.email=t@t commit -q -m good
-sr-checks run --base "$BASE" --head HEAD >/dev/null 2>&1 || { jq -c . "$SR_EVENTS_FILE" >&2; echo "well-formed spec was refused" >&2; exit 1; }
-[ "$(sort -n "$JUDGE_LOG" | tr '\n' ' ')" = "3 25 " ] || { echo "expected buckets of 3 and 25, judge saw: $(cat "$JUDGE_LOG")" >&2; exit 1; }
+commit many
+run || dump "4: 27 well-formed invariants were refused"
+passed || dump "4: no passed verdict for the 27 invariants"
+[ "$(sort -n "$JUDGE_LOG" | tr '\n' ' ')" = "2 25 " ] || dump "4: expected buckets of 25 and 2 judged files, the judge saw: $(tr '\n' ' ' < "$JUDGE_LOG")"
