@@ -1,4 +1,0 @@
-allow:
-  - glob: "memories/updates/*.md"
-  - regex: "^memories/decisions/[0-9]{8}_[a-z0-9-]+/.*\\.md$"
-  - glob: "src/**"
