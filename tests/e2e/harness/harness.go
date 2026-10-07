@@ -516,6 +516,10 @@ func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
 	}
 }
 
+// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
+// harness's argv with, in the recording of InstallJudgeClaudeRecordingArgv.
+func (e *Env) LargeJudgeModelArgs() (flag, value string) { return e.driver.LargeJudgeModelArgs() }
+
 // InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
 // the judge was asked, so a test can assert what the template actually rendered.
 //
