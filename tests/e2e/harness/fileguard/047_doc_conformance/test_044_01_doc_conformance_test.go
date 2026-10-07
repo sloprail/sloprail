@@ -75,8 +75,6 @@ func TestT044_03_UnmarkedOrWrongKindIsNeverJudged(t *testing.T) {
 // and the test asserts the marker's OWN URL and the file's body appear in it — and
 // that a DIFFERENT URL in a fresh session renders a DIFFERENT prompt.
 func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
-	// The example's judge is limited to `Bash(curl -sL https://…/*)`, a scoped rule.
-	harness.RequireCap(t, harness.CapScopedToolRules)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -88,6 +86,15 @@ func TestT044_04_MarkerURLReachesTemplate(t *testing.T) {
 	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !harness.HasCap(t, harness.CapScopedToolRules) {
+		// The example's judge is limited to `Bash(curl -sL https://…/*)`, a scoped rule this
+		// harness cannot grant: sr-agent refuses the run rather than round the grant up, so
+		// the judge is never launched and no prompt is rendered.
+		if prompt != "" {
+			t.Fatalf("a harness without scoped tool rules launched a judge whose grant is scoped:\n%s", prompt)
+		}
+		return
+	}
 	if prompt == "" {
 		t.Fatalf("the judge never ran, so nothing about the wiring can be concluded")
 	}

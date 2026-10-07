@@ -504,6 +504,10 @@ func (e *Env) InstallJudgeUsageLimit() {
 	}
 }
 
+// JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
+// judge's agent launched so that the project's and plugins' hooks do not run in it.
+func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
@@ -2549,14 +2553,4 @@ func EngineErrored(answer string) bool {
 		}
 	}
 	return false
-}
-
-// JudgeHooksDisabled says whether the argv a recording judge shim captured (InstallJudgeClaudeRecordingArgv)
-// switched the judge's own session's hooks off, in the harness's own spelling: Claude Code's
-// `disableAllHooks` setting unless the driver spells it otherwise.
-func JudgeHooksDisabled(argv string) bool {
-	if d, ok := mustDriver().(interface{ JudgeHooksDisabled(argv string) bool }); ok {
-		return d.JudgeHooksDisabled(argv)
-	}
-	return strings.Contains(argv, `"disableAllHooks":true`)
 }

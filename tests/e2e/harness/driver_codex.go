@@ -39,7 +39,7 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -282,6 +282,12 @@ func codexHostEnv() []string {
 }
 
 var codexThread = regexp.MustCompile(`"thread_id":"([^"]+)"`)
+
+// JudgeHooksOff: the judge's codex is launched with the hooks feature disabled
+// (`--disable hooks`, one argument per line in the recorded argv).
+func (codexDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, "--disable\nhooks\n")
+}
 
 // Observe records the thread a run started: the id Codex gave the session.
 func (codexDriver) Observe(e *Env, l Launch, output string) {
@@ -685,18 +691,6 @@ func (codexDriver) SeedTranscript(e *Env, projDir, sessionID string) {
 		e.t.Fatalf("harness: %v", err)
 	}
 	e.setHarnessID(sessionID, thread)
-}
-
-// JudgeHooksDisabled: Codex has the hook feature switched off by `--disable hooks`, the two
-// arguments the judge's argv (one per line) holds in a row.
-func (codexDriver) JudgeHooksDisabled(argv string) bool {
-	lines := strings.Split(argv, "\n")
-	for i := 0; i+1 < len(lines); i++ {
-		if lines[i] == "--disable" && lines[i+1] == "hooks" {
-			return true
-		}
-	}
-	return false
 }
 
 // RootMessageLine is the line of the session's first prompt in a rollout: the session_meta,

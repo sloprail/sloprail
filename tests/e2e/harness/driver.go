@@ -46,6 +46,13 @@ const (
 	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
 	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
 	CapRecordPreamble = "record-preamble"
+
+	// CapRecordNamesStartDir: the session's record names the directory the session began in,
+	// so a hook that reports another folder (the agent `cd`'d into a worktree) is still the
+	// same session's. Cursor's transcript names none (only a lossy project slug), and its
+	// hooks report the workspace the conversation was opened in, not a shell's directory.
+	CapRecordNamesStartDir = "record-names-start-dir"
+
 	// CapRecordAfterSessionStart: a fresh session's record does not exist while the
 	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
 	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
@@ -160,6 +167,10 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// JudgeHooksOff reports whether the argv the judge's agent was launched with (one
+	// argument per line) keeps the project's and plugins' hooks from running in it.
+	JudgeHooksOff(argv, projDir string) bool
+
 	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
 	// harness's argv with.
 	LargeJudgeModelArgs() (flag, value string)
@@ -169,6 +180,11 @@ type Driver interface {
 	// from the two, as the first hooks of a session make it.
 	IdentityPayload(e *Env, projDir, sessionID string) string
 
+	// SeedTranscript gives a session that has run no turn the record its agent would have (a
+	// user message, in the harness's own shape): a refusal reached without a transcript is stored
+	// for no key. A harness that names its own sessions has no path to write at before a turn
+	// ran, so it seeds under an id of its own.
+	SeedTranscript(e *Env, projDir, sessionID string)
 	// TranscriptPath is where the harness keeps a session's root transcript.
 	TranscriptPath(e *Env, projDir, sessionID string) string
 	// SubagentRecordPaths lists the sub-agent transcripts of a session, sorted.
