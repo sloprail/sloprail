@@ -43,7 +43,7 @@ func (cursorDriver) Name() string { return "cursor" }
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
 func (cursorDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapScopedToolRules}
 }
 
 func (cursorDriver) FindMock(repoRoot string) (string, string) {
@@ -381,6 +381,11 @@ func (cursorDriver) AgentShim(e *Env, projDir string) (string, string) {
 		"  --workspace " + shellQuote(projDir) + " \\\n" +
 		"  \"launched agent\" </dev/null\n"
 	return "cursor-agent", script
+}
+
+// LargeJudgeModelArgs: size-lg is claude-opus-5-5-medium.
+func (cursorDriver) LargeJudgeModelArgs() (string, string) {
+	return "--model", "claude-opus-5-5-medium"
 }
 
 func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {

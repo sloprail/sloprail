@@ -420,6 +420,9 @@ func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 	return "codex", script
 }
 
+// LargeJudgeModelArgs: size-lg is gpt-6.1-sol, named by Codex's short -m.
+func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
+
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
 func (codexDriver) JudgeShim(s JudgeShim) (string, string) {
