@@ -71,7 +71,7 @@ func canonicalMessage(raw json.RawMessage) json.RawMessage {
 // is not an object, is returned unchanged.
 func withRole(raw json.RawMessage, role string) json.RawMessage {
 	var msg map[string]json.RawMessage
-	if role == "" || json.Unmarshal(raw, &msg) != nil {
+	if role == "" || json.Unmarshal(raw, &msg) != nil || msg == nil {
 		return raw
 	}
 	if _, ok := msg["role"]; ok {

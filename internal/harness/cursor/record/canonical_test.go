@@ -74,6 +74,12 @@ func TestAMessageWithoutToolsOnlyGainsItsRole(t *testing.T) {
 	assert.JSONEq(t, `{"role":"user","content":[{"type":"text","text":"hi"}]}`, string(r.Message))
 }
 
+func TestWithRoleOnANullMessage(t *testing.T) {
+	r, err := Transcripts{}.ParseRecord([]byte(`{"role":"user","message":null}`))
+	require.NoError(t, err)
+	assert.Equal(t, "null", string(r.Message))
+}
+
 func TestWithRole(t *testing.T) {
 	got := string(withRole([]byte(`{"content":[{"type":"text","text":"hi"}]}`), "user"))
 	assert.Contains(t, got, `"role":"user"`)
