@@ -24,7 +24,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble}
+		CapStopHooks, CapForkResumeCompact, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapRecordNamesStartDir}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.

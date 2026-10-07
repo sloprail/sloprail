@@ -62,6 +62,7 @@ func TestT003_60_AnUnreadableRegistryIsARefusalNotNoOtherTips(t *testing.T) {
 // where its record says it began; it used to get a fresh one per directory, resetting
 // its verdicts, baseline and counters.
 func TestT003_60_ARootThatMovedToAnotherWorktreeKeepsItsStore(t *testing.T) {
+	harness.RequireCap(t, harness.CapRecordNamesStartDir)
 	e, proj, _ := project(t, docsRule)
 	e.Run(proj, "s-003-60e", "clean", Turns("done", harness.CommitFile("c1", "docs/a.md", "clean words", "add a")))
 	wt := filepath.Join(t.TempDir(), "elsewhere")
@@ -70,11 +71,7 @@ func TestT003_60_ARootThatMovedToAnotherWorktreeKeepsItsStore(t *testing.T) {
 		t.Fatalf("before the move the session has %d stores, want 1", n)
 	}
 
-	payload, _ := json.Marshal(map[string]any{
-		"session_id": "s-003-60e", "transcript_path": e.TranscriptPath(proj, "s-003-60e"),
-		"cwd": wt, "stop_hook_active": false, "hook_event_name": "Stop",
-	})
-	e.CLIDirectStdinEnv(wt, string(payload), e.SessionEnv(""), "sr-session", "stop")
+	e.StopFrom(proj, "s-003-60e", wt)
 
 	if dirs := e.SessionStoreDirs(proj, "s-003-60e"); len(dirs) != 1 {
 		t.Fatalf("a hook run from another worktree opened a second store for the same session: %v", dirs)

@@ -41,6 +41,12 @@ const (
 	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
 	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
 	CapRecordPreamble = "record-preamble"
+
+	// CapRecordNamesStartDir: the session's record names the directory the session began in,
+	// so a hook that reports another folder (the agent `cd`'d into a worktree) is still the
+	// same session's. Cursor's transcript names none (only a lossy project slug), and its
+	// hooks report the workspace the conversation was opened in, not a shell's directory.
+	CapRecordNamesStartDir = "record-names-start-dir"
 )
 
 // SessionMode is how a launch relates to the session id it names.
