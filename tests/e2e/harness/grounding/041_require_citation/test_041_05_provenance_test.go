@@ -161,7 +161,7 @@ func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 	res := e.Run(proj, "s-041-30", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/agent.md --cite:tool_result 'TASKAGENT-7702 all 40 tests pass' --content '# results'`),
 	))
-	if !res.Saw("b1") {
+	if !res.Saw("memories/agent.md") {
 		t.Fatalf("the citing call never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/agent.md") {
