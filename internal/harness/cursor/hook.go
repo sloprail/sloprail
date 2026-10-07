@@ -106,6 +106,12 @@ type Payload struct {
 
 	IsBackgroundAgent bool `json:"is_background_agent"`
 
+	// Status and LoopCount are the stop event's (TUI only: `-p` never fires it): how
+	// the turn ended, and how many follow-up re-prompts this turn has had already
+	// (followup_message re-prompts, loop_count 0 then 1).
+	Status    string `json:"status"`
+	LoopCount int    `json:"loop_count"`
+
 	// Subagent fields, documented but never seen in print mode.
 	SubagentType         string `json:"subagent_type"`
 	ParentConversationID string `json:"parent_conversation_id"`
