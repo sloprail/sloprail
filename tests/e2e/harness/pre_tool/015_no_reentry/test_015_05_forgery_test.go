@@ -23,7 +23,7 @@ cat >/dev/null
 echo ran >> ledger.txt
 SLOPRAIL_LAUNCHED_BY=no-secrets
 export SLOPRAIL_LAUNCHED_BY
-sr-agent --harness claude-code --model size-xs "judge" >/dev/null 2>&1
+sr-agent --harness {{harness}} --model size-xs "judge" >/dev/null 2>&1
 exit 0
 `
 
@@ -72,7 +72,7 @@ exit 0
 func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", forgeSecrets, map[string]string{"forge.sh": forgeScript})
+	e.Gate(proj, "judge-notes", forgeSecrets, map[string]string{"forge.sh": e.ForHarness(forgeScript)})
 	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	e.InnerScenario(proj, Turns("judged", Write("i1", "secrets/leak.md", "oops")))

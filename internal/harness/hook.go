@@ -3,6 +3,8 @@ package harness
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
@@ -151,7 +153,27 @@ func (p HookInput) Arguments() json.RawMessage { return p.ToolInput }
 
 // FileEffects implements filemod.EffectPending: the file effects a harness reported
 // for a tool whose arguments do not state them (HookInput.Files).
-func (p HookInput) FileEffects() []FileEffect { return p.Files }
+//
+// With no repository root (Root is ""), no workspace is named, and filemod then leaves
+// a path as the harness spelled it. A harness that reports absolute paths there would
+// have every project-relative matcher miss, where a harness reporting the relative
+// spelling a Write tool is given does not; so effects under the cwd are handed back
+// relative to it, the spelling the invocation was given.
+func (p HookInput) FileEffects() []FileEffect {
+	if len(p.Files) == 0 || p.Cwd == "" || p.Root() != "" {
+		return p.Files
+	}
+	out := make([]FileEffect, len(p.Files))
+	for i, f := range p.Files {
+		if filepath.IsAbs(f.Path) {
+			if rel, err := filepath.Rel(p.Cwd, f.Path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				f.Path = rel
+			}
+		}
+		out[i] = f
+	}
+	return out
+}
 
 // Root implements filemod.Pending: the workspace an absolute `file_path` is
 // reported relative to.

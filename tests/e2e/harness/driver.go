@@ -35,6 +35,9 @@ const (
 	// hook rejection that never reaches the transcript.
 	CapRecordHoldsToolResults = "record-holds-tool-results"
 
+	// CapPathLineBreaks: the harness's file tool can name a path holding a line break.
+	// Codex's apply_patch names a file on one line of the patch, so it cannot.
+	CapPathLineBreaks = "path-line-breaks"
 	// CapRecordPreamble: a fresh session's record opens with lines no reader counts as
 	// entries (custom-title / mode / last-prompt) and holds the hooks' own records
 	// (SessionStart attachments, the Stop hook summary), so an entry's physical line runs
@@ -156,6 +159,10 @@ type Driver interface {
 	// ForkTranscript writes the transcript a re-forked session opens on.
 	ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string)
 
+	// WrittenBytes is what the harness's file-writing tool leaves on disk when the agent
+	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
+	// ends every non-empty file with a newline).
+	WrittenBytes(content string) string
 	// Refusals are the PreToolUse refusal reasons in a run's output stream.
 	Refusals(output string) []string
 	// ToolResults are the tool_result texts in a run's output stream.
