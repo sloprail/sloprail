@@ -161,6 +161,22 @@ func TestParseHook_SpawnAgentIsTheCanonicalAgent(t *testing.T) {
 	}
 }
 
+func TestCurrentSessionPath_IsTheRolloutOfTheThreadInTheEnvironment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	dir := filepath.Join(home, "sessions", "2026", "10", "07")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	rollout := filepath.Join(dir, "rollout-2026-10-07T10-00-00-thread-1.jsonl")
+	require.NoError(t, os.WriteFile(rollout, []byte("{}\n"), 0o644))
+
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	h := Harness{}
+	assert.Equal(t, rollout, h.CurrentSessionPath("/any", env(map[string]string{"CODEX_THREAD_ID": "thread-1"})))
+	assert.Equal(t, rollout, h.CurrentSessionPath("/any", env(map[string]string{"CODEX_SESSION_ID": "thread-1"})))
+	assert.Empty(t, h.CurrentSessionPath("/any", env(map[string]string{"CODEX_THREAD_ID": "other"})))
+	assert.Empty(t, h.CurrentSessionPath("/any", env(nil)))
+}
+
 func TestProjectSkillDirs_CodexReadsAgentsSkills(t *testing.T) {
 	assert.Equal(t, []string{".agents/skills"}, harness.ProjectSkillDirs(New()))
 }

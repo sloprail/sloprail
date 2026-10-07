@@ -25,6 +25,7 @@ package codex
 import (
 	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/codex/record"
+	"strings"
 )
 
 // Harness is the Codex implementation of harness.Harness.
@@ -64,6 +65,17 @@ func (Harness) Detect(environ []string) bool { return Detect(environ) }
 // own rollout and not the parent's; an ephemeral session has none at all).
 func (Harness) LocateTranscript(in harness.HookInput) string {
 	return record.FindRollout(record.ConfigDir(), in.SessionID)
+}
+
+// CurrentSessionPath implements harness.CurrentSessionLocator: a shell command Codex
+// runs sees its session as CODEX_THREAD_ID (and CODEX_SESSION_ID), and the rollout is
+// found by that id.
+func (Harness) CurrentSessionPath(_ string, getenv func(string) string) string {
+	id := strings.TrimSpace(getenv("CODEX_THREAD_ID"))
+	if id == "" {
+		id = strings.TrimSpace(getenv("CODEX_SESSION_ID"))
+	}
+	return record.FindRollout(record.ConfigDir(), id)
 }
 
 // ProjectSkillDirs implements harness.SkillDirs: Codex reads a project's skills from

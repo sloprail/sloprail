@@ -75,6 +75,16 @@ type ChildEnvBlocklist interface {
 	ChildEnvBlocklist() []string
 }
 
+// CurrentSessionLocator is what a Harness MAY implement to find the record of the
+// session a command is running inside, from that command's own environment (not from a
+// hook payload): the agent, or a rule's script, running `sr-session` from a tool shell.
+// getenv is the process's environment; "" means no session is named or its record is
+// not there. A harness without it is read through Transcripts alone (Claude Code's
+// exported session id and projects layout, internal/transcript).
+type CurrentSessionLocator interface {
+	CurrentSessionPath(cwd string, getenv func(string) string) string
+}
+
 // SkillDirs is what a Harness MAY implement to name where a project keeps its own
 // skills, relative to the project root. A harness that does not is taken to use
 // DefaultSkillDir.

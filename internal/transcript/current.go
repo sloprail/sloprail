@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // SessionIDEnv is the environment variable Claude Code exports naming the
@@ -33,6 +35,11 @@ const SessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 // A session id inherited from a launcher, or a guessed file colliding with an
 // unrelated conversation, resolves to nothing rather than to the wrong record.
 func CurrentSessionPath(cwd string) string {
+	// A harness that names its session in the environment another way (Codex's
+	// CODEX_THREAD_ID, its rollout found by id) locates it itself.
+	if l, ok := harness.Current().(harness.CurrentSessionLocator); ok {
+		return l.CurrentSessionPath(cwd, os.Getenv)
+	}
 	sessionID := strings.TrimSpace(os.Getenv(SessionIDEnv))
 	if sessionID == "" {
 		return ""
