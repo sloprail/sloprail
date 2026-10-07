@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Context is what a case runs in: the temp working directory and, for a plugin case, the plugin
@@ -37,7 +39,7 @@ var ruleNatures = []string{NatureGate, NatureFileGuard, NatureContext}
 // A repo can hold .sloprail/ folders below the root. A case runs in the context of the .sloprail/
 // it sits in:
 //   - root (or any non-plugin folder): the .sloprail/ is copied into the case's fresh temp dir;
-//   - plugin (the .sloprail/'s parent holds .claude-plugin/plugin.json): that plugin folder is
+//   - plugin (the .sloprail/'s parent holds a harness's plugin.json): that plugin folder is
 //     installed from its local checkout as the plugin under test, beside the core sloprail plugin;
 //     the host repo's root .sloprail/ is NOT copied, and the case's temp dir starts empty.
 type Case struct {
@@ -61,12 +63,21 @@ func (c Case) Owner() string {
 }
 
 // skipDirs are never searched: dependencies, VCS data, and the temp / worktree folders.
-var skipDirs = map[string]bool{"node_modules": true, ".git": true, ".claude": true, ".worktrees": true}
+var skipDirs = map[string]bool{"node_modules": true, ".git": true, ".claude": true, ".cursor": true, ".worktrees": true}
 
-// IsPlugin reports whether dir is a Claude plugin folder.
+// pluginManifest is the first plugin.json dir holds under any harness's manifest folder, or "".
+func pluginManifest(dir string) string {
+	for _, p := range harness.PluginManifestPaths(dir) {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// IsPlugin reports whether dir is a plugin folder (of any harness).
 func IsPlugin(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json"))
-	return err == nil
+	return pluginManifest(dir) != ""
 }
 
 // sloprailDirs lists every .sloprail/ folder below root (not descending into one, nor into skipDirs).
@@ -186,7 +197,7 @@ func sameDir(a, b string) bool {
 
 // PluginName is a plugin folder's name: plugin.json's "name", else the folder's base name.
 func PluginName(dir string) string {
-	if raw, err := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+	if raw, err := os.ReadFile(pluginManifest(dir)); err == nil {
 		var m struct{ Name string }
 		if json.Unmarshal(raw, &m) == nil && m.Name != "" {
 			return m.Name
