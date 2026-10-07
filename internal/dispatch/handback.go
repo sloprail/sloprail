@@ -49,7 +49,7 @@ func subagentHandback(subject string, req Request) string {
 		"2. Revert those files on your branch in a real commit, so your branch carries nothing uncited:\n"+
 		"  `git apply -R --index %s && git commit -m 'revert: handed back to the parent for the user approval'`\n"+
 		"3. Report to your parent: where the patch is (%s), and EXACTLY what needs the user's approval. "+
-		"The parent asks the user (AskUserQuestion), re-applies the patch (`git apply --index <patch>`), and commits it with `%s: <the user's exact answer>`.",
+		"The parent asks the user, re-applies the patch (`git apply --index <patch>`), and commits it with `%s: <the user's exact answer>`.",
 		subject, base, files, handbackPatch, handbackPatch, handbackPatch, changeset.TrailerCitesUser)
 }
 

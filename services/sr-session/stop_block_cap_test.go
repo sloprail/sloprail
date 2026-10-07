@@ -40,7 +40,7 @@ func TestStopHookBlockCap_DefaultJudgesRetriesUpToTheHarnessCap(t *testing.T) {
 
 	out, _ := s.refusedStop(false)
 	require.Contains(t, out, `"decision":"block"`, "the first Stop is refused")
-	for i := 2; i <= declaration.DefaultStopHookBlockCap; i++ {
+	for i := 2; i <= declaration.DefaultStopHookBlockCap(); i++ {
 		out, _ = s.refusedStop(true)
 		require.Containsf(t, out, `"decision":"block"`,
 			"retry %d was not judged — a Stop gate gave way to the agent replying again", i)

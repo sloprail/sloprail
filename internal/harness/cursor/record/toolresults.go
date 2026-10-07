@@ -57,6 +57,13 @@ const (
 	KindPre = "pre"
 	// KindPost is a call's outcome (postToolUse, or postToolUseFailure with IsError).
 	KindPost = "post"
+	// KindRoot marks the conversation as the session's own root: its sessionStart fired.
+	// Cursor fires sessionStart for the session only, never for a sub-agent's conversation,
+	// whose tool hooks nonetheless fire under its own conversation_id (recorded in
+	// harness-mocks runs/subagent-lifecycle-hooks, nested-subagents, foreground-subagent-result,
+	// subagent-transcripts). No payload and no transcript line names a conversation's parent,
+	// so this is the only recorded way to tell the root from a sub-agent.
+	KindRoot = "root"
 	// KindContent is the bytes of a file a Read is about to return (beforeReadFile).
 	KindContent = "content"
 )
@@ -271,6 +278,7 @@ func sweep(dir string) {
 type slot struct {
 	id, tool, key, path, gen string
 	at                       time.Time
+	started                  int // the store line index of its pre
 
 	// where the outcome text is: the line index (1-based, the line's number in the store,
 	// which is what the result is cited under), its offset and length in the file.
@@ -305,6 +313,9 @@ func (s *slot) result() (r ref, isErr bool, ok bool) {
 type store struct {
 	path  string
 	byKey map[string][]*slot
+
+	// root: a KindRoot line was seen, so the conversation is the session's own.
+	root bool
 }
 
 // loadStore streams the file, keeping per line only where it is (not its text: outputs
@@ -354,20 +365,22 @@ func loadStore(conversationID string) *store {
 							break
 						}
 						open = without(open, s)
-						*s = slot{id: s.id, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at}
+						*s = slot{id: s.id, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at, started: where.idx}
 						if s.tool == "Read" && s.path != "" {
 							s.open = true
 							open = append(open, s)
 						}
 						break
 					}
-					s := &slot{id: l.ToolUseID, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at}
+					s := &slot{id: l.ToolUseID, tool: l.Tool, key: l.Key, path: l.Path, gen: l.Generation, at: at, started: where.idx}
 					byID[s.id] = s
 					all = append(all, s)
 					if s.tool == "Read" && s.path != "" {
 						s.open = true
 						open = append(open, s)
 					}
+				case KindRoot:
+					st.root = true
 				case KindPost:
 					s := byID[l.ToolUseID]
 					if s == nil || s.postRecorded || toolClass(l.Tool) != toolClass(s.tool) {
@@ -457,6 +470,15 @@ func (st *store) pairing(callCounts map[string]int) map[string][]*slot {
 		ok := true
 		for _, extra := range slots[calls:] {
 			if extra.postRecorded || extra.bound {
+				ok = false
+			}
+		}
+		// Calls pair with slots by START order, which is the transcript's order only if
+		// the calls did not overlap: each must have finished before the next began.
+		// Two running together (parallel identical commands) may have started in either
+		// order relative to the transcript, so their outputs could swap: no result.
+		for i := 0; ok && i+1 < calls; i++ {
+			if !slots[i].postRecorded || slots[i].post.idx > slots[i+1].started {
 				ok = false
 			}
 		}

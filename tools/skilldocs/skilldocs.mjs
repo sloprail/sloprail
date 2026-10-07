@@ -20,7 +20,7 @@
  * be run from any directory — the site calls it from outside this checkout and
  * passes its own content folder as out-dir.
  */
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join, basename, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -52,8 +52,10 @@ const GITHUB_BLOB_BASE = `https://github.com/sloprail/sloprail/blob/${COMMIT}`;
 // The user-facing invocation is `/<plugin>:<skill>` — plugin name from the
 // plugin manifest, skill from its directory. Read them so the command in the
 // docs can't drift from what the plugin is actually called.
+const MANIFEST_DIRS = ['.claude-plugin', '.codex-plugin', '.cursor-plugin']; // internal/harness/pluginmanifest.go
+const manifestDir = MANIFEST_DIRS.find((d) => existsSync(join(PLUGIN_DIR, d, 'plugin.json')));
 const pluginName = JSON.parse(
-  readFileSync(join(PLUGIN_DIR, '.claude-plugin', 'plugin.json'), 'utf8'),
+  readFileSync(join(PLUGIN_DIR, manifestDir, 'plugin.json'), 'utf8'),
 ).name;
 const SKILL_COMMAND = `/${pluginName}:${SKILL_NAME}`;
 

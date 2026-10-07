@@ -139,7 +139,8 @@ find_sr_session() {
 
 sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 
-# plugin_version reads THIS plugin's own version out of its plugin.json — the
+# plugin_version reads THIS plugin's own version out of its Claude manifest
+# (.claude-plugin/plugin.json; the Cursor manifest carries the same version) — the
 # minimum an installed sr-session is required to meet, since the two are
 # bumped in lockstep (scripts/bump-version.sh) and a release always ships the
 # sr* binaries matching the tag it was cut from.

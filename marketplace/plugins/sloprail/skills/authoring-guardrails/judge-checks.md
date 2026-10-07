@@ -173,7 +173,11 @@ the modelset.
 ## `allowed_tools` — what the judge's agent may do
 
 `allowed_tools:` is an optional list of tool names this judge's agent may use,
-threaded to `sr-agent`'s `--allowed-tools`:
+threaded to `sr-agent`'s `--allowed-tools`. Names are the **canonical tool
+vocabulary** (`Bash`, `Read`, `Write`, `Edit`, `Grep`, `Glob`, `WebFetch`, ... —
+Claude Code's spelling), and `sr-agent` maps each onto the running harness's own
+tool and permission model (Claude Code, Codex, Cursor). Write rules once, in
+that vocabulary; do not write a harness's own spelling:
 
 ```yaml
 allowed_tools: [WebFetch]
@@ -190,10 +194,10 @@ optionally followed by one parenthesised scope. An empty entry, two rules in one
 item (`"Read WebFetch"`), or a scope that never closes is refused at load,
 naming the entry.
 
-An entry may be a **scoped rule** in Claude Code's own syntax, and each list item
-reaches the harness whole, spaces included: `"Bash(curl -sL:*)"` lets the judge
+An entry may be a **scoped rule** in the canonical syntax, and each list item
+reaches `sr-agent` whole, spaces included: `"Bash(curl -sL:*)"` lets the judge
 run commands that start with `curl -sL` and no other shell command, and
-`"WebFetch(domain:code.claude.com)"` limits fetches to one host. Quote such an
+`"WebFetch(domain:example.com)"` limits fetches to one host. Quote such an
 entry in YAML, because its colon would otherwise start a mapping.
 
 ### One vocabulary, every harness
@@ -226,7 +230,7 @@ project is read by absolute path and cannot be written.
 ## `disallowed_tools` — what the judge's agent may not do
 
 `disallowed_tools:` lists rules the judge is **denied**, threaded to `sr-agent`'s
-`--disallowed-tools` (claude's own). A deny beats every allow, including the
+`--disallowed-tools`. A deny beats every allow, including the
 substrate's own grants, so this is how a rule takes back part of what it
 granted:
 
@@ -235,8 +239,8 @@ allowed_tools: ["Bash(curl:*)"]
 disallowed_tools: ["Bash(curl * -o *)", "Bash(curl * -d @*)"]
 ```
 
-It is judge-only and checked at load like `allowed_tools`. A harness with no
-permission model refuses it rather than running the judge unconfined.
+It is judge-only and checked at load like `allowed_tools`. A harness that cannot
+express a deny refuses it rather than running the judge unconfined.
 
 A deny list closes the **forms it names**, and no more. Measured with
 `Bash(curl:*)` granted: 20 patterns denied every form they named, including
@@ -254,23 +258,17 @@ that command.
 
 What does hold is to **pin the whole command and deny any extra word**: allow
 the exact command, flags and host, and deny that same prefix followed by a
-space. Claude Code's `*` matches across spaces, so the deny catches every flag,
+space. A scoped rule's `*` matches across spaces, so the deny catches every flag,
 file or second URL appended after the one argument you meant:
 
 ```yaml
-allowed_tools: ["Bash(curl -sL https://code.claude.com/docs/*)", "Bash(grep:*)", "Bash(head:*)"]
-disallowed_tools: ["Bash(curl -sL https://code.claude.com/docs/* *)"]
+allowed_tools: ["Bash(curl -sL https://example.com/docs/*)", "Bash(grep:*)", "Bash(head:*)"]
+disallowed_tools: ["Bash(curl -sL https://example.com/docs/* *)"]
 ```
 
-Measured through `sr-agent` (claude 2.1.282, haiku, project readonly):
-
-- **ran:** `curl -sL <docs url>.md | grep -n -A12 …` and `… | head`;
-- **refused:** everything else tried, namely:
-  - `-o` into the project, into `/tmp`, and attached (`-o/tmp/x`);
-  - `-O`, `-sLo`, `--output`;
-  - `-d @`, `-T`, `-F f=@`, `-H @`;
-  - a second URL, `$(…)` in the URL, `>` redirection;
-  - any other host.
+Which forms a given harness actually ran or refused under this pattern is
+measured per harness; Claude Code's measurements are in the
+[Claude Code notes](#claude-code-notes) appendix.
 
 ## What a judge can read and write
 
@@ -288,8 +286,8 @@ It **cannot write the project** with its file tools. Every file-writing tool —
 `touch`, `rm`) — is denied there, even if `allowed_tools` names `Write` or
 `Edit`. The only thing a judge may write is its verdict file, whose folder
 `sr-agent` adds as a writable dir the same way (`--add-dir <path>` is readable
-and writable, as in claude's own `--add-dir`; `--add-dir:readonly <path>` is
-readable only). Three things keep that true:
+and writable; `--add-dir:readonly <path>` is readable only). Three things
+keep that true:
 
 - The project's deny is never dropped. The verdict folder is placed outside the
   project, even when `$TMPDIR` points inside it, and `sr-agent` refuses a
@@ -299,12 +297,12 @@ readable only). Three things keep that true:
   path as a pattern, so its deny would not match the directory. The judge
   fails closed instead.
 - The judge runs in the `default` permission mode, whatever the user's own
-  settings say. A user default of bypassPermissions was measured to let a judge
-  with no tools write outside the project.
+  settings say (never a bypass mode; see the appendix for what was measured
+  under Claude Code).
 
 `allowed_tools: [Read]` is not needed to read the project. It adds reads
 **anywhere else** on disk, so name it only when the judge must open something
-outside the project (a transcript under `~/.claude`, say).
+outside the project (the session transcript, say).
 
 Three things `allowed_tools` can still widen, so name them deliberately:
 
@@ -316,7 +314,7 @@ Three things `allowed_tools` can still widen, so name them deliberately:
   readonly project and `-X POST -d @file` sent a file out. `awk` wrote a file
   anywhere under `Bash(awk:*)`, and so did `sed -n 'w <file>'` under
   `Bash(sed:*)`. `grep` and `head` have no writing forms.
-- **`Bash`** is a shell. The project stays denied to the writes Claude Code
+- **`Bash`** is a shell. The project stays denied to the writes the harness
   recognises, but a shell can run any program, and no permission rule sandboxes
   what that program does. Grant it only when the judge must *run* something, and
   prefer a `prepare` script (which you control) for that.
@@ -360,3 +358,30 @@ what genuinely needs judgement, and give it a `RUBRIC.md` (or the `.md.j2` itsel
 that states the standard concretely enough that two runs agree. And, as everywhere
 in this skill: cause the action and watch the judge refuse it — a judge that loads
 but never fires is the silent no-op this skill exists to prevent.
+
+## Claude Code notes
+
+Measurements taken under Claude Code, through `sr-agent`. Other harnesses map
+the same canonical rules onto their own permission models and may differ; check
+before relying on a form that is not listed here.
+
+- **Scoped-rule syntax.** The canonical `Bash(...)` / `WebFetch(domain:...)`
+  rules are Claude Code's own syntax, passed through unchanged; its `*` matches
+  across spaces. A host-limited fetch looks like
+  `"WebFetch(domain:code.claude.com)"`.
+- **Deny lists** (claude 2.1.282, haiku, project readonly), with the pinned
+  `curl` rule above and `https://code.claude.com/docs/` as the URL:
+
+  - **ran:** `curl -sL <docs url>.md | grep -n -A12 …` and `… | head`;
+  - **refused:** everything else tried, namely:
+    - `-o` into the project, into `/tmp`, and attached (`-o/tmp/x`);
+    - `-O`, `-sLo`, `--output`;
+    - `-d @`, `-T`, `-F f=@`, `-H @`;
+    - a second URL, `$(…)` in the URL, `>` redirection;
+    - any other host.
+
+- **Permission mode.** The judge runs in Claude Code's `default` permission mode
+  whatever the user's own settings say. A user default of bypassPermissions was
+  measured to let a judge with no tools write outside the project.
+- **Transcripts.** The session transcript lives under `~/.claude/projects/`;
+  reading it needs `allowed_tools: [Read]`.
