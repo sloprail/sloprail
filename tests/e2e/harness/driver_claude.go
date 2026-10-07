@@ -708,12 +708,14 @@ func (claudeDriver) SubagentFeedbackCount(records []string) int {
 }
 
 // BlockingErrors reads the hook_blocking_error attachments of a transcript.
-func (claudeDriver) BlockingErrors(record, hookEvent string, dedupe bool) []string {
+func (claudeDriver) BlockingErrors(record string, _ []string, hookEvent string, dedupe bool) []string {
 	return blockingErrorsIn(record, hookEvent, dedupe)
 }
 
 // StopContinuations reads the Stop refusals a transcript shows the agent went on past.
-func (claudeDriver) StopContinuations(record string) []string { return stopContinuationsIn(record) }
+func (claudeDriver) StopContinuations(record string, _ []string) []string {
+	return stopContinuationsIn(record)
+}
 
 // AnySubagentBlockingErrors reads every SubagentStop refusal recorded, told or not.
 func (claudeDriver) AnySubagentBlockingErrors(records []string) []string {

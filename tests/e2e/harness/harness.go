@@ -69,7 +69,8 @@ func (e *Env) setHarnessID(id, harnessID string) { e.harnessIDs[id] = harnessID 
 
 // Env is one isolated end-to-end environment.
 type Env struct {
-	harnessIDs map[string]string // the session ids of a test, by the harness's own (Driver.Observe)
+	prompts    map[string][]string // the prompts each session was launched with, in order (Driver.BlockingErrors)
+	harnessIDs map[string]string   // the session ids of a test, by the harness's own (Driver.Observe)
 	t          *testing.T
 	driver     Driver // the agent harness under test, selected by SR_HARNESS
 	binDir     string // holds every built service binary, prepended to PATH so the plugin finds them
@@ -372,6 +373,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		origins:      map[string]string{},
 		published:    map[string]bool{},
 		harnessIDs:   map[string]string{},
+		prompts:      map[string][]string{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -2093,7 +2095,7 @@ func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) 
 
 	// Only what the hooks refused: the output of the harness's own pre-Stop `sr-checks run` is
 	// never read as a Stop refusal.
-	out := e.driver.BlockingErrors(e.transcript(projDir, sessionID), hookEvent, dedupe)
+	out := e.driver.BlockingErrors(e.transcript(projDir, sessionID), e.prompts[sessionID], hookEvent, dedupe)
 	return out
 }
 
@@ -2117,7 +2119,7 @@ func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) 
 // "two results" is not something a person reading the conversation ever sees.
 func (e *Env) StopContinuations(projDir, sessionID string) []string {
 	e.t.Helper()
-	return e.driver.StopContinuations(e.transcript(projDir, sessionID))
+	return e.driver.StopContinuations(e.transcript(projDir, sessionID), e.prompts[sessionID])
 }
 
 // SubagentBlockingErrors returns the text of every SubagentStop refusal
@@ -2447,6 +2449,7 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, mode SessionMod
 		SkipIfUnsupported(e.t, err)
 		e.t.Fatalf("harness: write scenario: %v", err)
 	}
+	e.prompts[sessionID] = append(e.prompts[sessionID], prompt)
 	cmd := e.driver.Command(e, Launch{
 		ProjDir: projDir, WorkDir: workDir, ScriptPath: scriptPath, Prompt: prompt,
 		Mode: mode, SessionID: sessionID, FromSessionID: fromSessionID,

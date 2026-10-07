@@ -151,10 +151,12 @@ type Driver interface {
 	// StopBlocked reports whether a Stop hook's output refuses the turn.
 	StopBlocked(output string) bool
 	// BlockingErrors are the blocking hook errors in a transcript, optionally
-	// narrowed to one lifecycle event and optionally without repeats.
-	BlockingErrors(record, hookEvent string, dedupe bool) []string
+	// narrowed to one lifecycle event and optionally without repeats. prompts are the
+	// prompts the test launched the session with, in order: a harness whose record does
+	// not tell a prompt from a refusal fed back as one (Cursor's) reads them to.
+	BlockingErrors(record string, prompts []string, hookEvent string, dedupe bool) []string
 	// StopContinuations are the reasons of Stop refusals the agent went on past.
-	StopContinuations(record string) []string
+	StopContinuations(record string, prompts []string) []string
 	// SubagentBlockingErrors are the SubagentStop refusals the sub-agents were
 	// actually told, read from the contents of their own transcripts.
 	SubagentBlockingErrors(records []string) []string
