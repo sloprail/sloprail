@@ -16,9 +16,9 @@ func TestT058_22_RefusalAsksForATrailerNotAChainedCite(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an uncited commit was not refused:\n%s", res.Output)
 	}
-	has(t, res.Output, "as a trailer")
-	has(t, res.Output, "the rule checks it")
 	refusal := strings.Join(res.Refusals(), "\n")
+	has(t, refusal, "as a trailer")
+	has(t, refusal, "the rule checks it")
 	for _, gone := range []string{"cite part alone", "trajectory cite"} {
 		if strings.Contains(refusal, gone) {
 			t.Fatalf("the refusal still mentions %q:\n%s", gone, refusal)

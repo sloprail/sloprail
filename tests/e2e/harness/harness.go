@@ -504,6 +504,10 @@ func (e *Env) InstallJudgeUsageLimit() {
 	}
 }
 
+// JudgeHooksOff reports whether an argv recorded by InstallJudgeClaudeRecordingArgv shows the
+// judge's agent launched so that the project's and plugins' hooks do not run in it.
+func (e *Env) JudgeHooksOff(argv, projDir string) bool { return e.driver.JudgeHooksOff(argv, projDir) }
+
 // InstallShim puts an executable named name, holding script, on the PATH a
 // session's hooks run with — ahead of the build under test — so a test can stand
 // in for one binary (an older sr-file, say). BinPath names the real one, for a
@@ -1932,7 +1936,19 @@ const SessionStartAttachments = 2
 // citation's own output — read it from the file the mock wrote instead; this is the
 // up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	return MockPreambleLines + SessionStartAttachments + 1
+	pre, start := e.driver.RecordLayout()
+	return pre + start + 1
+}
+
+// NextPromptLine is the 1-based physical line the prompt of the next Run of sessionID
+// (a resume) will sit on, given the transcript as it stands.
+func (e *Env) NextPromptLine(proj, sessionID string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(e.TranscriptPath(proj, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: read transcript for the next prompt's line: %v", err)
+	}
+	return e.driver.NextPromptLine(string(body))
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation

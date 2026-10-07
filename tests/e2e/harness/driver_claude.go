@@ -24,7 +24,7 @@ func (claudeDriver) Name() string { return "claude" }
 
 func (claudeDriver) Caps() []string {
 	return []string{CapSubagents, CapWorktrees, CapPlugins, CapSkills, CapAskUserQuestion,
-		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules}
+		CapStopHooks, CapForkResumeCompact, CapForkSessions, CapBackgroundTasks, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordPreamble, CapPathLineBreaks, CapRecordAfterSessionStart, CapScopedToolRules, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapResumeFromOtherDirectory, CapScriptedRetryText}
 }
 
 // RenderScript renders the scenario as the shell the mock runs.
@@ -434,6 +434,18 @@ exit 0
 }
 
 // TranscriptPath is where claude keeps a session's transcript: <config>/projects/<encoded project dir>/<session>.jsonl.
+// RecordLayout: the mock's preamble lines, then the SessionStart attachments, then the prompt.
+func (claudeDriver) RecordLayout() (int, int) { return MockPreambleLines, SessionStartAttachments }
+
+// NextPromptLine: the resume's SessionStart attachments are written first, the prompt after.
+func (claudeDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + SessionStartAttachments + 1
+}
+
+func (claudeDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	e.seedTranscriptFile(projDir, sessionID, `{"type":"user","uuid":"e2e-seed","message":{"role":"user","content":"work"}}`)
+}
+
 func (claudeDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
@@ -791,3 +803,9 @@ func (claudeDriver) ConfigEnv(e *Env) []string { return []string{"CLAUDE_CONFIG_
 
 // Observe: Claude sessions are named by the caller (--session-id), so there is nothing to learn.
 func (claudeDriver) Observe(*Env, Launch, string) {}
+
+// JudgeHooksOff: the judge's claude is launched with disableAllHooks in its settings, the only
+// switch that stops the project's and plugins' hooks (empty hooks/enabledPlugins objects merge).
+func (claudeDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, `"disableAllHooks":true`)
+}

@@ -27,6 +27,31 @@ const (
 	// conversation. Cursor's mock does not model a fork of a conversation.
 	CapForkSessions = "fork-sessions"
 
+	// CapAllowNotice: the harness can show the person a note on a hook that allows (a
+	// systemMessage). Cursor has no field for one: the note goes to stderr only.
+	CapAllowNotice = "allow-notice"
+
+	// CapNullTranscriptPath: a hook payload with no transcript path means the session keeps
+	// none (Codex --ephemeral). Cursor names none on its first events and sloprail locates
+	// the file it will write, so there it is an ordinary payload and guardrails stay on.
+	CapNullTranscriptPath = "null-transcript-path"
+
+	// CapRecordHoldsHookContext: the record holds the context a start hook added (the plugin's
+	// rules-first text), as it holds the user's words. Cursor writes it nowhere in the
+	// transcript: the mock hands it to the scripted agent in A10N_MOCK_ADDITIONAL_CONTEXT
+	// (harness-mocks runs/additional-context).
+	CapRecordHoldsHookContext = "record-holds-hook-context"
+
+	// CapResumeFromOtherDirectory: a session resumed from another directory keeps appending to
+	// the record where it began (Claude Code reports a path under the new directory's project
+	// folder, where no file exists). Cursor files a conversation under its workspace folder.
+	CapResumeFromOtherDirectory = "resume-from-another-directory"
+
+	// CapScriptedRetryText: a scenario can say something only AFTER a Stop refusal. The
+	// cursor-mock plays every step before the first Stop, and the retry says only the
+	// scenario's final result.
+	CapScriptedRetryText = "scripted-retry-text"
+
 	// CapSubagentParentLink: a sub-agent's conversation names the session that dispatched
 	// it, so what the sub-agent can cite (the user's words, a sibling's tool output) and
 	// what the root can cite of it are resolvable. Cursor records no parent anywhere (hook
@@ -50,6 +75,13 @@ const (
 	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
 	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
 	CapRecordPreamble = "record-preamble"
+
+	// CapRecordNamesStartDir: the session's record names the directory the session began in,
+	// so a hook that reports another folder (the agent `cd`'d into a worktree) is still the
+	// same session's. Cursor's transcript names none (only a lossy project slug), and its
+	// hooks report the workspace the conversation was opened in, not a shell's directory.
+	CapRecordNamesStartDir = "record-names-start-dir"
+
 	// CapRecordAfterSessionStart: a fresh session's record does not exist while the
 	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
 	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
@@ -164,6 +196,10 @@ type Driver interface {
 	// JudgeShim is the executable (file name, body) standing in for the judge's
 	// agent binary.
 	JudgeShim(s JudgeShim) (name, body string)
+	// JudgeHooksOff reports whether the argv the judge's agent was launched with (one
+	// argument per line) keeps the project's and plugins' hooks from running in it.
+	JudgeHooksOff(argv, projDir string) bool
+
 	// LargeJudgeModelArgs is the flag and value a judge asking for size-lg reaches the
 	// harness's argv with.
 	LargeJudgeModelArgs() (flag, value string)
@@ -173,8 +209,21 @@ type Driver interface {
 	// from the two, as the first hooks of a session make it.
 	IdentityPayload(e *Env, projDir, sessionID string) string
 
+	// SeedTranscript gives a session that has run no turn the record its agent would have (a
+	// user message, in the harness's own shape): a refusal reached without a transcript is stored
+	// for no key. A harness that names its own sessions has no path to write at before a turn
+	// ran, so it seeds under an id of its own.
+	SeedTranscript(e *Env, projDir, sessionID string)
 	// TranscriptPath is where the harness keeps a session's root transcript.
 	TranscriptPath(e *Env, projDir, sessionID string) string
+	// RecordLayout is what a fresh record holds ahead of the first prompt: the lines the
+	// harness's own preamble takes (the mock's, not entries) and the records a session's
+	// start leaves before it. A test names the line the first prompt sits on, in
+	// `#skip <line>` or a (<record>:L-L) reference, authored before the run.
+	RecordLayout() (preambleLines, sessionStartRecords int)
+	// NextPromptLine is the 1-based physical line a prompt a resume appends to record
+	// (the record's current text) will sit on.
+	NextPromptLine(record string) int
 	// SubagentRecordPaths lists the sub-agent transcripts of a session, sorted.
 	SubagentRecordPaths(e *Env, projDir, sessionID string) []string
 	// ForkTranscript writes the transcript a re-forked session opens on.

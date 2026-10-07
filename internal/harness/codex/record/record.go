@@ -188,7 +188,8 @@ func harnessPreamble(text string) bool {
 	return strings.HasPrefix(t, "<environment_context>") ||
 		strings.HasPrefix(t, "<user_instructions>") ||
 		strings.HasPrefix(t, "# AGENTS.md instructions") ||
-		strings.HasPrefix(t, "<turn_aborted>")
+		strings.HasPrefix(t, "<turn_aborted>") ||
+		strings.HasPrefix(t, "<hook_prompt") // what a hook fed the agent (recorded: harness-mocks codex-mock runs/stops)
 }
 
 // argumentsOf maps a Codex tool call onto the canonical (name, arguments).

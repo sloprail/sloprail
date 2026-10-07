@@ -2,6 +2,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,7 +39,7 @@ func (codexDriver) Name() string { return "codex" }
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults}
+	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -281,6 +283,12 @@ func codexHostEnv() []string {
 
 var codexThread = regexp.MustCompile(`"thread_id":"([^"]+)"`)
 
+// JudgeHooksOff: the judge's codex is launched with the hooks feature disabled
+// (`--disable hooks`, one argument per line in the recorded argv).
+func (codexDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, "--disable\nhooks\n")
+}
+
 // Observe records the thread a run started: the id Codex gave the session.
 func (codexDriver) Observe(e *Env, l Launch, output string) {
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
@@ -364,7 +372,8 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 }
 
 // HookEnv is what a hook, or a call made from inside a session, runs with. Codex gives a
-// hook no session variable (the session is in its payload); a shell command the agent runs
+// hook no session variable (the session is in its payload), and a sloprail command run before
+// any session started has none either, so the harness is named outright as Cursor's is; a shell command the agent runs
 // has CODEX_THREAD_ID and CODEX_SESSION_ID.
 func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 	// SLOPRAIL_HARNESS: the plugin's hook wrapper names the harness, and Codex's own markers
@@ -463,6 +472,14 @@ func rolloutPath(e *Env, threadID string) string {
 
 // TranscriptPath is the session's rollout; before the session has run there is none, and
 // the path where it would be named after the session.
+// RecordLayout: the rollout opens with its session_meta, then the context the SessionStart
+// hook added (one developer message), then the prompt.
+func (codexDriver) RecordLayout() (int, int) { return 1, 1 }
+
+func (codexDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + 1 + 1
+}
+
 func (codexDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	if p := rolloutPath(e, e.harnessID(sessionID)); p != "" {
 		return p
@@ -657,4 +674,29 @@ func (c codexDriver) SubagentFeedbackCount(records []string) int {
 		n += len(c.BlockingErrors(r, nil, "SubagentStop", false))
 	}
 	return n
+}
+
+// SeedTranscript gives a session that has not run a turn the rollout Codex would have: a thread
+// the session names (its id is the thread's, in the form Codex gives one), and the rollout file
+// under $CODEX_HOME/sessions that CODEX_THREAD_ID finds it by.
+func (codexDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	if e.harnessID(sessionID) != "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	h := hex.EncodeToString(sum[:])
+	thread := fmt.Sprintf("%s-%s-4%s-8%s-%s", h[0:8], h[8:12], h[12:15], h[15:18], h[18:30])
+	dir := filepath.Join(e.configDir, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	meta, _ := json.Marshal(map[string]any{"timestamp": "2026-01-01T00:00:00.000Z", "ordinal": 0, "type": "session_meta",
+		"payload": map[string]any{"session_id": thread, "id": thread, "cwd": resolveWorkDir(projDir), "originator": "codex_exec", "source": "exec", "thread_source": "user"}})
+	user, _ := json.Marshal(map[string]any{"timestamp": "2026-01-01T00:00:00.001Z", "ordinal": 1, "type": "response_item",
+		"payload": map[string]any{"type": "message", "id": "msg_e2e_seed", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "work"}}}})
+	rollout := filepath.Join(dir, "rollout-2026-01-01T00-00-00-"+thread+".jsonl")
+	if err := os.WriteFile(rollout, []byte(string(meta)+"\n"+string(user)+"\n"), 0o644); err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	e.setHarnessID(sessionID, thread)
 }

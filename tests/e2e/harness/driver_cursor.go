@@ -217,9 +217,19 @@ func cursorHostEnv() []string {
 	return out
 }
 
+// mockUnmodeledStep matches the mock's refusal of a scripted tool call it does not model.
+var mockUnmodeledStep = regexp.MustCompile(`cursor-mock: the scenario script's tool call is refused: [^\n]*is not modeled[^\n]*`)
+
 // Observe records the session id the mock's first frame names.
 func (c cursorDriver) Observe(e *Env, l Launch, output string) {
 	c.syncPluginsBack(e)
+	// A step the mock itself declares unmodeled (it refuses the call rather than guess a
+	// frame no recording shows) is a step this harness cannot take here: skip naming it, as
+	// for any step a harness lacks. The mock's own words are the reason, so nothing here
+	// restates which forms it models.
+	if m := mockUnmodeledStep.FindString(output); m != "" {
+		e.t.Skipf("harness cursor: %s", m)
+	}
 	if l.Mode == SessionResume && e.harnessIDs[l.SessionID] != "" {
 		return
 	}
@@ -314,7 +324,7 @@ func (c cursorDriver) HookEnv(e *Env, sessionID string) []string {
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
 		// a shell tool's environment names its conversation (recorded, subprocess-session-env)
-		env = append(env, "CURSOR_CONVERSATION_ID="+e.harnessID(sessionID))
+		env = append(env, "CURSOR_CONVERSATION_ID="+cursorConversationID(e, sessionID))
 	}
 	return env
 }
@@ -401,12 +411,42 @@ func (cursorDriver) JudgeShim(s JudgeShim) (string, string) {
 
 var cursorNonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
-// TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
-func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
-	id := e.harnessID(sessionID)
-	if id == "" {
-		id = "not-yet-run-" + sessionID
+// cursorConversationID is the conversation id the harness gave a session, or the stand-in a
+// session no mock has run yet is filed under (its transcript path and its shell's variable agree).
+func cursorConversationID(e *Env, sessionID string) string {
+	if id := e.harnessID(sessionID); id != "" {
+		return id
 	}
+	return "not-yet-run-" + sessionID
+}
+
+// SeedRecord is the one line of a Cursor transcript: a user message, in Cursor's own shape.
+func (cursorDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	e.seedTranscriptFile(projDir, sessionID, `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nwork\n</user_query>"}]}}`)
+}
+
+// TranscriptPath is <home>/.cursor/projects/<workspace, non-alphanumerics as "-">/agent-transcripts/<session>/<session>.jsonl.
+// RecordLayout: the conversation's first line is the prompt, and Cursor writes nothing for a
+// session's start (the context a start hook adds is not in the transcript: harness-mocks
+// runs/additional-context).
+func (cursorDriver) RecordLayout() (int, int) { return 0, 0 }
+
+// NextPromptLine: a turn ends the record with a closing line ({"type":"turn_ended"}) that a
+// resume continues past (harness-mocks cursor-mock runner, transcript-record-envelope), so
+// the prompt takes its place.
+func (cursorDriver) NextPromptLine(record string) int {
+	if record == "" {
+		return 1
+	}
+	lines := strings.Split(strings.TrimSuffix(record, "\n"), "\n")
+	if strings.Contains(lines[len(lines)-1], `"turn_ended"`) {
+		lines = lines[:len(lines)-1]
+	}
+	return len(lines) + 1
+}
+
+func (cursorDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
+	id := cursorConversationID(e, sessionID)
 	project := cursorNonAlnum.ReplaceAllString(strings.TrimPrefix(resolveWorkDir(projDir), "/"), "-")
 	return filepath.Join(e.home, ".cursor", "projects", project, "agent-transcripts", id, id+".jsonl")
 }
@@ -603,6 +643,20 @@ func copyTree(src, dst string) error {
 
 // syncPluginsBack copies what the run wrote inside the loaded plugins (a check's ledger in
 // its plugin's own folder) back to the plugin's root, where the test reads it.
+// JudgeHooksOff: the judge's cursor-agent runs in a scratch workspace of its own, not the
+// project's. Cursor discovers project hooks from the workspace, so none of them fire there
+// (measured; see sr-agent's cursor_grant.go).
+func (cursorDriver) JudgeHooksOff(argv, projDir string) bool {
+	lines := strings.Split(argv, "\n")
+	for i, l := range lines {
+		if l == "--workspace" && i+1 < len(lines) {
+			ws := lines[i+1]
+			return ws != "" && ws != projDir && ws != resolveWorkDir(projDir)
+		}
+	}
+	return false
+}
+
 func (cursorDriver) syncPluginsBack(e *Env) {
 	for _, p := range e.extraPlugins {
 		_ = copyTree(filepath.Join(e.home, ".cursor", "plugins", "local", p.name), p.root)

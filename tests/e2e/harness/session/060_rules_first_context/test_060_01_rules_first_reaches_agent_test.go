@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T060_01: the plugin's standing instruction (rules-first.md) reaches the agent at
@@ -31,6 +33,20 @@ func TestT060_01_RulesFirstTextReachesTheAgent(t *testing.T) {
 		t.Fatalf("the session left no record: %v", err)
 	}
 	body := string(record)
+	if !harness.HasCap(t, harness.CapRecordHoldsHookContext) {
+		// This harness writes the context a start hook added nowhere in its transcript (the mock
+		// hands it to the scripted agent out of band), so the record cannot show what the agent
+		// was handed. What can be seen is the form `sr-session emit-context` writes it in, which
+		// the harness reads it from.
+		if strings.Contains(body, "sloprail is active in this project") {
+			t.Errorf("a harness whose record holds no hook context carries the rules-first text in it:\n%s", body)
+		}
+		res := e.CLIDirectStdinEnv(proj, "the rules come before the work", e.SessionEnv(sess), "sr-session", "emit-context")
+		if !strings.Contains(res.Output, `"additional_context"`) || !strings.Contains(res.Output, "the rules come before the work") {
+			t.Errorf("emit-context did not hand the text over in the harness's own form:\n%s", res.Output)
+		}
+		return
+	}
 	for _, want := range []string{
 		"sloprail is active in this project",
 		"the rules come before the work",
