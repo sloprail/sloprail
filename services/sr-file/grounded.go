@@ -207,8 +207,8 @@ func resolveCites(fc grounding.FileCommand) ([]transcript.Citation, error) {
 		path = transcript.CurrentSessionPath("")
 	}
 	if path == "" {
-		return nil, fmt.Errorf("sr-file %s: cannot resolve citations: no session trajectory found (set %s, or run inside a session with %s set)",
-			fc.Verb, grounding.EnvTranscript, transcript.SessionIDEnv)
+		return nil, fmt.Errorf("sr-file %s: cannot resolve citations: no session trajectory found (set %s, or run inside a harness session)",
+			fc.Verb, grounding.EnvTranscript)
 	}
 	cs, err := transcript.ResolveCitations(path, fc.Cites)
 	if err != nil {

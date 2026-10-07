@@ -394,7 +394,7 @@ func initRepo(t *testing.T, dir string) {
 		{"config", "user.email", "e2e@example.invalid"},
 		{"config", "user.name", "e2e"},
 		{"add", "-A"},
-		{"commit", "-m", "initial", "--no-gpg-sign"},
+		{"commit", "--allow-empty", "-m", "initial", "--no-gpg-sign"},
 	} {
 		run(t, dir, "git", args...)
 	}

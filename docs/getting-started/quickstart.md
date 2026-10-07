@@ -10,12 +10,13 @@ but never refuses is worse than no rule at all.
 
 ## Before you start
 
-You need the plugin — see [Install](/getting-started/install). In short, in
-Claude Code:
+You need the plugin, installed in the project you are working in — see
+[Install](/getting-started/install) for Codex and Cursor. In short, from the
+project's root, in Claude Code:
 
 ```bash
-/plugin marketplace add sloprail/sloprail
-/plugin install sloprail@sloprail-marketplace
+claude plugin marketplace add sloprail/sloprail --scope project
+claude plugin install sloprail@sloprail-marketplace --scope project
 ```
 
 That registers the hooks, and the next session installs the `sr*` binaries

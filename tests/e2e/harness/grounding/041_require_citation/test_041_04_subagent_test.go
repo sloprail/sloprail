@@ -137,6 +137,7 @@ func requireInSubagentRecord(t *testing.T, root, sub, callID string) {
 // command's output as tool_result; the write lands, grounded in the
 // sub-agent's own record.
 func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -229,13 +230,16 @@ func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 	record, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-22"))
 	subRecord, _ := os.ReadFile(subs[0])
 	said := string(record) + string(subRecord)
-	if !strings.Contains(said, "does not resolve") {
+	// A harness whose record holds no tool results (and a refusal is one) cannot show the
+	// refusal's wording; that the write did not land is shown above.
+	wording := harness.HasCap(t, harness.CapRecordHoldsToolResults)
+	if wording && !strings.Contains(said, "does not resolve") {
 		t.Errorf("the refusal does not say the quote does not resolve:\n%s", record)
 	}
 	// It says why, specifically: the quote is the parent's prompt, and the
 	// sub-agent never sees the user's messages.
-	if !strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
-		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.") {
+	if wording && (!strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
+		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.")) {
 		t.Errorf("the refusal does not tell the sub-agent it quoted its dispatch prompt:\n%s", record)
 	}
 	for _, l := range bothLedger(e, proj) {
@@ -250,6 +254,7 @@ func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 // trailer it committed with grounds the range. An uncited sub-agent commit is
 // refused there, so the guard is live.
 func TestT041_23_SubagentCitationsReachTheRootsStop(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	const afterGuard = `match: "memories/**"
 require:
   - citation: {source_types: [user]}
@@ -288,6 +293,7 @@ require:
 // exits 0, searching the sub-agent's record) and the gate is handed the
 // citation.
 func TestT041_24_SubagentCiteChainOnItsOwnOutput(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	const gate = `on:
   - event: PreCommandInvoke
     match: any(event.invocations, .bin == "touch")
@@ -331,6 +337,7 @@ checks:
 // reply does not ground a tool_result citation.
 // sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -360,6 +367,7 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 // command printed it — the reply is not a second, ambiguous match.
 // sr:proves citations/quote-resolves-to-exactly-one-entry
 func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
+	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

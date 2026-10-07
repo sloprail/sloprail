@@ -8,8 +8,7 @@ git init -q -b main .
 git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 BASE=$(git rev-parse HEAD)
 SETUP=$(sr-test agent "$SR_TEST_CASE_DIR/agent.sh" --prompt "set up")
-export CLAUDE_CONFIG_DIR=$(echo "$SETUP" | jq -er .config_dir)
-export CLAUDE_CODE_PLUGIN_CACHE_DIR=$(echo "$SETUP" | jq -er .plugin_cache)
+while IFS= read -r kv; do export "$kv"; done < <(echo "$SETUP" | jq -er ".env[]")
 fail() { echo "$1" >&2; jq -c . "$SR_EVENTS_FILE" >&2; exit 1; }
 
 variant() { # name workflow-body : commit it on its own branch from BASE, leave HEAD there

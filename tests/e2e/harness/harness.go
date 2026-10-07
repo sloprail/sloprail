@@ -960,6 +960,9 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 	// on it.
 	cmd.Env = append(HostEnv(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
 	cmd.Env = append(cmd.Env, e.autoWatchEnv()...)
+	if d, ok := e.driver.(interface{ CLIEnv(e *Env) []string }); ok {
+		cmd.Env = append(cmd.Env, d.CLIEnv(e)...)
+	}
 	// extraEnv is appended LAST so a caller-supplied variable wins over any
 	// ambient one — a test exercising cite's environment fallback sets
 	// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR this way.

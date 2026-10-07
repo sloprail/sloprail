@@ -94,7 +94,11 @@ type Payload struct {
 	// Command is beforeShellExecution's / afterShellExecution's command line.
 	Command string `json:"command"`
 
-	// FilePath and Edits are afterFileEdit's: the file and each {old_string,
+	// Content is beforeReadFile's: the file's bytes as the agent is about to read them
+	// (recorded: runs/file-tools). It is the only hook that carries a Read's content.
+	Content string `json:"content"`
+
+	// FilePath and Edits are afterFileEdit's (and FilePath beforeReadFile's): the file and each {old_string,
 	// new_string} applied.
 	FilePath string `json:"file_path"`
 	Edits    []Edit `json:"edits"`
