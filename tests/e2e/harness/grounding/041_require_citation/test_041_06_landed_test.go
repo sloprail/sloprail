@@ -118,14 +118,9 @@ func TestT041_36_EachDryRunFailureIsQuotedBesideItsFile(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a line whose changes sr-file cannot compute was permitted:\n%s", res.Output)
 	}
-	// The Bash call's own answer: the stream's other frames repeat the command line, which names
-	// both files.
-	var refusal string
-	for _, r := range res.ToolResults() {
-		if strings.Contains(r, "hook error") {
-			refusal = r
-		}
-	}
+	// What the agent was shown when the call was stopped: the stream's other frames repeat the
+	// command line, which names both files.
+	refusal := strings.Join(res.Refusals(), "\n")
 	if !strings.Contains(refusal, "QUOTE-NOBODY-SAID-4410") {
 		t.Errorf("the refusal of memories/a.md does not quote sr-file's reason for it:\n%s", refusal)
 	}
