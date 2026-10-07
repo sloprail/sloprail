@@ -207,15 +207,9 @@ fi
 `, marker, shQuote(line))
 		}
 	}
-	// The scenario's closing words are the agent's last message: what Codex hands a
-	// parent that waited for a sub-agent (its <subagent_notification>) is that message,
-	// not a result record. It is also what the agent says after every Stop refusal it
-	// goes on past (recorded: harness-mocks codex-mock stop-block-cap-30, an assistant
-	// message after each hook_prompt), the evidence StopContinuations reads.
-	if s.result != "" {
-		fmt.Fprintf(&b, "printf '%%s\\n' %s\n", shQuote(codexLine(codexText(s.result))))
-	}
-	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
+	// The scenario's end is the agent's final answer: Codex prints no result frame, its
+	// stream (and its rollout) end on the last agent message.
+	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(codexLine(codexText(s.result))))
 	return b.String(), nil
 }
 
@@ -378,12 +372,15 @@ func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 	return env
 }
 
-// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
-// host's: the harness it runs as, which the environment alone does not say (a command run
-// outside a session has none of Codex's markers), and so which agent binary a judge launches.
-func (codexDriver) CLIEnv(e *Env) []string { return []string{"SLOPRAIL_HARNESS=codex"} }
-
 func (codexDriver) ConfigEnv(e *Env) []string { return []string{"CODEX_HOME=" + e.configDir} }
+
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say (a Codex shell's
+// CODEX_THREAD_ID is only there inside a session), and the config dir the mock keeps its
+// rollouts in.
+func (c codexDriver) CLIEnv(e *Env) []string {
+	return append([]string{"SLOPRAIL_HARNESS=codex"}, c.ConfigEnv(e)...)
+}
 
 // ShellEnv: the mock's shell tool carries the harness's identity itself.
 func (codexDriver) ShellEnv() string { return "" }
@@ -496,6 +493,26 @@ func (codexDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []stri
 
 func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
 	e.t.Skipf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
+}
+
+// OriginRecord is where a rollout begins: the thread id its session_meta opens on. A fork
+// is a rollout of its own (its own id), and a sub-agent's names the root only in session_id.
+func (codexDriver) OriginRecord(record string) string {
+	first, _, _ := strings.Cut(record, "\n")
+	var rec struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID        string `json:"id"`
+			SessionID string `json:"session_id"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(first), &rec) != nil || rec.Type != "session_meta" {
+		return ""
+	}
+	if rec.Payload.ID != "" {
+		return rec.Payload.ID
+	}
+	return rec.Payload.SessionID
 }
 
 var codexRefusal = regexp.MustCompile(`(?s)Command blocked by PreToolUse hook: (.*?)\. Command: `)

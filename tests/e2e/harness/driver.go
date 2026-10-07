@@ -46,6 +46,10 @@ const (
 	// past its ordinal. Cursor's transcript is the conversation alone: no preamble, no hook
 	// records, a line per entry (harness-mocks cursor-mock session-transcript-file).
 	CapRecordPreamble = "record-preamble"
+	// CapRecordAfterSessionStart: a fresh session's record does not exist while the
+	// SessionStart hook runs; the hook's own attachment is then its first (origin) entry.
+	// Codex opens the rollout with its session_meta when the thread starts, before any hook.
+	CapRecordAfterSessionStart = "record-after-session-start"
 )
 
 // SessionMode is how a launch relates to the session id it names.
