@@ -27,6 +27,10 @@ func New() harness.Harness { return Harness{} }
 // Name implements harness.Harness.
 func (Harness) Name() string { return "cursor" }
 
+// ProjectSkillDirs implements harness.SkillDirs: Cursor loads a skill by reading its
+// SKILL.md under .cursor/skills or .agents/skills (see Payload.SkillLoaded).
+func (Harness) ProjectSkillDirs() []string { return []string{".cursor/skills", ".agents/skills"} }
+
 // CommandDir implements harness.HookDir: cursor-agent runs a plugin's hooks from the
 // plugin's directory, while a Shell command runs in the workspace folder the payload names.
 func (Harness) CommandDir(in harness.HookInput) string { return in.Cwd }

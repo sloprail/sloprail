@@ -23,7 +23,7 @@ func TestCursorRendersWhatCursorCanDo(t *testing.T) {
 		`{"type":"compact","trigger":"manual"}`,
 		`"name":"Task"`,
 		`"name":"Read"`, // a skill is loaded by reading its SKILL.md: Cursor has no skill tool
-		`/.claude/skills/x/SKILL.md`,
+		`/.cursor/skills/x/SKILL.md`,
 		// the final reply is an assistant line: the run's result is what the assistant said
 		`{"message":{"content":[{"text":"fin","type":"text"}]},"type":"assistant"}`,
 	} {
