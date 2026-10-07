@@ -137,6 +137,15 @@ type ToolResultRecorder interface {
 	RecordToolResult(in HookInput) error
 }
 
+// BlockRecorder is what a Harness MAY implement when its session record writes a
+// Stop hook's refusal back as an ordinary user message (Cursor: the followup_message
+// becomes the next prompt). The engine hands it each refusal it emits, so the record
+// can tell that message from one the person typed (the same standing Claude Code's
+// isMeta records have). in is the Stop hook's payload.
+type BlockRecorder interface {
+	RecordBlock(in HookInput, reason string) error
+}
+
 // HookDir is what a Harness MAY implement when its hooks do not run where the agent's
 // commands do (Cursor runs a plugin's hook from the plugin's directory): the directory
 // a pending command's relative paths are resolved against, "" when the hook already runs

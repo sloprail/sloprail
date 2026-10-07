@@ -66,6 +66,10 @@ const (
 	KindRoot = "root"
 	// KindContent is the bytes of a file a Read is about to return (beforeReadFile).
 	KindContent = "content"
+	// KindFollowup is a followup_message sloprail's stop hook emitted (Output): Cursor
+	// writes it into the transcript as a user record, which is then harness-injected,
+	// not the person's words.
+	KindFollowup = "followup"
 )
 
 // StoredLine is one line of the file.
@@ -316,6 +320,9 @@ type store struct {
 
 	// root: a KindRoot line was seen, so the conversation is the session's own.
 	root bool
+
+	// followups: the texts sloprail's stop hook emitted as followup_message.
+	followups map[string]bool
 }
 
 // loadStore streams the file, keeping per line only where it is (not its text: outputs
@@ -381,6 +388,11 @@ func loadStore(conversationID string) *store {
 					}
 				case KindRoot:
 					st.root = true
+				case KindFollowup:
+					if st.followups == nil {
+						st.followups = map[string]bool{}
+					}
+					st.followups[l.Output] = true
 				case KindPost:
 					s := byID[l.ToolUseID]
 					if s == nil || s.postRecorded || toolClass(l.Tool) != toolClass(s.tool) {

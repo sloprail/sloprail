@@ -132,6 +132,17 @@ func (Harness) RecordToolResult(in harness.HookInput) error {
 	return nil
 }
 
+// RecordBlock implements harness.BlockRecorder: Cursor writes a stop hook's
+// followup_message into the transcript as an ordinary user record, so the text sloprail
+// emitted is kept (record.KindFollowup) for OpenRecord to tell that record from the
+// person's own prompt.
+func (Harness) RecordBlock(in harness.HookInput, reason string) error {
+	if reason == "" {
+		return nil
+	}
+	return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindFollowup, Output: reason})
+}
+
 func filePathOf(input json.RawMessage) string {
 	var in struct {
 		FilePath string `json:"file_path"`

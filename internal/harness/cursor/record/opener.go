@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -93,6 +94,7 @@ func merge(r io.Reader, w io.Writer, st *store, side *os.File, slots map[string]
 		if !st.root {
 			out = markSidechain(out)
 		}
+		out = markInjected(out, st.followups)
 		if _, err := w.Write(append(out, '\n')); err != nil {
 			return err
 		}
@@ -234,4 +236,64 @@ func markSidechain(line []byte) []byte {
 		return line
 	}
 	return out
+}
+
+// markInjected marks a user line whose text is exactly a followup_message sloprail's stop
+// hook emitted as harness-injected (isMeta: the harness writing, the category Claude
+// Code's Stop-hook feedback records have), so it never grounds a citation of the user's
+// words even though it quotes them. Exact: the text of the line (its text blocks joined,
+// with Cursor's <user_query> envelope removed) must equal an emitted text; a person's own
+// prompt that merely resembles one is not marked.
+func markInjected(line []byte, followups map[string]bool) []byte {
+	if len(followups) == 0 {
+		return line
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return line
+	}
+	var role string
+	_ = json.Unmarshal(top["role"], &role)
+	if role != "user" {
+		return line
+	}
+	var msg struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(top["message"], &msg) != nil {
+		return line
+	}
+	var text string
+	for _, b := range msg.Content {
+		if b.Type == "text" {
+			text += b.Text
+		}
+	}
+	if !followups[text] && !followups[unwrapQuery(text)] {
+		return line
+	}
+	top["sloprail_meta"] = json.RawMessage("true")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return out
+}
+
+// unwrapQuery removes the envelope Cursor puts around a prompt (<timestamp/>, then the
+// text inside <user_query> tags) when the text is exactly that shape; otherwise the text
+// is returned as is.
+func unwrapQuery(text string) string {
+	const open, shut = "<user_query>\n", "\n</user_query>"
+	i := strings.Index(text, open)
+	if i < 0 || !strings.HasSuffix(text, shut) {
+		return text
+	}
+	if pre := strings.TrimSpace(text[:i]); pre != "" && pre != "<timestamp/>" {
+		return text
+	}
+	return text[i+len(open) : len(text)-len(shut)]
 }
