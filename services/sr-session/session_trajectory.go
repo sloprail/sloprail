@@ -148,10 +148,10 @@ func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 
 // errNoTrajectory is the message a subcommand prints when no trajectory could be
 // resolved by any of the three sources — no --path, no record on the payload, and
-// no current-session transcript derivable from CLAUDE_CODE_SESSION_ID. Shared so
+// no current-session transcript derivable from the harness's session identity. Shared so
 // describe, cite and normalize refuse the same way.
 func errNoTrajectory() error {
-	return fmt.Errorf("sloprail: no trajectory to read — pass --path, invoke this where a transcript is on the hook payload, or run it in a session (with %s set) whose transcript exists", transcript.SessionIDEnv)
+	return fmt.Errorf("sloprail: no trajectory to read — pass --path, invoke this where a transcript is on the hook payload, or run it in a session whose transcript exists")
 }
 
 // searchDirFor is where a trajectory's session keeps its OTHER trajectories — the
