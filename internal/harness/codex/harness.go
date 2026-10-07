@@ -25,6 +25,7 @@ package codex
 import (
 	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/codex/record"
+	"path/filepath"
 	"strings"
 )
 
@@ -65,6 +66,13 @@ func (Harness) Detect(environ []string) bool { return Detect(environ) }
 // own rollout and not the parent's; an ephemeral session has none at all).
 func (Harness) LocateTranscript(in harness.HookInput) string {
 	return record.FindRollout(record.ConfigDir(), in.SessionID)
+}
+
+// OwnsTranscript implements harness.TranscriptOwner: a Codex rollout is named
+// rollout-<timestamp>-<id>.jsonl.
+func (Harness) OwnsTranscript(path string) bool {
+	base := filepath.Base(path)
+	return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
 }
 
 // CurrentSessionPath implements harness.CurrentSessionLocator: a shell command Codex

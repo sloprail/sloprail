@@ -177,6 +177,13 @@ func TestCurrentSessionPath_IsTheRolloutOfTheThreadInTheEnvironment(t *testing.T
 	assert.Empty(t, h.CurrentSessionPath("/any", env(nil)))
 }
 
+func TestOwnsTranscript_ARolloutIsByItsName(t *testing.T) {
+	h := Harness{}
+	assert.True(t, h.OwnsTranscript("/c/sessions/2026/10/07/rollout-2026-10-07T16-45-33-01a116d3-aace.jsonl"))
+	assert.False(t, h.OwnsTranscript("/home/.claude/projects/-p/0f1e2d3c-1111-2222-3333-444455556666.jsonl"))
+	assert.False(t, h.OwnsTranscript("/c/rollout-x.txt"))
+}
+
 func TestProjectSkillDirs_CodexReadsAgentsSkills(t *testing.T) {
 	assert.Equal(t, []string{".agents/skills"}, harness.ProjectSkillDirs(New()))
 }

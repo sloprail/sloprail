@@ -46,9 +46,10 @@ func Read(path string) ([]Entry, error) {
 	return readFrom(f, path)
 }
 
-// parseLine parses one line with the registered harness's format.
-func parseLine(line []byte) (harness.Record, error) {
-	return harness.Current().Transcripts().ParseRecord(line)
+// parseLine parses one line of the session file at path with that file's harness's
+// format (harness.ForTranscript).
+func parseLine(path string, line []byte) (harness.Record, error) {
+	return harness.ForTranscript(path).Transcripts().ParseRecord(line)
 }
 
 func readFrom(r io.Reader, path string) ([]Entry, error) {
@@ -74,7 +75,7 @@ func scanRecords(r io.Reader, path string, visit func(harness.Record) bool) erro
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxRecordBytes)
 	for sc.Scan() {
-		rec, err := parseLine(sc.Bytes())
+		rec, err := parseLine(path, sc.Bytes())
 		if err != nil {
 			continue // see Read: an unparseable line is the format having moved
 		}
@@ -117,7 +118,7 @@ func readStrict(path string) ([]Entry, error) {
 		if len(strings.TrimSpace(sc.Text())) == 0 {
 			continue
 		}
-		rec, err := parseLine(sc.Bytes())
+		rec, err := parseLine(path, sc.Bytes())
 		if err != nil {
 			return nil, fmt.Errorf("transcript: parse %s: %w", path, err)
 		}

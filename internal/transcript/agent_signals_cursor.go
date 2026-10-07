@@ -69,7 +69,7 @@ func BackgroundAgentSignalsSince(path string, cur AgentSignalCursor) ([]AgentSig
 		if len(line) > 0 {
 			if body := bytes.TrimSpace(line); len(body) > 0 {
 				if mayCarryAgentSignal(body) || namesAwaitedCall(body, background) {
-					rec, jerr := parseLine(body)
+					rec, jerr := parseLine(path, body)
 					if jerr != nil {
 						return nil, cur, fmt.Errorf("transcript: parse %s: %w", path, jerr)
 					}

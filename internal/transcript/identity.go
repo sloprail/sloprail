@@ -135,7 +135,7 @@ func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 	}
 	// A harness that names its conversation in the file's path (harness.ConversationNamer)
 	// has its identity there: nothing is read, and nothing need exist yet.
-	if n, ok := harness.Current().Transcripts().(harness.ConversationNamer); ok {
+	if n, ok := harness.ForTranscript(path).Transcripts().(harness.ConversationNamer); ok {
 		if id := n.ConversationID(path); id != "" {
 			return Identity{ID: id}, nil
 		}

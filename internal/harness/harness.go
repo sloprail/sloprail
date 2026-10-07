@@ -85,6 +85,30 @@ type CurrentSessionLocator interface {
 	CurrentSessionPath(cwd string, getenv func(string) string) string
 }
 
+// TranscriptOwner is what a Harness MAY implement to say that a session file is its
+// own by the file's name, so the record is read with ITS format whatever harness the
+// process otherwise runs under. A process told nothing about its harness (a test's
+// `sr-session id`, a CLI run from a plain shell) is handed a record by path and must
+// not read a Codex rollout as a Claude Code transcript.
+type TranscriptOwner interface {
+	OwnsTranscript(path string) bool
+}
+
+// ForTranscript is the harness whose format the session file at path is in: the first
+// registered one (by name) that claims it, else Current.
+func ForTranscript(path string) Harness {
+	mu.RLock()
+	for _, name := range sortedNames() {
+		if o, ok := registry[name].(TranscriptOwner); ok && o.OwnsTranscript(path) {
+			h := registry[name]
+			mu.RUnlock()
+			return h
+		}
+	}
+	mu.RUnlock()
+	return Current()
+}
+
 // SkillDirs is what a Harness MAY implement to name where a project keeps its own
 // skills, relative to the project root. A harness that does not is taken to use
 // DefaultSkillDir.

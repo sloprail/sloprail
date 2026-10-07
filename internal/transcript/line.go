@@ -57,7 +57,7 @@ func ReadLines(path string) ([]LinedEntry, error) {
 	line := 0
 	for sc.Scan() {
 		line++
-		rec, perr := parseLine(sc.Bytes())
+		rec, perr := parseLine(path, sc.Bytes())
 		if perr != nil {
 			continue // an unparseable line is the format having moved; still counted
 		}
