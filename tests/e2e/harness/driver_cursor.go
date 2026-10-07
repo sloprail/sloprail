@@ -72,15 +72,6 @@ func cursorLine(content ...map[string]any) string {
 // cursorWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
 const cursorWorkspaceMark = "@@WORKSPACE@@"
 
-// The two Read sizes recorded in harness-mocks (cursor-mock toolexec ReadCarriedBytes,
-// ReadOmittedBytes): a file up to the first is carried whole, from the second on it is
-// named by an id. Between them the mock fails the Read rather than guess, so a step
-// that reads such a file is unsupported.
-const (
-	cursorReadCarriedBytes = 7602
-	cursorReadOmittedBytes = 53900
-)
-
 // cursorPassthrough are the tools a generic ToolUse may name: those the mock runs with string inputs.
 var cursorPassthrough = map[string]bool{"Read": true, "Grep": true, "Delete": true, "Shell": true}
 
@@ -115,11 +106,6 @@ func (c cursorDriver) render(a Action) (string, error) {
 		}
 		if !cursorPassthrough[a.Tool] {
 			return "", c.unsupported(a, "the mock runs no "+a.Tool+" tool")
-		}
-		if a.Tool == "Read" {
-			if st, err := os.Stat(a.Input["file_path"]); err == nil && st.Size() > cursorReadCarriedBytes && st.Size() < cursorReadOmittedBytes {
-				return "", c.unsupported(a, fmt.Sprintf("cursor-mock does not model a Read of a %d-byte file: Cursor's cut-off between %d and %d bytes is unrecorded", st.Size(), cursorReadCarriedBytes, cursorReadOmittedBytes))
-			}
 		}
 		in := map[string]any{}
 		for k, v := range a.Input {
