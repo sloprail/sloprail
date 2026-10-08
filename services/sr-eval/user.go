@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,7 +149,7 @@ func simulateUser(ctx context.Context, harnessID, binDir, model, brief string, d
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
-	if err := c.Run(); err != nil {
+	if err := procgroup.Run(c, true); err != nil {
 		return "", false, fmt.Errorf("simulated user: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return parseUserReply(stdout.String())

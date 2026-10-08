@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/sloprail/sloprail/internal/procgroup"
 )
 
 // ErrExited is returned when the harness ended before the driver asked it to.
@@ -31,6 +33,7 @@ type Session struct {
 	ready    *regexp.Regexp
 	quit     []*regexp.Regexp
 	cmd      *exec.Cmd
+	untrack  func() // unregisters cmd from procgroup once it has exited
 	ptmx     *os.File
 	screen   *screen
 	wmu      sync.Mutex
@@ -54,8 +57,15 @@ func Start(cmd *exec.Cmd, opts Options, raw io.Writer) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tuidrive: start %s on a terminal: %w", cmd.Path, err)
 	}
+	// On a terminal of its own the harness leads its own session and group: a signal that ends
+	// this process must end it too, or it runs on (and bills) with nobody reading it.
+	untrack, err := procgroup.Adopt(cmd, true)
+	if err != nil {
+		_ = ptmx.Close()
+		return nil, fmt.Errorf("tuidrive: start %s: %w", cmd.Path, err)
+	}
 	s := &Session{emu: newEmu(opts.Spec.Rows, opts.Spec.Cols), opts: opts, ready: ready, quit: quit, cmd: cmd, ptmx: ptmx,
-		done: make(chan struct{}), drained: make(chan struct{})}
+		untrack: untrack, done: make(chan struct{}), drained: make(chan struct{})}
 	s.screen = newScreen(s.write)
 	go func() { // done only once what the program printed has been read (bounded: a child may keep the pty open)
 		s.status = cmd.Wait()
@@ -294,5 +304,6 @@ func (s *Session) Close() {
 		}
 		<-s.done
 	}
+	s.untrack()
 	_ = s.ptmx.Close()
 }

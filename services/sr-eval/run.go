@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -328,7 +329,7 @@ func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, b
 	c.Stdout = stdout
 	c.Stderr = stderr
 	c.Env = env
-	return c.Run()
+	return procgroup.Run(c, true)
 }
 
 // subagentFiles are the files of the sub-agents the session spawned, asked of the

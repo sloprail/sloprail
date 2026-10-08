@@ -99,7 +99,15 @@ func helper(out string) {
 	script := "echo $$ >> " + pidFile + "; sleep 120 & echo $! >> " + pidFile + "; wait"
 	for i := 0; i < 2; i++ {
 		c := exec.Command("sh", "-c", script)
-		if _, err := Start(c, true); err != nil {
+		if i == 1 && os.Getenv("SR_PG_ADOPT") != "" { // started by other means (a pty), then adopted
+			Own(c)
+			if c.Start() != nil {
+				os.Exit(3)
+			}
+			if _, err := Adopt(c, true); err != nil {
+				os.Exit(3)
+			}
+		} else if _, err := Start(c, true); err != nil {
 			os.Exit(3)
 		}
 		go func() { _ = c.Wait() }() // reaped here, so a killed leader is not left a zombie of ours
@@ -147,11 +155,11 @@ func dead(pid int) bool {
 	return st == "" || st[0] == 'Z'
 }
 
-func runHelper(t *testing.T, sig syscall.Signal, late bool) (code int, pids []int, lateErr string) {
+func runHelper(t *testing.T, sig syscall.Signal, late bool, env ...string) (code int, pids []int, lateErr string) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), "SR_PG_PIDS="+out)
+	cmd.Env = append(append(os.Environ(), env...), "SR_PG_PIDS="+out)
 	if late {
 		cmd.Env = append(cmd.Env, "SR_PG_LATE=1")
 	}
@@ -184,6 +192,13 @@ func TestExitOnSignalEndsGroups(t *testing.T) {
 		code, _, _ := runHelper(t, sig, false)
 		assert.Equal(t, want, code, sig.String())
 	}
+}
+
+// A child started by other means and adopted (sr-eval's agent on a pty) ends with the rest:
+// a stopped eval run left its simulated user running, and billing, with nobody reading it.
+func TestAdoptedChildEndsOnSignal(t *testing.T) {
+	code, _, _ := runHelper(t, syscall.SIGTERM, false, "SR_PG_ADOPT=1")
+	assert.Equal(t, 143, code)
 }
 
 // A child started while the exit is under way is refused, never left unregistered and orphaned.

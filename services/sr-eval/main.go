@@ -47,12 +47,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
 	// The agent-under-test can read the process table: keep host paths out of our argv.
 	settleArgv()
+	// A run that is stopped (Ctrl-C, kill) ends every agent, simulated user and scorer it
+	// started: each is registered with procgroup. An orphaned one runs on, and bills.
+	procgroup.ExitOnSignal(nil)
 	err := newRoot().Execute()
 	if err != nil {
 		if err.Error() != "" {

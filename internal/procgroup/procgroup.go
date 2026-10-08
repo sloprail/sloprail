@@ -100,6 +100,27 @@ func Start(c *exec.Cmd, grouped bool) (untrack func(), err error) {
 	}, nil
 }
 
+// Adopt registers c, already started by other means (on a pseudo-terminal, as the leader of a
+// session of its own when group is set), as Start would have. After a signal has begun the
+// exit, c is killed and Adopt fails with ErrClosing.
+func Adopt(c *exec.Cmd, group bool) (untrack func(), err error) {
+	state.RLock()
+	defer state.RUnlock()
+	t := target{pid: c.Process.Pid, group: group}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.closing {
+		_ = t.kill(syscall.SIGKILL)
+		return nil, ErrClosing
+	}
+	state.live[c] = t
+	return func() {
+		state.mu.Lock()
+		delete(state.live, c)
+		state.mu.Unlock()
+	}, nil
+}
+
 // Run is Start, Wait and the unregistering: c.Run for a child that a signal to this process must
 // reach.
 func Run(c *exec.Cmd, grouped bool) error {

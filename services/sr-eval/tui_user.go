@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/procgroup"
 )
 
 // The simulated user of a TUI run sits at the terminal. It is an agent with one tool, a
@@ -102,7 +104,7 @@ func simulateTUIUser(ctx context.Context, harnessID, binDir, userBin, sock, mode
 	c.Env = tuiUserEnv(binDir, userBin, sock)
 	var stdout, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &stdout, &stderr
-	if err := c.Run(); err != nil {
+	if err := procgroup.Run(c, true); err != nil {
 		return false, fmt.Errorf("simulated user: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return parseTUIUserReply(stdout.String())
