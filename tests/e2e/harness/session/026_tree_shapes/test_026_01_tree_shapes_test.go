@@ -112,6 +112,9 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	proj := e.Project()
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
+	// A filesystem (or a user's config) that makes git ignore the executable bit would make the
+	// chmod below invisible to it: say outright that this repository tracks modes.
+	e.Git(proj, "config", "core.fileMode", "true")
 	e.WriteFile(proj, "script.sh", "#!/bin/sh\necho hello\n")
 	e.WriteFile(proj, "other.md", "original\n")
 	e.CommitAll(proj, "a file the session will chmod")
@@ -135,8 +138,8 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	// is off in this environment the diff is empty and the silence below would be
 	// correct rather than a defect.
 	if changed := e.Git(proj, "diff", "--name-only", "HEAD~1", "HEAD", "--", "script.sh"); changed == "" {
-		t.Skipf("git records no change for the chmod (core.fileMode is off on this " +
-			"filesystem), so there is no mode difference for the engine to report")
+		t.Fatalf("git records no change for the chmod although core.fileMode is set to true, " +
+			"so there is no mode difference for the engine to report")
 	}
 
 	// The control: the ledger is live.
