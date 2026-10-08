@@ -265,7 +265,11 @@ func injectCodexMarker(line, id, marker string) string {
 // run printed (Observe).
 func (codexDriver) Command(e *Env, l Launch) *exec.Cmd {
 	args := []string{"exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust",
-		"--script", l.ScriptPath, "-C", l.WorkDir, "-m", "mock-model"}
+		"--script", l.ScriptPath, "-C", l.WorkDir, "-m", "mock-model",
+		// Codex's default agents.max_depth is 0: a sub-agent cannot spawn another. A project
+		// that wants delegation to nest sets it, as this run does (the mock honours only this
+		// override), so a scenario whose sub-agent dispatches a further one is exercised.
+		"-c", "agents.max_depth=3"}
 	switch l.Mode {
 	case SessionResume:
 		args = append(args, "resume", e.harnessID(l.SessionID))

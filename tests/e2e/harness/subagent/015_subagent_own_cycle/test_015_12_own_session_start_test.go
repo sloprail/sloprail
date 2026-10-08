@@ -58,7 +58,25 @@ func TestT015_12_AnIsolatedSubagentRangeStartsAtItsOwnWorktreeHead(t *testing.T)
 	// B and C have landed on the default branch: really pushed to the harness origin (an agent's
 	// own push of them is refused by the push gate when enabled, so the harness does it between the turns).
 	e.PushBranch(proj, "main")
-	res := e.Run(proj, "s-015-12", "delegate", Turns("root done", Dispatch("d1", "make D", sub, "worktree")))
+	res := e.Run(proj, "s-015-12", "delegate", Turns("root done", Dispatch("d1", "make D", sub, harness.OwnTree(t))))
+
+	// Without a worktree for the sub-agent (Codex, Cursor) there is no second range to start
+	// anywhere: its commit D lands in the root's own tree, so the root's folder, tracked from
+	// A, is the only one and its Stop judges D with everything else the root answers for. The
+	// sub-agent's own stop is left alone.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e.NoSubagentStopBlock(proj, "s-015-12") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		folders := e.SessionFolders(proj, "s-015-12")
+		if len(folders) != 1 || folders[0].Role != "root" || folders[0].BaseRef != a || folders[0].AgentID != "" {
+			t.Fatalf("session folders = %+v, want the root alone, started at %s", folders, a)
+		}
+		if !strings.Contains(strings.Join(e.BlockingErrorsFrom(proj, "s-015-12", "Stop"), "\n"), "docs/d.md") {
+			t.Fatalf("the root's Stop did not judge the sub-agent's commit D, which landed in its tree:\n%s", res.Output)
+		}
+		return
+	}
 
 	// Refuse first: the violation in D is judged, and only D.
 	// The refusal names the sub-agent's own worktree and the commit its range starts from.

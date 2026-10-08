@@ -36,7 +36,7 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-11", "delegate work in a subdirectory", Turns("root done",
-		Dispatch("d1", "work deep in the tree", sub, "worktree"),
+		Dispatch("d1", "work deep in the tree", sub, harness.OwnTree(t)),
 	))
 
 	if !res.Saw("root done") {
@@ -46,12 +46,31 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
 	}
 
-	wt := theWorktree(t, proj)
-	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-12", e.RunBase("s-015-12"), "HEAD")
-	lines := subLedger(t, proj, wt, "recorder", "log")
-	for _, l := range lines {
-		if agentOf(l) == "" {
-			t.Fatalf("the file-guard judged without the sub-agent's identity: %s", l)
+	// Without a tree of its own (Codex, Cursor) the sub-agent commits into the root's, and the
+	// root's Stop judges the file: as the root, on the path relative to that tree's root, with
+	// the sub-agent's own stop left alone.
+	var lines []string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt := theWorktree(t, proj)
+		e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-12", e.RunBase("s-015-12"), "HEAD")
+		lines = subLedger(t, proj, wt, "recorder", "log")
+		for _, l := range lines {
+			if agentOf(l) == "" {
+				t.Fatalf("the file-guard judged without the sub-agent's identity: %s", l)
+			}
+		}
+	} else {
+		if trees := worktrees(t, proj); len(trees) != 0 {
+			t.Fatalf("a worktree was bound (%v) for a dispatch that could not ask for one", trees)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-015-11") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		lines = e.FileGuardLedgerLines(proj, "recorder", "log")
+		for _, l := range lines {
+			if agentOf(l) != "" {
+				t.Fatalf("the root's Stop judged a file as a sub-agent (%s) in the shared tree", l)
+			}
 		}
 	}
 	if len(lines) == 0 {
@@ -132,7 +151,7 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 
 	res := e.Run(proj, "s-015-12", "delegate to a delegator", Turns("root done",
 		Bash("r1", "echo root > from-the-root.md"),
-		Dispatch("d1", "outer job", middle, "worktree"),
+		Dispatch("d1", "outer job", middle, harness.OwnTree(t)),
 	))
 
 	if !res.Saw("root done") {
@@ -150,14 +169,36 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 	// one of those, so only the frames with no parent are the root's. Asserted so nobody reads
 	// this count as evidence about nesting again: it is 1 whether nesting happens or not,
 	// which is precisely why 014_07's conclusion from it does not follow.
-	if ids := agentIDs(rootFrames(res.Output)); len(ids) != 1 {
-		t.Fatalf("the root's own frames announced %d dispatch(es) (%v), want the root's one. A nested "+
-			"dispatch is announced in a sub-agent's frame, which names its parent", len(ids), ids)
+	//
+	// The "agentId: …" announcement is Claude Code's; Codex and Cursor announce no such
+	// thing, so there the sub-agents' own records (one per sub-agent, the nested one
+	// included) say that nesting happened.
+	if harness.HasCap(t, harness.CapWorktrees) {
+		if ids := agentIDs(rootFrames(res.Output)); len(ids) != 1 {
+			t.Fatalf("the root's own frames announced %d dispatch(es) (%v), want the root's one. A nested "+
+				"dispatch is announced in a sub-agent's frame, which names its parent", len(ids), ids)
+		}
+	} else if records := e.SubagentRecordPaths(proj, "s-015-12"); len(records) < 2 {
+		t.Fatalf("want a record for the middle and for the innermost sub-agent, saw %v", records)
 	}
 
 	// Everything below reads the MIDDLE sub-agent's worktree, which is where
 	// both the middle's work and the innermost's landed.
-	lines := subLedger(t, proj, theWorktree(t, proj), "recorder", "log")
+	//
+	// Without a tree of its own for the middle sub-agent (Codex, Cursor) all three work in
+	// the root's tree, and the root's Stop judges what the middle and the innermost committed.
+	var lines []string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		lines = subLedger(t, proj, theWorktree(t, proj), "recorder", "log")
+	} else {
+		if trees := worktrees(t, proj); len(trees) != 0 {
+			t.Fatalf("a worktree was bound (%v) for a dispatch that could not ask for one", trees)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-015-12") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		lines = e.FileGuardLedgerLines(proj, "recorder", "log")
+	}
 
 	// The delegating sub-agent's OWN work was judged at its own cycle — the work
 	// that came after the dispatch it made.

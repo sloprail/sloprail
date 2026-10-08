@@ -89,7 +89,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-07", "delegate work that gets refused once", Turns("root done",
-		Dispatch("d1", "do the job", sub, "worktree"),
+		Dispatch("d1", "do the job", sub, harness.OwnTree(t)),
 	))
 
 	// It FINISHED. This is the deadlock check and it comes first: everything
@@ -101,6 +101,33 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	}
 	if !res.Saw("root done") {
 		t.Fatalf("the dispatching session never completed:\n%s", res.Output)
+	}
+
+	// Without a tree of its own (Codex, Cursor) the sub-agent works in the root's, so its
+	// stop is not judged at all, and the first, refused look the rule takes is at the work the
+	// sub-agent judges before it stops: a command's result, which blocks nothing. The ROOT's
+	// own judging of the range it owns is the rule's second look, and it relents: the root's
+	// Stop is not refused, and the rule ran a bounded number of times over the files the
+	// sub-agent committed.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e.NoSubagentStopBlock(proj, "s-015-07") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		lines := e.FileGuardLedgerLines(proj, "onceonly", "../../../.onceonly.log")
+		if !containsPath(lines, "first.md") || !containsPath(lines, "second.md") {
+			t.Fatalf("the sub-agent's files were not judged in the root's tree: %v", lines)
+		}
+		if !strings.Contains(strings.Join(lines, "\n"), "call 2 ") {
+			t.Fatalf("the rule never took a second look at the root's range (%v), so its relenting was not exercised", lines)
+		}
+		if len(lines) > 4 {
+			t.Fatalf("the guardrail ran %d times (%v). It relents on its second look, so the "+
+				"judged retry should have passed and ended the loop", len(lines), lines)
+		}
+		if told := strings.Join(e.BlockingErrorsFrom(proj, "s-015-07", "Stop"), "\n"); strings.Contains(told, "the first attempt is refused") {
+			t.Fatalf("the root's Stop was refused with the first look's words though the rule relented:\n%s", told)
+		}
+		return
 	}
 
 	// The refusal really happened, at the SUB-AGENT's own stop.
@@ -178,7 +205,7 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-08", "delegate work that is always refused", Turns("root done",
-		Dispatch("d1", "do the job", sub, "worktree"),
+		Dispatch("d1", "do the job", sub, harness.OwnTree(t)),
 	))
 
 	// The whole point: an always-refusing rule must not drive the sub-agent to
@@ -191,6 +218,33 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	}
 	if !res.Saw("root done") {
 		t.Fatalf("the dispatching session never completed:\n%s", res.Output)
+	}
+
+	// Without a tree of its own (Codex, Cursor) the sub-agent is not judged at its stop;
+	// the cap bounds the ROOT's Stop, which owns the shared tree: refused once, and the
+	// re-fired Stop judges nothing again.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e.NoSubagentStopBlock(proj, "s-015-08") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		if told := strings.Join(e.BlockingErrorsFrom(proj, "s-015-08", "Stop"), "\n"); !strings.Contains(told, "this rule always says no") {
+			t.Fatalf("the root's Stop was not refused by the rule, so the re-fired stop never happened:\n%s", res.Output)
+		}
+		if n := len(e.AllBlockingErrorsFrom(proj, "s-015-08", "Stop")); n != 1 {
+			t.Fatalf("the root's Stop was refused %d times, want exactly once under stop_hook_block_cap: 1", n)
+		}
+		// Three looks at most: the sub-agent's judging run, the root's own, and the one Stop that
+		// refused. The re-fired Stop is not a fourth.
+		lines := e.FileGuardLedgerLines(proj, "always", "log")
+		if len(lines) == 0 {
+			t.Fatalf("the guardrail never ran at all")
+		}
+		if len(lines) > 3 {
+			t.Fatalf("the guardrail ran %d times (%v). A cycle already refused once "+
+				"under stop_hook_block_cap: 1 is left alone; judging it again ignores the project's "+
+				"cap", len(lines), lines)
+		}
+		return
 	}
 
 	// The rule did refuse, or the guard was never exercised.
@@ -227,7 +281,7 @@ func TestT015_08b_AReFiredSubagentStopAsksTheScriptAgain(t *testing.T) {
 		Bash("sb1", "echo x > refused-work.md"),
 	).ThenCommit("the sub-agent's work"))
 	res := e.Run(proj, "s-015-08b", "delegate work that is always refused", Turns("root done",
-		Dispatch("d1", "do the job", sub, "worktree"),
+		Dispatch("d1", "do the job", sub, harness.OwnTree(t)),
 	))
 
 	if !res.Saw("root done") {
@@ -236,6 +290,26 @@ func TestT015_08b_AReFiredSubagentStopAsksTheScriptAgain(t *testing.T) {
 	if hitRetryCap(res.Output) {
 		t.Fatalf("the harness had to override the hook; the engine's own cap should have ended the loop first:\n%s", res.Output)
 	}
+	// Without a tree of its own (Codex, Cursor) the sub-agent's stop is not judged; the
+	// re-fired Stop that is still judged is the ROOT's, which owns the shared tree.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e.NoSubagentStopBlock(proj, "s-015-08b") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		refusals := e.AllBlockingErrorsFrom(proj, "s-015-08b", "Stop")
+		if !strings.Contains(strings.Join(refusals, "\n"), "this rule always says no") {
+			t.Fatalf("the rule's refusal never reached the root's Stop:\n%s", res.Output)
+		}
+		if len(refusals) < 2 {
+			t.Fatalf("the root was refused %d time(s): the re-fired stop was not judged, so a rule "+
+				"gave way to the agent simply being sent round again", len(refusals))
+		}
+		if lines := readLines(t, filepath.Join(proj, ".refused.log")); len(lines) < 2 {
+			t.Fatalf("the script ran %d times (%v): a script refusal is asked again at a re-fired stop", len(lines), lines)
+		}
+		return
+	}
+
 	// The refusal is the rule's own, and it was delivered at more than one stop (the sub-agent was
 	// re-run each time: the de-duplicated record shows the text once, the stream shows the loop).
 	if !strings.Contains(strings.Join(e.SubagentBlockingErrors(proj, "s-015-08b"), "\n"), "this rule always says no") {
@@ -347,7 +421,7 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 
 			res := e.Run(proj, "s-015-09-"+strings.ReplaceAll(tc.name, " ", "-"),
 				"delegate work that leaves nothing", Turns("root done",
-					Dispatch("d1", "do the job", sub, "worktree"),
+					Dispatch("d1", "do the job", sub, harness.OwnTree(t)),
 				))
 
 			if !res.Saw("root done") {
@@ -355,6 +429,36 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 			}
 			if hitRetryCap(res.Output) {
 				t.Fatalf("a sub-agent that changed nothing was driven to the retry cap:\n%s", res.Output)
+			}
+
+			// Without a tree of its own (Codex, Cursor) the sub-agent commits into the root's,
+			// and the root's Stop judges the range: the same commits, netting out to the same
+			// tree, so it judges the kept file (the control) and nothing for the other two.
+			if !harness.HasCap(t, harness.CapWorktrees) {
+				if !e.NoSubagentStopBlock(proj, "s-015-09-"+strings.ReplaceAll(tc.name, " ", "-")) {
+					t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+				}
+				lines := e.FileGuardLedgerLines(proj, "recorder", "log")
+				if tc.wantJudged {
+					if !containsPath(lines, "kept.md") {
+						t.Fatalf("the control's committed file was not judged at the root's Stop (%v), so "+
+							"the silence in the other cases proves nothing", lines)
+					}
+					return
+				}
+				if len(lines) != 0 {
+					t.Fatalf("commits that leave the tree as they found it still had %d verdict(s) "+
+						"recorded (%v) at the root's Stop", len(lines), lines)
+				}
+				if strings.Contains(tc.name, "removal") {
+					if e.Exists(proj, "transient.md") {
+						t.Fatalf("the file the sub-agent deleted is still there, so the tree DID differ")
+					}
+					if e.Git(proj, "log", "--format=%s", "--", "transient.md") == "" {
+						t.Fatalf("the transient file was never committed, so its removal is not a netted-out range")
+					}
+				}
+				return
 			}
 
 			// The dispatch was real, so "nothing was judged" is about a cycle
@@ -425,7 +529,7 @@ func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 	))
 
 	res := e.Run(proj, "s-015-10", "delegate work that gets committed", Turns("root done",
-		Dispatch("d1", "do the job and commit it", sub, "worktree"),
+		Dispatch("d1", "do the job and commit it", sub, harness.OwnTree(t)),
 	))
 
 	if !res.Saw("root done") {
@@ -433,6 +537,21 @@ func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 	}
 	if hitRetryCap(res.Output) {
 		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
+	}
+
+	// Without a tree of its own (Codex, Cursor) the sub-agent commits into the root's, and
+	// the root's Stop judges the committed file; the sub-agent's own stop is not refused.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e.NoSubagentStopBlock(proj, "s-015-10") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		if !e.Exists(proj, "committed-by-the-sub.md") {
+			t.Fatalf("the sub-agent's file is not in the shared tree, so the commit case was never exercised")
+		}
+		if lines := e.FileGuardLedgerLines(proj, "recorder", "log"); !containsPath(lines, "committed-by-the-sub.md") {
+			t.Fatalf("a sub-agent that COMMITTED its work did not have it judged at the root's Stop (ledger %v)", lines)
+		}
+		return
 	}
 
 	wt := theWorktree(t, proj)
