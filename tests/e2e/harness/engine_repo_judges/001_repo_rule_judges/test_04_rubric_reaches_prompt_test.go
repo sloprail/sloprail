@@ -139,6 +139,17 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 	if len(access.Writable) == 0 {
 		t.Errorf("the answer directory was not granted a scoped write; argv:\n%s", string(argv))
 	}
+	if access.ArgvExact {
+		// The answer directory's scoped Edit rule comes first, Read last, and never an unscoped Write.
+		if len(access.AllowedTools) == 0 || !strings.HasPrefix(access.AllowedTools[0], "Edit(//") || access.AllowedTools[len(access.AllowedTools)-1] != "Read" {
+			t.Errorf("--allowed-tools must be the answer dir's scoped Edit rule(s) then Read; got %q; argv:\n%s", access.AllowedTools, string(argv))
+		}
+		for _, tool := range access.AllowedTools {
+			if tool == "Write" {
+				t.Errorf("the judge was granted an unscoped Write, which writes anywhere on disk; argv:\n%s", string(argv))
+			}
+		}
+	}
 	// The isolation the old script hand-rolled is now sr-agent's: the judge's agent runs
 	// without the project's hooks.
 	if !e.JudgeHooksOff(string(argv), proj) {
@@ -186,6 +197,13 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 		t.Fatalf("the judge must be pointed at the tip's tree snapshot, not the working tree; got %q (workspace %s)", ws, realWs)
 	}
 
+	if access.ArgvExact {
+		// --add-dir carries the tip's tree snapshot then the answer dir, and nothing else.
+		if len(access.AddDirs) != 2 || access.AddDirs[0] != ws {
+			t.Errorf("--add-dir must carry the tip's tree snapshot then the answer dir; got %q (workspace %s); argv:\n%s", access.AddDirs, ws, string(argv))
+		}
+	}
+
 	// Readable: the snapshot is among the directories the judge is given, or the harness
 	// reads the whole disk.
 	if !access.ReadsAnywhere && !within(ws, access.Readable) {
@@ -207,6 +225,20 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 	}
 	if len(access.OtherTools) != 0 {
 		t.Errorf("the judge was granted more than Read and its answer directory: %q; argv:\n%s", access.OtherTools, string(argv))
+	}
+	if access.ArgvExact {
+		// --allowed-tools is EXACTLY the answer dir's Edit rule (one per spelling: the answer
+		// dir may sit under a symlinked temp root) then the rule's own Read. An Edit allow on
+		// the workspace or an unscoped Write fails here. The answer dir is gone (sr-agent
+		// removed it), so its resolved spelling is built from its parent's.
+		wantAllowed := []string{"Edit(/" + answerDir + "/**)"}
+		if parent := resolved(t, filepath.Dir(answerDir)); parent != filepath.Dir(answerDir) {
+			wantAllowed = append(wantAllowed, "Edit(/"+filepath.Join(parent, filepath.Base(answerDir))+"/**)")
+		}
+		wantAllowed = append(wantAllowed, "Read")
+		if strings.Join(access.AllowedTools, "\n") != strings.Join(wantAllowed, "\n") {
+			t.Errorf("--allowed-tools must be exactly the answer dir's Edit rule(s) and Read;\n got %q\nwant %q\nargv:\n%s", access.AllowedTools, wantAllowed, string(argv))
+		}
 	}
 
 	// Not writable: the workspace is denied outright, or the harness confines writes to
