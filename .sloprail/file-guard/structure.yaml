@@ -28,3 +28,7 @@ allow:
   - regex: '^tests/e2e/(cli|harness)/[a-z_]+/[0-9]{3}_[a-z0-9_]+/[^/]+$'
   # example content a test loads (a moved example's .sloprail, scripts, templates), kept verbatim
   - regex: '^tests/e2e/(cli|harness)/[a-z_]+/[0-9]{3}_[a-z0-9_]+/testdata/.+$'
+# A skill of the sloprail plugin is one flat folder, skills/<name>/<file>: nothing loose in skills/,
+# no subfolders.
+deny:
+  - regex: '^marketplace/plugins/sloprail/skills/([^/]+|[^/]+/[^/]+/.+)$'

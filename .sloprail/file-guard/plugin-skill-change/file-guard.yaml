@@ -1,0 +1,14 @@
+# A change to a skill shipped in the sloprail plugin is asked for by a person, and is the change
+# they asked for: minimal, not fitted to one incident, losing nothing unasked, regressing nothing.
+# Judged per skill, on its diff and the user's words its commits cite. Whether the skill as it
+# stands is good is plugin-skill-content's question, not this one's.
+match: path startsWith "marketplace/plugins/sloprail/skills/"
+deletions: include
+subjects: ./subjects.sh
+require:
+  - citation: {source_types: [user]}
+checks:
+  - prepare: ./prepare.sh
+    judge: ./judge-change.md.j2
+    model: size-md
+    allowed_tools: [Read]

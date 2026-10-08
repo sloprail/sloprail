@@ -1,0 +1,5 @@
+# Every file of a skill in the sloprail plugin stays within 200 lines. The gate of the same name
+# refuses an oversized write before it lands; this judges what was committed.
+match: path startsWith "marketplace/plugins/sloprail/skills/"
+checks:
+  - script: ./check.sh
