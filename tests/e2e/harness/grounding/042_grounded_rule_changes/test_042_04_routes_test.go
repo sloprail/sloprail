@@ -95,7 +95,7 @@ func TestT042_15_TheRuleCannotDisableItself(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if name == "yq" {
 				if _, err := exec.LookPath("yq"); err != nil {
-					t.Skip("yq is not installed")
+					t.Fatal("yq is required but not installed (brew install yq / https://github.com/mikefarah/yq)")
 				}
 			}
 			e := NewUncited(t)

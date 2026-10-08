@@ -59,7 +59,7 @@ func TestMarketplacePinsEveryPluginToItsReleaseTag(t *testing.T) {
 // real files are untouched.
 func TestBumpVersionWritesVersionAndRef(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq not installed")
+		t.Fatal("jq is required but not installed (brew install jq / apt-get install jq)")
 	}
 	root := repoRoot(t)
 	tmp := t.TempDir()

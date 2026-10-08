@@ -63,3 +63,20 @@ for one session instead:
 ```
 claude --plugin-dir marketplace/plugins/sloprail
 ```
+
+## Running the tests
+
+`make test-unit` (unit and `tests/repo`), `make test-services`, and
+`make test-e2e` (the e2e suites, which drive a mock agent). Tests never skip
+because of the environment: a missing prerequisite fails the test with the fix.
+
+Install these first:
+
+- Go (the version in `go.mod`), `git`, and `sh`.
+- `jq` and `yq` (mikefarah's) on `PATH`: `brew install jq yq`, or
+  `apt-get install jq` plus the `yq` binary from
+  <https://github.com/mikefarah/yq/releases>. CI installs both.
+- The pinned mock agents: `make mock` installs the versions pinned in
+  `tests/e2e/harness/{MOCK,CODEX_MOCK,CURSOR_MOCK}_VERSION` into `.bin/`. The
+  e2e harness runs the same install itself, once per test binary, when the
+  pinned mock is missing, and fails with the reason if it cannot.

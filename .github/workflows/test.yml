@@ -176,6 +176,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install jq and yq
+        run: |
+          command -v jq >/dev/null || sudo apt-get install -y jq
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+
       - if: needs.changes.outputs.code-changed == 'true'
         name: build
         run: go build ./...
@@ -252,6 +262,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install jq and yq
+        run: |
+          command -v jq >/dev/null || sudo apt-get install -y jq
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+
       # The mocks the e2e suites drive, at the versions pinned in
       # tests/e2e/harness/{MOCK,CODEX_MOCK,CURSOR_MOCK}_VERSION — the same
       # `make mock` a contributor runs, built from source (harness-mocks is
@@ -260,16 +280,14 @@ jobs:
         name: install the mocks
         run: make mock
 
-      # The suite SKIPS every package when the mock is absent, and a skipped
-      # package reports ok — 56 packages "passing" in 38 seconds against ~30
-      # minutes locally. A green run that tested nothing is worse than a red one
-      # because it is trusted, so the absence is made loud rather than silent.
+      # Checked here as well as by the harness (which installs a missing pinned
+      # mock itself and fails if it cannot): a broken install step stops the job
+      # at once rather than inside every package.
       - if: needs.changes.outputs.code-changed == 'true'
         name: e2e
         run: |
           test -x .bin/a10n-claude-mock || {
-            echo "a10n-claude-mock is not in .bin/ — every e2e package would SKIP"
-            echo "and report ok. Failing instead of running nothing."
+            echo "a10n-claude-mock is not in .bin/ — the install step above did not leave it."
             exit 1
           }
           make test-e2e-shard SHARD=${{ matrix.shard }}
@@ -329,6 +347,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        name: install jq and yq
+        run: |
+          command -v jq >/dev/null || sudo apt-get install -y jq
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+
       - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install the mocks
         run: make mock
@@ -369,6 +397,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
+      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        name: install jq and yq
+        run: |
+          command -v jq >/dev/null || sudo apt-get install -y jq
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
+
       - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install the mocks
         run: make mock
@@ -516,6 +554,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: install jq and yq
+        run: |
+          command -v jq >/dev/null || sudo apt-get install -y jq
+          command -v yq >/dev/null || {
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          }
       - name: install the mocks
         run: make mock
       - name: e2e (${{ needs.changes.outputs.adhoc-harness }})
