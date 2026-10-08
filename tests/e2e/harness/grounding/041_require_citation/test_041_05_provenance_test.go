@@ -66,6 +66,22 @@ func TestT041_28_ResultOfUnknownProvenanceIsNotCitable(t *testing.T) {
 		if !e.Exists(proj, "memories/results.md") {
 			t.Fatalf("a result with its call in the record did not ground a write:\n%s", res.Output)
 		}
+		// The negative still holds there: a result planted in the harness's own record with
+		// no call (Codex: a function_call_output item no call answers; Cursor: the stored
+		// outcome of a call that never started) does not ground a write.
+		e.AppendOrphanToolResult(proj, "s-041-28", "elsewhere-orphan", "ORPHAN-E2E-9917 all green")
+		res = e.Run(proj, "s-041-28", "write the other down", Turns("done",
+			Bash("b2", `sr-file write memories/orphan.md --cite:tool_result 'ORPHAN-E2E-9917 all green' --content '# orphan'`),
+		))
+		if !res.Saw("memories/orphan.md") {
+			t.Fatalf("the citing call never ran:\n%s", res.Output)
+		}
+		if e.Exists(proj, "memories/orphan.md") {
+			t.Fatalf("a result whose call is not in the record grounded a write:\n%s", res.Output)
+		}
+		if !res.SawInRefusal(noResolvingCitation) {
+			t.Errorf("the write citing an orphan result was not refused for carrying no citation that resolves:\n%s", res.Output)
+		}
 		return
 	}
 	if e.Exists(proj, "memories/results.md") {
