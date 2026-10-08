@@ -108,6 +108,9 @@ func fakeTurn(record, prompt string) {
 		fmt.Print(".")
 		time.Sleep(50 * time.Millisecond)
 	}
+	if os.Getenv("FAKE_DAEMON") != "" { // a helper the harness keeps for the session (a language server)
+		_ = exec.Command("sleep", "600").Start()
+	}
 	if os.Getenv("FAKE_ASK") != "" { // a question widget: a call whose answer only the person gives
 		appendRecord(record, map[string]any{"role": "assistant", "tool_use": "AskQuestion"})
 		fmt.Print("\r\nQuestion 1 of 1\r\n")

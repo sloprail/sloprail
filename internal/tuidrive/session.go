@@ -243,7 +243,10 @@ func (s *Session) ended(ctx context.Context, known map[int]bool) error {
 			continue
 		}
 		if s.opts.Answered != nil && !s.opts.Answered() {
-			if !busy && quiet >= s.opts.BlockedAfter {
+			// Busy has already held this to ProcSettle: a process the harness keeps for the
+			// session (a language server it starts on the first edit) never ends, so it can
+			// only delay the question, not hide it.
+			if quiet >= s.opts.BlockedAfter {
 				return s.fail(fmt.Errorf("%w: quiet for %s with the session record not ending in its answer", ErrBlocked, quiet.Round(time.Second)))
 			}
 			continue

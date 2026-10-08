@@ -64,10 +64,11 @@ type Options struct {
 	// does, however quiet the screen. Nil means no such check.
 	Answered func() bool
 
-	// BlockedAfter is how long the record and the screen may be quiet, with no new process
-	// running, while the record does not end with the agent's answer, before the agent is taken
-	// to be waiting for the person at the terminal (a question it asks, an approval): the turn
-	// then returns ErrBlocked, for the caller to answer on the screen (default 60s).
+	// BlockedAfter is how long the record and the screen may be quiet (ProcSettle, if longer,
+	// while a new process runs) while the record does not end with the agent's answer, before
+	// the agent is taken to be waiting for the person at the terminal (a question it asks, an
+	// approval): the turn then returns ErrBlocked, for the caller to answer on the screen
+	// (default 60s).
 	BlockedAfter time.Duration
 
 	// Settle is how long the record and the screen must both be quiet, with no new process

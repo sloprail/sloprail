@@ -266,6 +266,22 @@ func TestAgentWaitingForTheUserReturnsBlockedThenContinuesWhenAnswered(t *testin
 	_ = s.Quit(ctx)
 }
 
+// A helper the harness starts mid-turn and keeps (Cursor's language server) never exits: it
+// holds the question to ProcSettle, not to the turn ceiling. A real Cursor run sat at its
+// Stop follow-up until the ceiling this way.
+func TestAQuestionIsFoundPastAHelperThatNeverExits(t *testing.T) {
+	f, cmd := newFake(t, "FAKE_ASK=1", "FAKE_DAEMON=1")
+	f.opts.BlockedAfter, f.opts.ProcSettle, f.opts.TurnTimeout = 600*time.Millisecond, 1500*time.Millisecond, 15*time.Second
+	s := f.start(cmd)
+	ctx := context.Background()
+	if err := s.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Turn(ctx, "work"); !errors.Is(err, ErrBlocked) {
+		t.Fatalf("want ErrBlocked once ProcSettle passed, got %v", err)
+	}
+}
+
 // The hard ceiling: a screen that never stops changing (a spinner that never ends) fails the
 // turn loudly instead of holding the run.
 func TestTurnCeilingFailsALoudHang(t *testing.T) {
