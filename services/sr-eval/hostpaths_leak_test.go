@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A real Cursor run learned the fixture's host path, then the sr-eval checkout's, from inside
@@ -20,21 +22,22 @@ const (
 	leakCheckout = "/private/tmp/LEAKCANARY/checkout"
 )
 
-// argvRole: first pass, behave as `sr-eval run --fixture <leakFixture>` and hide the argv;
-// second pass (re-executed), report what `ps` shows for this very process, then what the
-// program itself sees.
+// argvRole runs main's own startup (settleArgv) as `sr-eval run --fixture <leakFixture>`.
+// First pass: it must re-execute. Second pass (re-executed): settleArgv must return, not
+// re-execute again; then report what `ps` showed for this very process before, and what the
+// program itself sees after.
 func argvRole() {
 	out := os.Getenv("SRE_TEST_ARGV_OUT")
 	if len(os.Args) == 3 && strings.HasPrefix(os.Args[2], argsFilePrefix) {
 		ps, _ := exec.Command("ps", "-o", "args=", "-p", itoa(os.Getpid())).Output()
-		restoreArgv()
+		settleArgv()
 		b, _ := json.Marshal(map[string]any{"ps": string(ps), "args": os.Args})
 		_ = os.WriteFile(out, b, 0o644)
 		os.Exit(0)
 	}
 	os.Args = []string{os.Args[0], "run", "--fixture", leakFixture, "--harness", "cursor"}
-	hideArgv()
-	os.Exit(3) // hideArgv returned: it did not re-execute
+	settleArgv()
+	os.Exit(3) // settleArgv returned: it did not re-execute
 }
 
 func itoa(n int) string {
@@ -49,9 +52,15 @@ func TestHideArgv_ProcessTableCarriesNoHostPath(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	out := filepath.Join(t.TempDir(), "argv.json")
-	cmd := exec.Command(self)
+	// A re-execution loop never returns: bound it.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, self)
 	cmd.Env = append(os.Environ(), roleEnv+"=argv", "SRE_TEST_ARGV_OUT="+out, "TMPDIR="+tmp)
 	if b, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("sr-eval run re-executes itself forever: %s", b)
+		}
 		t.Fatalf("argv role: %v: %s", err, b)
 	}
 	b, err := os.ReadFile(out)

@@ -52,8 +52,7 @@ import (
 
 func main() {
 	// The agent-under-test can read the process table: keep host paths out of our argv.
-	restoreArgv()
-	hideArgv()
+	settleArgv()
 	err := newRoot().Execute()
 	if err != nil {
 		if err.Error() != "" {
@@ -79,4 +78,13 @@ happened — not what a mock was scripted to produce.`,
 	}
 	cmd.AddCommand(newRunCmd(), newArchiveCmd(), newTUICmd())
 	return cmd
+}
+
+// settleArgv runs once per process: the re-executed process restores its real arguments, the
+// first one hides them (re-executing). Never both: restored arguments hidden again would
+// re-execute forever.
+func settleArgv() {
+	if !restoreArgv() {
+		hideArgv()
+	}
 }

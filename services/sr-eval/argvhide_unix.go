@@ -46,15 +46,18 @@ func hideArgv() {
 }
 
 // restoreArgv replaces os.Args with the real arguments hideArgv stashed and deletes the file.
-func restoreArgv() {
+// It reports whether this process is the re-executed one, which must not hide again: the
+// restored arguments carry the paths again, and a second hideArgv would re-execute forever.
+func restoreArgv() bool {
 	if len(os.Args) != 3 || !strings.HasPrefix(os.Args[2], argsFilePrefix) {
-		return
+		return false
 	}
 	p := filepath.Join(os.TempDir(), strings.TrimPrefix(os.Args[2], argsFilePrefix))
 	body, err := os.ReadFile(p)
 	os.Remove(p)
 	if err != nil {
-		return
+		return true
 	}
 	os.Args = append([]string{os.Args[0]}, strings.Split(string(body), "\x00")...)
+	return true
 }
