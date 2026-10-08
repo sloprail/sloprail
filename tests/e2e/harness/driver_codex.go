@@ -41,8 +41,10 @@ func (codexDriver) Name() string { return "codex" }
 // Caps: Codex has no Skill tool, no ask-user-question in exec, no worktree hooks
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
+func (codexDriver) SkillLoadTool() string { return "Bash" }
+
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText}
+	return []string{CapSubagents, CapSubagentLifecycleHooks, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -100,6 +102,9 @@ func codexUpdateFile(path, oldText, newText string) string {
 	return b.String()
 }
 
+// codexWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
+const codexWorkspaceMark = "@@WORKSPACE@@"
+
 func (codexDriver) unsupported(a Action, why string) error {
 	return &UnsupportedError{Harness: "codex", Step: fmt.Sprintf("%s (kind %d): %s", a.ID, a.Kind, why)}
 }
@@ -146,10 +151,20 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 			{suffix: "w", spawnedBy: a.ID},
 		}, nil
 	case ActSkill:
-		return nil, c.unsupported(a, "Codex has no skill tool")
+		// Codex has no skill tool: reading the skill's SKILL.md through the shell is how it loads one.
+		path := codexWorkspaceMark + "/" + harness.ProjectSkillDirs(codexharness.New())[0] + "/" + a.Text + "/SKILL.md"
+		return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + path}))}}, nil
 	case ActToolUse:
 		if a.Background {
-			return nil, c.unsupported(a, "a background command's receipt names no task")
+			if a.Tool != "Bash" {
+				return nil, c.unsupported(a, "spawn_agent has no background option: it answers at once and runs concurrently, with no receipt naming a task")
+			}
+			// A background command is the command with its output sent to a file a later read reads.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": backgroundShell(a.ID, a.Input["command"])}))}}, nil
+		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && strings.Contains(path, backgroundTmpMark) && len(a.Input) == 1 {
+			// the output file of a background command: the run's temporary directory is the shell's.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": `cat "` + strings.ReplaceAll(path, backgroundTmpMark, backgroundShellTmp) + `"`}))}}, nil
 		}
 		if path := a.Input["file_path"]; a.Tool == "Read" && path != "" && len(a.Input) == 1 {
 			// Codex reads a file through its shell: the Read of a whole file is `cat` of it.
@@ -174,7 +189,7 @@ func (c codexDriver) RenderScript(s Scenario) (string, error) {
 	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
 	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
 	compacts := 0
-	for i, t := range s.turns {
+	for i, t := range launchedOutput(foldCallOutput(s.turns)) {
 		blocks, err := c.render(t.act)
 		if err != nil {
 			return "", err
@@ -209,6 +224,15 @@ fi
 				continue
 			}
 			line = injectCodexMarker(line, t.act.ID, marker)
+			if strings.Contains(line, codexWorkspaceMark) {
+				// the line names a path in the workspace: the script runs there, so $PWD is its root
+				fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  printf '%%s\n' %s | sed "s|%s|$PWD|g"
+  exit 0
+fi
+`, marker, shQuote(line), codexWorkspaceMark)
+				continue
+			}
 			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
   printf '%%s\n' %s
   exit 0
@@ -241,7 +265,11 @@ func injectCodexMarker(line, id, marker string) string {
 // run printed (Observe).
 func (codexDriver) Command(e *Env, l Launch) *exec.Cmd {
 	args := []string{"exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust",
-		"--script", l.ScriptPath, "-C", l.WorkDir, "-m", "mock-model"}
+		"--script", l.ScriptPath, "-C", l.WorkDir, "-m", "mock-model",
+		// Codex's default agents.max_depth is 0: a sub-agent cannot spawn another. A project
+		// that wants delegation to nest sets it, as this run does (the mock honours only this
+		// override), so a scenario whose sub-agent dispatches a further one is exercised.
+		"-c", "agents.max_depth=3"}
 	switch l.Mode {
 	case SessionResume:
 		args = append(args, "resume", e.harnessID(l.SessionID))

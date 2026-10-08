@@ -30,7 +30,7 @@ func runSubagentCommit(t *testing.T, e *Env, proj, sess string) harness.Result {
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "mkdir -p docs && echo 'the release is Friday' > docs/a.md"),
 	).ThenCommit("the sub-agent's doc"))
-	return e.Run(proj, sess, "delegate the doc", Turns("root done", harness.Dispatch("d1", "write the doc", sub, "worktree")))
+	return e.Run(proj, sess, "delegate the doc", Turns("root done", harness.Dispatch("d1", "write the doc", sub, harness.OwnTree(t))))
 }
 
 // T056_05: by default a sub-agent's folders are tracked, but only the ROOT's Stop verifies
@@ -60,6 +60,18 @@ func TestT056_06_OptingInMakesTheSubagentsOwnStopVerify(t *testing.T) {
 
 	res := runSubagentCommit(t, e, proj, sess)
 
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// No worktree option on this harness: the sub-agent works in the root's tree and has no
+		// range of its own, so even opted in its Stop has nothing to verify; the root's Stop,
+		// which owns that tree, refuses the failing range.
+		if !e.NoSubagentStopBlock(proj, sess) {
+			t.Fatalf("a sub-agent in the root's tree was refused for a range of its own:\n%s", res.Output)
+		}
+		if got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"); !strings.Contains(got, failedText) {
+			t.Fatalf("the root's Stop did not refuse the failing range:\n%s", got)
+		}
+		return
+	}
 	if !e.SubagentStopBlocked(proj, sess, failedText) {
 		t.Fatalf("the sub-agent's Stop did not refuse its failing range:\n%s", res.Output)
 	}

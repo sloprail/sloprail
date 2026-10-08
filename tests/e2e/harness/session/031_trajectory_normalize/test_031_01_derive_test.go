@@ -154,6 +154,34 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 
+	if !harness.HasCap(t, harness.CapSeveralCallsInOneEntry) {
+		// This harness's record writes a call apiece (Codex's rollout, Cursor's transcript), so
+		// three calls are three entries: each yields its own one event, still one per call,
+		// in the order the calls were made.
+		e.Run(proj, "s-031-05", "do a few things", Turns("done",
+			Bash("c1", "ls"), Bash("c2", "pwd"), Bash("c3", "whoami"),
+		))
+		res := normalize(e, proj, e.TranscriptPath(proj, "s-031-05"), "--whole-session")
+		if res.Code != 0 {
+			t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
+		}
+		var raws []string
+		for _, ent := range decodeEntries(t, res.Output) {
+			for _, ev := range ent.Events {
+				if ev.Kind != "PreCommandInvoke" {
+					continue
+				}
+				if len(ent.Events) != 1 {
+					t.Fatalf("a call written as an entry of its own should yield that one event, got %v", eventsOf(ent))
+				}
+				raws = append(raws, ev.Fields["raw"].(string))
+			}
+		}
+		if len(raws) != 3 || raws[0] != "ls" || raws[1] != "pwd" || raws[2] != "whoami" {
+			t.Fatalf("the three calls should yield ls, pwd, whoami in order, one event each, got %v:\n%s", raws, res.Output)
+		}
+		return
+	}
 	e.Run(proj, "s-031-05", "do a few things", Turns("done",
 		BashBatch("c1", "ls", "pwd", "whoami"),
 	))
@@ -209,7 +237,6 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 // number of preamble records: an entry's physical line is its ordinal position among the
 // physical lines, and the first entry sits exactly `preamble+1` in.
 func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
-	harness.RequireCap(t, harness.CapRecordPreamble)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -218,6 +245,24 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 		Say("m1", "on it"),
 	))
 	path := e.TranscriptPath(proj, "s-031-06")
+	if !harness.HasCap(t, harness.CapRecordPreamble) {
+		// A record with no preamble (Codex opens on its session_meta, Cursor on the prompt): every
+		// line is an entry, so an entry's physical line IS its ordinal position, with none skipped.
+		res := normalize(e, proj, path)
+		if res.Code != 0 {
+			t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
+		}
+		entries := decodeEntries(t, res.Output)
+		if physical := nonBlankLines(readFile(t, path)); len(entries) != physical {
+			t.Fatalf("a record with no preamble has an entry per physical line: %d entries for %d lines:\n%s", len(entries), physical, res.Output)
+		}
+		for i, ent := range entries {
+			if ent.Line != i+1 {
+				t.Fatalf("entry %d (%s) should sit on physical line %d, got line %d:\n%s", i, ent.Type, i+1, ent.Line, res.Output)
+			}
+		}
+		return
+	}
 
 	// The mock-produced transcript opens with a run of no-uuid preamble records; count
 	// them from the file the mock wrote so the line assertions rest on its real layout
@@ -287,6 +332,17 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 	if len(summary.HookErrors) != 0 {
 		t.Errorf("nothing refused, yet the summary lists hook errors: %v", summary.HookErrors)
 	}
+}
+
+// nonBlankLines counts the physical lines of a record that hold something.
+func nonBlankLines(text string) int {
+	n := 0
+	for _, l := range strings.Split(text, "\n") {
+		if strings.TrimSpace(l) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // leadingNoUUIDLines counts the run of records at the HEAD of the transcript that carry

@@ -19,7 +19,30 @@ func TestT003_63_AGoneBranchsLastTipIsPinnedAndSurvivesGarbageCollection(t *test
 		Bash("b1", "git switch -q -c sub-a"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// A sub-agent in the root's tree has no worktree to remove, so nothing is pinned: its
+		// branch is a live ref of the root's repository, tracked in the root's folder, and keeps the
+		// commit through housekeeping on its own. The root's Stop verifies and refuses it.
+		noSubagentFolder(t, e, proj, sess)
+		tip := strings.TrimSpace(e.Git(proj, "rev-parse", "sub-a"))
+		if !trackedIn(sessionRanges(t, e, proj, sess), proj, "sub-a") {
+			t.Fatalf("the sub-agent's branch is not tracked in the root's folder: %+v", sessionRanges(t, e, proj, sess))
+		}
+		if pins := e.Git(proj, "for-each-ref", "refs/sloprail/pins"); strings.TrimSpace(pins) != "" {
+			t.Fatalf("a tip was pinned though no worktree was removed:\n%s", pins)
+		}
+		e.Git(proj, "reflog", "expire", "--expire=now", "--all")
+		e.Git(proj, "gc", "-q", "--prune=now")
+		if out := e.Git(proj, "cat-file", "-t", tip); strings.TrimSpace(out) != "commit" {
+			t.Fatalf("the branch did not keep the commit through the collection, got %q", out)
+		}
+		r := e.StopNow(proj, sess, false)
+		if !harness.Blocked(r) || !strings.Contains(r.Output, "docs/a.md") || strings.Contains(r.Output, "cannot be read") {
+			t.Fatalf("the sub-agent's violation escaped the root's Stop:\n%s", r.Output)
+		}
+		return
+	}
 	wt, _ := subagentFolder(t, e, proj, sess)
 	tip := strings.TrimSpace(e.Git(proj, "rev-parse", "sub-a"))
 

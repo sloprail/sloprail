@@ -42,6 +42,8 @@ func (cursorDriver) Name() string { return "cursor" }
 // background task (spec/capabilities, providers.cursor of harness-mocks). The stop hook is
 // there because every run opts into the mock's Stop (A10N_CURSOR_MOCK_STOP=1): a scenario
 // then ends with the agent's own `sr-checks run`, which the Stop verifies.
+func (cursorDriver) SkillLoadTool() string { return "Read" }
+
 func (cursorDriver) Caps() []string {
 	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript, CapPathLineBreaks, CapProseWithCallInOneEntry}
 }
@@ -102,7 +104,11 @@ func (c cursorDriver) render(a Action) (string, error) {
 		return `{"type":"compact","trigger":"manual"}`, nil
 	case ActToolUse:
 		if a.Background {
-			return "", c.unsupported(a, "a background command's receipt names no task")
+			if a.Tool != "Bash" {
+				return "", c.unsupported(a, "a Task has no background option: it answers at once and runs concurrently, with no receipt naming a task")
+			}
+			// A background command is the command with its output sent to a file a later Read reads.
+			return cursorLine(codexTool(a.ID, "Bash", map[string]any{"command": backgroundShell(a.ID, a.Input["command"])})), nil
 		}
 		if !cursorPassthrough[a.Tool] {
 			return "", c.unsupported(a, "the mock runs no "+a.Tool+" tool")
@@ -134,7 +140,7 @@ cnt() { n=$(grep -c "$1" "$SF" 2>/dev/null); echo "${n:-0}"; }
 BASE=0; [ "$SF" = "${SLOP_BASE_FILE:-}" ] && BASE=${SLOP_BASE:-0}
 PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - BASE - 1 ))
 `)
-	for i, t := range s.turns {
+	for i, t := range launchedOutput(foldCallOutput(s.turns)) {
 		line, err := c.render(t.act)
 		if err != nil {
 			return "", err
@@ -142,6 +148,11 @@ PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - BASE - 1 ))
 		if strings.Contains(line, cursorWorkspaceMark) {
 			// the line names a path in the workspace: the script runs there, so $PWD is its root
 			fmt.Fprintf(&b, "if [ \"$PROG\" -eq %d ]; then\n  printf '%%s\\n' %s | sed \"s|%s|$PWD|g\"\n  exit 0\nfi\n", i, shQuote(line), cursorWorkspaceMark)
+			continue
+		}
+		if strings.Contains(line, backgroundTmpMark) {
+			// the line names a file in the run's temporary directory, which the script's environment names
+			fmt.Fprintf(&b, "if [ \"$PROG\" -eq %d ]; then\n  printf '%%s\\n' %s | sed \"s|%s|${TMPDIR:-/tmp}|g\"\n  exit 0\nfi\n", i, shQuote(line), backgroundTmpMark)
 			continue
 		}
 		fmt.Fprintf(&b, "if [ \"$PROG\" -eq %d ]; then\n  printf '%%s\\n' %s\n  exit 0\nfi\n", i, shQuote(line))
@@ -492,6 +503,9 @@ func (c cursorDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []s
 	}
 	return out
 }
+
+// OriginOfSession: a Cursor conversation is the chat id the harness named it by.
+func (cursorDriver) OriginOfSession(e *Env, sessionID string) string { return e.harnessID(sessionID) }
 
 func (cursorDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
 	e.t.Fatalf("harness cursor: a fork of a conversation is not modelled: a test continues a conversation through RunContinued")

@@ -43,15 +43,30 @@ func provenanceProject(t *testing.T) (*harness.Env, string) {
 // sr:proves citations/tool-result-pool-is-genuine-tool-output
 func TestT041_28_ResultOfUnknownProvenanceIsNotCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
-	e.Run(proj, "s-041-28", prompt, Turns("done", harness.ToolResult("elsewhere", "ORPHAN-E2E-5521 all green")))
-	if !strings.Contains(readFile(t, e.TranscriptPath(proj, "s-041-28")), "ORPHAN-E2E-5521") {
+	// A harness whose record cannot hold a result without its call (Codex and Cursor record
+	// the output of a command they ran) has no result of unknown provenance to refuse: the
+	// same output WITH its call is what a tool_result citation grounds on, and the write lands.
+	orphan := harness.HasCap(t, harness.CapOrphanToolResult)
+	result := []harness.Turn{harness.ToolResult("elsewhere", "ORPHAN-E2E-5521 all green")}
+	if !orphan {
+		call, out := harness.CallWithOutput("elsewhere", "Bash", map[string]string{"command": "true"}, "ORPHAN-E2E-5521 all green")
+		result = []harness.Turn{call, out}
+	}
+	e.Run(proj, "s-041-28", prompt, Turns("done", result...))
+	if orphan && !strings.Contains(readFile(t, e.TranscriptPath(proj, "s-041-28")), "ORPHAN-E2E-5521") {
 		t.Fatalf("the orphan result is not in the record, so this would not test it")
 	}
 	res := e.Run(proj, "s-041-28", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'ORPHAN-E2E-5521 all green' --content '# results'`),
 	))
-	if !res.Saw("b1") {
+	if !res.Saw("memories/results.md") {
 		t.Fatalf("the citing call never ran:\n%s", res.Output)
+	}
+	if !orphan {
+		if !e.Exists(proj, "memories/results.md") {
+			t.Fatalf("a result with its call in the record did not ground a write:\n%s", res.Output)
+		}
+		return
 	}
 	if e.Exists(proj, "memories/results.md") {
 		t.Fatalf("a result whose call is not in the record grounded a write:\n%s", res.Output)
@@ -67,7 +82,14 @@ func TestT041_29_ABackgroundBashsOutputReadFromItsFileIsCitable(t *testing.T) {
 		harness.ReadLaunchedOutput("r1"),
 	))
 	record := readFile(t, e.TranscriptPath(proj, "s-041-29"))
-	for _, want := range []string{"Command running in background with ID: ", "TASKBASH-3311 12 passed"} {
+	wants := []string{"TASKBASH-3311 12 passed"}
+	if harness.HasCap(t, harness.CapBackgroundTasks) {
+		// Where the harness has background tasks the launch is answered with a receipt naming
+		// the task. Codex and Cursor answer with none (the command's
+		// output goes to a file the next call reads): the output read from that file is what grounds.
+		wants = append(wants, "Command running in background with ID: ")
+	}
+	for _, want := range wants {
 		if !strings.Contains(record, want) {
 			t.Fatalf("%q is not in the record, so this would not test it", want)
 		}
@@ -129,19 +151,32 @@ func TestT041_45_AnAgentTranscriptReadBackIsNotToolOutput(t *testing.T) {
 func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
 	reply := subagentScript(t, harness.Turns("TASKAGENT-7702 all 40 tests pass"))
-	e.Run(proj, "s-041-30", prompt, Turns("done",
-		harness.Background("ag1", "Agent", map[string]string{"prompt": "run the suite", "description": "background", "script": reply}),
-	))
-	record := readFile(t, e.TranscriptPath(proj, "s-041-30"))
-	for _, want := range []string{"Async agent launched successfully.", "<task-notification>", "TASKAGENT-7702"} {
-		if !strings.Contains(record, want) {
-			t.Fatalf("%q is not in the record, so this would not test it", want)
+	if harness.HasCap(t, harness.CapBackgroundTasks) {
+		e.Run(proj, "s-041-30", prompt, Turns("done",
+			harness.Background("ag1", "Agent", map[string]string{"prompt": "run the suite", "description": "background", "script": reply}),
+		))
+		record := readFile(t, e.TranscriptPath(proj, "s-041-30"))
+		for _, want := range []string{"Async agent launched successfully.", "<task-notification>", "TASKAGENT-7702"} {
+			if !strings.Contains(record, want) {
+				t.Fatalf("%q is not in the record, so this would not test it", want)
+			}
+		}
+	} else {
+		// Codex's spawn_agent and Cursor's Task have no background choice: the call answers at once
+		// and the agent runs concurrently, so a dispatch is the launch, and no notification hands the
+		// task back. Its reply reaches the parent some other way (a wait on the agent, the sub-agent's
+		// own record) and is the same model-written text, citable nowhere.
+		e.Run(proj, "s-041-30", prompt, Turns("done",
+			harness.Dispatch("ag1", "run the suite", reply, ""),
+		))
+		if len(e.SubagentRecordPaths(proj, "s-041-30")) == 0 {
+			t.Fatalf("the agent left no record of its own, so this would not test it")
 		}
 	}
 	res := e.Run(proj, "s-041-30", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/agent.md --cite:tool_result 'TASKAGENT-7702 all 40 tests pass' --content '# results'`),
 	))
-	if !res.Saw("b1") {
+	if !res.Saw("memories/agent.md") {
 		t.Fatalf("the citing call never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/agent.md") {
@@ -156,23 +191,35 @@ func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 // sr:proves citations/user-pool-is-the-persons-own-words
 func TestT041_32_AnAnswerIsNotToolOutput(t *testing.T) {
 	e, proj := provenanceProject(t)
-	ask, answer := harness.AskUserQuestion("q1", "which retry budget?", "ANSWER-E2E-6120 five retries")
-	e.Run(proj, "s-041-32", prompt, Turns("done", ask, answer))
+	asked := harness.HasCap(t, harness.CapAskUserQuestion)
+	e.Run(proj, "s-041-32", prompt, Turns("done", harness.AskUserQuestionIfOffered(t, "q1", "which retry budget?", "ANSWER-E2E-6120 five retries")...))
 	record := readFile(t, e.TranscriptPath(proj, "s-041-32"))
-	for _, want := range []string{`"name":"AskUserQuestion"`, "ANSWER-E2E-6120"} {
-		if !strings.Contains(record, want) {
-			t.Fatalf("%q is not in the record, so this would not test it", want)
+	if asked {
+		for _, want := range []string{`"name":"AskUserQuestion"`, "ANSWER-E2E-6120"} {
+			if !strings.Contains(record, want) {
+				t.Fatalf("%q is not in the record, so this would not test it", want)
+			}
 		}
+	} else if strings.Contains(record, "ANSWER-E2E-6120") {
+		// No question tool, so no answer: the words are in no record, and so ground
+		// neither a user nor a tool_result citation.
+		t.Fatalf("the answer is in a record that has no answer to hold:\n%s", record)
 	}
 	res := e.Run(proj, "s-041-32", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/budget.md --cite:tool_result 'ANSWER-E2E-6120 five retries' --content '# budget'`),
 		Bash("b2", `sr-file write notes/budget.md --cite:user 'ANSWER-E2E-6120 five retries' --content '# budget'`),
 	))
-	if !res.Saw("memories/plain.md") {
+	if !res.Saw("memories/budget.md") {
 		t.Fatalf("the citing calls never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/budget.md") {
 		t.Errorf("the user's answer grounded a --cite:tool_result write:\n%s", res.Output)
+	}
+	if !asked {
+		if e.Exists(proj, "notes/budget.md") {
+			t.Errorf("words no one said grounded a --cite:user write:\n%s", res.Output)
+		}
+		return
 	}
 	if !e.Exists(proj, "notes/budget.md") {
 		t.Errorf("the user's answer did not ground a --cite:user write:\n%s", res.Output)
@@ -194,7 +241,6 @@ func readFile(t *testing.T, path string) string {
 // sr-file failing the same way is left to say its own words.
 // sr:proves citations/user-pool-is-the-root-conversation
 func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
-	harness.RequireCap(t, harness.CapSubagentParentLink)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -208,6 +254,11 @@ func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
 	))
 	if e.Exists(proj, "notes.md") || e.Exists(proj, "root-notes.md") {
 		t.Fatalf("a write citing words the user never said landed")
+	}
+	// A harness whose record holds no tool results (a refusal is one) cannot show the
+	// refusals' wording; that nothing landed is shown above.
+	if !harness.HasCap(t, harness.CapRecordHoldsToolResults) {
+		return
 	}
 	// The sub-agent's own call and its result are in its own record, the root's
 	// in the root's.
@@ -256,7 +307,7 @@ func TestT041_48_ATranscriptReadBackIsRecognisedByItsText(t *testing.T) {
 		Bash("b3", `sr-file write memories/data.md --cite:tool_result 'DATAVALUE-6603' --content '# x'`),
 		Bash("b4", `sr-file write memories/echo.md --cite:tool_result 'BUILD-OK-5512' --content '# x'`),
 	))
-	if !res.Saw("b4") {
+	if !res.Saw("memories/echo.md") {
 		t.Fatalf("the citing calls never ran:\n%s", res.Output)
 	}
 	for _, f := range []string{"memories/gone.md", "memories/rel.md"} {

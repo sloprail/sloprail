@@ -102,17 +102,32 @@ func TestT055_07_ASubagentOwesCommitsInItsOwnWorktreeOnly(t *testing.T) {
 
 	const own = "s-055-07a"
 	res := e.Run(proj, own, "delegate into isolation", Turns("root done",
-		harness.Dispatch("d1", "write the doc", write("isolated.md"), "worktree"),
+		harness.Dispatch("d1", "write the doc", write("isolated.md"), harness.OwnTree(t)),
 	))
 	var wt bool
 	for _, f := range e.SessionFolders(proj, own) {
 		wt = wt || f.Role == sessionstate.FolderSubagentWorktree
 	}
-	if !wt {
-		t.Fatalf("a sub-agent's own worktree is not a folder of the session: %+v", e.SessionFolders(proj, own))
-	}
-	if !e.SubagentStopBlocked(proj, own, "docs/isolated.md") {
-		t.Fatalf("a sub-agent in its own worktree was not owed a commit for its uncommitted work:\n%s", res.Output)
+	if harness.HasCap(t, harness.CapWorktrees) {
+		if !wt {
+			t.Fatalf("a sub-agent's own worktree is not a folder of the session: %+v", e.SessionFolders(proj, own))
+		}
+		if !e.SubagentStopBlocked(proj, own, "docs/isolated.md") {
+			t.Fatalf("a sub-agent in its own worktree was not owed a commit for its uncommitted work:\n%s", res.Output)
+		}
+	} else {
+		// No worktree option on this harness: the sub-agent works in the root's tree, so no
+		// worktree of its own is a folder, it is not refused for the root's tree, and the
+		// root is owed the commit.
+		if wt {
+			t.Fatalf("a harness without sub-agent worktrees registered one as a folder: %+v", e.SessionFolders(proj, own))
+		}
+		if !e.NoSubagentStopBlock(proj, own) {
+			t.Fatalf("a sub-agent in the root's tree was refused for the root's tree:\n%s", res.Output)
+		}
+		if got := strings.Join(e.BlockingErrorsFrom(proj, own, "Stop"), "\n"); !strings.Contains(got, "docs/isolated.md") {
+			t.Fatalf("the root, which owns the tree, was not owed the commit:\n%s", got)
+		}
 	}
 
 	const shared = "s-055-07b"
