@@ -118,6 +118,13 @@ rule.
 several, comma-separated), and with no flag sets up each harness it finds on the
 machine. For Claude Code it only prints the project commands above.
 
+`install.sh` also installs `jq` and `yq` when they are not on your `PATH` (the
+tests and some shipped scripts need them): with `brew` on macOS, with `apt-get`,
+`dnf` or `apk` on Linux when one is available (through `sudo` only when you are
+not root and `sudo` needs no password), otherwise the official static binary into
+the same directory as the `sr*` binaries. It prints what it installed and fails
+with the reason if it cannot. `install.sh --tools-only [DIR]` does just that step.
+
 ## Differences between the harnesses
 
 The rules a project writes don't change between harnesses; these are the places

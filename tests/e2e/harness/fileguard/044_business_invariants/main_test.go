@@ -31,41 +31,12 @@ var (
 // drives the session differently (no CLAUDE_CODE_SESSION_ID, so sr-file cannot
 // find the session) — the tests then fail for a reason that is not theirs. With
 // A10N_CLAUDE_MOCK unset and no .bin/ stamp for tests/e2e/harness/MOCK_VERSION,
-// every test here that drives the mock is skipped with the fix — except under CI,
-// where a missing mock is a broken job, not a laptop without `make mock`, and
-// fails instead (CI also checks .bin/ itself before the tests).
+// the pinned mock is installed into .bin/ first (what `make mock` does; no test
+// skips for a missing mock) and the test fails if that install does.
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	if msg := pinnedMockMissing(repoRoot(t), os.Getenv("A10N_CLAUDE_MOCK")); msg != "" {
-		missingMock(t, os.Getenv("CI"), msg)
-	}
+	harness.EnsurePinnedMock(t)
 	return harness.New(t)
-}
-
-// missingMock skips (a developer's machine) or fails (CI set) for a missing mock.
-func missingMock(t testing.TB, ci, msg string) {
-	t.Helper()
-	if ci != "" {
-		t.Fatal(msg + " (CI is set: a missing mock fails rather than skips)")
-	}
-	t.Skip(msg)
-}
-
-// pinnedMockMissing says why the pinned mock is not installed, or "" when it is
-// (or when A10N_CLAUDE_MOCK names a mock build of the caller's own).
-func pinnedMockMissing(root, override string) string {
-	if override != "" {
-		return ""
-	}
-	version, err := os.ReadFile(filepath.Join(root, "tests", "e2e", "harness", "MOCK_VERSION"))
-	if err != nil {
-		return "harness: tests/e2e/harness/MOCK_VERSION unreadable: " + err.Error()
-	}
-	stamp := filepath.Join(root, ".bin", "a10n-claude-mock."+strings.TrimSpace(string(version)))
-	if _, err := os.Stat(stamp); err != nil {
-		return "the pinned a10n-claude-mock (" + strings.TrimSpace(string(version)) + ") is not in .bin/ — run `make mock`"
-	}
-	return ""
 }
 
 // TestMain removes the binary build dir when this package's tests finish.
@@ -151,8 +122,6 @@ func containsAll(haystack string, needles ...string) bool {
 // tests/e2e/harness/gate/058_cite_before_commit.
 func newEnvUncited(t *testing.T) *env {
 	t.Helper()
-	if msg := pinnedMockMissing(repoRoot(t), os.Getenv("A10N_CLAUDE_MOCK")); msg != "" {
-		missingMock(t, os.Getenv("CI"), msg)
-	}
+	harness.EnsurePinnedMock(t)
 	return harness.New(t, harness.WithoutShipped("sloprail/gate/cite-before-commit"))
 }
