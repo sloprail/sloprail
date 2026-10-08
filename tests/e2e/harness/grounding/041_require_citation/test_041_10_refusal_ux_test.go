@@ -66,18 +66,25 @@ require:
 `
 	const sess = "s-041-61"
 	e, proj := guardedUncited(t, guard)
-	sub := subagentScript(t, harness.Turns("sub done",
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	steps := []harness.Turn{
 		Bash("sb1", "echo 'build finished: CITEUX-7310 green'"),
 		Bash("sb2", "sr-file write memories/a.md --cite:tool_result 'CITEUX-7310 green' <<'EOF'\n# a\nEOF"),
-		harness.Commit("sb3", "write a"),
-	))
+	}
+	if !linked {
+		// Where cite cannot be asked of a sub-agent, ask it plainly and read its answer.
+		steps = append(steps, Bash("sb2c", citeProbe("tool_result", "CITEUX-7310 green", "sub-cite")))
+	}
+	sub := subagentScript(t, harness.Turns("sub done", append(steps, harness.Commit("sb3", "write a"))...))
 	e.Run(proj, sess, prompt, Turns("done", harness.Dispatch("d1", "write it down", sub, "")))
-	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+	if !linked {
 		// A harness that cannot link a sub-agent to its session: its cited write is refused, so
 		// there is no recorded quote to list.
 		if e.Exists(proj, "memories/a.md") {
 			t.Fatalf("a sub-agent's cited write landed on a harness that cannot link it to its session")
 		}
+		// The sub-agent's cite ran and said why it cannot help from a sub-agent.
+		requireUnlinkedError(t, proj, "sub-cite")
 		return
 	}
 	refusal := stopRefusal(e, proj, sess)
