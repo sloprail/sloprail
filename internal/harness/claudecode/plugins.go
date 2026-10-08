@@ -395,6 +395,38 @@ func locate(p harness.Plugin, marketplaces map[string]marketplace, home, project
 	return dir, tried, nil
 }
 
+// PluginCopies implements harness.PluginCopies. locate names ONE directory for a
+// plugin: the source of a directory marketplace, else the cache. Claude Code can hold
+// both (a plugin installed from a directory marketplace also unpacked into the cache),
+// and a skill is read at whichever it served, so the other is a copy: the source tree
+// when one is declared, and the cache's live version.
+func (Harness) PluginCopies(projectDir, home string, root harness.Root) []string {
+	_, marketplaces, err := resolveEnabled(projectDir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	if m, ok := marketplaces[root.Plugin.Marketplace]; ok && m.Source.Source == "directory" && m.Source.Path != "" {
+		sourcePath := m.Source.Path
+		if !filepath.IsAbs(sourcePath) {
+			sourcePath = filepath.Join(projectDir, sourcePath)
+		}
+		for _, dir := range pluginDirsInMarketplace(sourcePath, root.Plugin.Name) {
+			if isDir(dir) {
+				out = append(out, dir)
+				break
+			}
+		}
+	}
+	pluginCache := filepath.Join(CacheRoot(home), root.Plugin.Marketplace, root.Plugin.Name)
+	if version, err := liveVersion(root.Plugin, pluginCache, home); err == nil {
+		if dir := filepath.Join(pluginCache, version); isDir(dir) {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
 // pluginDirsInMarketplace lists where a plugin's files may sit within a
 // directory-sourced marketplace, in the order to try them.
 func pluginDirsInMarketplace(root, name string) []string {

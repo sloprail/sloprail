@@ -106,6 +106,42 @@ type SkillDirs interface {
 	ProjectSkillDirs() []string
 }
 
+// PluginCopies is what a Harness MAY implement when it can load one plugin from more
+// than one directory (an installed cache copy beside the marketplace source Resolve
+// prefers): the other directories the plugin's files are read from, besides root.Dir.
+// An agent reads a skill's SKILL.md at whichever copy it was loaded from, so a check
+// that a skill was read must recognise every one.
+type PluginCopies interface {
+	PluginCopies(projectDir, home string, root Root) []string
+}
+
+// PluginDirs is every directory h loads an enabled plugin's files from: each resolved
+// root, then its other copies, without repeats. Unresolved plugins contribute none.
+func PluginDirs(h Harness, projectDir, home string) ([]string, error) {
+	res, err := h.ResolvePlugins(projectDir, home)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var dirs []string
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	c, hasCopies := h.(PluginCopies)
+	for _, root := range res.Roots {
+		add(root.Dir)
+		if hasCopies {
+			for _, d := range c.PluginCopies(projectDir, home, root) {
+				add(d)
+			}
+		}
+	}
+	return dirs, nil
+}
+
 // DefaultSkillDir is where a project's own skills live for a harness that names none
 // (Claude Code's layout).
 const DefaultSkillDir = ".claude/skills"
