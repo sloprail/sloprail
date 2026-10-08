@@ -347,7 +347,13 @@ func New(t *testing.T, opts ...Option) *Env {
 	}
 	mock, hint := drv.FindMock(repoRoot(t))
 	if mock == "" {
-		t.Skipf("harness: the %s mock agent not found — %s", drv.Name(), hint)
+		// Not found: install the pinned one (what `make mock` does) rather than skip.
+		if err := ensureMock(repoRoot(t), drv.Name()); err != nil {
+			t.Fatalf("harness: the %s mock agent not found and installing it failed (%s): %v", drv.Name(), hint, err)
+		}
+		if mock, _ = drv.FindMock(repoRoot(t)); mock == "" {
+			t.Fatalf("harness: the %s mock agent not found after installing it — %s", drv.Name(), hint)
+		}
 	}
 	// A short root, not t.TempDir(): the encoded project-dir path below is a
 	// 1:1 non-alphanumeric substitution with no shortening, and a long test
