@@ -1508,7 +1508,14 @@ func (e *Env) ScenarioError(s Scenario) error {
 // ForHarness fills `{{harness}}` in a check script with the name of the selected
 // harness, for a script that launches an agent through `sr-agent --harness`: the agent
 // it runs is then the one this run's shim (InstallClaudeShim) stands in for.
+// `{{agent-mode}}` becomes `--agent-run ` where a judge-mode agent cannot write the project
+// (no CapJudgeWritesProject), and nothing where it can.
 func (e *Env) ForHarness(script string) string {
+	mode := "--agent-run "
+	if HasCap(e.t, CapJudgeWritesProject) {
+		mode = "" // the launched agent is a judge, as a check's agent is
+	}
+	script = strings.ReplaceAll(script, "{{agent-mode}}", mode)
 	return strings.ReplaceAll(script, "{{harness}}", e.driver.Name())
 }
 

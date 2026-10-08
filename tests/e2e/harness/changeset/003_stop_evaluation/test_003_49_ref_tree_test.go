@@ -10,11 +10,14 @@ import (
 // A judge that reads the project the way a real one does: it passes only when the
 // project it was given holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
 // The tree is the one the prompt names ("The project being judged is at <dir>."), which is how
-// every harness's judge learns it: Claude is also handed it as an --add-dir, but a Codex judge
-// reads the project by absolute path and is handed no such argument.
+// every harness's judge learns it. Where the harness also carries the tree as an argument
+// (Claude's --add-dir: CapJudgeTreeInArgv), an argument naming the tree must hold REQUIRED.md
+// too, so the launch itself is checked; a Codex judge reads the project by absolute path and a
+// Cursor judge runs in an empty workspace, and are handed no such argument.
 const requiredFileJudge = `#!/bin/sh
 out=""
 ok=no
+argv_ok=no
 for arg in "$@"; do
   case "$arg" in
     *"Write your answer to the file "*)
@@ -23,7 +26,9 @@ for arg in "$@"; do
       if [ -n "$tree" ] && [ -f "$tree/REQUIRED.md" ]; then ok=yes; fi
       ;;
   esac
+  if [ -f "$arg/REQUIRED.md" ]; then argv_ok=yes; fi
 done
+if [ "{{tree-in-argv}}" = yes ] && [ "$argv_ok" != yes ]; then ok=no; fi
 [ -n "$out" ] || exit 0
 if [ "$ok" = yes ]; then
   printf '%s' '{"pass": true, "reasoning": "REQUIRED.md is there"}' > "$out"
@@ -36,7 +41,11 @@ exit 0
 func requiredProject(t *testing.T) (*Env, string, string) {
 	t.Helper()
 	e, proj := judgeProject(t, verdictPass)
-	e.InstallJudgeScript(requiredFileJudge)
+	inArgv := "no"
+	if harness.HasCap(t, harness.CapJudgeTreeInArgv) {
+		inArgv = "yes"
+	}
+	e.InstallJudgeScript(strings.ReplaceAll(requiredFileJudge, "{{tree-in-argv}}", inArgv))
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 

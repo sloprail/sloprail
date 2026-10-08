@@ -3,6 +3,8 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -141,6 +143,71 @@ func citeFromFixture(e *Env, path, sources, quote string) harness.Result {
 	return e.CLIDirectEnv(dirOf(path), []string{"SLOPRAIL_HARNESS=claude"}, "sr-session", "trajectory", "cite", "--path", path, "--source-types", sources, quote)
 }
 
+// citeLinked is cite over a linkedSession's record: a forged one is read as Claude's, a
+// real mock's as the selected harness's own.
+func citeLinked(e *Env, forged bool, path, sources, quote string) harness.Result {
+	if forged {
+		return citeFromFixture(e, path, sources, quote)
+	}
+	return citeFrom(e, path, sources, quote)
+}
+
+// linkedSession is the session of a harness that ties a sub-agent to its parent
+// (CapSubagentParentLink): the root's record and the sub-agents' (the second only when two),
+// first dispatched first. forged says the records are the hand-authored Claude-layout files
+// (the one shape the Claude mock cannot emit: it writes a sub-agent's calls into the ROOT
+// record), whose lines are known; on any other harness the records are what its mock wrote
+// for a real sub-agent, linked to the parent by that harness's own parent link, and the lines
+// are found in the record.
+func linkedSession(t *testing.T, e *Env, two bool) (root string, subs []string, forged bool) {
+	t.Helper()
+	if harness.Selected(t) == "claude" {
+		root, sub := subagentSessionFiles(t)
+		subs = []string{sub}
+		if two {
+			other := filepath.Join(filepath.Dir(sub), "agent-def.jsonl")
+			if err := os.WriteFile(other, []byte(strings.Join([]string{
+				sidechainUserMsg("t0", "def", "DISPATCH words: measure it too"),
+				toolCallLine("t1", true, "toolu_other", "echo measured"),
+				toolOutputLine("t2", true, "toolu_other", "measured SUBOUT-4417 attempts"),
+			}, "\n")+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			subs = append(subs, other)
+		}
+		return root, subs, true
+	}
+	root, byWords := unlinkedSession(t, e, two)
+	subs = []string{byWords["measure the retry budget"]}
+	if two {
+		subs = append(subs, byWords["measure it too"])
+	}
+	return root, subs, false
+}
+
+// requireCitedAt checks one cite answer line names path, and the record line it points at
+// holds the quote. On forged records the line is also the known one (wantLine).
+func requireCitedAt(t *testing.T, forged bool, got, path string, wantLine int, quote string) {
+	t.Helper()
+	if !strings.HasPrefix(got, path+":") {
+		t.Errorf("cite answered %q, want a line of %s", got, path)
+		return
+	}
+	line, err := strconv.Atoi(strings.TrimPrefix(got, path+":"))
+	if err != nil || line < 1 {
+		t.Errorf("cite answered %q, want <path>:<line>", got)
+		return
+	}
+	if forged && line != wantLine {
+		t.Errorf("cite answered %q, want %s:%d", got, path, wantLine)
+		return
+	}
+	lines := strings.Split(readFile(t, path), "\n")
+	if line > len(lines) || !strings.Contains(lines[line-1], quote) {
+		t.Errorf("cite answered %q, but that line of the record does not hold %q", got, quote)
+	}
+}
+
 func citeFrom(e *Env, path, sources, quote string) harness.Result {
 	return e.CLIDirect(dirOf(path), "sr-session", "trajectory", "cite", "--path", path, "--source-types", sources, quote)
 }
@@ -160,15 +227,18 @@ func TestT029_24_SubagentToolOutputResolves(t *testing.T) {
 		}
 		return
 	}
-	root, sub := subagentSessionFiles(t)
+	root, subs, forged := linkedSession(t, e, false)
+	sub := subs[0]
 	for _, from := range []string{root, sub} {
-		res := citeFromFixture(e, from, "tool_result", "SUBOUT-4417 attempts")
+		res := citeLinked(e, forged, from, "tool_result", "SUBOUT-4417 attempts")
 		if res.Code != 0 {
 			t.Fatalf("citing a sub-agent's tool output from %s exited %d, want 0:\n%s", from, res.Code, res.Output)
 		}
-		if got := nonEmptyLines(res.Output); len(got) != 1 || got[0] != sub+":3" {
-			t.Errorf("from %s: got %q, want the sub-agent's line %s:3", from, got, sub)
+		got := nonEmptyLines(res.Output)
+		if len(got) != 1 {
+			t.Fatalf("from %s: got %q, want the sub-agent's one line", from, got)
 		}
+		requireCitedAt(t, forged, got[0], sub, 3, "SUBOUT-4417 attempts")
 	}
 }
 
@@ -190,14 +260,16 @@ func TestT029_25_UserPoolIsTheRootsFromASubagent(t *testing.T) {
 		}
 		return
 	}
-	root, sub := subagentSessionFiles(t)
+	root, subs, forged := linkedSession(t, e, false)
+	sub := subs[0]
 
-	res := citeFromFixture(e, sub, "user", "END USER asked")
-	if res.Code != 0 || strings.TrimSpace(res.Output) != root+":1" {
-		t.Fatalf("the end user's words from a sub-agent's trajectory: exit %d, stdout %q; want 0 and %s:1", res.Code, res.Output, root)
+	res := citeLinked(e, forged, sub, "user", "END USER asked")
+	if res.Code != 0 {
+		t.Fatalf("the end user's words from a sub-agent's trajectory: exit %d, stdout %q; want 0 and a line of %s", res.Code, res.Output, root)
 	}
+	requireCitedAt(t, forged, strings.TrimSpace(res.Output), root, 1, "END USER asked")
 	for _, sources := range []string{"user", "user,tool_result"} {
-		res = citeFromFixture(e, sub, sources, "DISPATCH words")
+		res = citeLinked(e, forged, sub, sources, "DISPATCH words")
 		if res.Code != 1 {
 			t.Errorf("--source-types %s: citing the dispatch prompt exited %d, want 1 (not the user's words, not tool output):\n%s", sources, res.Code, res.Output)
 		}
@@ -223,22 +295,21 @@ func TestT029_26_AmbiguousAcrossRecords(t *testing.T) {
 		}
 		return
 	}
-	root, sub := subagentSessionFiles(t)
-	other := filepath.Join(filepath.Dir(sub), "agent-def.jsonl")
-	if err := os.WriteFile(other, []byte(strings.Join([]string{
-		sidechainUserMsg("t0", "def", "DISPATCH words: measure it too"),
-		toolCallLine("t1", true, "toolu_other", "echo measured"),
-		toolOutputLine("t2", true, "toolu_other", "measured SUBOUT-4417 attempts"),
-	}, "\n")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	res := citeFromFixture(e, root, "tool_result", "SUBOUT-4417")
+	root, subs, forged := linkedSession(t, e, true)
+	res := citeLinked(e, forged, root, "tool_result", "SUBOUT-4417")
 	if res.Code != 2 {
 		t.Fatalf("a quote in two sub-agents' records exited %d, want 2:\n%s", res.Code, res.Output)
 	}
-	want := []string{sub + ":3", other + ":3"}
-	if got := nonEmptyLines(res.Output); strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("candidates %q, want %q", got, want)
+	got := nonEmptyLines(res.Output)
+	if len(got) != len(subs) {
+		t.Fatalf("candidates %q, want one line in each of %q", got, subs)
+	}
+	// One candidate per sub-agent record, in either order.
+	sort.Strings(got)
+	sorted := append([]string{}, subs...)
+	sort.Strings(sorted)
+	for i, cand := range got {
+		requireCitedAt(t, forged, cand, sorted[i], 3, "SUBOUT-4417")
 	}
 }
 
@@ -258,14 +329,17 @@ func TestT029_27_TheCallersOwnOutputFirst(t *testing.T) {
 		}
 		return
 	}
-	root, sub := subagentSessionFiles(t)
-	for from, want := range map[string]string{root: root + ":3", sub: sub + ":5"} {
-		res := citeFromFixture(e, from, "tool_result", "SHARED-LINE")
+	root, subs, forged := linkedSession(t, e, false)
+	sub := subs[0]
+	for from, wantLine := range map[string]int{root: 3, sub: 5} {
+		res := citeLinked(e, forged, from, "tool_result", "SHARED-LINE")
 		if res.Code != 0 {
 			t.Fatalf("from %s: a quote in the caller's own record and a sub-agent's exited %d, want 0:\n%s", from, res.Code, res.Output)
 		}
-		if got := nonEmptyLines(res.Output); len(got) != 1 || got[0] != want {
-			t.Errorf("from %s: got %q, want the caller's own line %s", from, got, want)
+		got := nonEmptyLines(res.Output)
+		if len(got) != 1 {
+			t.Fatalf("from %s: got %q, want the caller's own one line", from, got)
 		}
+		requireCitedAt(t, forged, got[0], from, wantLine, "SHARED-LINE")
 	}
 }

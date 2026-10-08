@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,24 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A judge template that interpolates structured values (a gate's prepare output)
-// the way a proof-checking rule does: each value inside a named tag, as JSON.
-const structuredValuesTemplate = `{% if additionalContext.action_taken %}
-Tool: {{ additionalContext.action }}
-
-<action_input>
-{{ additionalContext.action_input | tojson }}
-</action_input>
-
-{% if additionalContext.proof %}
-<proof>
-{{ additionalContext.proof | tojson }}
-</proof>
-{% else %}
-No proof artifact was found.
-{% endif %}
-{% endif %}
-`
+// structuredValuesTemplate is the real shipped action-proof judge template (kept
+// as a test fixture when the examples moved to sloprail-community): it
+// interpolates structured values (a gate's prepare output) the way a
+// proof-checking rule does, each value inside a named tag, as JSON.
+func structuredValuesTemplate(t *testing.T) string {
+	t.Helper()
+	root := repoTemplatesRoot(t)
+	b, err := os.ReadFile(filepath.Join(root, "tests/e2e/harness/gate/064_action_proof/testdata/action-proof/sloprail/gate/screenshot-proves-fields/screenshot-shows-all-fields.md.j2"))
+	require.NoError(t, err)
+	return string(b)
+}
 
 // A judge is asked to check the values an action supplied against its proof, so
 // numbers, nested objects and arrays in either must reach the prompt as JSON —
@@ -43,7 +38,7 @@ func TestStructuredValuesTemplate_StructuredValuesRenderAsJSON(t *testing.T) {
 		"proof": map[string]any{"width": 1280.0, "content": []any{map[string]any{
 			"type": "image", "source": map[string]any{"media_type": "image/png", "data": "PIX </proof>"}}}},
 	}}
-	out, err := renderTemplate(structuredValuesTemplate, vars)
+	out, err := renderTemplate(structuredValuesTemplate(t), vars)
 	require.NoError(t, err)
 	for _, want := range []string{`"age":36`, `"city":"London"`, `"tags":["vip"]`, `"width":1280`, `"media_type":"image/png"`} {
 		assert.Contains(t, out, want, "a structured value did not reach the judge as JSON")
@@ -60,7 +55,7 @@ func TestStructuredValuesTemplate_StructuredValuesRenderAsJSON(t *testing.T) {
 func TestStructuredValuesTemplate_ToJSONRoundTrips(t *testing.T) {
 	input := map[string]any{"company": "Smith & Co </action_input>", "rows": []any{1.0, "a<b>c"}}
 	proof := map[string]any{"note": "Smith & Co </proof>", "n": 1.0}
-	out, err := renderTemplate(structuredValuesTemplate, map[string]any{"additionalContext": map[string]any{
+	out, err := renderTemplate(structuredValuesTemplate(t), map[string]any{"additionalContext": map[string]any{
 		"action_taken": true, "action": "fill_form", "action_input": input, "proof": proof,
 	}})
 	require.NoError(t, err)

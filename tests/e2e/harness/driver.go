@@ -125,6 +125,21 @@ const (
 	// leaves no boundary at all: neither names a parent.
 	CapCompactionNamesParent = "compaction-names-parent"
 
+	// CapJudgeWritesProject: the agent a check launches in judge mode (sr-agent without
+	// --agent-run) can write the project, so its edits reach the project's other rules. A
+	// Cursor judge is confined by the engine to its answer file; a Codex judge runs in a
+	// read-only sandbox. A test about a launched agent's reach into the project launches it
+	// in judge mode where this is declared and with --agent-run where not (ForHarness's
+	// {{agent-mode}}).
+	CapJudgeWritesProject = "judge-writes-project"
+
+	// CapJudgeTreeInArgv: the project a judge is asked about reaches the harness as an
+	// argument (Claude Code's --add-dir). A Codex judge reads it by absolute path under a
+	// sandbox and a Cursor judge in an empty workspace, so neither launch has an argument
+	// naming the tree: there the prompt's "The project being judged is at <dir>." is the
+	// only place the tree is named.
+	CapJudgeTreeInArgv = "judge-tree-in-argv"
+
 	// CapShellDenyBesideGrant: a judge can be granted a shell command and denied a form of it
 	// in the same run. Cursor does not enforce a shell deny beside a shell grant (measured), so
 	// sr-agent refuses such a run rather than promise a confinement it cannot give.

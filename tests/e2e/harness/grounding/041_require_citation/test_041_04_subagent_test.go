@@ -102,6 +102,35 @@ esac
 exit 0
 `
 
+// unlinkedRefusal is the error a citation asked of a sub-agent gives on a harness that
+// cannot tie the sub-agent to the user's conversation (no CapSubagentParentLink); it names
+// the main agent as the one to cite.
+// noResolvingCitation is what the refusal of a write says when no quote it cited resolves.
+const noResolvingCitation = "it carries none that resolves"
+
+const unlinkedRefusal = "cannot be tied to the user's conversation"
+
+// citeProbe is a plain `sr-session trajectory cite` of quote that leaves its output and exit
+// status in files of the project (<tag>.out, <tag>.rc). A sub-agent's own tool results are
+// not streamed to the root's output and Cursor's record holds none, so this is the one way to
+// read what cite said to a sub-agent. A citing sr-file call or a cite chain is judged by the
+// pre-tool hook, which refuses it before it runs and whose wording a sub-agent's record does
+// not keep on such a harness; it is the same resolution, so the same error.
+func citeProbe(source, quote, tag string) string {
+	return "sr-session trajectory cite --source-types " + source + " '" + quote + "' > " + tag + ".out 2>&1; echo $? > " + tag + ".rc"
+}
+
+// requireUnlinkedError checks that the command captured as tag ran in a sub-agent and
+// failed with the unlinked-sub-agent error: exit non-zero, naming the main agent.
+func requireUnlinkedError(t *testing.T, proj, tag string) {
+	t.Helper()
+	out := readProj(t, proj, tag+".out")
+	rc := strings.TrimSpace(readProj(t, proj, tag+".rc"))
+	if rc == "0" || !strings.Contains(out, unlinkedRefusal) || !strings.Contains(out, "main agent") {
+		t.Fatalf("a citing call in a sub-agent that cannot cite: exit %s, want the unlinked-sub-agent error naming the main agent:\n%s", rc, out)
+	}
+}
+
 func subagentScript(t *testing.T, s harness.Scenario) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sub.sh")
@@ -169,10 +198,15 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	}
 
 	// And a sub-agent grounds the finding in that output.
-	write := subagentScript(t, harness.Turns("written",
+	steps := []harness.Turn{
 		Bash("sb2", `sr-file write memories/findings.md --cite:tool_result 'SUBPROBE-4417 attempts' --content '# findings'`),
-		harness.Commit("sc2", "write down the retry budget", harness.CitesTool("SUBPROBE-4417 attempts")),
-	))
+	}
+	if !linked {
+		// Where cite cannot be asked of a sub-agent, ask it plainly and read its answer.
+		steps = append(steps, Bash("sb2c", citeProbe("tool_result", "SUBPROBE-4417 attempts", "sub-cite")))
+	}
+	steps = append(steps, harness.Commit("sc2", "write down the retry budget", harness.CitesTool("SUBPROBE-4417 attempts")))
+	write := subagentScript(t, harness.Turns("written", steps...))
 	res = e.Run(proj, "s-041-21", "now write it down", Turns("done",
 		harness.Dispatch("d2", "write down the retry budget", write, ""),
 	))
@@ -180,6 +214,8 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 		if e.Exists(proj, "memories/findings.md") {
 			t.Fatalf("a sub-agent's write was grounded on a harness that cannot link it to its session:\n%s", res.Output)
 		}
+		// The sub-agent's cite ran and said why it cannot help from a sub-agent.
+		requireUnlinkedError(t, proj, "sub-cite")
 		return
 	}
 	if !e.Exists(proj, "memories/findings.md") {
@@ -333,12 +369,20 @@ checks:
 		requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
 	}
 
-	release := subagentScript(t, harness.Turns("released",
+	steps := []harness.Turn{
 		Bash("sb2", `sr-session trajectory cite --source-types tool_result 'CHAINPROBE-9051 green' && touch released.txt`),
+	}
+	if !linked {
+		steps = append(steps, Bash("sb2c", citeProbe("tool_result", "CHAINPROBE-9051 green", "sub-chain")))
+	}
+	release := subagentScript(t, harness.Turns("released",
+		steps...,
 	))
 	res := e.Run(proj, "s-041-24", "now release", Turns("done", harness.Dispatch("d2", "release it", release, "")))
 	if !linked {
-		// cite errors from a sub-agent, so the chain stops and the gate is never handed a citation.
+		// cite errors from a sub-agent (non-zero, naming the main agent), so the chain stops
+		// and the gate is never handed a citation.
+		requireUnlinkedError(t, proj, "sub-chain")
 		if e.Exists(proj, "released.txt") {
 			t.Fatalf("a cite chain ran in a sub-agent of a harness that cannot link it to its session:\n%s", res.Output)
 		}
@@ -375,8 +419,16 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 	linked := harness.HasCap(t, harness.CapSubagentParentLink)
 	if !linked {
 		// The reply is nowhere citable and the sub-agent is not linked: the write is refused.
+		if !res.Saw("memories/results.md") {
+			t.Fatalf("the main agent's citing sr-file call never ran:\n%s", res.Output)
+		}
 		if e.Exists(proj, "memories/results.md") {
 			t.Fatalf("a sub-agent's reply grounded a write as a tool's output:\n%s", res.Output)
+		}
+		// The call ran and was refused: nothing the main agent can quote grounds it, and the
+		// sub-agent's reply is not a tool's output on any harness.
+		if !res.SawInRefusal(noResolvingCitation) {
+			t.Errorf("the main agent's citing write was not refused for carrying no citation that resolves:\n%s", res.Output)
 		}
 		return
 	}
@@ -422,8 +474,14 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	))
 	if !linked {
 		// The main agent cannot reach a sub-agent's output: nothing to ground the write on.
+		if !res.Saw("memories/coverage.md") {
+			t.Fatalf("the citing call never ran:\n%s", res.Output)
+		}
 		if e.Exists(proj, "memories/coverage.md") {
 			t.Fatalf("a sub-agent's output grounded a write on a harness that cannot link it:\n%s", res.Output)
+		}
+		if !res.SawInRefusal(noResolvingCitation) {
+			t.Errorf("the main agent's citing write was not refused for carrying no citation that resolves:\n%s", res.Output)
 		}
 		return
 	}
@@ -451,17 +509,24 @@ func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
 	installBoth(e, proj, userGate, userGuard)
 	e.CommitAll(proj, "baseline")
 
-	sub := subagentScript(t, harness.Turns("sub done",
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	steps := []harness.Turn{
 		Bash("sb1", `sr-file write memories/decisions.md --cite:user 'adopt a decision log' --content '# decisions'`),
-	))
+	}
+	if !linked {
+		// Where cite cannot be asked of a sub-agent, ask it plainly and read its answer.
+		steps = append(steps, Bash("sb1c", citeProbe("user", "adopt a decision log", "sub-cite")))
+	}
+	sub := subagentScript(t, harness.Turns("sub done", steps...))
 	res := e.Run(proj, "s-041-27", prompt, Turns("done",
 		harness.Dispatch("d1", `The user wrote, verbatim: "`+prompt+`". Record it.`, sub, ""),
 	))
-	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+	if !linked {
 		// The sub-agent cannot reach the user's conversation to resolve the words in.
 		if e.Exists(proj, "memories/decisions.md") {
 			t.Fatalf("a sub-agent cited the user's words on a harness that cannot link it:\n%s", res.Output)
 		}
+		requireUnlinkedError(t, proj, "sub-cite")
 		return
 	}
 	if !e.Exists(proj, "memories/decisions.md") {

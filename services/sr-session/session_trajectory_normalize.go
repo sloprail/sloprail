@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -54,6 +53,9 @@ file and command events, and tags (PostTagWrite). Not the git-observed Post file
 events, not PreToolUse, not Stop.
 
   --path <PATH>          which trajectory to read; defaults to the hooked-in one
+  --root <DIR>           the workspace a record that names no working directory of
+                         its own (Cursor's) is read against, so its file paths are
+                         reported relative to it; without it nothing is assumed
   --events <Kind,...>    which event kinds populate each entry's events, named by
                          the event's own kind (PreCommandInvoke, PostTagWrite,
                          PreFileCreate, PreFileUpdate, PreFileDelete). Absent
@@ -74,6 +76,8 @@ read JSON.`,
 	}
 	cmd.Flags().String("path", "",
 		"Which trajectory to read; defaults to the one the hook was invoked for")
+	cmd.Flags().String("root", "",
+		"The workspace a record that names no cwd (Cursor's) is read against; without it such a record's file paths are not made relative")
 	cmd.Flags().StringSlice("events", nil,
 		"Comma-separated event kinds to populate each entry's events (default: every re-derivable kind)")
 	cmd.Flags().Bool("whole-session", false,
@@ -146,7 +150,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// inherits the last one written (the mock writes cwd on the first record
 	// only). Computed before slicing so a slice starting mid-session still
 	// knows where its first entries ran.
-	roots, dirs := entryRoots(lined, workspaceFallback(p))
+	roots, dirs := entryRoots(lined, workspaceFallback(cmd, p))
 
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 	pathGiven := cmd.Flags().Changed("path")
@@ -183,20 +187,16 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 }
 
 // workspaceFallback is the workspace a record that names none is read against: the
-// payload's, and for a bare --path (no payload) the repository this command runs in. A
-// harness whose records carry no cwd (Cursor's) leaves nothing else to go on, and file
-// paths are looked up from the process's directory in that case anyway, so they must be
-// reported against its repository too.
-func workspaceFallback(p HookPayload) string {
+// payload's, else the --root the caller named. Nothing is guessed from the process's
+// directory: a harness whose records carry no cwd (Cursor's) read through a bare --path
+// has no workspace unless --root says which, and without one file paths are left as the
+// record states them.
+func workspaceFallback(cmd *cobra.Command, p HookPayload) string {
 	if root := p.Root(); root != "" {
 		return root
 	}
-	if wd, err := os.Getwd(); err == nil {
-		if root, err := gitrepo.Root(wd); err == nil {
-			return root
-		}
-	}
-	return ""
+	root, _ := cmd.Flags().GetString("root")
+	return root
 }
 
 // entryRoots is the workspace each record's file paths are resolved against,
