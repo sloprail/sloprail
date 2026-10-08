@@ -9,7 +9,7 @@
 #   1. detects the platform (darwin/linux, amd64/arm64)
 #   2. downloads that platform's archive from the latest GitHub Release
 #      (sloprail/sloprail), verifies it against the release's checksums.txt
-#   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks into one directory —
+#   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks, sr-test into one directory —
 #      $SLOPRAIL_INSTALL_DIR if set, else ~/.local/bin — because sibling
 #      resolution (internal/subbin) requires the set to be installed together
 #   3b. also installs a10n-claude-mock (pinned, see below) next to them, and jq and yq
@@ -99,10 +99,10 @@ say "sloprail install: detected ${platform}"
 # Pinned to internal/harnessmock/version.txt (what the sr-test code checks with
 # --version). Released from sloprail/harness-mocks as per-platform raw binaries,
 # a10n-claude-mock-<os>-<arch>, plus an optional checksums.txt.
-# TODO: internal/harnessmock/version.txt is created by the sr-test Go part; until
-# it is on this branch the fallback below is the single default.
+# Run from a release, version.txt is not beside install.sh: the default below is
+# kept equal to it (TestInstallShDefaultMatchesThePin).
 HARNESS_MOCKS_REPO="sloprail/harness-mocks"
-HARNESS_MOCK_DEFAULT_VERSION="0.2.0"
+HARNESS_MOCK_DEFAULT_VERSION="0.4.0"
 
 harness_mock_version() {
   v=""
@@ -391,12 +391,12 @@ mkdir -p "${INSTALL_DIR}"
 # Fail before copying anything if the release lacks a binary this script installs (an older
 # release predates one), instead of a bare `cp: cannot stat` halfway through.
 missing=""
-for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
+for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks sr-test; do
   [ -f "${tmp}/sloprail-${platform}/${bin}" ] || missing="${missing} ${bin}"
 done
 # sr:invariant install/install-verifies-the-release-checksum
 [ -z "$missing" ] || die "release ${tag} does not contain:${missing} — it predates those binaries, nothing was installed. Install from source instead: GOBIN=\"${INSTALL_DIR}\" go install github.com/sloprail/sloprail/services/...@main"
-for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
+for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks sr-test; do
   cp "${tmp}/sloprail-${platform}/${bin}" "${INSTALL_DIR}/${bin}"
   chmod +x "${INSTALL_DIR}/${bin}"
   # macOS kills a binary copied over an existing signed one at exec with a
