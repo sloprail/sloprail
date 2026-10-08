@@ -58,8 +58,20 @@ func TestT003_36_TheSameInASubagentWorktree(t *testing.T) {
 		harness.CommitFile("c2", "docs/b.md", "clean words", "sub adds b"),
 	))
 	res := e.Run(proj, "s-003-36b", "delegate", Turns("root done",
-		harness.Dispatch("d1", "write the docs", sub, "worktree"),
+		harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t)),
 	))
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// The sub-agent works in the root's tree: its Stop is not judged, and the branch it left is
+		// judged and named at the root's Stop, like the root's own in (a).
+		if !e.NoSubagentStopBlock(proj, "s-003-36b") {
+			t.Fatalf("a sub-agent in the root's tree was judged at its Stop:\n%s", res.Output)
+		}
+		got := stopRefusals(e, proj, "s-003-36b")
+		if !strings.Contains(got, refusalText) || !strings.Contains(got, "sub-a") || strings.Contains(got, "sub-b") {
+			t.Fatalf("the branch the sub-agent left was not judged and named at the root's Stop; refusals:\n%s", got)
+		}
+		return
+	}
 	if !e.SubagentStopBlocked(proj, "s-003-36b", "(sub-a, from ") {
 		t.Fatalf("a sub-agent's left branch was not judged at its Stop:\n%s", res.Output)
 	}

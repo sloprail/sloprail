@@ -43,9 +43,35 @@ func TestT029_20_ToolResultLineExitsZeroWithContent(t *testing.T) {
 	e.Run(proj, "s-029-16", "run the tests", Turns("done", call, output))
 	path := e.TranscriptPath(proj, "s-029-16")
 
-	resultLine := physicalLine(t, path, "GREENMARKER")
-	if resultLine == 0 {
-		t.Fatalf("the mock did not write the tool_result to the transcript\n%s", readFile(t, path))
+	if !harness.HasCap(t, harness.CapRecordHoldsToolResults) {
+		// The record holds no tool result (Cursor keeps the outputs in sloprail's own store),
+		// so no line of it is one: the only line naming the marker is the CALL, the agent's
+		// command, and that is not a tool_result the session produced.
+		callLine := physicalLine(t, path, "GREENMARKER")
+		if callLine == 0 {
+			t.Fatalf("the call is not in the transcript\n%s", readFile(t, path))
+		}
+		if n := strings.Count(readFile(t, path), "GREENMARKER"); n != 1 {
+			t.Fatalf("the record names the output %d times, want once (the call), since it holds no results:\n%s", n, readFile(t, path))
+		}
+		res := toolResultCmd(e, proj, path, callLine)
+		if res.Code != 1 || strings.TrimSpace(res.Output) != "" {
+			t.Fatalf("the call's line exited %d, want 1 and silent (a call is not a tool_result):\n%s", res.Code, res.Output)
+		}
+		return
+	}
+
+	// The result's own line: the record line of the call r1's result (on a harness whose
+	// command runs for real the call's line names the output too, as the command that printed it).
+	resultText := e.ResultRecord(readFile(t, path), "r1")
+	resultLine := 0
+	for i, l := range strings.Split(readFile(t, path), "\n") {
+		if resultText != "" && l == resultText {
+			resultLine = i + 1
+		}
+	}
+	if resultLine == 0 || !strings.Contains(resultText, "GREENMARKER") {
+		t.Fatalf("the harness did not write the tool_result to the transcript\n%s", readFile(t, path))
 	}
 
 	res := toolResultCmd(e, proj, path, resultLine)
@@ -65,9 +91,8 @@ func TestT029_21_UserLineIsNotAToolResult(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 
-	e.Run(proj, "s-029-17", "please MIGRATE the auth module", Turns("done",
-		ToolResult("r1", "some tool output"),
-	))
+	call, output := harness.CallWithOutput("r1", "Bash", map[string]string{"command": "true"}, "some tool output")
+	e.Run(proj, "s-029-17", "please MIGRATE the auth module", Turns("done", call, output))
 	path := e.TranscriptPath(proj, "s-029-17")
 
 	promptLine := physicalLine(t, path, "please MIGRATE the auth module")

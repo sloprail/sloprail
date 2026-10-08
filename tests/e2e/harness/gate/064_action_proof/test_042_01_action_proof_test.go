@@ -48,6 +48,23 @@ func TestT042_05_StructuredInputAndProofReachJudgeAsJSON(t *testing.T) {
 	installExampleTree(t, proj)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
+	if !harness.HasCap(t, harness.CapMCPTools) {
+		// The harness has no MCP tool to call (Codex and Cursor: harness-mocks mcp-tool is
+		// pending for both), so the form is not an auditable action the gate can find: its
+		// prepare reads the turn's trajectory and reports no action, and the judge is
+		// asked only the template's no-action question, with no action and no proof in it.
+		e.Run(proj, "s-042-05", "fill the form and prove it with a screenshot", Turns("done",
+			harness.Bash("w1", "echo form filled")))
+		prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+		if prompt == "" {
+			t.Fatalf("the judge never ran, so the gate's prepare did not read the turn")
+		}
+		if !containsStr(prompt, "No form fill or download happened") || containsStr(prompt, "<action_input>") {
+			t.Errorf("a turn with no MCP tool call was not read as taking no auditable action:\n%s", prompt)
+		}
+		return
+	}
+
 	e.Run(proj, "s-042-05", "fill the form and prove it with a screenshot", Turns("done",
 		harness.ToolUseJSON("w1", "mcp__browser__fill_form", `{"name":"Ada","age":36,"address":{"city":"London"},"tags":["vip"],`+
 			`"mock_result":{"content":[{"type":"text","text":"Filled 4 fields"}],"isError":false}}`),

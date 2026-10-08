@@ -39,8 +39,19 @@ func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testi
 		harness.CommitFile("sb1", "docs/isolated.md", "FORBIDDEN by the rule", "sub-agent adds a doc in isolation"),
 	))
 	res = e2.Run(proj2, "s-003-08b", "delegate into isolation", Turns("root done",
-		harness.Dispatch("d1", "write the doc", sub2, "worktree"),
+		harness.Dispatch("d1", "write the doc", sub2, harness.OwnTree(t)),
 	))
+	// A harness with no worktree for a sub-agent runs it in the root's tree: its commit is
+	// judged at the root's Stop, as above, and not at its own.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if !e2.NoSubagentStopBlock(proj2, "s-003-08b") {
+			t.Fatalf("a sub-agent without a tree of its own was judged, and refused, for a commit:\n%s", res.Output)
+		}
+		if got := e2.BlockingErrorsFrom(proj2, "s-003-08b", "Stop"); len(got) == 0 {
+			t.Fatal("the root, which owns the only tree, was not refused for the commit the rule objects to")
+		}
+		return
+	}
 	if !e2.SubagentStopBlocked(proj2, "s-003-08b", "FORBIDDEN text in the changeset") {
 		t.Fatalf("a sub-agent in its own worktree was not judged on its own commit:\n%s", res.Output)
 	}

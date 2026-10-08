@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // Capabilities a Driver may declare. A test that needs one the selected harness
@@ -66,6 +68,16 @@ const (
 	// hook rejection that never reaches the transcript.
 	CapRecordHoldsToolResults = "record-holds-tool-results"
 
+	// CapOrphanToolResult: the session's record can hold a tool result whose call is not in
+	// the record (a scenario step supplying one). Codex's and Cursor's results are the
+	// harness's own record of a command it ran, so each has its call.
+	CapOrphanToolResult = "orphan-tool-result"
+
+	// CapMCPTools: the agent can call a tool of an MCP server (mcp__<server>__<tool>) and
+	// the scenario can state its result (harness-mocks spec/capabilities mcp-tool: claude
+	// only, codex and cursor pending).
+	CapMCPTools = "mcp-tools"
+
 	// CapPathLineBreaks: the harness's file tool can name a path holding a line break.
 	// Codex's apply_patch names a file on one line of the patch, so it cannot.
 	CapPathLineBreaks = "path-line-breaks"
@@ -97,10 +109,32 @@ const (
 	// and the call as separate records, so the prose and the call are two entries.
 	CapProseWithCallInOneEntry = "prose-with-call-in-one-entry"
 
+	// CapSeveralCallsInOneEntry: one assistant message of the record can hold several tool
+	// calls (Claude Code writes the message with every tool_use block). Codex's rollout and
+	// Cursor's transcript write a call apiece, so a turn that makes three calls is three entries.
+	CapSeveralCallsInOneEntry = "several-calls-in-one-entry"
+
+	// CapDispatchWithoutCallID: a sub-agent can be dispatched by a tool call that names no id
+	// (Claude Code's sub-agent meta then records an empty toolUseId). Codex and Cursor give every
+	// call an id, and name the dispatch's link (or none) in their own records.
+	CapDispatchWithoutCallID = "dispatch-without-call-id"
+
+	// CapCompactionNamesParent: a compaction's boundary record names the record it continues
+	// (Claude Code's logicalParentUuid), which a preserved-segment compaction can leave naming
+	// a record no file holds. Codex's compaction is a record in the same rollout and Cursor's
+	// leaves no boundary at all: neither names a parent.
+	CapCompactionNamesParent = "compaction-names-parent"
+
 	// CapShellDenyBesideGrant: a judge can be granted a shell command and denied a form of it
 	// in the same run. Cursor does not enforce a shell deny beside a shell grant (measured), so
 	// sr-agent refuses such a run rather than promise a confinement it cannot give.
 	CapShellDenyBesideGrant = "shell-deny-beside-grant"
+
+	// CapSubagentLifecycleHooks: the harness fires a sub-agent's start and stop hooks, which is
+	// what feeds the session's sub-agent registry (`sr-session agents list`). Cursor's
+	// subagentStart/subagentStop never fire in print mode (harness-mocks runs/subagent-lifecycle-hooks),
+	// so its registry stays empty.
+	CapSubagentLifecycleHooks = "subagent-lifecycle-hooks"
 )
 
 // SessionMode is how a launch relates to the session id it names.
@@ -269,6 +303,10 @@ type Driver interface {
 	// are the harness's own (Claude Code's tool results) plants them; one with none returns nil.
 	Companions(e *Env, projDir, sessionID string) map[string]string
 
+	// SkillLoadTool is the tool whose call loads a skill: the Skill tool where the harness
+	// has one, else the tool that reads the skill's SKILL.md (CapSkills names the former).
+	SkillLoadTool() string
+
 	// WrittenBytes is what the harness's file-writing tool leaves on disk when the agent
 	// writes content: the content itself, unless the tool shapes it (Codex's apply_patch
 	// ends every non-empty file with a newline).
@@ -433,4 +471,22 @@ func RequireCap(t testing.TB, caps ...string) {
 			t.Skipf("harness %s lacks capability %q", d.Name(), c)
 		}
 	}
+}
+
+// ProjectSkillDir is the project-relative directory the selected harness loads a project's
+// own skills from (".claude/skills" on Claude Code), where a test that seeds a skill puts it.
+func ProjectSkillDir(t testing.TB) string {
+	t.Helper()
+	return harness.ProjectSkillDirs(harness.Select([]string{harness.SelectEnv + "=" + Selected(t)}))[0]
+}
+
+// SkillLoadTool is the tool the selected harness's PreToolUse names when the agent loads a
+// skill: "Skill" on Claude Code, the tool that reads the skill's SKILL.md elsewhere.
+func SkillLoadTool(t testing.TB) string {
+	t.Helper()
+	d, err := selectDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.SkillLoadTool()
 }

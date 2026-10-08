@@ -75,6 +75,30 @@ func cite(e *Env, dir, path, quote string) harness.Result {
 	return e.CLIDirect(dir, "sr-session", "trajectory", "cite", "--path", path, quote)
 }
 
+// requireNotSaid asserts, on a harness with no answer record (no question tool), that
+// what a person would have answered is not in the record: each quote exits 1 with
+// nothing on stdout and the notice that it is not the user's words. The prompt, which
+// the person did say, must resolve (exit 0) in the same record — else the misses would
+// hold for an empty record too.
+func requireNotSaid(t *testing.T, e *Env, proj, path, said string, notSaid ...string) {
+	t.Helper()
+	if res := cite(e, proj, path, said); res.Code != 0 {
+		t.Fatalf("the person's own prompt %q did not resolve (exit %d), so the misses below prove nothing:\n%s", said, res.Code, res.Output)
+	}
+	for _, q := range notSaid {
+		res := cite(e, proj, path, q)
+		if res.Code != 1 {
+			t.Fatalf("citing %q, which no record holds as said, exited %d, want 1:\n%s", q, res.Code, res.Output)
+		}
+		if strings.Contains(res.Output, path+":") {
+			t.Fatalf("citing %q printed a citation, must be silent on stdout:\n%q", q, res.Output)
+		}
+		if !strings.Contains(res.Output, "the quote is not in the user's messages") {
+			t.Fatalf("citing %q must say on stderr that it is not there:\n%q", q, res.Output)
+		}
+	}
+}
+
 // writeSubagentTranscript writes a SUB-AGENT's transcript — one whose own origin
 // record carries isSidechain, exactly as Claude Code writes a sub-agent's file —
 // laid out at <session>/subagents/agent-<id>.jsonl the way the harness nests it,
