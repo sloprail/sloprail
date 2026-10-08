@@ -477,6 +477,19 @@ jobs:
       # GitHub via SLOPRAIL_RELEASE_URL — proving the SHIPPED script's
       # download → checksum verify → unpack → install sequence actually works,
       # not a rewritten stand-in.
+      # jq/yq: with neither on PATH (a PATH of basic tools only) and no package manager
+      # allowed, install.sh puts static binaries (here local stand-ins) in the install dir.
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install.sh installs jq and yq
+        run: |
+          sandbox="$RUNNER_TEMP/tools-sandbox"; mkdir -p "$sandbox/bin" "$sandbox/src" "$sandbox/dest"
+          for t in uname mktemp curl id cp chmod mkdir rm cat tr dirname grep awk sed; do ln -s "$(command -v $t)" "$sandbox/bin/$t"; done
+          printf '#!/bin/sh\necho jq-stand-in\n' > "$sandbox/src/jq"; printf '#!/bin/sh\necho yq-stand-in\n' > "$sandbox/src/yq"
+          cp install.sh /tmp/install-tools-under-test.sh
+          env -i HOME="$sandbox" PATH="$sandbox/bin" SLOPRAIL_TOOLS_NO_PM=1 SLOPRAIL_JQ_URL="file://$sandbox/src/jq" SLOPRAIL_YQ_URL="file://$sandbox/src/yq" /bin/sh /tmp/install-tools-under-test.sh --tools-only "$sandbox/dest"
+          test -x "$sandbox/dest/jq" && test -x "$sandbox/dest/yq"
+          if env -i HOME="$sandbox" PATH="$sandbox/bin" SLOPRAIL_TOOLS_NO_PM=1 SLOPRAIL_YQ_URL="file://$sandbox/none" /bin/sh /tmp/install-tools-under-test.sh --tools-only "$sandbox/dest2"; then echo "a missing download was not an error"; exit 1; fi
+
       - if: needs.changes.outputs.code-changed == 'true'
         name: run install.sh end to end
         run: |

@@ -75,7 +75,8 @@ Install these first:
 - Go (the version in `go.mod`), `git`, and `sh`.
 - `jq` and `yq` (mikefarah's) on `PATH`: `brew install jq yq`, or
   `apt-get install jq` plus the `yq` binary from
-  <https://github.com/mikefarah/yq/releases>. CI installs both.
+  <https://github.com/mikefarah/yq/releases>. CI installs both, and
+  `./install.sh --tools-only` installs whichever is missing.
 - The pinned mock agents: `make mock` installs the versions pinned in
   `tests/e2e/harness/{MOCK,CODEX_MOCK,CURSOR_MOCK}_VERSION` into `.bin/`. The
   e2e harness runs the same install itself, once per test binary, when the
