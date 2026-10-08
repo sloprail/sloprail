@@ -99,8 +99,7 @@ refused, so a broken context cannot lock you out of fixing it.
 
 ## How other rules use a context
 
-- **A gate requires it.** `require: [{context: research-run}]` holds the gate until the
-  context has run its `enter` this cycle, so what it recorded is current
+- **A gate requires it** with `require: [{context: research-run}]`
   ([gate.md](gate.md#require-preconditions)).
 - **A match reads it.** In a gate's or another context's match,
   `context["research-run"].active` and `context["research-run"].payload` read its state, and

@@ -88,9 +88,8 @@ require:
   - citation: {source_types: [user]}   # or [user, tool_result]
 ```
 
-Pair it with a file-guard of the same name, with the same `match` and `require`. It catches a
-change that reached a commit without a citation, such as one a command made that sloprail
-could not see.
+Like any gate that prevents a write, keep a file-guard of the same name beside it, with the
+same `match` and `require` ([gate.md](gate.md#preventing-a-write-or-a-delete)).
 
 When only some changes must be grounded, such as a removal or a status change, add `when`: a
 script, reading the same payload as a check, that exits 0 when the requirement applies and 1

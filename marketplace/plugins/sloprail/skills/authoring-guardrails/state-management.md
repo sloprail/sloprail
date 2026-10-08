@@ -38,9 +38,8 @@ entries="$(sr-session state list --owner tag-declared 2>/dev/null)"
 tags="$(printf '%s' "$entries" | jq -s -r '[.[] | select(.key | startswith("tag:"))] | .[].key | ltrimstr("tag:")')"
 ```
 
-- **Pair it with `require: [{context: tag-declared}]`.** That holds the gate until the context
-  has run this cycle, so the records are current. Without it the gate reads the previous
-  cycle's.
+- **Pair it with `require: [{context: tag-declared}]`**, so the records are this cycle's
+  ([gate.md](gate.md#require-preconditions)).
 - **`list` prints one JSON object per line**, not an array. Slurp it with `jq -s` before
   treating it as a list: `jq '[.[] | …]'` on the raw lines comes back empty, and the gate then
   refuses every correct turn.

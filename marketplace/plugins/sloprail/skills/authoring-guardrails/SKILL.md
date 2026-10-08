@@ -59,8 +59,7 @@ the paths that may be written at all.
 
 The folder name is the rule's name, and a refusal ends with it, so pick one that reads well
 there; kebab-case is the convention. The rule's scripts and judge templates sit beside its
-YAML, and a script runs with that folder as its working directory. Create the folders
-yourself; nothing scaffolds them.
+YAML. Create the folders yourself; nothing scaffolds them.
 
 A rule's full name is `<plugin>/<nature>/<name>` (`sloprail/gate/cite-before-commit`), or
 `<nature>/<name>` for the project's own. The nature is part of it because a gate and a
@@ -103,8 +102,7 @@ permitted. Keep that proof as a case in the rule's own `tests/<case>/test.sh`, o
 case, and run it with `sr-test run --rule <nature>/<name>`. `sr-test doctor` lists the rules
 that have no case.
 
-For a file-guard, `sr-checks changeset --rule <name> --base <rev> --head <rev>` prints what its
-checks will be handed without running them, and `sr-checks run` with the same range judges it
+A file-guard is judged over a range of commits with `sr-checks`
 ([file-guard.md](file-guard.md#running-it)).
 
 ## Changing a rule that already stands
