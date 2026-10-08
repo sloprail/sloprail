@@ -14,7 +14,7 @@ func agentRunArgv(t *testing.T, name Harness, resumeID string) []string {
 	if !ok {
 		t.Fatalf("no spec for %s", name)
 	}
-	run, err := spec.forAgentRun(resumeID)
+	run, err := spec.forAgentRun(resumeID, false)
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
@@ -49,7 +49,7 @@ func TestForAgentRun_PerHarnessArgv(t *testing.T) {
 
 // A spec without agent-run args is refused, not run as a judge.
 func TestForAgentRun_RefusesASpecWithNone(t *testing.T) {
-	if _, err := (harnessSpec{name: "bare", binary: "bare"}).forAgentRun(""); err == nil {
+	if _, err := (harnessSpec{name: "bare", binary: "bare"}).forAgentRun("", false); err == nil {
 		t.Fatal("a harness that cannot run unattended must be refused")
 	}
 }

@@ -29,6 +29,10 @@ type runRecord struct {
 	HasSubagents bool      `json:"has_subagents"`
 	StartedAt    time.Time `json:"started_at"`
 	FinishedAt   time.Time `json:"finished_at"`
+
+	// Files are further files of the run kept beside run.json (path under the run directory to
+	// content): a TUI run keeps the simulated user's calls and the frames they returned.
+	Files map[string][]byte `json:"-"`
 }
 
 // archiveRoot is the git-backed directory every run is recorded under:
@@ -85,6 +89,16 @@ func archiveRun(rec runRecord, transcriptPath string, subagents []harness.Subage
 					return "", fmt.Errorf("archive subagent transcripts: %w", err)
 				}
 			}
+		}
+	}
+
+	for name, content := range rec.Files {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return "", fmt.Errorf("archive %s: %w", name, err)
+		}
+		if err := os.WriteFile(p, content, 0o644); err != nil {
+			return "", fmt.Errorf("archive %s: %w", name, err)
 		}
 	}
 

@@ -172,10 +172,20 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	}
 
 	var agentErrs []string
+	// An agent whose hooks fire only in its interactive mode is run there, on a terminal, in
+	// one session for every turn; any other is run one-shot, a process per turn.
+	var archiveFiles map[string][]byte
+	inter, interactive := interactiveOf(h)
+	if interactive {
+		fmt.Fprintf(out, "sr-eval: %s's hooks fire only in its interactive mode: the agent-under-test runs there, on a terminal\n", harnessID)
+		o := (&tuiRun{h: h, inter: inter, harnessID: harnessID, fx: fx, ws: ws, agent: agent, binDir: binDir,
+			prompt: prompt, brief: brief, maxTurns: maxTurns, out: out, errs: cmd.ErrOrStderr()}).run(ctx)
+		agentErrs, archiveFiles = o.errs, o.files
+	}
 	var dialogue []exchange
 	var sessionID string // the first turn's session, by which every later turn resumes it
 	message := prompt
-	for turn := 1; turn <= maxTurns; turn++ {
+	for turn := 1; !interactive && turn <= maxTurns; turn++ {
 		if turn > 1 {
 			next, done, userErr := simulateUser(ctx, harnessID, binDir, fx.User.UserModel(), brief, dialogue)
 			if userErr != nil {
@@ -234,6 +244,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 		Passed:     sr.Passed,
 		Reason:     sr.Reason,
 		AgentError: agentErrText,
+		Files:      archiveFiles,
 		Transcript: transcriptPath,
 		StartedAt:  startedAt,
 		FinishedAt: time.Now(),

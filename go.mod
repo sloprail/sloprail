@@ -18,7 +18,11 @@ require (
 
 require github.com/aisbergg/gonja v0.0.0-20230529111726-b16083958108
 
-require github.com/klauspost/compress v1.18.0
+require (
+	github.com/creack/pty v1.1.24
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
+	github.com/klauspost/compress v1.18.0
+)
 
 require (
 	golang.org/x/mod v0.37.0 // indirect

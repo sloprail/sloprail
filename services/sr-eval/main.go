@@ -74,6 +74,6 @@ happened — not what a mock was scripted to produce.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(newRunCmd(), newArchiveCmd())
+	cmd.AddCommand(newRunCmd(), newArchiveCmd(), newTUICmd())
 	return cmd
 }

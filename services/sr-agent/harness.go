@@ -104,6 +104,11 @@ type harnessSpec struct {
 	// a permission prompt). nil means the harness cannot be run that way.
 	agentRunArgs []string
 
+	// tui: the harness has an interactive (TUI) mode, which is its binary with none of execArgs
+	// and no prompt (the caller types it): `--agent-run --interactive`. Set where some of the
+	// harness's hooks fire only there (internal/harness.Interactive).
+	tui bool
+
 	// resume spells resuming one session by its EXACT id (`--resume <id>` with
 	// `--agent-run`), so a multi-turn run lands every turn in one record: the one-shot
 	// subcommand words that carry the id (Codex's `exec resume <id>`, which replace
@@ -450,9 +455,11 @@ var cursorSpec = harnessSpec{
 	binary: cursor.Binary,
 
 	// `--force` runs shell commands headless (without it they are rejected); `--trust`
-	// is the headless workspace-trust flag. Stop never fires in `-p`, so a fixture that
-	// relies on it declares the harnesses it needs.
+	// is the headless workspace-trust flag. Stop never fires in `-p`, so sr-eval runs the
+	// agent under test in the TUI instead (`--interactive`, below; harness.Interactive says so);
+	// judges keep `-p`.
 	agentRunArgs: []string{"--trust", "--force"},
+	tui:          true,
 	resume:       func(id string) (subcommand, flags []string) { return nil, []string{"--resume", id} },
 
 	// CURSOR_AGENT=1 is set in the environment of every shell command the agent runs
@@ -579,7 +586,10 @@ func within(path, dir string) bool {
 
 // forAgentRun is the spec for running the agent under test: its agentRunArgs stand in
 // for baseArgs and, resuming session resumeID, its spelling is added.
-func (s harnessSpec) forAgentRun(resumeID string) (harnessSpec, error) {
+func (s harnessSpec) forAgentRun(resumeID string, interactive bool) (harnessSpec, error) {
+	if interactive && !s.tui {
+		return s, fmt.Errorf("%w: %s has no interactive mode to run the agent under test in (--interactive)", ErrModeUnsupported, s.name)
+	}
 	if s.agentRunArgs == nil {
 		return s, fmt.Errorf("%w: %s cannot be run as the agent under test (--agent-run)", ErrModeUnsupported, s.name)
 	}

@@ -114,6 +114,19 @@ user:                   # optional — makes the run multi-turn, see below
   never sees the project, the guardrails or the transcript, so a brief must
   not coach the agent on the guardrail either.
 
+  **Under a harness whose hooks fire only in its interactive mode** (Cursor: its
+  `stop`, `beforeSubmitPrompt` and `afterAgentResponse` never fire in `-p`),
+  sr-eval runs the agent-under-test in that TUI on a pseudo-terminal, one session
+  for every turn (`sr-agent --agent-run --interactive`), types `prompt.md`, and
+  the simulated user is a tool-using agent at the terminal instead: its only
+  tools are `sr-eval tui type|key|wait`, each returning the screen as it is
+  after the action, and its plain text goes nowhere. It is shown the screen once
+  the prompt's turn has ended, and each round ends with `{"done": bool}`; a
+  fixture without `user:` just gets `prompt.md`. A turn ends when the session
+  record and the screen have been quiet, with no process started since the
+  prompt (a running stop hook is one), and the record ends with the agent's
+  answer. Every call and the frame it returned is archived under `tui/`.
+
 ## The copy order, precisely
 
 1. Seed (copied) or Repo (cloned at `ref`) — `git init` is run afterward for
