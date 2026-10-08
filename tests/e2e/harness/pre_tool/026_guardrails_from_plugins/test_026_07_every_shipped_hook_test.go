@@ -12,7 +12,7 @@ import (
 )
 
 // Every hook script this repo ships — its own .sloprail, every
-// marketplace plugin — must pass authoring-slop's own grep. authoring-slop has a
+// marketplace plugin, the example rule trees kept under tests/**/testdata — must pass authoring-slop's own grep. authoring-slop has a
 // PreFileWrite gate half: a shipped script its grep refuses can never be edited again in a
 // project that has the plugin (the edit is refused), which is how 16 scripts
 // became uneditable when the Post newContentKnown floor landed (issue #91).
@@ -45,8 +45,12 @@ func shippedHookScripts(t *testing.T, root string) []string {
 			return nil
 		}
 		slash := filepath.ToSlash(rel)
+		// The example rule trees the e2e tests keep (no leading dot):
+		// tests/**/testdata/<name>/sloprail/{file-guard,gate,context}/**.sh.
+		kept := strings.HasPrefix(slash, "tests/") && strings.Contains(slash, "/testdata/") &&
+			(strings.Contains(slash, "/sloprail/file-guard/") || strings.Contains(slash, "/sloprail/gate/") || strings.Contains(slash, "/sloprail/context/"))
 		if strings.HasSuffix(slash, ".sh") &&
-			(strings.Contains(slash, ".sloprail/file-guard/") || strings.Contains(slash, ".sloprail/gate/") || strings.Contains(slash, ".sloprail/context/")) {
+			(strings.Contains(slash, ".sloprail/file-guard/") || strings.Contains(slash, ".sloprail/gate/") || strings.Contains(slash, ".sloprail/context/") || kept) {
 			out = append(out, slash)
 		}
 		return nil
@@ -81,7 +85,16 @@ func TestT026_07_EveryShippedHookPassesTheGrep(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// A kept example's rule tree is `testdata/<name>/sloprail/…` (no dot);
+			// installed in a project it is `.sloprail/…`, and the grep's
+			// file-guard exemption is by that location. Check it under that path.
 			rel := path
+			if i := strings.Index(rel, "/testdata/"); i >= 0 {
+				rest := rel[i+len("/testdata/"):]
+				if j := strings.Index(rest, "/"); j >= 0 {
+					rel = "." + rest[j+1:]
+				}
+			}
 			payload, _ := json.Marshal(map[string]any{"event": map[string]any{
 				"kind": "PreFileUpdate", "path": rel, "newContent": string(body), "resultKnown": true,
 			}})
@@ -130,6 +143,9 @@ func TestT026_08_EveryPostReaderFailsClosedOnAnUnreadFile(t *testing.T) {
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/prepare-judgment-gates.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gates-hold/gates-hold.sh", "PostFileUpdate", refuses, nil},
 		{"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-gate-is-grounded/resolve-gate-context.sh", "PostFileUpdate", refuses, nil},
+		// A real kept example's context enter (the eval-loop-maxing goal-tracking
+		// context, run by its own e2e test): an unread goal.yaml is in force.
+		{"tests/e2e/harness/session/059_eval_loop_maxing/testdata/eval-loop-maxing/sloprail/context/goal-tracking/enter.sh", "PostFileUpdate", activate, nil},
 		// The fixture plugin's scripts (fixture_hooks_test.go), under a temp tree.
 		// A git repository where committed code pins the file: an unread file
 		// nothing pins is waived (nothing is at stake), so that fixture must pin it.
