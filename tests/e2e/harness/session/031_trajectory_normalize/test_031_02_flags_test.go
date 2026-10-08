@@ -44,8 +44,21 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	}
 	e.WriteFile(proj, "existing.md", "old body\n")
 
-	// Run FROM the repo so the file module's stats resolve against it.
-	res := normalize(e, proj, path)
+	// Run FROM the repo so the file module's stats resolve against it. A record that names
+	// no working directory (Cursor's) is read against the workspace --root names; nothing is
+	// guessed from where the command runs.
+	var rootArgs []string
+	if !harness.HasCap(t, harness.CapRecordNamesStartDir) {
+		for _, en := range decodeEntries(t, mustRun(t, normalize(e, proj, path))) {
+			for _, ev := range en.Events {
+				if p, _ := ev.Fields["path"].(string); strings.HasPrefix(ev.Kind, "PreFile") && !filepath.IsAbs(p) {
+					t.Fatalf("without --root a record naming no cwd must not be read against a guessed workspace, but %s reported the relative path %q", ev.Kind, p)
+				}
+			}
+		}
+		rootArgs = []string{"--root", proj}
+	}
+	res := normalize(e, proj, path, rootArgs...)
 	if res.Code != 0 {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
