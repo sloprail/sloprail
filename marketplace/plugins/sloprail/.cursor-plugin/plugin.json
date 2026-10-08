@@ -1,6 +1,6 @@
 {
   "name": "sloprail",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Guardrails for Cursor's agent.",
   "keywords": ["cursor", "cursor-plugin", "hooks", "guardrails", "coding-agents", "agentic-coding", "ai-agents"],
   "hooks": "./hooks/cursor-hooks.json"
