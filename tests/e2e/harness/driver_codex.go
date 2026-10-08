@@ -44,7 +44,7 @@ func (codexDriver) Name() string { return "codex" }
 func (codexDriver) SkillLoadTool() string { return "Bash" }
 
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapSubagentLifecycleHooks, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapRecordHoldsHookContext, CapScriptedRetryText}
+	return []string{CapSubagents, CapSubagentLifecycleHooks, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapScriptedRetryText}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
