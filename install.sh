@@ -99,10 +99,10 @@ say "sloprail install: detected ${platform}"
 # Pinned to internal/harnessmock/version.txt (what the sr-test code checks with
 # --version). Released from sloprail/harness-mocks as per-platform raw binaries,
 # a10n-claude-mock-<os>-<arch>, plus an optional checksums.txt.
-# TODO: internal/harnessmock/version.txt is created by the sr-test Go part; until
-# it is on this branch the fallback below is the single default.
+# Run from a release, version.txt is not beside install.sh: the default below is
+# kept equal to it (TestInstallShDefaultMatchesThePin).
 HARNESS_MOCKS_REPO="sloprail/harness-mocks"
-HARNESS_MOCK_DEFAULT_VERSION="0.2.0"
+HARNESS_MOCK_DEFAULT_VERSION="0.4.0"
 
 harness_mock_version() {
   v=""
