@@ -110,12 +110,15 @@ func skillCandidatePaths(workspace, name, rel string) []string {
 	if err != nil {
 		return paths
 	}
-	res, err := harness.Current().ResolvePlugins(workspace, home)
+	// Every directory the harness loads an enabled plugin from, not only the one
+	// ResolvePlugins prefers: the agent reads the copy it was served (Codex: the
+	// installed cache copy, while Resolve names the marketplace source).
+	dirs, err := harness.PluginDirs(harness.Current(), workspace, home)
 	if err != nil {
 		return paths
 	}
-	for _, root := range res.Roots {
-		paths = append(paths, filepath.Join(root.Dir, "skills", name, rel))
+	for _, dir := range dirs {
+		paths = append(paths, filepath.Join(dir, "skills", name, rel))
 	}
 	return paths
 }

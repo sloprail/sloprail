@@ -60,14 +60,16 @@ func codexHome(home string) string {
 	return filepath.Join(home, ".codex")
 }
 
-// Resolve reads the enabled plugins and locates each.
-func Resolve(projectDir, home string) (harness.Resolution, error) {
-	var res harness.Resolution
-	chome := codexHome(home)
+// layered is what the user and project config layers say, merged.
+type layered struct {
+	enabled      map[string]bool
+	order        []string
+	marketplaces map[string]string
+}
 
-	enabled := map[string]bool{}
-	var order []string
-	marketplaces := map[string]string{}
+// readLayers reads config.toml in the user layer and then the project layer.
+func readLayers(projectDir, chome string) (layered, error) {
+	l := layered{enabled: map[string]bool{}, marketplaces: map[string]string{}}
 	layers := []string{}
 	if chome != "" {
 		layers = append(layers, filepath.Join(chome, "config.toml"))
@@ -81,26 +83,70 @@ func Resolve(projectDir, home string) (harness.Resolution, error) {
 			continue
 		}
 		if err != nil {
-			return res, fmt.Errorf("codex: read %s: %w", path, err)
+			return l, fmt.Errorf("codex: read %s: %w", path, err)
 		}
 		var c config
 		if err := toml.Unmarshal(data, &c); err != nil {
-			return res, fmt.Errorf("codex: parse %s: %w", path, err)
+			return l, fmt.Errorf("codex: parse %s: %w", path, err)
 		}
 		for name, m := range c.Marketplaces {
 			if m.Source != "" {
-				marketplaces[name] = m.Source
+				l.marketplaces[name] = m.Source
 			}
 		}
 		for key, p := range c.Plugins {
-			if _, seen := enabled[key]; !seen {
-				order = append(order, key)
+			if _, seen := l.enabled[key]; !seen {
+				l.order = append(l.order, key)
 			}
 			// Absent `enabled` is Codex's default, on.
-			enabled[key] = p.Enabled == nil || *p.Enabled
+			l.enabled[key] = p.Enabled == nil || *p.Enabled
 		}
 	}
-	sort.Strings(order)
+	sort.Strings(l.order)
+	return l, nil
+}
+
+// PluginCopies implements harness.PluginCopies. Codex loads an installed plugin from
+// its cache, `<CODEX_HOME>/plugins/cache/<marketplace>/<plugin>/<version>/`, while
+// Resolve prefers the local marketplace source the plugin was added from; the agent
+// reads whichever copy its loaded skill names, so the marketplace source and every
+// cache version are copies of the one plugin.
+func (Harness) PluginCopies(projectDir, home string, root harness.Root) []string {
+	chome := codexHome(home)
+	l, err := readLayers(projectDir, chome)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	if src, ok := l.marketplaces[root.Plugin.Marketplace]; ok {
+		manifest := filepath.Join(src, ".agents", "plugins", "marketplace.json")
+		if dir := fromMarketplace(src, manifest, root.Plugin.Name); dir != "" && isDir(dir) {
+			out = append(out, dir)
+		}
+	}
+	if chome != "" {
+		cache := filepath.Join(chome, "plugins", "cache", root.Plugin.Marketplace, root.Plugin.Name)
+		if versions, err := os.ReadDir(cache); err == nil {
+			for _, v := range versions {
+				if v.IsDir() {
+					out = append(out, filepath.Join(cache, v.Name()))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// Resolve reads the enabled plugins and locates each.
+func Resolve(projectDir, home string) (harness.Resolution, error) {
+	var res harness.Resolution
+	chome := codexHome(home)
+
+	l, err := readLayers(projectDir, chome)
+	if err != nil {
+		return res, err
+	}
+	enabled, order, marketplaces := l.enabled, l.order, l.marketplaces
 
 	for _, key := range order {
 		if !enabled[key] {
