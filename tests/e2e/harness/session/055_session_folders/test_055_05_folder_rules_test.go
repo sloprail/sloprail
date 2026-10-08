@@ -102,17 +102,32 @@ func TestT055_07_ASubagentOwesCommitsInItsOwnWorktreeOnly(t *testing.T) {
 
 	const own = "s-055-07a"
 	res := e.Run(proj, own, "delegate into isolation", Turns("root done",
-		harness.Dispatch("d1", "write the doc", write("isolated.md"), "worktree"),
+		harness.Dispatch("d1", "write the doc", write("isolated.md"), harness.OwnTree(t)),
 	))
 	var wt bool
 	for _, f := range e.SessionFolders(proj, own) {
 		wt = wt || f.Role == sessionstate.FolderSubagentWorktree
 	}
-	if !wt {
-		t.Fatalf("a sub-agent's own worktree is not a folder of the session: %+v", e.SessionFolders(proj, own))
-	}
-	if !e.SubagentStopBlocked(proj, own, "docs/isolated.md") {
-		t.Fatalf("a sub-agent in its own worktree was not owed a commit for its uncommitted work:\n%s", res.Output)
+	if harness.HasCap(t, harness.CapWorktrees) {
+		if !wt {
+			t.Fatalf("a sub-agent's own worktree is not a folder of the session: %+v", e.SessionFolders(proj, own))
+		}
+		if !e.SubagentStopBlocked(proj, own, "docs/isolated.md") {
+			t.Fatalf("a sub-agent in its own worktree was not owed a commit for its uncommitted work:\n%s", res.Output)
+		}
+	} else {
+		// No worktree option on this harness: the sub-agent works in the root's tree, so no
+		// worktree of its own is a folder, it is not refused for the root's tree, and the
+		// root is owed the commit.
+		if wt {
+			t.Fatalf("a harness without sub-agent worktrees registered one as a folder: %+v", e.SessionFolders(proj, own))
+		}
+		if !e.NoSubagentStopBlock(proj, own) {
+			t.Fatalf("a sub-agent in the root's tree was refused for the root's tree:\n%s", res.Output)
+		}
+		if got := strings.Join(e.BlockingErrorsFrom(proj, own, "Stop"), "\n"); !strings.Contains(got, "docs/isolated.md") {
+			t.Fatalf("the root, which owns the tree, was not owed the commit:\n%s", got)
+		}
 	}
 
 	const shared = "s-055-07b"
@@ -162,10 +177,32 @@ func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
 		Bash("sb1", "mkdir -p "+other+"/docs && echo hi > "+other+"/docs/a.md && git -C "+other+" add -A && git -C "+other+" commit -q -m 'the sub-agent work'"),
 	))
 
-	e.Run(proj, sess, "delegate", Turns("root done",
-		harness.Dispatch("d1", "write the doc elsewhere", script, ""),
-	))
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	turns := []harness.Turn{harness.Dispatch("d1", "write the doc elsewhere", script, "")}
+	if !linked {
+		// The premise that the root's Stop runs and judges: the root has a rule of its own
+		// and owes a commit under it, so its Stop refuses with that rule's words. Without
+		// it, "the sub-agent's verdict is absent" would also hold of a Stop that never ran.
+		e.FileGuard(proj, "docs", "match: \"docs/**\"\nchecks:\n  - script: ./refuse.sh\n",
+			map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"ROOT-OWN-VERDICT\"}'\nexit 1\n"})
+		e.CommitAll(proj, "the root's rule")
+		turns = append([]harness.Turn{
+			Bash("rb0", "git -C "+proj+" commit -q --allow-empty -m 'register this folder'"),
+			Bash("rb1", "mkdir -p "+proj+"/docs && echo hi > "+proj+"/docs/r.md && git -C "+proj+" add -A && git -C "+proj+" commit -q -m 'the root work'"),
+		}, turns...)
+	}
+	e.Run(proj, sess, "delegate", Turns("root done", turns...))
 	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !linked {
+		if !strings.Contains(got, "ROOT-OWN-VERDICT") {
+			t.Fatalf("premise: the root's Stop did not run its own rule:\n%s", got)
+		}
+		// The sub-agent's record names no parent, so its range is not the root's to report.
+		if strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
+			t.Fatalf("a sub-agent linked to no parent had its range reported by the root's Stop:\n%s", got)
+		}
+		return
+	}
 	if !strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
 		t.Fatalf("the root's Stop did not verify the sub-agent's tracked range when the root declares no rule:\n%s", got)
 	}

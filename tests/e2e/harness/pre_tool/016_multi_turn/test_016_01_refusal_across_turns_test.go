@@ -156,7 +156,7 @@ exit 0
 	// And the last write is the one on disk. A rule being asked is worth
 	// nothing if the answer did not govern the tree.
 	body := readFile(t, filepath.Join(proj, "notes.md"))
-	assert.Equal(t, "version two, quite different", body,
+	assert.Equal(t, e.Written("version two, quite different"), body,
 		"the permitted rewrite must be what the tree ends up holding")
 }
 

@@ -1,0 +1,44 @@
+{
+  "name": "sloprail-marketplace",
+  "interface": {
+    "displayName": "sloprail"
+  },
+  "plugins": [
+    {
+      "name": "sloprail",
+      "source": {
+        "source": "local",
+        "path": "./marketplace/plugins/sloprail"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "sloprail-tasks",
+      "source": {
+        "source": "local",
+        "path": "./marketplace/plugins/sloprail-tasks"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "sloprail-content",
+      "source": {
+        "source": "local",
+        "path": "./marketplace/plugins/sloprail-content"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

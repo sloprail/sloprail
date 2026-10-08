@@ -70,13 +70,18 @@ func TestT003_60_ARootThatMovedToAnotherWorktreeKeepsItsStore(t *testing.T) {
 		t.Fatalf("before the move the session has %d stores, want 1", n)
 	}
 
-	payload, _ := json.Marshal(map[string]any{
-		"session_id": "s-003-60e", "transcript_path": e.TranscriptPath(proj, "s-003-60e"),
-		"cwd": wt, "stop_hook_active": false, "hook_event_name": "Stop",
-	})
-	e.CLIDirectStdinEnv(wt, string(payload), e.SessionEnv(""), "sr-session", "stop")
+	e.StopFrom(proj, "s-003-60e", wt)
 
-	if dirs := e.SessionStoreDirs(proj, "s-003-60e"); len(dirs) != 1 {
-		t.Fatalf("a hook run from another worktree opened a second store for the same session: %v", dirs)
+	dirs := e.SessionStoreDirs(proj, "s-003-60e")
+	if harness.HasCap(t, harness.CapRecordNamesStartDir) {
+		if len(dirs) != 1 {
+			t.Fatalf("a hook run from another worktree opened a second store for the same session: %v", dirs)
+		}
+		return
+	}
+	// This harness's record names no start directory, so the folder a hook reports is all
+	// that says where the session is: the other worktree is a store of its own.
+	if len(dirs) != 2 {
+		t.Fatalf("a record naming no start directory: want one store per reported folder (2), got %v", dirs)
 	}
 }

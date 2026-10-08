@@ -8,19 +8,27 @@ import (
 )
 
 // A judge that reads the project the way a real one does: it passes only when the
-// project it was given (sr-agent's --add-dir, which reaches the harness as an argument)
-// holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
+// project it was given holds REQUIRED.md. So it answers for WHICH tree it was pointed at.
+// The tree is the one the prompt names ("The project being judged is at <dir>."), which is how
+// every harness's judge learns it. Where the harness also carries the tree as an argument
+// (Claude's --add-dir: CapJudgeTreeInArgv), an argument naming the tree must hold REQUIRED.md
+// too, so the launch itself is checked; a Codex judge reads the project by absolute path and a
+// Cursor judge runs in an empty workspace, and are handed no such argument.
 const requiredFileJudge = `#!/bin/sh
 out=""
 ok=no
+argv_ok=no
 for arg in "$@"; do
   case "$arg" in
     *"Write your answer to the file "*)
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      tree="$(printf '%s' "$arg" | sed -n 's/.*The project being judged is at \(.*\)\. Paths in the material.*/\1/p' | head -1)"
+      if [ -n "$tree" ] && [ -f "$tree/REQUIRED.md" ]; then ok=yes; fi
       ;;
   esac
-  if [ -f "$arg/REQUIRED.md" ]; then ok=yes; fi
+  if [ -f "$arg/REQUIRED.md" ]; then argv_ok=yes; fi
 done
+if [ "{{tree-in-argv}}" = yes ] && [ "$argv_ok" != yes ]; then ok=no; fi
 [ -n "$out" ] || exit 0
 if [ "$ok" = yes ]; then
   printf '%s' '{"pass": true, "reasoning": "REQUIRED.md is there"}' > "$out"
@@ -33,14 +41,18 @@ exit 0
 func requiredProject(t *testing.T) (*Env, string, string) {
 	t.Helper()
 	e, proj := judgeProject(t, verdictPass)
-	e.InstallShim("claude", requiredFileJudge)
+	inArgv := "no"
+	if harness.HasCap(t, harness.CapJudgeTreeInArgv) {
+		inArgv = "yes"
+	}
+	e.InstallJudgeScript(strings.ReplaceAll(requiredFileJudge, "{{tree-in-argv}}", inArgv))
 	return e, proj, filepath.Join(t.TempDir(), "feat-x-tree")
 }
 
 // judgeInTree is the turn an agent takes to have the judges asked about the branch a worktree
 // holds: `sr-checks run` from that worktree, over the branch's own commits.
 func judgeInTree(wt, base string) harness.Turn {
-	return Bash("j-"+filepath.Base(base), "cd "+wt+" && CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
+	return Bash("j-"+filepath.Base(base), "cd "+wt+" && "+harness.ShellEnv()+"sr-checks run --base '"+base+"' --head HEAD >/dev/null 2>&1; true")
 }
 
 // commitOnX: from the coordinator's own checkout, make a commit on a new branch, then go

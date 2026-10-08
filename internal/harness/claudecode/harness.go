@@ -23,7 +23,7 @@ func New() harness.Harness { return Harness{} }
 func init() { harness.Register(New()) }
 
 // Name implements harness.Harness.
-func (Harness) Name() string { return "claudecode" }
+func (Harness) Name() string { return "claude" }
 
 // ResolvePlugins implements harness.Harness.
 func (Harness) ResolvePlugins(projectDir, home string) (harness.Resolution, error) {

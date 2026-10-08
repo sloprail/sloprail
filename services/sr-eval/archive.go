@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // AppName is the directory sr-eval keeps its run archive under, matching the
@@ -20,7 +21,7 @@ type runRecord struct {
 	Fixture      string    `json:"fixture"`     // the fixture directory's own name (basename)
 	FixtureDir   string    `json:"fixture_dir"` // absolute path, for reproducing the run
 	Model        string    `json:"model"`       // the resolved --model (fixture default or override)
-	Harness      string    `json:"harness"`     // "claude-code" today; sr-agent's own resolution, once it reports one
+	Harness      string    `json:"harness"`     // the canonical id (claude, codex, cursor) the run was launched under
 	Passed       bool      `json:"passed"`
 	Reason       string    `json:"reason"`      // empty on a pass
 	AgentError   string    `json:"agent_error"` // the agent-under-test's own exit error, if any — a run can still be scored after this
@@ -51,7 +52,7 @@ func archiveRoot() (string, error) {
 // project directory (a real user's ordinary session history), and sr-eval
 // has no business relocating it out from under whatever else might read it
 // from there.
-func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr []byte, verdict *Verdict) (string, error) {
+func archiveRun(rec runRecord, transcriptPath string, subagents []harness.SubagentFile, scoreStdout, scoreStderr []byte, verdict *Verdict) (string, error) {
 	root, err := archiveRoot()
 	if err != nil {
 		return "", err
@@ -73,11 +74,16 @@ func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr [
 		if err := copyFile(transcriptPath, filepath.Join(dir, "transcript.jsonl")); err != nil {
 			return "", fmt.Errorf("archive transcript: %w", err)
 		}
-		subDir := filepath.Join(strings.TrimSuffix(transcriptPath, ".jsonl"), "subagents")
-		if entries, err := os.ReadDir(subDir); err == nil && len(entries) > 0 {
+		if len(subagents) > 0 {
 			rec.HasSubagents = true
-			if err := copyTree(subDir, filepath.Join(dir, "subagents")); err != nil {
-				return "", fmt.Errorf("archive subagent transcripts: %w", err)
+			for _, f := range subagents {
+				dst := filepath.Join(dir, "subagents", f.Rel)
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+					return "", fmt.Errorf("archive subagent transcripts: %w", err)
+				}
+				if err := copyFile(f.Path, dst); err != nil {
+					return "", fmt.Errorf("archive subagent transcripts: %w", err)
+				}
 			}
 		}
 	}

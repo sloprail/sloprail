@@ -42,9 +42,10 @@ if [ -z "$user_lines" ]; then
 fi
 
 # The LATEST real user message in the whole session: type "user", not a
-# sub-agent's ("isSidechain"), and its content is a plain STRING — a genuine
-# typed message — never an array (that shape is a tool_result delivered back
-# to the agent, which also arrives as a "user"-typed entry but is not
+# sub-agent's ("isSidechain"), and its content is TEXT — a plain string, or a
+# list of text blocks (the spelling some harnesses record a typed message in) —
+# never a list holding a tool_result (that shape is a tool's output delivered
+# back to the agent, which also arrives as a "user"-typed entry but is not
 # something a person said). This is the exact distinction #95745 needed and a
 # keyword grep over "any past user message" would not have made: the fix is
 # not "was this ever said" but "is this what the user is asking FOR RIGHT NOW".
@@ -53,7 +54,9 @@ latest_line="$(sr-session trajectory normalize --path "$tp" --whole-session --ev
       [ .[]
         | select(.type == "user")
         | select((.isSidechain // false) == false)
-        | select((.message.content | type) == "string")
+        | select((.message.content | type) == "string"
+            or ((.message.content | type) == "array"
+                and ([.message.content[] | select(.type != "text")] | length) == 0))
         | .line
       ]
       | if length == 0 then empty else max end

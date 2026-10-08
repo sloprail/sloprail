@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/claudecode"
+	"github.com/sloprail/sloprail/internal/harness/cursor"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,10 +19,13 @@ import (
 // zero value and lose it.
 type Harness string
 
-// ClaudeCode is the first harness this binary supported; Cursor follows it. What
-// makes another cheap is that everything harness-shaped in this binary is reached
-// through the registry below rather than written inline.
-const ClaudeCode Harness = "claude-code"
+// ClaudeCode and Codex are the first harnesses this binary supported; Cursor follows
+// (cursor_harness.go). What makes another cheap is that everything harness-shaped in
+// this binary is reached through the registry below rather than written inline.
+const (
+	ClaudeCode Harness = "claude"
+	Codex      Harness = "codex"
+)
 
 // Cursor is Cursor's CLI agent, `cursor-agent`.
 const Cursor Harness = "cursor"
@@ -93,6 +98,19 @@ type harnessSpec struct {
 	// otherwise recurse. nil when the harness needs none.
 	baseArgs []string
 
+	// agentRunArgs replace baseArgs when sr-agent runs the agent UNDER TEST
+	// (`--agent-run`, what sr-eval launches): no isolation, so the project's hooks and
+	// plugins are live, and whatever makes a headless run unattended (nothing can answer
+	// a permission prompt). nil means the harness cannot be run that way.
+	agentRunArgs []string
+
+	// resume spells resuming one session by its EXACT id (`--resume <id>` with
+	// `--agent-run`), so a multi-turn run lands every turn in one record: the one-shot
+	// subcommand words that carry the id (Codex's `exec resume <id>`, which replace
+	// execArgs) and/or flags that do (Claude's and Cursor's `--resume <id>`). Never the
+	// harness's "most recent session" form: that picks by recency, not by identity.
+	resume func(id string) (subcommand, flags []string)
+
 	// stdinPromptAbove is the prompt size, in bytes, above which the prompt goes
 	// to the harness on its STDIN instead of as a command-line argument. An argv
 	// is bounded (the OS's ARG_MAX covers argv AND environment together, about
@@ -102,6 +120,18 @@ type harnessSpec struct {
 	// never handed one that way. Below the bound the prompt stays positional, as
 	// every harness takes it.
 	stdinPromptAbove int
+
+	// execArgs are the arguments that put the binary in one-shot mode, before
+	// the model flag: `-p` for Claude Code, the `exec` subcommand for Codex. nil
+	// means ["-p"], which every spec literal that predates Codex relied on.
+	execArgs []string
+
+	// modelFlag is the flag naming the model; "" means `--model`.
+	modelFlag string
+
+	// stdinPromptArgs are appended when the prompt is fed on stdin: Codex needs
+	// the explicit `-` placeholder, Claude Code reads stdin when given no prompt.
+	stdinPromptArgs []string
 
 	// grant returns the arguments that give the agent exactly the file access a
 	// run needs: each added directory in its mode — writable or readonly — (the
@@ -115,6 +145,15 @@ type harnessSpec struct {
 	// seam for saying so per-harness rather than assuming every harness has
 	// Claude Code's permission model.
 	grant func(g accessGrant) []string
+
+	// checkGrant, when set, refuses an access grant this harness cannot express as
+	// tightly as asked (before anything runs). nil accepts every grant.
+	checkGrant func(g accessGrant) error
+
+	// tools, when set, translates the allowed/denied tools (the canonical vocabulary,
+	// internal/harness/toolrules.go) into this harness's run settings, instead of the
+	// rules riding through verbatim in grant. nil means verbatim (Claude Code).
+	tools harness.ToolPolicy
 
 	// grantEnv is grant for a harness whose permissions are not command-line flags
 	// but a configuration the process reads: it returns the environment that points
@@ -142,7 +181,10 @@ type harnessSpec struct {
 // makes an alias always end the search.
 var claudeCodeSpec = harnessSpec{
 	name:   ClaudeCode,
-	binary: "claude",
+	binary: claudecode.Binary,
+
+	agentRunArgs: []string{"--permission-mode", "bypassPermissions"},
+	resume:       func(id string) (subcommand, flags []string) { return nil, []string{"--resume", id} },
 
 	stdinPromptAbove: 64 << 10,
 	detect: func(getenv func(string) string) bool {
@@ -405,7 +447,13 @@ var claudeCodeSpec = harnessSpec{
 //     which a judge reading a user's project should not opt into silently.
 var cursorSpec = harnessSpec{
 	name:   Cursor,
-	binary: "cursor-agent",
+	binary: cursor.Binary,
+
+	// `--force` runs shell commands headless (without it they are rejected); `--trust`
+	// is the headless workspace-trust flag. Stop never fires in `-p`, so a fixture that
+	// relies on it declares the harnesses it needs.
+	agentRunArgs: []string{"--trust", "--force"},
+	resume:       func(id string) (subcommand, flags []string) { return nil, []string{"--resume", id} },
 
 	// CURSOR_AGENT=1 is set in the environment of every shell command the agent runs
 	// (recorded: runs/subprocess-session-env), which is where a judge check
@@ -470,6 +518,10 @@ type accessGrant struct {
 	// passed through in the harness's own spelling beside the grant's own
 	// readonly-dir denies.
 	DenyTools []string
+
+	// AgentRun is a run of the agent under test, not a judge: a harness whose grant
+	// would otherwise confine the process to its judge sandbox leaves that out.
+	AgentRun bool
 }
 
 // dirGrant is one directory the agent is given, and how.
@@ -525,8 +577,45 @@ func within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
-// harnesses is the registry. Adding a harness is adding an entry here.
-var harnesses = []harnessSpec{claudeCodeSpec, cursorSpec}
+// forAgentRun is the spec for running the agent under test: its agentRunArgs stand in
+// for baseArgs and, resuming session resumeID, its spelling is added.
+func (s harnessSpec) forAgentRun(resumeID string) (harnessSpec, error) {
+	if s.agentRunArgs == nil {
+		return s, fmt.Errorf("%w: %s cannot be run as the agent under test (--agent-run)", ErrModeUnsupported, s.name)
+	}
+	if resumeID != "" && s.resume == nil {
+		return s, fmt.Errorf("%w: %s cannot resume a session (--resume)", ErrModeUnsupported, s.name)
+	}
+	s.baseArgs = s.agentRunArgs
+	if resumeID != "" {
+		subcommand, flags := s.resume(resumeID)
+		if subcommand != nil {
+			s.execArgs = subcommand
+		}
+		s.baseArgs = append(append([]string{}, flags...), s.baseArgs...)
+	}
+	return s, nil
+}
+
+func (s harnessSpec) execArgsOrDefault() []string {
+	if s.execArgs != nil {
+		return s.execArgs
+	}
+	return []string{"-p"}
+}
+
+func (s harnessSpec) modelFlagOrDefault() string {
+	if s.modelFlag != "" {
+		return s.modelFlag
+	}
+	return "--model"
+}
+
+// harnesses is the registry. Adding a harness is adding an entry here. The order
+// is the order environment detection tries them. SLOPRAIL_HARNESS, when set, is read
+// first (DetectHarness); the specs' own markers decide otherwise, and Codex's yields to
+// Claude Code's when an environment holds both.
+var harnesses = []harnessSpec{codexSpec, claudeCodeSpec, cursorSpec}
 
 // ErrNoHarness is returned when the environment names no harness this binary
 // knows.
@@ -538,6 +627,7 @@ var ErrUnknownHarness = errors.New("unsupported harness")
 
 // lookupSpec finds the registry entry for a named harness.
 func lookupSpec(name Harness) (harnessSpec, bool) {
+	name = Harness(harness.Canonical(string(name))) // deprecated spellings: internal/harness
 	for _, spec := range harnesses {
 		if spec.name == name {
 			return spec, true
@@ -566,6 +656,15 @@ func supportedNames() []string {
 //
 // The environment is read through a lookup so a test can supply one directly.
 func DetectHarness(getenv func(string) string) (harnessSpec, error) {
+	// An explicit SLOPRAIL_HARNESS names the session's harness: a judge runs on the
+	// harness that triggered it.
+	if name := getenv("SLOPRAIL_HARNESS"); name != "" {
+		if spec, ok := lookupSpec(Harness(name)); ok {
+			return spec, nil
+		}
+		return harnessSpec{}, fmt.Errorf("%w: SLOPRAIL_HARNESS=%q. Supported: %s",
+			ErrUnknownHarness, name, strings.Join(supportedNames(), ", "))
+	}
 	for _, spec := range harnesses {
 		if spec.detect(getenv) {
 			return spec, nil

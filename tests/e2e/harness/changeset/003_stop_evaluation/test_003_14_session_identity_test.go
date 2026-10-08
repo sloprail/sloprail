@@ -120,8 +120,9 @@ func TestT003_16_APassSurvivesAReFork(t *testing.T) {
 		t.Fatal("premise: the judge was never asked")
 	}
 
-	e.RunForked(proj, "s-003-16-a", "s-003-16-b", "carry on", Turns("done", Bash("b1", "true")))
-	if n := stopBlocks(e, proj, "s-003-16-b"); n != 0 {
+	// A harness with no fork continues the conversation by resuming it.
+	cont := e.RunContinued(proj, "s-003-16-a", "s-003-16-b", "carry on", Turns("done", Bash("b1", "true")))
+	if n := stopBlocks(e, proj, cont); n != 0 {
 		t.Fatalf("the fork was refused over a pass its conversation had earned (%d blocks)", n)
 	}
 	if n := e.JudgeCalls(proj, promptFile, ""); n != asked {
@@ -146,9 +147,10 @@ func TestT003_17_ARefusalSurvivesAReFork(t *testing.T) {
 		t.Fatal("premise: the judge was never asked")
 	}
 
-	e.RunForked(proj, "s-003-17-a", "s-003-17-b", "carry on", Turns("done", Bash("b1", "true")))
-	if !strings.Contains(strings.Join(e.BlockingErrorsFrom(proj, "s-003-17-b", "Stop"), "\n"), "JUDGE-SAYS-NO") {
-		t.Fatalf("a refusal recorded before a re-fork did not refuse after it: %q", e.BlockingErrors(proj, "s-003-17-b"))
+	// A harness with no fork continues the conversation by resuming it.
+	cont := e.RunContinued(proj, "s-003-17-a", "s-003-17-b", "carry on", Turns("done", Bash("b1", "true")))
+	if !strings.Contains(strings.Join(e.BlockingErrorsFrom(proj, cont, "Stop"), "\n"), "JUDGE-SAYS-NO") {
+		t.Fatalf("a refusal recorded before a re-fork did not refuse after it: %q", e.BlockingErrors(proj, cont))
 	}
 	if n := e.JudgeCalls(proj, promptFile, ""); n != asked {
 		t.Fatalf("the refusal was not replayed over the fork: the judge was asked %d more time(s)", n-asked)

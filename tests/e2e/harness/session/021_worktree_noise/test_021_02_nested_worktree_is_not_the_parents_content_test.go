@@ -243,23 +243,35 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e.InstallClaudeShim(proj)
 	e.Run(proj, "s-021-03", "delegate into a worktree", Turns("done",
 		Write("w1", "root-own.md", "the root's own work\n"),
-		Dispatch("d1", "do the delegated thing", subScript, "worktree"),
+		Dispatch("d1", "do the delegated thing", subScript, harness.OwnTree(t)),
 	).ThenCommit("the root's work"))
 
-	// The premise: a worktree really was bound inside the parent's tree, and git
-	// reports it as untracked content of the parent. Without both, the silence
-	// below is about a cycle that had no noise to be shielded from.
-	entries, err := os.ReadDir(filepath.Join(proj, ".claude", "worktrees"))
-	if err != nil || len(entries) == 0 {
-		t.Fatalf("no worktree was bound under .claude/worktrees (%v) — isolation=%q did not "+
-			"create a nested checkout, so this proves nothing", err, "worktree")
-	}
-	// The agent's own `git add -A` commits the nested checkout as an embedded
-	// repository (a mode-160000 entry), so it is in the parent's committed range
-	// rather than merely untracked: the entry the rule must not be shown.
-	if staged := harness.Git(t, proj, "ls-files", "-s", "--full-name", "--", ".claude/worktrees"); !strings.Contains(staged, "160000") {
-		t.Fatalf("the parent's history does not hold the nested checkout as an embedded repository:\n%s\n"+
-			"the pollution this test is about is not present, so its conclusion would be vacuous", staged)
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// A harness without sub-agent worktrees (Codex, Cursor) binds nothing nested: the
+		// sub-agent works in the root's tree, so there is no other tree's noise to shield the
+		// rule from, and the project must hold no nested checkout at all.
+		if entries, err := os.ReadDir(filepath.Join(proj, ".claude", "worktrees")); err == nil && len(entries) > 0 {
+			t.Fatalf("a harness without sub-agent worktrees bound a nested checkout: %v", entries)
+		}
+		if staged := harness.Git(t, proj, "ls-files", "-s", "--full-name", "--", ".claude/worktrees"); strings.TrimSpace(staged) != "" {
+			t.Fatalf("the parent's history holds a nested checkout on a harness without sub-agent worktrees:\n%s", staged)
+		}
+	} else {
+		// The premise: a worktree really was bound inside the parent's tree, and git
+		// reports it as untracked content of the parent. Without both, the silence
+		// below is about a cycle that had no noise to be shielded from.
+		entries, err := os.ReadDir(filepath.Join(proj, ".claude", "worktrees"))
+		if err != nil || len(entries) == 0 {
+			t.Fatalf("no worktree was bound under .claude/worktrees (%v) — isolation=%q did not "+
+				"create a nested checkout, so this proves nothing", err, "worktree")
+		}
+		// The agent's own `git add -A` commits the nested checkout as an embedded
+		// repository (a mode-160000 entry), so it is in the parent's committed range
+		// rather than merely untracked: the entry the rule must not be shown.
+		if staged := harness.Git(t, proj, "ls-files", "-s", "--full-name", "--", ".claude/worktrees"); !strings.Contains(staged, "160000") {
+			t.Fatalf("the parent's history does not hold the nested checkout as an embedded repository:\n%s\n"+
+				"the pollution this test is about is not present, so its conclusion would be vacuous", staged)
+		}
 	}
 
 	got := changesetkit.Files(t, led.Lines())

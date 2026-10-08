@@ -36,7 +36,7 @@ func TestFreshPath_DropsSloprailKeepsHarness(t *testing.T) {
 	t.Setenv("PATH", shared+string(os.PathListSeparator)+other)
 
 	home := t.TempDir()
-	got, err := freshPath(home)
+	got, err := freshPath(home, "claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestBaseAgentEnv_TempRootsLandInTheWorkspace(t *testing.T) {
 		"HOME=/Users/op", "TMPDIR=/var/folders/op/T/", "CLAUDE_CODE_TMPDIR=/tmp/op",
 		"PATH=/usr/bin", "KEEP=1",
 	}
-	got := baseAgentEnv(environ, "/ws/home", "/ws/tmp", false)
+	got := baseAgentEnv(testHarness(t, "claude"), environ, "/ws/home", "/ws/tmp", false)
 
 	want := map[string]string{
 		"HOME": "/ws/home", "TMPDIR": "/ws/tmp", "CLAUDE_CODE_TMPDIR": "/ws/tmp", "KEEP": "1",
@@ -128,7 +128,7 @@ func TestBaseAgentEnv_TempRootsLandInTheWorkspace(t *testing.T) {
 
 // A fresh machine also drops what would reach an existing sloprail install.
 func TestBaseAgentEnv_FreshDropsInstallPointers(t *testing.T) {
-	got := baseAgentEnv([]string{"GOPATH=/go", "SLOPRAIL_X=1", "KEEP=1"}, "/h", "/t", true)
+	got := baseAgentEnv(testHarness(t, "claude"), []string{"GOPATH=/go", "SLOPRAIL_X=1", "KEEP=1"}, "/h", "/t", true)
 	for _, kv := range got {
 		if strings.HasPrefix(kv, "GOPATH=") || strings.HasPrefix(kv, "SLOPRAIL_") {
 			t.Errorf("a fresh machine kept %s", kv)
@@ -140,7 +140,7 @@ func TestBaseAgentEnv_FreshDropsInstallPointers(t *testing.T) {
 // identity variables go, while credential selectors and the rest stay.
 // sr:proves authoring-tools/eval-agent-runs-isolated
 func TestBaseAgentEnv_DropsAmbientSession(t *testing.T) {
-	got := baseAgentEnv([]string{
+	got := baseAgentEnv(testHarness(t, "claude"), []string{
 		"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=x", "CLAUDE_CODE_ENTRYPOINT=cli",
 		"CLAUDE_CODE_EXECPATH=/bin/claude", "CLAUDE_PROJECT_DIR=/p",
 		"CLAUDE_CODE_OAUTH_TOKEN=t", "KEEP=1",
@@ -166,7 +166,7 @@ func TestBaseAgentEnv_DropsAmbientSession(t *testing.T) {
 // so a clone made through $TMPDIR or mktemp cannot collide with an earlier run's.
 func TestBaseAgentEnv_TMPDIRIsPerRun(t *testing.T) {
 	tmpOf := func(root string) string {
-		for _, kv := range baseAgentEnv([]string{"TMPDIR=/tmp"}, root+"/home", root+"/tmp", false) {
+		for _, kv := range baseAgentEnv(testHarness(t, "claude"), []string{"TMPDIR=/tmp"}, root+"/home", root+"/tmp", false) {
 			if v, ok := strings.CutPrefix(kv, "TMPDIR="); ok {
 				return v
 			}

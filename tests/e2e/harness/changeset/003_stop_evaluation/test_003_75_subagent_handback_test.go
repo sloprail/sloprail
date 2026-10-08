@@ -42,14 +42,34 @@ func TestT003_75_ASubagentHandsUncitedChangesBackAndTheParentReappliesThemCited(
 	sub := harness.SubagentScript(t, Turns("sub done",
 		harness.CommitFile("c1", "docs/release.md", "the steps", "document the release"),
 	))
-	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// A sub-agent in the root's tree is not refused at its own Stop: its uncited commit is
+		// the root's to answer for, so there is no hand-back. The root is told, plainly, to cite
+		// (T003_75 root), and passes once the commit carries the user's answer.
+		if !e.NoSubagentStopBlock(proj, sess) {
+			t.Fatalf("a sub-agent in the root's tree was refused for its uncited commit:\n%s", res.Output)
+		}
+		told := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+		if !strings.Contains(told, "docs/release.md") || !strings.Contains(told, "Sloprail-Cites-User: <exact quote>") || strings.Contains(told, "You are a sub-agent") {
+			t.Fatalf("the root's refusal for the sub-agent's uncited commit is not the plain cite instruction:\n%s", told)
+		}
+		blocks := stopBlocks(e, proj, sess)
+		e.Run(proj, sess, "cited", Turns("cited",
+			Bash("a2", "git commit -q --amend -m 'document the release' -m 'Sloprail-Cites-User: "+handbackPrompt+"'"),
+		))
+		if n := stopBlocks(e, proj, sess); n > blocks {
+			t.Fatalf("the root's cited commit was refused:\n%s", newBlocks(e, proj, sess, blocks))
+		}
+		return
+	}
 	if !e.SubagentStopBlocked(proj, sess, "") {
 		t.Fatalf("premise: the sub-agent's uncited commit should be refused at its Stop:\n%s", res.Output)
 	}
 	told := strings.Join(e.SubagentBlockingErrors(proj, sess), "\n")
 	for _, want := range []string{
 		"You are a sub-agent", "cannot get the user's words yourself", "docs/release.md",
-		"AskUserQuestion", "Sloprail-Cites-User: <the user's exact answer>", "EXACTLY what needs the user's approval",
+		"Sloprail-Cites-User: <the user's exact answer>", "EXACTLY what needs the user's approval",
 	} {
 		if !strings.Contains(told, want) {
 			t.Fatalf("the sub-agent's refusal lacks %q:\n%s", want, told)
@@ -129,12 +149,29 @@ func TestT003_75_AStashedUncitedChangeIsNotJudgedUntilItIsCommitted(t *testing.T
 		Bash("w1", "mkdir -p docs && echo steps > docs/release.md"),
 		Bash("w2", "git stash push -u -q"),
 	))
-	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
 	if !e.NoSubagentStopBlock(proj, sess) {
 		t.Fatalf("a sub-agent's stashed change was judged:\n%s", res.Output)
 	}
 	if got := stopRefusals(e, proj, sess); got != "" {
 		t.Fatalf("the root was refused for a stash:\n%s", got)
+	}
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		// The stash is in the root's own tree and repository: popped and committed there, it is
+		// judged at the root's Stop and refused.
+		noSubagentFolder(t, e, proj, sess)
+		if out := e.Git(proj, "stash", "list"); !strings.Contains(out, "stash@{0}") {
+			t.Fatalf("premise: nothing was stashed: %q", out)
+		}
+		blocks := stopBlocks(e, proj, sess)
+		applied := e.Run(proj, sess, "apply the stash", Turns("applied",
+			Bash("a1", "git stash pop -q && git add docs/release.md"),
+			Bash("a2", "git commit -q -m 'document the release'"),
+		))
+		if !applied.Saw("must cite") && !strings.Contains(newBlocks(e, proj, sess, blocks), "must cite") {
+			t.Fatalf("the commit made from the popped stash was not judged:\n%s", applied.Output)
+		}
+		return
 	}
 	wt, agent := subagentFolder(t, e, proj, sess)
 	if out := e.Git(wt, "stash", "list"); !strings.Contains(out, "stash@{0}") {
@@ -163,13 +200,18 @@ func TestT003_75b_ASubagentThatOnlyStashesLosesItsWorktreeAndNothingBreaks(t *te
 		Bash("w1", "mkdir -p docs && echo steps > docs/release.md"),
 		Bash("w2", "git stash push -u -q"),
 	))
-	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
+	res := e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
 	if !e.NoSubagentStopBlock(proj, sess) {
 		t.Fatalf("a sub-agent's stashed change was judged at its Stop:\n%s", res.Output)
 	}
-	wt, _ := subagentFolder(t, e, proj, sess)
-	if _, err := os.Stat(wt); err == nil {
-		t.Fatalf("premise: the clean sub-agent's worktree %s was not removed", wt)
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt, _ := subagentFolder(t, e, proj, sess)
+		if _, err := os.Stat(wt); err == nil {
+			t.Fatalf("premise: the clean sub-agent's worktree %s was not removed", wt)
+		}
+	} else {
+		// No worktree of its own, so none to lose: the root's tree is the one it stashed in.
+		noSubagentFolder(t, e, proj, sess)
 	}
 	if out := e.Git(proj, "stash", "list"); !strings.Contains(out, "stash@{0}") {
 		t.Fatalf("premise: the stash is not in the main repository: %q", out)

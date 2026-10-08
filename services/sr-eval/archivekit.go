@@ -185,9 +185,18 @@ func commitDir(root, runDir, msg string) error {
 // build artefact in a scratchpad must not bloat the git archive).
 const maxLenientFileSize = 256 << 20
 
-func copyTreeLenient(src, dst string) (skipped []string, err error) {
+// exclude names top-level entries of src to leave out (they are archived another way).
+func copyTreeLenient(src, dst string, exclude ...string) (skipped []string, err error) {
 	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, werr error) error {
 		rel, _ := filepath.Rel(src, path)
+		for _, x := range exclude {
+			if rel == x {
+				if d != nil && d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+		}
 		if werr != nil {
 			skipped = append(skipped, fmt.Sprintf("%s: %v", rel, werr))
 			if d != nil && d.IsDir() {

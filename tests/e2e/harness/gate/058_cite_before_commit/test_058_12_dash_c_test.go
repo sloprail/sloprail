@@ -205,7 +205,8 @@ func TestT058_19_GitEnvRedirectionFailsClosed(t *testing.T) {
 			t.Fatalf("%s before git commit was not refused:\n%s", assign, res.Output)
 		}
 		has(t, res.Output, "could not check")
-		has(t, res.Output, "git -C <literal dir> commit")
+		// the reason itself, not the stream: a stream-json harness escapes "<" in it
+		has(t, strings.Join(res.Refusals(), "\n"), "git -C <literal dir> commit")
 	}
 }
 

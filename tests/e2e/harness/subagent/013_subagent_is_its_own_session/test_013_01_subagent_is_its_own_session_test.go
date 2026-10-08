@@ -122,7 +122,7 @@ func TestT013_01_PluginBindsSubagentStop(t *testing.T) {
 		Write("sw1", "from-sub.md", "delegated work"),
 	))
 	res := e.Run(proj, "s-013-01", "delegate", Turns("root done",
-		Dispatch("d1", "do the job", subScript, "worktree"),
+		Dispatch("d1", "do the job", subScript, harness.OwnTree(t)),
 	))
 	if !res.Saw("root done") {
 		t.Fatalf("the delegated cycle did not complete with SubagentStop bound:\n%s", res.Output)
@@ -165,7 +165,7 @@ func TestT013_02_AnIsolatedSubagentCompletesWithTheGuardrailLive(t *testing.T) {
 	))
 
 	res := e.Run(proj, "s-013-02", "delegate some work", Turns("root done",
-		Dispatch("d1", "do the delegated thing", subScript, "worktree"),
+		Dispatch("d1", "do the delegated thing", subScript, harness.OwnTree(t)),
 		Write("rw1", "from-root.md", "the root's own work"),
 	))
 
@@ -184,9 +184,23 @@ func TestT013_02_AnIsolatedSubagentCompletesWithTheGuardrailLive(t *testing.T) {
 	// An assertion on `from-sub.md` would hold for a sub-agent that was never
 	// isolated, or never dispatched at all, and would be measuring the mock's
 	// tool execution rather than the isolation.
+	//
+	// A harness whose sub-agents cannot be isolated (Codex's spawn_agent, Cursor's Task)
+	// has no tree to bind: the sub-agent works in the root's own, so the same dispatch
+	// binds NO worktree and the cycle ends all the same, with nothing refusing the
+	// sub-agent's stop for the work the root's Stop will see.
 	trees := worktrees(t, proj)
-	if len(trees) != 1 {
-		t.Fatalf("want one worktree bound for the isolated sub-agent, found %d (%v) — isolation=%q did not bind a separate tree", len(trees), trees, "worktree")
+	if harness.HasCap(t, harness.CapWorktrees) {
+		if len(trees) != 1 {
+			t.Fatalf("want one worktree bound for the isolated sub-agent, found %d (%v) — isolation=%q did not bind a separate tree", len(trees), trees, "worktree")
+		}
+	} else {
+		if len(trees) != 0 {
+			t.Fatalf("a harness without sub-agent isolation bound worktrees %v — the sub-agent must share the root's tree", trees)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-013-02") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
 	}
 
 	// The dispatching session's own tree is untouched by that, which is what
@@ -235,8 +249,8 @@ func TestT013_03_TwoSubagentsGetTwoTrees(t *testing.T) {
 	writeScenario(t, second, harness.Turns("two done", Write("s2", "two.md", "second")))
 
 	res := e.Run(proj, "s-013-03", "delegate twice", Turns("root done",
-		Dispatch("d1", "first job", first, "worktree"),
-		Dispatch("d2", "second job", second, "worktree"),
+		Dispatch("d1", "first job", first, harness.OwnTree(t)),
+		Dispatch("d2", "second job", second, harness.OwnTree(t)),
 	))
 
 	if !res.Saw("root done") {
@@ -247,21 +261,43 @@ func TestT013_03_TwoSubagentsGetTwoTrees(t *testing.T) {
 	// tool result, and equal ids would mean the harness treated the two as one
 	// sub-agent — under which nothing about keeping two sessions apart could be
 	// exercised here at all.
-	ids := agentIDs(res.Output)
-	if len(ids) != 2 {
-		t.Fatalf("want two dispatched sub-agents, saw %d (%v):\n%s", len(ids), ids, res.Output)
+	//
+	// Where the stream announces the id ("agentId: …", Claude Code's) that is what is
+	// read; every harness also keeps one record per sub-agent, so two distinct records
+	// say the same thing about a harness that announces nothing.
+	if harness.HasCap(t, harness.CapWorktrees) {
+		ids := agentIDs(res.Output)
+		if len(ids) != 2 {
+			t.Fatalf("want two dispatched sub-agents, saw %d (%v):\n%s", len(ids), ids, res.Output)
+		}
+		if ids[0] == ids[1] {
+			t.Fatalf("both dispatches reported the agent id %s — the harness ran one sub-agent, not two", ids[0])
+		}
 	}
-	if ids[0] == ids[1] {
-		t.Fatalf("both dispatches reported the agent id %s — the harness ran one sub-agent, not two", ids[0])
+	records := e.SubagentRecordPaths(proj, "s-013-03")
+	if len(records) != 2 || records[0] == records[1] {
+		t.Fatalf("want two dispatched sub-agents with a record each, saw %v:\n%s", records, res.Output)
 	}
 
 	// Two worktrees, so the two sub-agents got trees of their own rather than
 	// sharing one. A single worktree here would mean the second dispatch reused
 	// the first's tree, under which two sub-agents' work would be one tree's
 	// diff.
+	//
+	// Without sub-agent isolation (Codex, Cursor) both work in the root's tree, so no
+	// worktree is bound for either and neither stop is refused for the shared tree's work.
 	trees := worktrees(t, proj)
-	if len(trees) != 2 {
-		t.Fatalf("want a worktree per sub-agent, found %d (%v) — two separate trees were never exercised", len(trees), trees)
+	if harness.HasCap(t, harness.CapWorktrees) {
+		if len(trees) != 2 {
+			t.Fatalf("want a worktree per sub-agent, found %d (%v) — two separate trees were never exercised", len(trees), trees)
+		}
+	} else {
+		if len(trees) != 0 {
+			t.Fatalf("a harness without sub-agent isolation bound worktrees %v — both sub-agents must share the root's tree", trees)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-013-03") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
 	}
 }
 
@@ -394,7 +430,7 @@ func initRepo(t *testing.T, dir string) {
 		{"config", "user.email", "e2e@example.invalid"},
 		{"config", "user.name", "e2e"},
 		{"add", "-A"},
-		{"commit", "-m", "initial", "--no-gpg-sign"},
+		{"commit", "--allow-empty", "-m", "initial", "--no-gpg-sign"},
 	} {
 		run(t, dir, "git", args...)
 	}

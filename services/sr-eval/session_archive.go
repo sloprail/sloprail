@@ -1,10 +1,17 @@
 package main
 
-// `sr-eval archive` records Claude Code session trajectories into a git-backed
-// archive that does not depend on the session's own storage, on the project's
-// git state, or on origin: the transcripts, the session's scratchpad and task
-// outputs, its sloprail state store, and the check results of every repository
-// the session tracked, all copied.
+// `sr-eval archive` records agent session trajectories (Claude Code, Codex, Cursor)
+// into a repository-backed archive that does not depend on the session's own
+// storage, on the project's repository state, or on origin: the root session
+// record, the sub-agents' records where the harness can tie them to it (and an
+// explicit note where it cannot), what the harness keeps beside the record
+// (Claude Code's tool results, scratchpad and task outputs; Cursor's recorded tool
+// outputs), the session's sloprail state store, and the check results of every
+// repository the session tracked, all copied.
+//
+// Everything specific to a harness is asked of it (internal/harness:
+// SessionLister, SubagentLocator, SubagentsUnlinkable, CompanionLocator); nothing
+// here knows a layout.
 //
 // Hidden: an operator's tool (like `sr-checks log`), not part of an agent's
 // workflow, so it stays out of --help, the generated CLI reference and the docs.
@@ -17,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +31,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/transcript"
 	"github.com/sloprail/sloprail/internal/version"
@@ -35,14 +42,18 @@ const sessionArchiveEnv = "SLOPRAIL_SESSION_ARCHIVE_DIR"
 
 func newArchiveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:    "archive (--session <id> [--session <id> ...] | --all-sessions) [--into <dir>] [--label <name>]",
+		Use:    "archive (--session <id> [--session <id> ...] | --all-sessions) [--into <dir>] [--label <name>] [--harness <name>]",
 		Hidden: true,
-		Short:  "Archive this project's Claude Code session trajectories",
-		Long: `Archive Claude Code sessions of the project in the current directory.
+		Short:  "Archive this project's agent session trajectories",
+		Long: `Archive the sessions of the project in the current directory, of the harness
+--harness names (default: $` + harness.SelectEnv + `, else Claude Code).
 
-Per session it copies the transcript and its session directory (subagents,
-tool-results), the scratchpad and task outputs Claude Code keeps under its temp
-root, and the session's sloprail state store. It also saves the check results
+Per session it copies the root transcript, the records of the sub-agents the
+harness can tie to it (a harness that cannot, Cursor, is recorded as such in
+archive.json, never silently left out), what the harness keeps beside the record
+(Claude Code: the session directory's tool results, the scratchpad and task
+outputs under its temp root; Cursor: the tool outputs sloprail recorded), and
+the session's sloprail state store. It also saves the check results
 (sr-checks log --json) of the project repository and of every other repository the
 session tracked (once per repository, however many of its worktrees), and the
 tracked ranges themselves (sr-session refs list --json), so the archive stands
@@ -56,24 +67,30 @@ Layout: <into>/<label>/<UTC timestamp>-<rand>/ with archive.json, one directory
 per session and checks/. Exactly this entry's directory is committed.
 
 --into defaults to <XDG data dir>/sloprail/session-archives, or
-$` + sessionArchiveEnv + `; --label to the project directory's name.`,
+$` + sessionArchiveEnv + `; --label to the project directory's name.
+
+--all-sessions takes the sessions the harness proves to be roots; a record it
+cannot prove one (a sub-agent's, on Cursor) is archived only when --session names it.`,
 		Args: cobra.NoArgs,
 		RunE: runArchive,
 	}
 	cmd.Flags().StringArray("session", nil, "A session id to archive (repeatable)")
-	cmd.Flags().Bool("all-sessions", false, "Archive every session of the project")
+	cmd.Flags().Bool("all-sessions", false, "Archive every root session of the project")
 	cmd.Flags().String("into", "", "The archive repository (default: <XDG data dir>/sloprail/session-archives)")
-	cmd.Flags().String("label", "", "The archive's group name (default: the Claude Code project directory's name)")
+	cmd.Flags().String("label", "", "The archive's group name (default: the project directory's name)")
+	cmd.Flags().String("harness", "", "The harness whose sessions to archive (default: $"+harness.SelectEnv+", else "+defaultHarness+")")
 	return cmd
 }
 
 // archiveManifest is archive.json.
 type archiveManifest struct {
+	Harness   string            `json:"harness"`
 	Label     string            `json:"label"`
 	Cwd       string            `json:"cwd"`
 	Project   string            `json:"project_dir"`
 	Sources   archiveSources    `json:"sources"`
 	Sessions  []string          `json:"sessions"`
+	Subagents map[string]string `json:"subagents"` // session -> what became of its sub-agents
 	StartedAt time.Time         `json:"started_at"`
 	EndedAt   time.Time         `json:"finished_at"`
 	Tools     map[string]string `json:"tool_versions"`
@@ -82,8 +99,9 @@ type archiveManifest struct {
 }
 
 type archiveSources struct {
-	ProjectDir string            `json:"claude_project_dir"`
-	Scratchpad map[string]string `json:"scratchpad_roots,omitempty"` // session -> where its temp dir was found, and how
+	ProjectDir string `json:"harness_project_dir"`
+	// Companions: session -> item -> where the harness kept it, and how it was found.
+	Companions map[string]map[string]string `json:"companions,omitempty"`
 }
 
 // archivedChecks is one repository's check log. The verdicts live in the
@@ -107,11 +125,16 @@ func runArchive(cmd *cobra.Command, _ []string) error {
 	all, _ := cmd.Flags().GetBool("all-sessions")
 	into, _ := cmd.Flags().GetString("into")
 	label, _ := cmd.Flags().GetString("label")
+	harnessName, _ := cmd.Flags().GetString("harness")
 	switch {
 	case len(ids) == 0 && !all:
 		return errors.New("sr-eval archive: name the sessions: --session <id> (repeatable) or --all-sessions")
 	case len(ids) > 0 && all:
 		return errors.New("sr-eval archive: --session and --all-sessions are exclusive: name the sessions or take all of them")
+	}
+	h, err := resolveHarness(harnessName, os.Getenv)
+	if err != nil {
+		return fmt.Errorf("sr-eval archive: %w", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -122,7 +145,7 @@ func runArchive(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	out, err := archiveSessions(cwd, ids, all, into, label, time.Now())
+	out, err := archiveSessions(h, cwd, ids, all, into, label, time.Now())
 	if err != nil {
 		return err
 	}
@@ -142,17 +165,31 @@ func sessionArchiveRoot() (string, error) {
 	return filepath.Join(home, AppName, "session-archives"), nil
 }
 
-// archiveSessions archives the sessions of the project at cwd and returns the entry's directory.
-func archiveSessions(cwd string, ids []string, all bool, into, label string, now time.Time) (string, error) {
-	configDir := transcript.ConfigDir()
-	projDir := transcript.ProjectDir(configDir, cwd)
-	if projDir == "" {
-		return "", errors.New("sr-eval archive: cannot locate Claude Code's configuration directory")
+// archiveSessions archives the sessions of the project at cwd, as harness h keeps them, and
+// returns the entry's directory.
+func archiveSessions(h harness.Harness, cwd string, ids []string, all bool, into, label string, now time.Time) (string, error) {
+	t := h.Transcripts()
+	lister, ok := t.(harness.SessionLister)
+	if !ok {
+		return "", fmt.Errorf("sr-eval archive: harness %s cannot list its sessions", h.Name())
 	}
-	if !isDir(projDir) {
-		return "", fmt.Errorf("sr-eval archive: no Claude Code project directory for %s (looked at %s)", cwd, projDir)
+	configDir := t.ConfigDir()
+	if configDir == "" {
+		return "", fmt.Errorf("sr-eval archive: cannot locate %s's configuration directory", h.Name())
 	}
-	projName := filepath.Base(projDir)
+	workDir := transcript.ResolveWorkDir(cwd)
+	projDir := t.ProjectDir(configDir, workDir)
+	records := lister.ProjectSessions(configDir, workDir)
+	if len(records) == 0 {
+		return "", fmt.Errorf("sr-eval archive: no %s sessions for %s (looked at %s)", h.Name(), cwd, projDir)
+	}
+	byID := map[string]harness.SessionRecord{}
+	for _, r := range records {
+		byID[r.ID] = r
+	}
+	// The default label is the harness's name for the project (Claude Code's and Cursor's
+	// encoded project directory; for a harness that keeps no project directory, the folder's own name).
+	projName := filepath.Base(t.EncodeProjectDir(workDir))
 	if label == "" {
 		label = projName
 	}
@@ -160,20 +197,21 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 		return "", fmt.Errorf("sr-eval archive: --label %q must be a plain name", label)
 	}
 	if all {
-		matches, _ := filepath.Glob(filepath.Join(projDir, "*.jsonl"))
-		for _, m := range matches {
-			ids = append(ids, strings.TrimSuffix(filepath.Base(m), ".jsonl"))
+		for _, r := range records {
+			if r.Root {
+				ids = append(ids, r.ID)
+			}
 		}
 		sort.Strings(ids)
 		if len(ids) == 0 {
-			return "", fmt.Errorf("sr-eval archive: %s holds no session", projDir)
+			return "", fmt.Errorf("sr-eval archive: %s holds no root session of %s", projDir, h.Name())
 		}
 	}
 	for _, id := range ids {
 		if id == "" || strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
 			return "", fmt.Errorf("sr-eval archive: %q is not a session id", id)
 		}
-		if _, err := os.Stat(filepath.Join(projDir, id+".jsonl")); err != nil {
+		if _, ok := byID[id]; !ok {
 			return "", fmt.Errorf("sr-eval archive: session %s has no transcript in %s", id, projDir)
 		}
 	}
@@ -191,8 +229,9 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 	}
 
 	m := &archiveManifest{
-		Label: label, Cwd: cwd, Project: projName, Sessions: ids, StartedAt: now.UTC(),
-		Sources: archiveSources{ProjectDir: projDir, Scratchpad: map[string]string{}},
+		Harness: h.Name(), Label: label, Cwd: cwd, Project: projName, Sessions: ids, StartedAt: now.UTC(),
+		Sources:   archiveSources{ProjectDir: projDir, Companions: map[string]map[string]string{}},
+		Subagents: map[string]string{},
 	}
 	folders := map[string][]string{}      // tracked folder -> sessions that tracked it
 	ranges := map[string][]trackedRange{} // tracked folder -> the ranges the sessions held there
@@ -200,7 +239,7 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 		folders[filepath.Clean(root)] = nil
 	}
 	for _, id := range ids {
-		for _, r := range archiveOneSession(m, cwd, projDir, projName, id, dir) {
+		for _, r := range archiveOneSession(m, h, cwd, byID[id], dir) {
 			f := filepath.Clean(r.Folder)
 			if !contains(folders[f], id) {
 				folders[f] = append(folders[f], id)
@@ -227,18 +266,18 @@ func archiveSessions(cwd string, ids []string, all bool, into, label string, now
 
 // archiveOneSession copies what one session left behind into <dir>/<id>/ and
 // returns the ranges it tracked. A missing piece is recorded in
-// the manifest, never an error: a session may have no subagents, no scratchpad,
+// the manifest, never an error: a session may have no sub-agents, no companions,
 // or no state at all.
-func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir string) []trackedRange {
+func archiveOneSession(m *archiveManifest, h harness.Harness, cwd string, rec harness.SessionRecord, dir string) []trackedRange {
+	id, tpath := rec.ID, rec.Path
 	skip := func(item, reason string) {
 		m.Skipped = append(m.Skipped, skippedItem{Session: id, Item: item, Reason: reason})
 	}
 	sdir := filepath.Join(dir, id)
-	tpath := filepath.Join(projDir, id+".jsonl")
 	if err := copyFile(tpath, filepath.Join(sdir, "transcript.jsonl")); err != nil {
 		skip("transcript", err.Error())
 	}
-	copyDir := func(src, dst, item string) {
+	copyDir := func(src, dst, item string, exclude ...string) {
 		if !isDir(src) {
 			skip(item, "absent: "+src)
 			return
@@ -246,7 +285,7 @@ func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir strin
 		if r, rerr := filepath.EvalSymlinks(src); rerr == nil {
 			src = r // WalkDir does not descend a symlinked root
 		}
-		skipped, err := copyTreeLenient(src, filepath.Join(sdir, dst))
+		skipped, err := copyTreeLenient(src, filepath.Join(sdir, dst), exclude...)
 		if err != nil {
 			skip(item, err.Error())
 		}
@@ -254,14 +293,34 @@ func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir strin
 			skip(item+"/"+s, "not copied")
 		}
 	}
-	copyDir(filepath.Join(projDir, id), "session-dir", "session dir (subagents, tool-results)")
 
-	// The scratchpad and task outputs: <tmp>/claude-<uid>/<project dir>/<session>/.
-	if root, how := findTempDir(projName, id, tpath); root != "" {
-		m.Sources.Scratchpad[id] = root + " (" + how + ")"
-		copyDir(root, "tmp", "scratchpad and tasks")
-	} else {
-		skip("scratchpad and tasks", "no temp directory found for the session")
+	archiveSubagents(m, h, rec, sdir, skip)
+
+	// What the harness keeps beside the record.
+	if l, ok := h.Transcripts().(harness.CompanionLocator); ok {
+		for _, c := range l.Companions(tpath) {
+			switch {
+			case c.Path == "":
+				skip(c.Item, c.Why)
+				continue
+			case isDir(c.Path):
+				copyDir(c.Path, c.Dir, c.Item, c.Exclude...)
+			default:
+				if _, err := os.Stat(c.Path); err != nil {
+					skip(c.Item, "absent: "+c.Path)
+					continue
+				}
+				if err := copyFile(c.Path, filepath.Join(sdir, c.Dir, filepath.Base(c.Path))); err != nil {
+					skip(c.Item, err.Error())
+				}
+			}
+			if c.How != "" {
+				if m.Sources.Companions[id] == nil {
+					m.Sources.Companions[id] = map[string]string{}
+				}
+				m.Sources.Companions[id][c.Item] = c.Path + " (" + c.How + ")"
+			}
+		}
 	}
 
 	// The state store, keyed by the session's stable identity (the origin
@@ -285,15 +344,45 @@ func archiveOneSession(m *archiveManifest, cwd, projDir, projName, id, dir strin
 		skip("sloprail state store", "absent: no state directory for "+strings.Join(stateIDs, ", "))
 	}
 
-	return archiveRefs(cwd, tpath, id, sdir, skip)
+	return archiveRefs(h, cwd, tpath, id, sdir, skip)
+}
+
+// archiveSubagents copies the records of the sub-agents the harness can tie to the session
+// into <sdir>/subagents/, and records in the manifest what became of them: how many, none, or
+// that the harness declares a sub-agent's session cannot be tied to its parent (so none can be
+// archived with this one, and the archive says so rather than looking complete).
+func archiveSubagents(m *archiveManifest, h harness.Harness, rec harness.SessionRecord, sdir string, skip func(item, reason string)) {
+	t := h.Transcripts()
+	if u, ok := t.(harness.SubagentsUnlinkable); ok && u.SubagentsUnlinkable() {
+		m.Subagents[rec.ID] = "unlinkable: " + h.Name() + " names no parent in a sub-agent's record, so its sub-agents are not archived with the session"
+		return
+	}
+	l, ok := t.(harness.SubagentLocator)
+	if !ok {
+		m.Subagents[rec.ID] = "unlinkable: " + h.Name() + " has no way to find a session's sub-agents"
+		return
+	}
+	n := 0
+	for _, f := range l.SubagentFiles(rec.Path) {
+		if err := copyFile(f.Path, filepath.Join(sdir, "subagents", f.Rel)); err != nil {
+			skip("subagents/"+f.Rel, err.Error())
+			continue
+		}
+		n++
+	}
+	if n == 0 {
+		m.Subagents[rec.ID] = "none"
+		return
+	}
+	m.Subagents[rec.ID] = fmt.Sprintf("archived: %d files", n)
 }
 
 // archiveRefs saves `sr-session refs list --json` for the session, run as the
-// session itself (a hook-style payload on stdin names it), and returns the
-// ranges it lists.
-func archiveRefs(cwd, tpath, id, sdir string, skip func(item, reason string)) []trackedRange {
+// session itself (a hook-style payload on stdin names it, parsed as harness h's),
+// and returns the ranges it lists.
+func archiveRefs(h harness.Harness, cwd, tpath, id, sdir string, skip func(item, reason string)) []trackedRange {
 	payload, _ := json.Marshal(map[string]string{"session_id": id, "transcript_path": tpath, "cwd": cwd})
-	stdout, err := runTool(cwd, bytes.NewReader(payload), "sr-session", "refs", "list", "--json")
+	stdout, err := runTool(cwd, bytes.NewReader(payload), []string{harness.SelectEnv + "=" + h.Name()}, "sr-session", "refs", "list", "--json")
 	if err != nil {
 		skip("refs list --json", err.Error())
 		return nil
@@ -328,8 +417,9 @@ func contains(list []string, s string) bool {
 }
 
 // runTool execs a sibling binary from PATH in dir, the way sloprail's binaries
-// talk to each other, and returns its stdout; a failure carries its stderr.
-func runTool(dir string, stdin *bytes.Reader, name string, args ...string) ([]byte, error) {
+// talk to each other, and returns its stdout; a failure carries its stderr. extraEnv
+// (KEY=VALUE) is added to the process's environment.
+func runTool(dir string, stdin *bytes.Reader, extraEnv []string, name string, args ...string) ([]byte, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return nil, fmt.Errorf("%s is not on PATH", name)
@@ -338,6 +428,9 @@ func runTool(dir string, stdin *bytes.Reader, name string, args ...string) ([]by
 	c.Dir = dir
 	if stdin != nil {
 		c.Stdin = stdin
+	}
+	if len(extraEnv) > 0 {
+		c.Env = append(os.Environ(), extraEnv...)
 	}
 	var stdout, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &stdout, &stderr
@@ -350,7 +443,7 @@ func runTool(dir string, stdin *bytes.Reader, name string, args ...string) ([]by
 func toolVersions() map[string]string {
 	v := map[string]string{"sr-eval": version.Version}
 	for _, name := range []string{"sr-session", "sr-checks"} {
-		if out, err := runTool("", nil, name, "--version"); err == nil {
+		if out, err := runTool("", nil, nil, name, "--version"); err == nil {
 			v[name] = strings.TrimSpace(string(out))
 		} else {
 			v[name] = "unavailable"
@@ -360,61 +453,4 @@ func toolVersions() map[string]string {
 		v["git"] = strings.TrimSpace(string(out))
 	}
 	return v
-}
-
-// findTempDir locates Claude Code's per-session temp directory,
-// <tmp root>/claude-<uid>/<project dir>/<session>/ (it holds scratchpad/ and
-// tasks/). The transcript is asked first, for it may name the exact path; then
-// $CLAUDE_CODE_TMPDIR (Claude Code's own override), then the platform's temp
-// dirs. Symlinked roots (macOS /tmp -> /private/tmp) are resolved.
-func findTempDir(projName, id, transcriptPath string) (dir, how string) {
-	re := regexp.MustCompile(`(/[^\s"'\\]*/claude-[0-9]+/[A-Za-z0-9-]+/` + regexp.QuoteMeta(id) + `)/`)
-	if p := scanForTempDir(transcriptPath, re); p != "" {
-		return p, "named in the transcript"
-	}
-	var bases []string
-	if d := os.Getenv("CLAUDE_CODE_TMPDIR"); d != "" {
-		bases = append(bases, d)
-	}
-	bases = append(bases, "/tmp", os.TempDir())
-	for _, base := range bases {
-		cand := filepath.Join(base, fmt.Sprintf("claude-%d", os.Getuid()), projName, id)
-		if isDir(cand) {
-			if r, err := filepath.EvalSymlinks(cand); err == nil {
-				cand = r
-			}
-			return cand, "temp root " + base
-		}
-	}
-	return "", ""
-}
-
-// scanForTempDir streams the transcript (these run to hundreds of MB; reading
-// one whole would double the process's memory) in chunks that overlap enough
-// to keep a path split across a chunk boundary, and returns the first match
-// that is a directory.
-func scanForTempDir(path string, re *regexp.Regexp) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	const chunk, overlap = 4 << 20, 4096
-	buf := make([]byte, 0, chunk+overlap)
-	tmp := make([]byte, chunk)
-	for {
-		n, rerr := f.Read(tmp)
-		buf = append(buf, tmp[:n]...)
-		for _, m := range re.FindAllSubmatch(buf, -1) {
-			if isDir(string(m[1])) {
-				return string(m[1])
-			}
-		}
-		if len(buf) > overlap {
-			buf = append(buf[:0], buf[len(buf)-overlap:]...)
-		}
-		if rerr != nil {
-			return ""
-		}
-	}
 }

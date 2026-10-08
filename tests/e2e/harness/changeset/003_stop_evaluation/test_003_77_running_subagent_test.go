@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,19 +43,29 @@ func TestT003_77_TheParentsStopLeavesARunningBackgroundAgentsRangeForLater(t *te
 	sub := harness.SubagentScript(t, Turns("sub done",
 		harness.CommitFile("c1", "docs/release.md", "the steps", "document the release"),
 	))
-	e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	_, agent := subagentFolder(t, e, proj, sess)
+	e.Run(proj, sess, handbackPrompt, Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
 	record := e.TranscriptPath(proj, sess)
-	// The agent's branch is tracked once, from its worktree and with its agent_id: a branch
-	// checked out in another worktree is never the root folder's row.
-	var rows int
-	for _, r := range e.SessionRanges(proj, sess) {
-		if strings.HasPrefix(r.Head, "worktree-agent-") {
-			rows++
+	var agent string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		_, agent = subagentFolder(t, e, proj, sess)
+		// The agent's branch is tracked once, from its worktree and with its agent_id: a branch
+		// checked out in another worktree is never the root folder's row.
+		var rows int
+		for _, r := range e.SessionRanges(proj, sess) {
+			if strings.HasPrefix(r.Head, "worktree-agent-") {
+				rows++
+			}
 		}
-	}
-	if rows != 1 {
-		t.Fatalf("premise: the agent's branch should be tracked once, from its worktree, have %d rows", rows)
+		if rows != 1 {
+			t.Fatalf("premise: the agent's branch should be tracked once, from its worktree, have %d rows", rows)
+		}
+	} else {
+		// No tree of its own: the agent committed on the root's branch, and is known by its record.
+		recs := e.SubagentRecordPaths(proj, sess)
+		if len(recs) == 0 {
+			t.Fatalf("premise: no sub-agent record")
+		}
+		agent = strings.TrimSuffix(strings.TrimPrefix(filepath.Base(recs[0]), "agent-"), ".jsonl")
 	}
 
 	// Premise: with nothing marking the agent as running, the parent's Stop judges its range.
@@ -71,6 +82,15 @@ func TestT003_77_TheParentsStopLeavesARunningBackgroundAgentsRangeForLater(t *te
 	})
 	if r := e.CLIDirectStdinEnv(proj, string(start), e.SessionEnv(""), "sr-session", "subagent-start"); r.Code != 0 {
 		t.Fatalf("subagent-start failed: exit %d\n%s", r.Code, r.Output)
+	}
+	if !harness.HasCap(t, harness.CapBackgroundTasks) {
+		// This harness's record cannot show a background launch (no recorded transcript of it holds
+		// an Agent call run in the background): a running sub-agent is never known to be a background
+		// one, so its range stays owed and is judged at the parent's Stop.
+		if r := e.StopNow(proj, sess, false); !harness.Blocked(r) || !strings.Contains(r.Output, "docs/release.md") {
+			t.Fatalf("a running sub-agent not recorded as a background launch excused its range:\n%s", r.Output)
+		}
+		return
 	}
 	appendRecord(t, record,
 		`{"type":"assistant","uuid":"bg-a","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_bg","name":"Agent","input":{"prompt":"go","run_in_background":true}}]}}`,

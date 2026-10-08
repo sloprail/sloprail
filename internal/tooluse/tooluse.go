@@ -41,11 +41,19 @@ const KindPreToolUse = "PreToolUse"
 // event.go — nowhere else, so a rename cannot leave a matcher checking against
 // a name the events no longer carry.
 const (
-	// FieldTool is the tool's name as the harness reports it.
+	// FieldTool is the tool's CANONICAL name (internal/harness/tools.go: Bash, Write,
+	// Edit, Read, WebFetch, WebSearch, Agent, ... in Claude Code's spelling, and
+	// mcp__<server>__<tool> for an MCP tool), the same on every harness. A tool with
+	// no canonical equivalent keeps the name its harness gives it.
 	FieldTool = "tool"
 
-	// FieldInput is the tool's input as the harness reports it. Its shape depends
-	// on the tool, so it is declared as an OPEN map — Record<unknown> in the spec
+	// FieldNativeTool is the name the harness itself reported (Codex's spawn_agent,
+	// Cursor's Task, Claude's older Task); equal to `tool` where nothing was renamed.
+	FieldNativeTool = "nativeTool"
+
+	// FieldInput is the tool's input: for a canonical tool, under the canonical
+	// keys (file_path, command, url, query, prompt, ...); for any other, as the
+	// harness reports it. Its shape depends on the tool, so it is declared as an OPEN map — Record<unknown> in the spec
 	// — and a matcher reading `input.file_path` reaches into it unchecked, the way
 	// commandmod's `flags` is open. A closed type would refuse a key the engine
 	// has not heard of, which is the checker punishing an author for a vocabulary
@@ -61,8 +69,15 @@ const (
 type Pending interface {
 	// Tool is what the harness calls the tool it is about to run.
 	Tool() string
-	// Arguments are the tool's own, as the harness gave them, undecoded.
+	// Arguments are the tool's arguments, undecoded: under the canonical keys for a
+	// canonical tool (the harness's parse normalised them).
 	Arguments() json.RawMessage
+}
+
+// NativePending is what a Pending MAY also give: the tool's name as its harness
+// reported it, where that differs from Tool.
+type NativePending interface {
+	NativeTool() string
 }
 
 // Module produces the pre-tool event.
@@ -87,6 +102,7 @@ func (*Module) Kinds() []module.KindDecl {
 			Name: KindPreToolUse,
 			Fields: []module.FieldDecl{
 				{Name: FieldTool, Type: module.TypeString},
+				{Name: FieldNativeTool, Type: module.TypeString},
 				{Name: FieldInput, Type: module.TypeMap},
 			},
 		},
@@ -125,6 +141,9 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	}
 
 	e := ToolEvent{Tool: pending.Tool()}
+	if n, ok := in[module.InputPayload].(NativePending); ok {
+		e.NativeTool = n.NativeTool()
+	}
 	// The arguments are decoded to a map where they are one, and left empty
 	// otherwise. A tool whose input is not an object — or a payload with no
 	// arguments at all — still gets an event, because the event's purpose is to

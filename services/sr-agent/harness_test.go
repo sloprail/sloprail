@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +72,7 @@ func TestDetectHarness_UnknownEnvironmentIsRefused(t *testing.T) {
 			_, err := DetectHarness(envOf(tc.vars))
 			require.ErrorIs(t, err, ErrNoHarness)
 			// A refusal must say what would have counted and how to proceed.
-			assert.Contains(t, err.Error(), "claude-code")
+			assert.Contains(t, err.Error(), "claude")
 			assert.Contains(t, err.Error(), "--harness")
 		})
 	}
@@ -94,7 +96,7 @@ func TestResolveHarness_OverrideWinsWithNoEnvironmentAtAll(t *testing.T) {
 	_, err := ResolveHarness("", empty)
 	require.ErrorIs(t, err, ErrNoHarness, "detection must fail here, or the override proves nothing")
 
-	spec, err := ResolveHarness("claude-code", empty)
+	spec, err := ResolveHarness("claude", empty)
 	require.NoError(t, err)
 	assert.Equal(t, ClaudeCode, spec.name)
 }
@@ -131,23 +133,23 @@ func TestResolveHarness_OverrideBeatsAContradictingEnvironment(t *testing.T) {
 func TestResolveHarness_UnsupportedOverrideIsRefusedEvenWhenDetectionWouldWork(t *testing.T) {
 	claudeEnv := envOf(map[string]string{"CLAUDECODE": "1"})
 
-	spec, err := ResolveHarness("codex", claudeEnv)
+	spec, err := ResolveHarness("no-such-harness", claudeEnv)
 	require.ErrorIs(t, err, ErrUnknownHarness)
 	assert.Empty(t, string(spec.name), "no harness may be chosen when the override is unsupported")
-	assert.Contains(t, err.Error(), "codex", "the refusal must echo the name that was typed")
-	assert.Contains(t, err.Error(), "claude-code", "and name what is supported")
+	assert.Contains(t, err.Error(), "no-such-harness", "the refusal must echo the name that was typed")
+	assert.Contains(t, err.Error(), "claude", "and name what is supported")
 }
 
 func TestResolveHarness_OverrideIsCaseSensitiveAndExact(t *testing.T) {
 	env := envOf(map[string]string{"CLAUDECODE": "1"})
-	for _, name := range []string{"Claude-Code", "CLAUDE-CODE", "claude", "claudecode", " claude-code"} {
+	for _, name := range []string{"Claude", "CLAUDE", "Claude-Code", " claude"} {
 		_, err := ResolveHarness(name, env)
 		assert.ErrorIs(t, err, ErrUnknownHarness, "%q must not be accepted as a harness name", name)
 	}
 }
 
 func TestSupportedNames_ListsTheRegistry(t *testing.T) {
-	assert.Equal(t, []string{"claude-code", "cursor"}, supportedNames())
+	assert.Equal(t, []string{"claude", "codex", "cursor"}, supportedNames())
 }
 
 func TestLookupSpec(t *testing.T) {
@@ -375,6 +377,16 @@ func TestCursorRules_ToolMapping(t *testing.T) {
 
 	_, _, err = cursorRules(accessGrant{Tools: []string{"Bash"}, DenyTools: []string{"Bash(rm:*)"}})
 	assert.ErrorIs(t, err, ErrModeUnsupported, "a shell deny beside a shell grant was not enforced by cursor-agent (measured)")
+	assert.ErrorIs(t, err, harness.ErrToolUnsupported, "the engine reports a grant the harness cannot express by this error")
+}
+
+func TestCursorRules_ScopedBashIsRefused(t *testing.T) {
+	for _, rule := range []string{"Bash(git show:*)", "Bash(curl * -o *)"} {
+		_, _, err := cursorRules(accessGrant{Tools: []string{rule}})
+		assert.ErrorIs(t, err, harness.ErrToolUnsupported, rule)
+		_, _, err = cursorRules(accessGrant{DenyTools: []string{rule}})
+		assert.ErrorIs(t, err, harness.ErrToolUnsupported, rule)
+	}
 }
 
 func TestCursorSizesAreCatalogueModels(t *testing.T) {
@@ -388,4 +400,22 @@ func TestSanitizeChildEnvStripsCursorSessionIdentity(t *testing.T) {
 	t.Setenv("SLOPRAIL_HARNESS", "cursor") // the strip is the running harness's (ChildEnvBlocklist)
 	out := sanitizeChildEnv([]string{"CURSOR_CONVERSATION_ID=c", "CURSOR_REQUEST_ID=r", "CURSOR_TRANSCRIPT_PATH=/t", "CURSOR_AGENT=1", "CURSOR_API_KEY=k"})
 	assert.Equal(t, []string{"CURSOR_AGENT=1", "CURSOR_API_KEY=k"}, out)
+}
+
+// A plugin's hook wrapper names its harness with SLOPRAIL_HARNESS and sets none of the
+// markers the harness puts on its own shell commands, so a judge launched from it must
+// resolve the harness from that name alone.
+func TestDetectHarness_NamedBySloprailHarness(t *testing.T) {
+	for name, want := range map[string]Harness{
+		"cursor":      Cursor,
+		"claude-code": ClaudeCode,
+	} {
+		spec, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": name}))
+		if err != nil || spec.name != want {
+			t.Errorf("SLOPRAIL_HARNESS=%s: got %q, %v; want %q", name, spec.name, err, want)
+		}
+	}
+	if _, err := DetectHarness(envOf(map[string]string{"SLOPRAIL_HARNESS": "nope"})); !errors.Is(err, ErrUnknownHarness) {
+		t.Errorf("an unknown SLOPRAIL_HARNESS must be refused, got %v", err)
+	}
 }

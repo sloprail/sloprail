@@ -17,10 +17,18 @@ func TestT003_79_AnUntrackNamesARangeWhoseFolderAndBranchAreGone(t *testing.T) {
 		Bash("b1", "git switch -q -c sub-gone"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	wt, _ := subagentFolder(t, e, proj, sess)
-
-	e.Git(proj, "worktree", "remove", "--force", wt)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	var wt string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt, _ = subagentFolder(t, e, proj, sess)
+		e.Git(proj, "worktree", "remove", "--force", wt)
+	} else {
+		// No worktree of its own, so no folder to lose: the range is stored under the root's
+		// folder. Its branch is checked out there, so it is left (detached) before it is deleted.
+		noSubagentFolder(t, e, proj, sess)
+		wt = proj
+		e.Git(proj, "switch", "-q", "--detach")
+	}
 	e.Git(proj, "branch", "-D", "sub-gone")
 
 	r := e.CLIDirectEnv(proj, e.SessionEnv(sess), "sr-session", "refs", "untrack", "--folder", wt, "--head", "sub-gone", "--reason", "the worktree and its branch are gone")

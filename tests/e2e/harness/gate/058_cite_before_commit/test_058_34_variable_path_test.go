@@ -75,8 +75,9 @@ func TestT058_36_UnresolvableFolderFailsClosed(t *testing.T) {
 		if !res.Refused() {
 			t.Fatalf("%q was not refused:\n%s", cmd, res.Output)
 		}
-		has(t, res.Output, "could not check")
-		has(t, res.Output, "git -C <literal dir> commit")
+		reason := strings.Join(res.Refusals(), "\n")
+		has(t, reason, "could not check")
+		has(t, reason, "git -C <literal dir> commit")
 	}
 }
 

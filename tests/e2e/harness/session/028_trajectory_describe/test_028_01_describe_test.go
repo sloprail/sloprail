@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T028_01: describe on a ROOT trajectory — not a sub-agent, and it names the
@@ -32,7 +34,7 @@ func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
 	}
 
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", rootPath)
+	res := e.CLIDirectEnv(proj, e.SessionCLIEnv(), "sr-session", "trajectory", "describe", "--path", rootPath)
 	if res.Code != 0 {
 		t.Fatalf("describe on a root exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -45,6 +47,13 @@ func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 		t.Fatalf("a root carried a parentPath, which it must not:\n%s", res.Output)
 	}
 	subs, ok := got["subagentPaths"].([]any)
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		// A harness that cannot tie a sub-agent to its parent has none to enumerate.
+		if !ok || len(subs) != 0 {
+			t.Fatalf("subagentPaths=%v, want empty (this harness cannot link sub-agents):\n%s", got["subagentPaths"], res.Output)
+		}
+		return
+	}
 	if !ok || len(subs) != 1 {
 		t.Fatalf("subagentPaths=%v, want exactly the one sub-agent record:\n%s", got["subagentPaths"], res.Output)
 	}
@@ -85,7 +94,7 @@ func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
 	}
 
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
+	res := e.CLIDirectEnv(proj, e.SessionCLIEnv(), "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe on a sub-agent exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -93,6 +102,16 @@ func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 
 	if got["isSubagent"] != true {
 		t.Fatalf("a sub-agent reported isSubagent=%v, want true:\n%s", got["isSubagent"], res.Output)
+	}
+	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+		// Still told from a root, but with no parent to name.
+		if _, present := got["parentPath"]; present {
+			t.Fatalf("parentPath=%v, want none (this harness cannot link sub-agents):\n%s", got["parentPath"], res.Output)
+		}
+		if subs, ok := got["subagentPaths"].([]any); !ok || len(subs) != 0 {
+			t.Fatalf("subagentPaths=%v, want empty:\n%s", got["subagentPaths"], res.Output)
+		}
+		return
 	}
 	if got["parentPath"] != rootPath {
 		t.Fatalf("parentPath=%v, want the dispatching root %s (the toolUseId correlation):\n%s",
@@ -125,16 +144,25 @@ func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 	sub := writeScenario(t, proj, Turns("sub done",
 		Bash("s1", "echo delegated > from-sub.md"),
 	))
-	e.Run(proj, "s-028-03", "start the work", Turns("root done",
-		DispatchNoParent("d1", "delegated prompt", sub),
-	))
+	// Where a dispatch can carry no call id, the one with none is the sub-agent whose parent is
+	// not derivable. Where every call has an id (Codex, Cursor) an ordinary dispatch is the only
+	// one there is, and its parent is derivable exactly when the harness links sub-agents to
+	// their parent at all (CapSubagentParentLink): the link is then the record's own, not a
+	// guess from a missing id.
+	dispatch := Dispatch("d1", "delegated prompt", sub, "")
+	wantParent := harness.HasCap(t, harness.CapSubagentParentLink)
+	if harness.HasCap(t, harness.CapDispatchWithoutCallID) {
+		dispatch = DispatchNoParent("d1", "delegated prompt", sub)
+		wantParent = false
+	}
+	e.Run(proj, "s-028-03", "start the work", Turns("root done", dispatch))
 
 	recs := e.SubagentRecordPaths(proj, "s-028-03")
 	if len(recs) != 1 {
 		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
 	}
 
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
+	res := e.CLIDirectEnv(proj, e.SessionCLIEnv(), "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -144,8 +172,16 @@ func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 		t.Fatalf("isSubagent=%v, want true — the meta companion and the sidechain record both mark it:\n%s",
 			got["isSubagent"], res.Output)
 	}
-	if _, present := got["parentPath"]; present {
-		t.Fatalf("parentPath was set to %v from a meta with no toolUseId — it must be absent, not guessed:\n%s",
+	_, present := got["parentPath"]
+	if wantParent {
+		if got["parentPath"] != e.TranscriptPath(proj, "s-028-03") {
+			t.Fatalf("parentPath=%v, want the dispatching root (this harness's record links the sub-agent to it):\n%s",
+				got["parentPath"], res.Output)
+		}
+		return
+	}
+	if present {
+		t.Fatalf("parentPath was set to %v with no derivable parent — it must be absent, not guessed:\n%s",
 			got["parentPath"], res.Output)
 	}
 }

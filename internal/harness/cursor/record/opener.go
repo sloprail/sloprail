@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -88,8 +89,14 @@ func (Transcripts) RecordVersion(path string) (int64, time.Time, error) {
 // merge copies the transcript to w as OpenRecord describes.
 func merge(r io.Reader, w io.Writer, st *store, side *os.File, slots map[string][]*slot, counts map[string]int) error {
 	seen := map[string]int{}
+	var turn turnState
 	return eachLine(r, func(n int, line []byte) error {
 		out, calls := augment(line, n)
+		if !st.root {
+			out = markSidechain(out)
+		}
+		out = markInjected(out, st.followups)
+		out = turn.markCompactionRewrite(out, st.compacted)
 		if _, err := w.Write(append(out, '\n')); err != nil {
 			return err
 		}
@@ -209,4 +216,139 @@ func augment(line []byte, n int) ([]byte, []call) {
 		return line, nil
 	}
 	return out, calls
+}
+
+// markSidechain marks a user line as not the user's words. A conversation that cannot be
+// proven to be the session's own root (no sessionStart was seen for it, KindRoot) is a
+// sub-agent's, or unknown: its "user" lines are a dispatch prompt, and must never ground a
+// citation as the user's. This is the same treatment Claude Code's isSidechain records get.
+func markSidechain(line []byte) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return line
+	}
+	var role string
+	_ = json.Unmarshal(top["role"], &role)
+	if role != "user" {
+		return line
+	}
+	top["sloprail_sidechain"] = json.RawMessage("true")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return out
+}
+
+// markInjected marks a user line whose text is exactly a followup_message sloprail's stop
+// hook emitted as harness-injected (isMeta: the harness writing, the category Claude
+// Code's Stop-hook feedback records have), so it never grounds a citation of the user's
+// words even though it quotes them. Exact: the text of the line (its text blocks joined,
+// with Cursor's <user_query> envelope removed) must equal an emitted text; a person's own
+// prompt that merely resembles one is not marked.
+func markInjected(line []byte, followups map[string]bool) []byte {
+	if len(followups) == 0 {
+		return line
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return line
+	}
+	var role string
+	_ = json.Unmarshal(top["role"], &role)
+	if role != "user" {
+		return line
+	}
+	var msg struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(top["message"], &msg) != nil {
+		return line
+	}
+	var text string
+	for _, b := range msg.Content {
+		if b.Type == "text" {
+			text += b.Text
+		}
+	}
+	if !followups[text] && !followups[unwrapQuery(text)] {
+		return line
+	}
+	top["sloprail_meta"] = json.RawMessage("true")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return out
+}
+
+// unwrapQuery removes the envelope Cursor puts around a prompt (<timestamp/>, then the
+// text inside <user_query> tags) when the text is exactly that shape; otherwise the text
+// is returned as is.
+func unwrapQuery(text string) string {
+	const open, shut = "<user_query>\n", "\n</user_query>"
+	i := strings.Index(text, open)
+	if i < 0 || !strings.HasSuffix(text, shut) {
+		return text
+	}
+	if pre := strings.TrimSpace(text[:i]); pre != "" && pre != "<timestamp/>" {
+		return text
+	}
+	return text[i+len(open) : len(text)-len(shut)]
+}
+
+// turnState follows the transcript line by line for markCompactionRewrite: whether a
+// turn is running, and the message of the user line that opened it.
+type turnState struct {
+	running bool
+	opening json.RawMessage
+}
+
+// markCompactionRewrite marks a user line as harness-injected (isMeta) when Cursor wrote
+// it as the compaction's rewrite of the prompt. After a compaction Cursor writes the
+// prompt into the transcript again, byte-identical to the person's (recorded: harness-mocks
+// cursor-mock runs/compaction-transcript-continuity), so it would ground a citation of the
+// user's words a second time. All three must hold, none is a similarity test:
+//
+//   - a compaction was recorded for the conversation (preCompact, KindCompact);
+//   - the line comes after the user line that opened its turn (a turn is running: an
+//     assistant line since, no turn_ended);
+//   - its message is byte-identical to that opening line's message.
+//
+// A different message written mid-turn (a person's own, a <dynamic_tools> record) is left
+// as it is. The opening line is the transcript's own record of the submitted prompt:
+// beforeSubmitPrompt, which carries it, never fires in print mode (recorded) and is not
+// proven to fire from a plugin.
+func (s *turnState) markCompactionRewrite(line []byte, compacted bool) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return line
+	}
+	var role, typ string
+	_ = json.Unmarshal(top["role"], &role)
+	_ = json.Unmarshal(top["type"], &typ)
+	switch {
+	case role == "assistant":
+		s.running = true
+		return line
+	case typ == "turn_ended":
+		s.running = false
+		return line
+	case role != "user":
+		return line
+	case !s.running:
+		s.opening = top["message"]
+		return line
+	case !compacted || string(top["message"]) != string(s.opening):
+		return line
+	}
+	top["sloprail_meta"] = json.RawMessage("true")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return out
 }

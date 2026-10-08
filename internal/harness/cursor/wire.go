@@ -97,6 +97,12 @@ func toolOutputText(tool, raw string) string {
 //   - beforeReadFile: the bytes of a file a Read is about to return.
 func (Harness) RecordToolResult(in harness.HookInput) error {
 	switch in.Event {
+	case string(SessionStart):
+		// the session's own conversation (see record.KindRoot): never fired for a sub-agent's
+		return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindRoot})
+	case string(PreCompact):
+		// the transcript is about to hold the prompt again, written by Cursor
+		return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindCompact})
 	case string(PreToolUse):
 		if in.ToolUseID == "" || in.ToolName == "" {
 			return nil
@@ -127,6 +133,17 @@ func (Harness) RecordToolResult(in harness.HookInput) error {
 		})
 	}
 	return nil
+}
+
+// RecordBlock implements harness.BlockRecorder: Cursor writes a stop hook's
+// followup_message into the transcript as an ordinary user record, so the text sloprail
+// emitted is kept (record.KindFollowup) for OpenRecord to tell that record from the
+// person's own prompt.
+func (Harness) RecordBlock(in harness.HookInput, reason string) error {
+	if reason == "" {
+		return nil
+	}
+	return record.AppendLine(in.SessionID, record.StoredLine{Kind: record.KindFollowup, Output: reason})
 }
 
 func filePathOf(input json.RawMessage) string {

@@ -99,15 +99,11 @@ func (w *walk) transcripts() ([]candidate, error) {
 	if w.listed {
 		return w.listing, nil
 	}
-	entries, err := os.ReadDir(w.dir)
+	paths, err := w.recordPaths()
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", w.dir, err)
+		return nil, err
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		path := filepath.Join(w.dir, e.Name())
+	for _, path := range paths {
 		root, err := rootRecord(path)
 		if errors.Is(err, ErrNoOriginRecord) || errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -120,6 +116,30 @@ func (w *walk) transcripts() ([]candidate, error) {
 	}
 	w.listed = true
 	return w.listing, nil
+}
+
+// recordPaths is every transcript in the walk's project directory: the harness's own
+// listing where its layout is not a flat directory (harness.RecordLister), else the
+// directory's top-level .jsonl files.
+func (w *walk) recordPaths() ([]string, error) {
+	if l, ok := w.records.(harness.RecordLister); ok {
+		if _, err := os.Stat(w.dir); err != nil {
+			return nil, fmt.Errorf("read %s: %w", w.dir, err)
+		}
+		return l.ListRecords(w.dir), nil
+	}
+	entries, err := os.ReadDir(w.dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", w.dir, err)
+	}
+	var paths []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(w.dir, e.Name()))
+	}
+	return paths, nil
 }
 
 // startedAfter reports whether cand's root was written after root was — that

@@ -163,7 +163,7 @@ func TestDetectAndChildEnv(t *testing.T) {
 	assert.False(t, h.Detect(ide))
 	assert.False(t, h.Detect(ide[:len(ide)-2]), "IDE variables alone are not the agent's")
 	assert.False(t, h.Detect(append([]string{"CURSOR_AGENT=1"}, ide...)), "a Claude session inside an agent's shell is still Claude's")
-	assert.Equal(t, "claudecode", func() string {
+	assert.Equal(t, "claude", func() string {
 		harness.Register(stubClaude{})
 		return harness.Select(ide).Name()
 	}())

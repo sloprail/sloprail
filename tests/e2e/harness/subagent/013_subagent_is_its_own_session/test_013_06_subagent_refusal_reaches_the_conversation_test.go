@@ -85,7 +85,7 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-013-06", "delegate some work", Turns("root done",
-		Dispatch("d1", "do the job", subScript, "worktree"),
+		Dispatch("d1", "do the job", subScript, harness.OwnTree(t)),
 	))
 
 	// The rule ran at the sub-agent's own cycle. Without this the rest is a test
@@ -93,6 +93,29 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the guardrail never ran at the sub-agent's stop, so nothing here is about a "+
 			"sub-agent's refusal:\n%s", res.Output)
+	}
+
+	// On a harness whose sub-agents cannot take a tree of their own (Codex, Cursor) the
+	// sub-agent works in the root's tree and is judged at the ROOT's Stop, not at its
+	// own: nothing refuses the sub-agent's stop, and the refusal, with its words and
+	// the guardrail's name, reaches the root instead.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if _, err := os.Stat(filepath.Join(proj, "from-sub.md")); err != nil {
+			t.Fatalf("the sub-agent's work never reached the shared tree, so the refusal was not "+
+				"about delegated work:\n%s", res.Output)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-013-06") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop, though only "+
+				"the agent that owns the tree is judged:\n%s", res.Output)
+		}
+		told := strings.Join(e.BlockingErrorsFrom(proj, "s-013-06", "Stop"), "\n")
+		if !strings.Contains(told, "the sub-agent should not have created this") {
+			t.Fatalf("the root's Stop did not refuse the sub-agent's committed work with the rule's words:\n%s", told)
+		}
+		if !strings.Contains(told, "nosubwork") {
+			t.Fatalf("the root's refusal did not name the guardrail that produced it:\n%s", told)
+		}
+		return
 	}
 
 	// The file the sub-agent made is really there. A refusal is an objection to
@@ -157,16 +180,18 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-013-07", "delegate some work", Turns("root done",
-		Dispatch("d1", "do the job", subScript, "worktree"),
+		Dispatch("d1", "do the job", subScript, harness.OwnTree(t)),
 	))
 
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the permitting guardrail never ran, so this proves nothing about a cycle that "+
 			"was judged and allowed:\n%s", res.Output)
 	}
-	if blocking := e.AnySubagentBlockingErrors(proj, "s-013-07"); len(blocking) > 0 {
-		t.Fatalf("a sub-agent cycle nothing objected to was recorded as refused (%v) — a refusal "+
-			"that appears without one stops meaning anything:\n%s", blocking, res.Output)
+	// (Where the sub-agent shares the root's tree, the permitting rule ran at the root's
+	// Stop and the sub-agent's stop was not judged at all; the assertion is the same.)
+	if !e.NoSubagentStopBlock(proj, "s-013-07") {
+		t.Fatalf("a sub-agent cycle nothing objected to was recorded as refused — a refusal "+
+			"that appears without one stops meaning anything:\n%s", res.Output)
 	}
 	if !res.Saw("root done") {
 		t.Errorf("the dispatching session did not complete though nothing refused:\n%s", res.Output)

@@ -4,14 +4,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 )
 
 // DotDirName is the directory a project keeps its guardrails in.
 const DotDirName = ".sloprail"
-
-// ClaudeDirName is the directory the harness records a project's settings in.
-const ClaudeDirName = ".claude"
 
 // DotDir resolves the project's dot-directory. The harness reports the working
 // directory on its payload; when it does not, the process's own is the same
@@ -36,14 +34,17 @@ func DotDir(cwd string) string {
 	return filepath.Join(NearestHolding(cwd, DotDirName), DotDirName)
 }
 
-// ProjectDir resolves the project root — the directory holding `.claude/`,
-// which is where the harness records what this repo installed.
+// ProjectDir resolves the project root — the directory holding the current harness's
+// marker directory (harness.ProjectMarkers: `.claude/` for Claude Code), which is where
+// the harness records what this repo installed. Only the current harness's marker
+// counts: the settings read from the root are that harness's own, so another
+// harness's directory does not make a directory this harness's project.
 //
 // Searched upward the same way as dotDir and for the same reason: from a
 // subdirectory, `<cwd>/.claude/settings.json` is absent, the enabled plugins
 // resolve to none, and every plugin-shipped rule goes quiet with the project's.
 func ProjectDir(cwd string) string {
-	return NearestHolding(cwd, ClaudeDirName)
+	return nearestHoldingAny(cwd, harness.ProjectMarkers(harness.Current()))
 }
 
 // NearestHolding is the nearest directory from cwd upward, bounded by cwd's
@@ -54,7 +55,11 @@ func ProjectDir(cwd string) string {
 // root the next `.claude` is the user's own ~/.claude, which is not this
 // project's settings. A cwd outside any repository is its own anchor, so the
 // walk there is the cwd alone — exactly the old answer.
-func NearestHolding(cwd, name string) string {
+func NearestHolding(cwd, name string) string { return nearestHoldingAny(cwd, []string{name}) }
+
+// nearestHoldingAny is NearestHolding for several names: a directory holding any of
+// them. With none it is the anchor, like a walk that found nothing.
+func nearestHoldingAny(cwd string, names []string) string {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
@@ -73,8 +78,10 @@ func NearestHolding(cwd, name string) string {
 	}
 
 	for {
-		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.IsDir() {
-			return dir
+		for _, name := range names {
+			if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.IsDir() {
+				return dir
+			}
 		}
 		if dir == anchor {
 			return anchor

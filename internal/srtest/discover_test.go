@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -148,4 +149,14 @@ func putJSON(t *testing.T, root, rel, body string) {
 	p := filepath.Join(root, rel)
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+}
+
+// Every harness's manifest folder makes a plugin folder, and names it.
+func TestPluginManifestOfAnyHarness(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range harness.PluginManifestDirs {
+		putJSON(t, root, "p"+d+"/"+d+"/plugin.json", `{"name":"n`+d+`"}`)
+		assert.True(t, IsPlugin(filepath.Join(root, "p"+d)), d)
+		assert.Equal(t, "n"+d, PluginName(filepath.Join(root, "p"+d)), d)
+	}
 }

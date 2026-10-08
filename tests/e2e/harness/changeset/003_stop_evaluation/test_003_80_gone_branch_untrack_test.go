@@ -19,8 +19,15 @@ func TestT003_80_AnUntrackNamesARangeWhoseBranchIsGoneInAFolderThatStands(t *tes
 		Bash("b1", "git switch -q -c sub-gone-branch"),
 		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	wt, _ := subagentFolder(t, e, proj, sess)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	// A harness with no worktree for a sub-agent runs it in the root's tree: the range is stored
+	// under the root's folder, which stands, and there is no folder of its own.
+	wt := proj
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt, _ = subagentFolder(t, e, proj, sess)
+	} else {
+		noSubagentFolder(t, e, proj, sess)
+	}
 
 	e.Git(wt, "switch", "-q", "--detach")
 	e.Git(proj, "branch", "-D", "sub-gone-branch")

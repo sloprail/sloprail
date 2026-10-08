@@ -2,6 +2,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/harness"
+	codexharness "github.com/sloprail/sloprail/internal/harness/codex"
 )
 
 // codexDriver is the Driver for OpenAI Codex, run through a10n-codex-mock (the
@@ -36,8 +41,10 @@ func (codexDriver) Name() string { return "codex" }
 // Caps: Codex has no Skill tool, no ask-user-question in exec, no worktree hooks
 // or isolation, and no receipt that names a background task (spec/capabilities,
 // providers.codex of harness-mocks).
+func (codexDriver) SkillLoadTool() string { return "Bash" }
+
 func (codexDriver) Caps() []string {
-	return []string{CapSubagents, CapPlugins, CapStopHooks, CapForkResumeCompact, CapTranscript}
+	return []string{CapSubagents, CapSubagentLifecycleHooks, CapPlugins, CapStopHooks, CapForkResumeCompact, CapForkSessions, CapTranscript, CapSubagentParentLink, CapRecordHoldsToolResults, CapRecordNamesStartDir, CapAllowNotice, CapNullTranscriptPath, CapRecordHoldsHookContext, CapScriptedRetryText}
 }
 
 func (codexDriver) FindMock(repoRoot string) (string, string) {
@@ -95,6 +102,9 @@ func codexUpdateFile(path, oldText, newText string) string {
 	return b.String()
 }
 
+// codexWorkspaceMark stands for the workspace root in a rendered line; the script swaps in $PWD.
+const codexWorkspaceMark = "@@WORKSPACE@@"
+
 func (codexDriver) unsupported(a Action, why string) error {
 	return &UnsupportedError{Harness: "codex", Step: fmt.Sprintf("%s (kind %d): %s", a.ID, a.Kind, why)}
 }
@@ -115,6 +125,9 @@ type codexBlock struct {
 func (c codexDriver) render(a Action) ([]codexBlock, error) {
 	switch a.Kind {
 	case ActWrite:
+		if strings.ContainsAny(a.Path, "\r\n") {
+			return nil, c.unsupported(a, "an apply_patch path is one line of the patch, so a path holding a line break cannot be named")
+		}
 		return []codexBlock{{line: codexLine(codexTool(a.ID, "apply_patch", map[string]any{"command": codexAddFile(a.Path, a.Content)}))}}, nil
 	case ActEdit:
 		if a.Old == "" {
@@ -138,10 +151,24 @@ func (c codexDriver) render(a Action) ([]codexBlock, error) {
 			{suffix: "w", spawnedBy: a.ID},
 		}, nil
 	case ActSkill:
-		return nil, c.unsupported(a, "Codex has no skill tool")
+		// Codex has no skill tool: reading the skill's SKILL.md through the shell is how it loads one.
+		path := codexWorkspaceMark + "/" + harness.ProjectSkillDirs(codexharness.New())[0] + "/" + a.Text + "/SKILL.md"
+		return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + path}))}}, nil
 	case ActToolUse:
 		if a.Background {
-			return nil, c.unsupported(a, "a background command's receipt names no task")
+			if a.Tool != "Bash" {
+				return nil, c.unsupported(a, "spawn_agent has no background option: it answers at once and runs concurrently, with no receipt naming a task")
+			}
+			// A background command is the command with its output sent to a file a later read reads.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": backgroundShell(a.ID, a.Input["command"])}))}}, nil
+		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && strings.Contains(path, backgroundTmpMark) && len(a.Input) == 1 {
+			// the output file of a background command: the run's temporary directory is the shell's.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": `cat "` + strings.ReplaceAll(path, backgroundTmpMark, backgroundShellTmp) + `"`}))}}, nil
+		}
+		if path := a.Input["file_path"]; a.Tool == "Read" && path != "" && len(a.Input) == 1 {
+			// Codex reads a file through its shell: the Read of a whole file is `cat` of it.
+			return []codexBlock{{line: codexLine(codexTool(a.ID, "Bash", map[string]any{"command": "cat " + shQuote(path)}))}}, nil
 		}
 		return nil, c.unsupported(a, "Codex has only the shell and apply_patch: no "+a.Tool+" tool")
 	case ActCompact:
@@ -162,7 +189,7 @@ func (c codexDriver) RenderScript(s Scenario) (string, error) {
 	b.WriteString("set -u\nSF=\"${A10N_MOCK_SESSION_FILE:-/dev/null}\"\n")
 	b.WriteString("SESS=\"$(cat \"$SF\" 2>/dev/null || true)\"\n")
 	compacts := 0
-	for i, t := range s.turns {
+	for i, t := range launchedOutput(foldCallOutput(s.turns)) {
 		blocks, err := c.render(t.act)
 		if err != nil {
 			return "", err
@@ -197,6 +224,15 @@ fi
 				continue
 			}
 			line = injectCodexMarker(line, t.act.ID, marker)
+			if strings.Contains(line, codexWorkspaceMark) {
+				// the line names a path in the workspace: the script runs there, so $PWD is its root
+				fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  printf '%%s\n' %s | sed "s|%s|$PWD|g"
+  exit 0
+fi
+`, marker, shQuote(line), codexWorkspaceMark)
+				continue
+			}
 			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
   printf '%%s\n' %s
   exit 0
@@ -204,7 +240,9 @@ fi
 `, marker, shQuote(line))
 		}
 	}
-	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(fmt.Sprintf(`{"type":"result","subtype":"success","result":%s}`, jsonStr(s.result))))
+	// The scenario's end is the agent's final answer: Codex prints no result frame, its
+	// stream (and its rollout) end on the last agent message.
+	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(codexLine(codexText(s.result))))
 	return b.String(), nil
 }
 
@@ -227,7 +265,11 @@ func injectCodexMarker(line, id, marker string) string {
 // run printed (Observe).
 func (codexDriver) Command(e *Env, l Launch) *exec.Cmd {
 	args := []string{"exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust",
-		"--script", l.ScriptPath, "-C", l.WorkDir, "-m", "mock-model"}
+		"--script", l.ScriptPath, "-C", l.WorkDir, "-m", "mock-model",
+		// Codex's default agents.max_depth is 0: a sub-agent cannot spawn another. A project
+		// that wants delegation to nest sets it, as this run does (the mock honours only this
+		// override), so a scenario whose sub-agent dispatches a further one is exercised.
+		"-c", "agents.max_depth=3"}
 	switch l.Mode {
 	case SessionResume:
 		args = append(args, "resume", e.harnessID(l.SessionID))
@@ -271,6 +313,12 @@ func codexHostEnv() []string {
 }
 
 var codexThread = regexp.MustCompile(`"thread_id":"([^"]+)"`)
+
+// JudgeHooksOff: the judge's codex is launched with the hooks feature disabled
+// (`--disable hooks`, one argument per line in the recorded argv).
+func (codexDriver) JudgeHooksOff(argv, _ string) bool {
+	return strings.Contains(argv, "--disable\nhooks\n")
+}
 
 // Observe records the thread a run started: the id Codex gave the session.
 func (codexDriver) Observe(e *Env, l Launch, output string) {
@@ -337,14 +385,17 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 	if err := os.MkdirAll(filepath.Join(dir, ".agents", "plugins"), 0o755); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "plugins"), 0o755); err != nil {
-		e.t.Fatalf("harness: %v", err)
-	}
-	if err := os.Symlink(root, filepath.Join(dir, "plugins", plugin)); err != nil {
-		e.t.Fatalf("harness: link plugin %s: %v", plugin, err)
+	// The entry's path reaches the plugin's own directory (relative to the marketplace,
+	// so it resolves to the real directory, not through a link): the mock installs a
+	// plugin by copying the directory and does not copy a symbolic link, so a link here
+	// installed nothing and the plugin's hooks never ran. Resolved when the mock runs, so
+	// files a test adds to the plugin first are installed too.
+	rel, err := filepath.Rel(dir, root)
+	if err != nil {
+		e.t.Fatalf("harness: plugin %s path: %v", plugin, err)
 	}
 	body, _ := json.Marshal(map[string]any{"name": name, "plugins": []any{map[string]any{
-		"name": plugin, "source": map[string]any{"source": "local", "path": "./plugins/" + plugin}}}})
+		"name": plugin, "source": map[string]any{"source": "local", "path": rel}}}})
 	if err := os.WriteFile(filepath.Join(dir, ".agents", "plugins", "marketplace.json"), body, 0o644); err != nil {
 		e.t.Fatalf("harness: %v", err)
 	}
@@ -352,10 +403,13 @@ func (codexDriver) marketplace(e *Env, name, plugin, root string) string {
 }
 
 // HookEnv is what a hook, or a call made from inside a session, runs with. Codex gives a
-// hook no session variable (the session is in its payload); a shell command the agent runs
+// hook no session variable (the session is in its payload), and a sloprail command run before
+// any session started has none either, so the harness is named outright as Cursor's is; a shell command the agent runs
 // has CODEX_THREAD_ID and CODEX_SESSION_ID.
 func (codexDriver) HookEnv(e *Env, sessionID string) []string {
-	env := []string{"CODEX_HOME=" + e.configDir,
+	// SLOPRAIL_HARNESS: the plugin's hook wrapper names the harness, and Codex's own markers
+	// (a thread id) are not in a hook's environment, so without it a call made as a hook is read as Claude's.
+	env := []string{"SLOPRAIL_HARNESS=codex", "CODEX_HOME=" + e.configDir,
 		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
 	if sessionID != "" {
 		id := e.harnessID(sessionID)
@@ -365,6 +419,14 @@ func (codexDriver) HookEnv(e *Env, sessionID string) []string {
 }
 
 func (codexDriver) ConfigEnv(e *Env) []string { return []string{"CODEX_HOME=" + e.configDir} }
+
+// CLIEnv is what a sloprail command a test runs itself (runBinEnv) is given on top of the
+// host's: the harness it runs as, which the environment alone does not say (a Codex shell's
+// CODEX_THREAD_ID is only there inside a session), and the config dir the mock keeps its
+// rollouts in.
+func (c codexDriver) CLIEnv(e *Env) []string {
+	return append([]string{"SLOPRAIL_HARNESS=codex"}, c.ConfigEnv(e)...)
+}
 
 // ShellEnv: the mock's shell tool carries the harness's identity itself.
 func (codexDriver) ShellEnv() string { return "" }
@@ -383,6 +445,12 @@ func (codexDriver) StopPayload(e *Env, projDir, sessionID string, active bool) s
 	return string(payload)
 }
 
+// IdentityPayload is the session id and the working directory.
+func (codexDriver) IdentityPayload(e *Env, projDir, sessionID string) string {
+	payload, _ := json.Marshal(map[string]any{"session_id": e.harnessID(sessionID), "cwd": projDir})
+	return string(payload)
+}
+
 func (codexDriver) StopBlocked(output string) bool {
 	return strings.Contains(output, `"decision":"block"`)
 }
@@ -391,16 +459,35 @@ func (codexDriver) StopBlocked(output string) bool {
 func (codexDriver) AgentShim(e *Env, projDir string) (string, string) {
 	script := "#!/bin/sh\n" +
 		"[ -t 0 ] || cat >/dev/null\n" +
-		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check \\\n" +
+		"exec " + shellQuote(e.mock) + " exec --json --skip-git-repo-check --dangerously-bypass-hook-trust \\\n" +
 		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
 		"  -C " + shellQuote(projDir) + " -m mock-model \\\n" +
 		"  \"launched agent\" </dev/null\n"
 	return "codex", script
 }
 
+// SkillDir: Codex's project skills.
+func (codexDriver) SkillDir() string { return harness.ProjectSkillDirs(codexharness.New())[0] }
+
+// LargeJudgeModelArgs: size-lg is gpt-6.1-sol, named by Codex's short -m.
+func (codexDriver) LargeJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
+
+// MediumJudgeModelArgs: size-md is gpt-6.1-sol as well.
+func (codexDriver) MediumJudgeModelArgs() (string, string) { return "-m", "gpt-6.1-sol" }
+
 // JudgeShim is the stand-in for the `codex` the judge (sr-agent) runs by name: it answers the
 // same prompt line the claude one does, whatever the harness.
 func (codexDriver) JudgeShim(s JudgeShim) (string, string) {
+	if s.Kind == JudgeShimUsageLimit {
+		// codex reports a usage limit on stderr, status 1. The wording is the one sr-agent's
+		// classifier already reads for Codex (services/sr-agent/failure.go); no harness-mocks
+		// recording holds a real one yet.
+		return "codex", `#!/bin/sh
+echo call >>"$LEDGER"
+echo "ERROR: You've hit your usage limit. Try again later." >&2
+exit 1
+`
+	}
 	_, body := claudeDriver{}.JudgeShim(s)
 	return "codex", body
 }
@@ -422,6 +509,14 @@ func rolloutPath(e *Env, threadID string) string {
 
 // TranscriptPath is the session's rollout; before the session has run there is none, and
 // the path where it would be named after the session.
+// RecordLayout: the rollout opens with its session_meta, then the context the SessionStart
+// hook added (one developer message), then the prompt.
+func (codexDriver) RecordLayout() (int, int) { return 1, 1 }
+
+func (codexDriver) NextPromptLine(record string) int {
+	return strings.Count(record, "\n") + 1 + 1
+}
+
 func (codexDriver) TranscriptPath(e *Env, projDir, sessionID string) string {
 	if p := rolloutPath(e, e.harnessID(sessionID)); p != "" {
 		return p
@@ -460,10 +555,56 @@ func (codexDriver) SubagentRecordPaths(e *Env, projDir, sessionID string) []stri
 }
 
 func (codexDriver) ForkTranscript(e *Env, cwd, oldSessionID, newSessionID string) {
-	e.t.Skipf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
+	e.t.Fatalf("harness codex: a fork is made by `exec fork` (RunForked), not by seeding a transcript")
+}
+
+// OriginRecord is where a rollout begins: the thread id its session_meta opens on. A fork
+// is a rollout of its own (its own id), and a sub-agent's names the root only in session_id.
+func (codexDriver) OriginRecord(record string) string {
+	first, _, _ := strings.Cut(record, "\n")
+	var rec struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID        string `json:"id"`
+			SessionID string `json:"session_id"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(first), &rec) != nil || rec.Type != "session_meta" {
+		return ""
+	}
+	if rec.Payload.ID != "" {
+		return rec.Payload.ID
+	}
+	return rec.Payload.SessionID
 }
 
 var codexRefusal = regexp.MustCompile(`(?s)Command blocked by PreToolUse hook: (.*?)\. Command: `)
+
+// WrittenBytes: an apply_patch "Add File" is a list of "+<line>" rows, so a file it
+// creates always ends its last line (an empty one stays empty).
+func (codexDriver) WrittenBytes(content string) string {
+	if content == "" {
+		return ""
+	}
+	return strings.TrimSuffix(content, "\n") + "\n"
+}
+
+// ResultRecord: a rollout's function_call_output names its call by call_id, which the mock
+// spells <id>-slop-turn-<n>-<id>.
+func (codexDriver) ResultRecord(record, id string) string {
+	found := ""
+	for _, l := range strings.Split(record, "\n") {
+		if strings.Contains(l, `"call_id":"`+id+`-slop-turn-`) && strings.Contains(l, `"function_call_output"`) {
+			found = l
+		}
+	}
+	return found
+}
+
+// RefusalOutput is the line the mock reports on its error stream for a refused command.
+func (codexDriver) RefusalOutput(reason string) string {
+	return "Command blocked by PreToolUse hook: " + reason + ". Command: echo hi"
+}
 
 // Refusals reads the PreToolUse refusals the mock reports on its error stream.
 func (codexDriver) Refusals(output string) []string {
@@ -531,7 +672,7 @@ func hookPrompts(record string) (events, reasons []string, assistantAfter []int)
 	return
 }
 
-func (codexDriver) BlockingErrors(record, hookEvent string, dedupe bool) []string {
+func (codexDriver) BlockingErrors(record string, _ []string, hookEvent string, dedupe bool) []string {
 	events, reasons, _ := hookPrompts(record)
 	var out []string
 	seen := map[string]bool{}
@@ -548,12 +689,21 @@ func (codexDriver) BlockingErrors(record, hookEvent string, dedupe bool) []strin
 	return out
 }
 
-// StopContinuations are the Stop refusals after which the agent went on: a step of its own followed.
-func (codexDriver) StopContinuations(record string) []string {
+// StopContinuations are the Stop refusals after which the agent went on: a step of its own
+// followed, or the continued turn reached a later Stop (which refused again). The last refusal
+// of a run that ended on it is one the harness gave up on, as at Claude's stop-hook cap.
+func (codexDriver) StopContinuations(record string, _ []string) []string {
 	events, reasons, after := hookPrompts(record)
 	var out []string
 	for i, r := range reasons {
-		if events[i] == "Stop" && after[i] > 0 {
+		if events[i] != "Stop" {
+			continue
+		}
+		laterStop := false
+		for _, ev := range events[i+1:] {
+			laterStop = laterStop || ev == "Stop"
+		}
+		if after[i] > 0 || laterStop {
 			out = append(out, r)
 		}
 	}
@@ -567,7 +717,7 @@ func (c codexDriver) SubagentBlockingErrors(records []string) []string {
 func (c codexDriver) AnySubagentBlockingErrors(records []string) []string {
 	var out []string
 	for _, r := range records {
-		out = append(out, c.BlockingErrors(r, "SubagentStop", true)...)
+		out = append(out, c.BlockingErrors(r, nil, "SubagentStop", true)...)
 	}
 	return out
 }
@@ -575,7 +725,72 @@ func (c codexDriver) AnySubagentBlockingErrors(records []string) []string {
 func (c codexDriver) SubagentFeedbackCount(records []string) int {
 	n := 0
 	for _, r := range records {
-		n += len(c.BlockingErrors(r, "SubagentStop", false))
+		n += len(c.BlockingErrors(r, nil, "SubagentStop", false))
 	}
 	return n
+}
+
+// SubagentReply is what Codex's root record holds of a sub-agent's reply: the
+// sub-agent's final answer inside the <subagent_notification> the harness tells the
+// parent (recorded: harness-mocks codex-mock subagent-transcripts-v2), and the
+// output of the wait_agent call that waited for the call's agent.
+func (codexDriver) SubagentReply(path, callID string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var reply strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		var rec struct {
+			Payload struct {
+				Type    string          `json:"type"`
+				Role    string          `json:"role"`
+				CallID  string          `json:"call_id"`
+				Output  json.RawMessage `json:"output"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		p := rec.Payload
+		switch {
+		case p.Type == "message" && p.Role == "user":
+			for _, c := range p.Content {
+				if strings.Contains(c.Text, "<subagent_notification>") {
+					reply.WriteString(c.Text)
+				}
+			}
+		case p.Type == "function_call_output" && strings.HasPrefix(p.CallID, callID+"-"):
+			reply.Write(p.Output)
+		}
+	}
+	return reply.String(), nil
+}
+
+// SeedTranscript gives a session that has not run a turn the rollout Codex would have: a thread
+// the session names (its id is the thread's, in the form Codex gives one), and the rollout file
+// under $CODEX_HOME/sessions that CODEX_THREAD_ID finds it by.
+func (codexDriver) SeedTranscript(e *Env, projDir, sessionID string) {
+	if e.harnessID(sessionID) != "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	h := hex.EncodeToString(sum[:])
+	thread := fmt.Sprintf("%s-%s-4%s-8%s-%s", h[0:8], h[8:12], h[12:15], h[15:18], h[18:30])
+	dir := filepath.Join(e.configDir, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	meta, _ := json.Marshal(map[string]any{"timestamp": "2026-01-01T00:00:00.000Z", "ordinal": 0, "type": "session_meta",
+		"payload": map[string]any{"session_id": thread, "id": thread, "cwd": resolveWorkDir(projDir), "originator": "codex_exec", "source": "exec", "thread_source": "user"}})
+	user, _ := json.Marshal(map[string]any{"timestamp": "2026-01-01T00:00:00.001Z", "ordinal": 1, "type": "response_item",
+		"payload": map[string]any{"type": "message", "id": "msg_e2e_seed", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "work"}}}})
+	rollout := filepath.Join(dir, "rollout-2026-01-01T00-00-00-"+thread+".jsonl")
+	if err := os.WriteFile(rollout, []byte(string(meta)+"\n"+string(user)+"\n"), 0o644); err != nil {
+		e.t.Fatalf("harness: %v", err)
+	}
+	e.setHarnessID(sessionID, thread)
 }

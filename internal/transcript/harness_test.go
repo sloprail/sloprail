@@ -11,7 +11,7 @@ import (
 // format package both share.
 type transcriptsOnly struct{ harness.Harness }
 
-func (transcriptsOnly) Name() string                     { return "claudecode" }
+func (transcriptsOnly) Name() string                     { return "claude" }
 func (transcriptsOnly) Transcripts() harness.Transcripts { return claudeformat.Transcripts{} }
 
 func init() { harness.Register(transcriptsOnly{}) }

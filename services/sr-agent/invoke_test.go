@@ -120,7 +120,7 @@ func TestCheckHarnessArgs_WrongHarnessIsReported(t *testing.T) {
 	err := CheckHarnessArgs("--claude-args", ClaudeCode, fakeHarness("codex"))
 	require.ErrorIs(t, err, ErrWrongHarnessArgs)
 	assert.Contains(t, err.Error(), "--claude-args")
-	assert.Contains(t, err.Error(), "claude-code")
+	assert.Contains(t, err.Error(), "claude")
 	assert.Contains(t, err.Error(), "codex", "the running harness must be named too")
 }
 

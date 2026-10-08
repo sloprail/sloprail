@@ -51,7 +51,7 @@ import (
 // (see sameTree). Building it as filepath.Join(configDir, "projects") and then
 // filepath.Rel-ing path against that join breaks the moment the two spell one
 // directory differently: a config folder itself reached through a symlink (a
-// symlinked CLAUDE_CONFIG_DIR, or the macOS /var → /private/var most callers
+// symlinked config directory (CLAUDE_CONFIG_DIR under Claude Code), or the macOS /var → /private/var most callers
 // resolve for exactly this reason but a bare join does not), or a reported path
 // under a different-looking but identical directory. filepath.Rel does not
 // resolve symlinks, so it either errors or returns a path escaping the tree

@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,15 +18,12 @@ import (
 // disk becomes an update carrying its current bytes; an absent one becomes a
 // create carrying the content the write would leave behind.
 //
-// A FIXTURE, not the mock: this derivation stat-s the LIVE tree, and a mock run
-// APPLIES its writes before normalize reads it — the mock executes a Write tool call
-// against the working directory, so by the time normalize reads the tree the file is
-// already there. Measured against the installed mock: a Write to an ABSENT path reads
-// back as a PreFileUpdate whose oldContent already equals the written content, not the
-// PreFileCreate the pre-write tree would yield. a10n-cli#470 (which added tool_result
-// forwarding) did not change this — the write-before-read is inherent to the mock
-// running the tool. Only a hand-staged tree holds the files in the pre-write state the
-// create-vs-update distinction is about (see the package note).
+// Driven by the mock, then the tree put back: this derivation stat-s the LIVE tree, and a
+// mock run APPLIES its writes (the mock executes a Write against the working directory), so
+// a create would read back as an update with oldContent already the written bytes. The test
+// restores the tree to its pre-write state after the run, so normalize reads the
+// agent's real trajectory (in whichever harness's own record format) against the tree the
+// create-vs-update distinction is about.
 func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -34,20 +33,46 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	e.WriteFile(proj, "existing.md", "old body\n")
 	e.CommitAll(proj, "before the session")
 
-	path := stageFileEventTree(t, proj,
-		userMsg("u1", "write some files"),
-		assistantWrite("a1", "u1", "brand-new.md", "# Brand New\n"),    // absent -> create
-		assistantWrite("a2", "a1", "existing.md", "a wholly new body"), // present -> update
-	)
+	e.Run(proj, "s-031-03", "write some files", Turns("done",
+		Write("w1", "brand-new.md", "# Brand New\n"),    // absent -> create
+		Write("w2", "existing.md", "a wholly new body"), // present -> update
+	))
+	path := e.TranscriptPath(proj, "s-031-03")
+	// The pre-write tree: the run's writes undone.
+	if err := os.Remove(filepath.Join(proj, "brand-new.md")); err != nil {
+		t.Fatalf("the run did not write brand-new.md: %v", err)
+	}
+	e.WriteFile(proj, "existing.md", "old body\n")
 
-	// Run FROM the repo so the file module's stats resolve against it.
-	res := normalize(e, proj, path)
+	// Run FROM the repo so the file module's stats resolve against it. A record that names
+	// no working directory (Cursor's) is read against the workspace --root names; nothing is
+	// guessed from where the command runs.
+	var rootArgs []string
+	if !harness.HasCap(t, harness.CapRecordNamesStartDir) {
+		for _, en := range decodeEntries(t, mustRun(t, normalize(e, proj, path))) {
+			for _, ev := range en.Events {
+				if p, _ := ev.Fields["path"].(string); strings.HasPrefix(ev.Kind, "PreFile") && !filepath.IsAbs(p) {
+					t.Fatalf("without --root a record naming no cwd must not be read against a guessed workspace, but %s reported the relative path %q", ev.Kind, p)
+				}
+			}
+		}
+		rootArgs = []string{"--root", proj}
+	}
+	res := normalize(e, proj, path, rootArgs...)
 	if res.Code != 0 {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	entries := decodeEntries(t, res.Output)
+	var entries []normalized
+	for _, en := range decodeEntries(t, res.Output) {
+		if len(en.Events) > 0 {
+			entries = append(entries, en)
+		}
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want the two write entries to carry events, got %d:\n%s", len(entries), res.Output)
+	}
 
-	create := entries[1]
+	create := entries[0]
 	if got := eventsOf(create); len(got) != 1 || got[0] != "PreFileCreate" {
 		t.Fatalf("a write to an absent path should be PreFileCreate, got %v", got)
 	}
@@ -58,7 +83,7 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 		t.Fatalf("PreFileCreate should carry the written content, got %v", create.Events[0].Fields["newContent"])
 	}
 
-	update := entries[2]
+	update := entries[1]
 	if got := eventsOf(update); len(got) != 1 || got[0] != "PreFileUpdate" {
 		t.Fatalf("a write to a present path should be PreFileUpdate, got %v", got)
 	}
@@ -92,15 +117,30 @@ func TestT031_07_EventsFlagNarrows(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-031-07")
 
-	// Unfiltered: the one entry carries both the command and the tag. Found by its
-	// events rather than a fixed index — the mock's tool_result record sits after it.
+	// Unfiltered. Where a turn's prose and its call are one entry, that entry carries both
+	// the command and the tag; where the record writes them as two (Codex's rollout), the
+	// command is on the call's entry and the tag on the message's, one event each. Found by
+	// the events rather than a fixed index: a tool_result record sits after them.
 	all := decodeEntries(t, mustRun(t, normalize(e, proj, path, "--whole-session")))
 	both := theEntryWith(t, all, "PreCommandInvoke")
-	if got := eventsOf(both); len(got) != 2 {
-		t.Fatalf("unfiltered, the entry should carry both a command and a tag, got %v", got)
-	}
-	if bothTag := theEntryWith(t, all, "PostTagWrite"); bothTag.UUID != both.UUID {
-		t.Fatalf("the command and the tag should be on the SAME entry (%s vs %s)", both.UUID, bothTag.UUID)
+	bothTag := theEntryWith(t, all, "PostTagWrite")
+	if harness.HasCap(t, harness.CapProseWithCallInOneEntry) {
+		if got := eventsOf(both); len(got) != 2 {
+			t.Fatalf("unfiltered, the entry should carry both a command and a tag, got %v", got)
+		}
+		if bothTag.UUID != both.UUID {
+			t.Fatalf("the command and the tag should be on the SAME entry (%s vs %s)", both.UUID, bothTag.UUID)
+		}
+	} else {
+		if got := eventsOf(both); len(got) != 1 {
+			t.Fatalf("the call's entry should carry just the command, got %v", got)
+		}
+		if got := eventsOf(bothTag); len(got) != 1 {
+			t.Fatalf("the message's entry should carry just the tag, got %v", got)
+		}
+		if bothTag.UUID == both.UUID {
+			t.Fatalf("the record writes the prose and the call as two entries, but both events are on entry %s", both.UUID)
+		}
 	}
 
 	// Only PreCommandInvoke: the tag module is not run, so that entry carries just

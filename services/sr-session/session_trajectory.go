@@ -20,7 +20,7 @@ import (
 //	                                  sub-agent's, what spawned it, what it spawned)
 //	sr-session trajectory cite        turn a remembered quote into <path>:<line>
 //	                                  (--include-envelope also prints the whole
-//	                                  AskUserQuestion answer envelope at that line)
+//	                                  question-answer envelope at that line)
 //	sr-session trajectory tool-result is a cited LINE a tool_result, and its content
 //	                                  (the line-oriented sibling of cite, for a
 //	                                  delivery observation that names a line already)
@@ -44,7 +44,7 @@ func newSessionTrajectoryCmd() *cobra.Command {
   sr-session trajectory cite        turn a substring of the user's own words into
                                     a resolvable <path>:<line> citation
                                     (--include-envelope also prints the whole
-                                    AskUserQuestion answer envelope at that line)
+                                    question-answer envelope at that line)
   sr-session trajectory tool-result whether a cited --line is a tool_result, and
                                     its content — for a delivery observation that
                                     names a transcript line as proof of work
@@ -102,7 +102,7 @@ accept --path to read another — the parent or a sibling that describe named.`,
 // returning it.
 //
 // Resolving the CURRENT session — which is the ROOT when a sub-agent is not the
-// caller, and which holds the citations cite grounds (an AskUserQuestion answer is
+// caller, and which holds the citations cite grounds (a question the user answered is
 // recorded in the root's transcript) — is sufficient for cite's purpose. It does
 // not attempt to detect a sub-agent from the environment, because nothing in a
 // tool call's environment distinguishes one; that judgement is made from the

@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
 )
@@ -63,6 +64,10 @@ type HookInput struct {
 	// ToolName is the canonical name of the tool a tool hook is about.
 	ToolName string `json:"tool_name"`
 
+	// NativeToolName is the name the harness itself reported for it (Codex's
+	// spawn_agent, Cursor's Task, Claude's older Task): empty when ToolName is it.
+	NativeToolName string `json:"native_tool_name,omitempty"`
+
 	// ToolUseID names the tool call, for the decision log.
 	ToolUseID string `json:"tool_use_id"`
 
@@ -109,6 +114,17 @@ const (
 	FileDelete FileEffectKind = "delete"
 )
 
+// FileEffecter is what a Harness MAY implement when a write tool of its own cannot be
+// read from the canonical argument shapes (Codex's apply_patch names several files in
+// one patch): it states the effects of one call of that tool, from the tool's name and
+// arguments as the harness spells them and the directory the call runs in. It is the one
+// seam for the question, asked both of a live hook (ParseHook fills HookInput.Files from
+// it) and of a recorded call (trajectory normalize re-derives the events of one). A tool
+// it does not know yields none.
+type FileEffecter interface {
+	FileEffects(tool string, input json.RawMessage, cwd string) []FileEffect
+}
+
 // FileEffect is one file a pending tool call would change.
 type FileEffect struct {
 	Kind FileEffectKind
@@ -134,8 +150,20 @@ func (p HookInput) IsSubagent() bool {
 // to run, in the canonical vocabulary.
 func (p HookInput) Tool() string { return p.ToolName }
 
+// NativeTool implements tooluse.NativePending: the name the harness reported.
+func (p HookInput) NativeTool() string {
+	if p.NativeToolName != "" {
+		return p.NativeToolName
+	}
+	return p.ToolName
+}
+
 // Arguments implements filemod.Pending: the tool's own arguments, undecoded.
 func (p HookInput) Arguments() json.RawMessage { return p.ToolInput }
+
+// FileEffects implements filemod.EffectPending: the file effects a harness reported
+// for a tool whose arguments do not state them (HookInput.Files).
+func (p HookInput) FileEffects() []FileEffect { return p.Files }
 
 // Root implements filemod.Pending: the workspace an absolute `file_path` is
 // reported relative to.
@@ -145,17 +173,25 @@ func (p HookInput) Arguments() json.RawMessage { return p.ToolInput }
 // gitrepo.Root), and a hook invoked below the top of the tree would otherwise make
 // the two phases report different spellings of one file, so a rule binding
 // PreFileCreate and PostFileCreate with a single matcher would match on one and not
-// the other. An unresolvable root yields "", which filemod reads as "no workspace
+// the other.
+//
+// A folder that is no repository has no top to be below, so the folder the hook fired
+// in (Cwd, the project folder every adapter reports) is the workspace: otherwise a
+// harness that reports absolute paths (every one does for a write tool) would have each
+// project-relative matcher miss there, and a deny-by-default structure gate refuse
+// everything. Only an unusable Cwd yields "", which filemod reads as "no workspace
 // named" and leaves the path as the harness spelled it.
 func (p HookInput) Root() string {
 	if p.Cwd == "" {
 		return ""
 	}
-	root, err := gitrepo.Root(p.Cwd)
-	if err != nil {
-		return ""
+	if root, err := gitrepo.Root(p.Cwd); err == nil {
+		return root
 	}
-	return root
+	if filepath.IsAbs(p.Cwd) {
+		return filepath.Clean(p.Cwd)
+	}
+	return ""
 }
 
 // HeadContent implements filemod.HeadReader: a workspace-relative file's bytes in
@@ -212,4 +248,47 @@ type HookWire interface {
 
 	// RenderHook writes the response in the harness's own output format.
 	RenderHook(w io.Writer, resp HookResponse) error
+}
+
+// RenderHookJSON writes a response in the hook output contract Claude Code and
+// Codex share (each documents it; recorded for Codex in harness-mocks
+// codex-mock/internal/hooks/decide.go): a Deny is a PreToolUse permissionDecision, a
+// Block is the top-level decision:"block" that Stop and SubagentStop read, a system
+// message is a top-level systemMessage, and additional context is
+// hookSpecificOutput.additionalContext under the event's name. An Allow with nothing
+// to say writes nothing. It is here so each adapter that speaks this contract calls
+// one renderer rather than copying it.
+// sr:invariant gates/refusal-stops-the-action
+// sr:invariant gates/stop-refusal-continues-the-turn
+func RenderHookJSON(w io.Writer, resp HookResponse) error {
+	var out map[string]any
+	switch resp.Decision {
+	case Deny:
+		out = map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName":            "PreToolUse",
+				"permissionDecision":       "deny",
+				"permissionDecisionReason": resp.Reason,
+			},
+		}
+	case Block:
+		out = map[string]any{"decision": "block", "reason": resp.Reason}
+	default:
+		out = map[string]any{}
+	}
+	if resp.SystemMessage != "" {
+		out["systemMessage"] = resp.SystemMessage
+	}
+	if resp.AdditionalContext != "" {
+		specific, _ := out["hookSpecificOutput"].(map[string]any)
+		if specific == nil {
+			specific = map[string]any{"hookEventName": resp.Event}
+			out["hookSpecificOutput"] = specific
+		}
+		specific["additionalContext"] = resp.AdditionalContext
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return json.NewEncoder(w).Encode(out)
 }

@@ -30,7 +30,7 @@ if [ "$D" -ge 6 ]; then
 fi
 SLOP_TEST_DEPTH=$((D + 1))
 export SLOP_TEST_DEPTH
-sr-agent --harness claude-code --model size-xs "judge" >/dev/null 2>&1
+sr-agent --harness {{harness}} {{agent-mode}}--model size-xs "judge" >/dev/null 2>&1
 exit 0
 `
 
@@ -62,8 +62,8 @@ exit 0
 func TestT015_04_SubagentDoesNotReenterEitherRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": depthScript})
-	e.Gate(proj, "review-docs", reviewByAgent, map[string]string{"review.sh": depthScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": e.ForHarness(depthScript)})
+	e.Gate(proj, "review-docs", reviewByAgent, map[string]string{"review.sh": e.ForHarness(depthScript)})
 	e.InstallClaudeShim(proj)
 	// Every launched agent runs this same scenario: it writes under review/
 	// (reaching review-docs) and then under notes/ (reaching judge-notes again).

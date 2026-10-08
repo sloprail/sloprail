@@ -13,6 +13,7 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/tagmod"
@@ -52,6 +53,9 @@ file and command events, and tags (PostTagWrite). Not the git-observed Post file
 events, not PreToolUse, not Stop.
 
   --path <PATH>          which trajectory to read; defaults to the hooked-in one
+  --root <DIR>           the workspace a record that names no working directory of
+                         its own (Cursor's) is read against, so its file paths are
+                         reported relative to it; without it nothing is assumed
   --events <Kind,...>    which event kinds populate each entry's events, named by
                          the event's own kind (PreCommandInvoke, PostTagWrite,
                          PreFileCreate, PreFileUpdate, PreFileDelete). Absent
@@ -72,6 +76,8 @@ read JSON.`,
 	}
 	cmd.Flags().String("path", "",
 		"Which trajectory to read; defaults to the one the hook was invoked for")
+	cmd.Flags().String("root", "",
+		"The workspace a record that names no cwd (Cursor's) is read against; without it such a record's file paths are not made relative")
 	cmd.Flags().StringSlice("events", nil,
 		"Comma-separated event kinds to populate each entry's events (default: every re-derivable kind)")
 	cmd.Flags().Bool("whole-session", false,
@@ -144,7 +150,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// inherits the last one written (the mock writes cwd on the first record
 	// only). Computed before slicing so a slice starting mid-session still
 	// knows where its first entries ran.
-	roots, dirs := entryRoots(lined, p.Root())
+	roots, dirs := entryRoots(lined, workspaceFallback(cmd, p))
 
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 	pathGiven := cmd.Flags().Changed("path")
@@ -178,6 +184,19 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)
 	return enc.Encode(out)
+}
+
+// workspaceFallback is the workspace a record that names none is read against: the
+// payload's, else the --root the caller named. Nothing is guessed from the process's
+// directory: a harness whose records carry no cwd (Cursor's) read through a bare --path
+// has no workspace unless --root says which, and without one file paths are left as the
+// record states them.
+func workspaceFallback(cmd *cobra.Command, p HookPayload) string {
+	if root := p.Root(); root != "" {
+		return root
+	}
+	root, _ := cmd.Flags().GetString("root")
+	return root
 }
 
 // entryRoots is the workspace each record's file paths are resolved against,
@@ -314,6 +333,16 @@ func (c pendingCall) Root() string               { return c.root }
 // Dir is where the recorded command ran (filemod.DirPending): its relative
 // paths are looked up there, not in this process's working directory.
 func (c pendingCall) Dir() string { return c.dir }
+
+// FileEffects implements filemod.EffectPending: the effects the current harness states
+// for a tool of its own whose arguments do not name its files (Codex's apply_patch), the
+// same seam a live hook's payload is filled from.
+func (c pendingCall) FileEffects() []harness.FileEffect {
+	if fe, ok := harness.Current().(harness.FileEffecter); ok {
+		return fe.FileEffects(c.name, c.input, c.dir)
+	}
+	return nil
+}
 
 // kindSet is the set of event kinds an entry's events are narrowed to.
 type kindSet map[string]bool

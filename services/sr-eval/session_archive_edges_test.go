@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -23,18 +22,6 @@ func TestArchive_TempDirOfAnotherSessionIsNeverPicked(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "mine", "tmp", "scratchpad", "notes.txt")); err != nil {
 		t.Errorf("its own temp dir was not archived: %v", err)
-	}
-}
-
-func TestScanForTempDir_FindsAPathSplitAcrossChunks(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "claude-5", "-p", "sid")
-	mustWriteFile2(t, filepath.Join(root, "scratchpad", "a"), "a")
-	pad := strings.Repeat("x", 4<<20-10)
-	path := filepath.Join(t.TempDir(), "t.jsonl")
-	mustWriteFile(t, path, pad+" "+root+"/scratchpad\n")
-	re := regexp.MustCompile(`(/[^\s"'\\]*/claude-[0-9]+/[A-Za-z0-9-]+/sid)/`)
-	if got := scanForTempDir(path, re); got != root {
-		t.Errorf("got %q, want %q", got, root)
 	}
 }
 

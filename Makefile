@@ -109,6 +109,7 @@ distribute-local: build
 		echo "  $(INSTALL_DIR)/$$s"; \
 	done
 	@sh install.sh --harness-mock-only "$(INSTALL_DIR)"
+	@if command -v codex >/dev/null 2>&1; then "$(INSTALL_DIR)/sr-session" codex-trust || true; fi
 	@case ":$$PATH:" in \
 		*":$(INSTALL_DIR):"*) ;; \
 		*) echo; echo "NOTE: $(INSTALL_DIR) is not on your \$$PATH — add it, or the hooks will not find sr-session.";; \
@@ -194,7 +195,8 @@ verify-version:
 		exit 1; \
 	fi
 	@want="$${TAG#v}"; \
-	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json \( -path '*/.claude-plugin/*' -o -path '*/.cursor-plugin/*' \)); do \
+	. scripts/plugin-manifest-dirs.sh; \
+	for f in $$(plugin_manifests .); do \
 		got="$$(jq -r .version "$$f")"; \
 		if [ "$$got" != "$$want" ]; then \
 			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run make cut-release VERSION='$$want' instead of tagging by hand" >&2; \

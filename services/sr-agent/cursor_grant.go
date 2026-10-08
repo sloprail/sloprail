@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/harness/cursor"
 )
 
@@ -41,6 +42,9 @@ import (
 // cursorGrantEnv builds the private config dir for a run and the env that points
 // cursor-agent at it. cleanup removes the dir.
 func cursorGrantEnv(g accessGrant) (env, args []string, cleanup func(), err error) {
+	if g.AgentRun && len(g.Tools) == 0 && len(g.DenyTools) == 0 {
+		return nil, nil, nil, nil // the agent under test keeps its own config; nothing to grant
+	}
 	allow, deny, err := cursorRules(g)
 	if err != nil {
 		return nil, nil, nil, err
@@ -69,7 +73,10 @@ func cursorGrantEnv(g accessGrant) (env, args []string, cleanup func(), err erro
 			jg.Writable = append(jg.Writable, d.Path)
 		}
 	}
-	env = []string{"CURSOR_CONFIG_DIR=" + dir, jg.Encode()}
+	env = []string{"CURSOR_CONFIG_DIR=" + dir}
+	if !g.AgentRun { // the judge's own write confinement; the agent under test writes its project
+		env = append(env, jg.Encode())
+	}
 	if readonlyProject {
 		// A judge reads the project (readonly) by absolute path; it does not need it as
 		// its workspace, and the workspace is where cursor-agent discovers project hooks.
@@ -101,7 +108,11 @@ func cursorRules(g accessGrant) (allow, deny []string, err error) {
 	}
 	shellAllowed := false
 	for _, t := range g.Tools {
-		for _, tok := range cursorToken(t) {
+		toks, err := cursorToken(t)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, tok := range toks {
 			if strings.HasPrefix(tok, "Shell(") {
 				shellAllowed = true
 			}
@@ -109,10 +120,14 @@ func cursorRules(g accessGrant) (allow, deny []string, err error) {
 		}
 	}
 	for _, t := range g.DenyTools {
-		for _, tok := range cursorToken(t) {
+		toks, err := cursorToken(t)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, tok := range toks {
 			if strings.HasPrefix(tok, "Shell(") && shellAllowed {
-				return nil, nil, fmt.Errorf("%w: cursor does not enforce a shell deny beside a shell grant (measured), so %q cannot be promised; drop it or the shell grant",
-					ErrModeUnsupported, t)
+				return nil, nil, fmt.Errorf("%w: %w: cursor does not enforce a shell deny beside a shell grant (measured), so %q cannot be promised; drop it or the shell grant",
+					ErrModeUnsupported, harness.ErrToolUnsupported, t)
 			}
 			deny = append(deny, tok)
 		}
@@ -137,37 +152,42 @@ var claudeToolRule = regexp.MustCompile(`^([A-Za-z]+)(?:\((.*)\))?$`)
 // (Read/Write/Shell/WebFetch/Mcp with a path, command base or domain). A rule
 // already in Cursor's spelling (`Shell(ls)`) passes through. A bare Read or Write
 // means everything; a bare Bash means any command.
-func cursorToken(rule string) []string {
+//
+// Cursor's Shell(...) names a command base, not a command line, so a Bash rule scoped
+// below the base (`Bash(git show:*)`, `Bash(curl * -o *)`) cannot be said: mapping it to
+// `Shell(git)` would grant, or deny, more than the rule asked. That is refused with
+// harness.ErrToolUnsupported, as Codex refuses the same rule.
+func cursorToken(rule string) ([]string, error) {
 	rule = strings.TrimSpace(rule)
 	m := claudeToolRule.FindStringSubmatch(rule)
 	if m == nil {
-		return []string{rule}
+		return []string{rule}, nil
 	}
 	name, arg := m[1], m[2]
 	switch name {
 	case "Bash", "Shell":
 		if arg == "" {
-			return []string{"Shell(*)"}
+			return []string{"Shell(*)"}, nil
 		}
 		base := strings.TrimSuffix(strings.TrimSuffix(arg, ":*"), " *")
-		if f := strings.Fields(base); len(f) > 0 {
-			base = f[0]
+		if strings.ContainsAny(base, " \t*") {
+			return nil, fmt.Errorf("%w: cursor names a shell command by its base only, so %s cannot be scoped below it", harness.ErrToolUnsupported, rule)
 		}
-		return []string{"Shell(" + base + ")"}
+		return []string{"Shell(" + base + ")"}, nil
 	case "Read", "Write":
 		if arg == "" {
-			return []string{name + "(**)"}
+			return []string{name + "(**)"}, nil
 		}
-		return []string{name + "(" + strings.TrimPrefix(arg, "/") + ")"}
+		return []string{name + "(" + strings.TrimPrefix(arg, "/") + ")"}, nil
 	case "Edit", "MultiEdit", "NotebookEdit":
 		if arg == "" {
-			return []string{"Write(**)"}
+			return []string{"Write(**)"}, nil
 		}
-		return []string{"Write(" + strings.TrimPrefix(arg, "/") + ")"}
+		return []string{"Write(" + strings.TrimPrefix(arg, "/") + ")"}, nil
 	case "WebFetch":
 		if arg == "" {
-			return []string{"WebFetch(*)"}
+			return []string{"WebFetch(*)"}, nil
 		}
 	}
-	return []string{rule}
+	return []string{rule}, nil
 }

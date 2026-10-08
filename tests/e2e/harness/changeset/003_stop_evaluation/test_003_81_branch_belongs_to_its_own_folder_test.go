@@ -28,8 +28,14 @@ func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 		Bash("b1", "git switch -q -c sub-own"),
 		harness.CommitFile("c1", "docs/a.md", "sub words", "sub adds a"),
 	))
-	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, "worktree")))
-	wt, _ := subagentFolder(t, e, proj, sess)
+	e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+	hasWT := harness.HasCap(t, harness.CapWorktrees)
+	var wt string
+	if hasWT {
+		wt, _ = subagentFolder(t, e, proj, sess)
+	} else {
+		noSubagentFolder(t, e, proj, sess)
+	}
 
 	// The root commits on two branches of its own in its own checkout, then leaves them: one
 	// checked out nowhere, one handed to a worktree the session never works in.
@@ -48,20 +54,35 @@ func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 		if !trackedIn(rs, proj, head) && !trackedIn(rs, third, head) {
 			t.Fatalf("premise: the root's own branch %s is tracked neither in the root folder nor where it is checked out: %+v", head, rs)
 		}
-		if trackedIn(rs, wt, head) {
+		if hasWT && trackedIn(rs, wt, head) {
 			t.Fatalf("%s, committed in the root's checkout, is attached to the sub-agent's sibling worktree: %+v", head, rs)
 		}
 	}
-	// Nothing dropped: a sub-agent's branch it left (checked out nowhere) is still answered for.
-	if !trackedIn(rs, wt, "sub-left") && !trackedIn(rs, proj, "sub-left") {
-		t.Fatalf("the sub-agent's branch sub-left, which it left, is tracked in no folder: %+v", rs)
-	}
-	if !trackedIn(rs, wt, "sub-own") {
-		t.Fatalf("premise: the sub-agent's own branch is not tracked in its folder: %+v", rs)
-	}
-	for _, head := range []string{"sub-own", "sub-left"} {
-		if trackedIn(rs, proj, head) && trackedIn(rs, wt, head) {
-			t.Fatalf("%s is answered for in both the root's checkout and the sub-agent's worktree: %+v", head, rs)
+	if !hasWT {
+		// One tree, so one home: the sub-agent's branches, made in the root's checkout, are the
+		// root's, each answered for in the root's folder alone, and nothing is dropped.
+		for _, head := range []string{"sub-own", "sub-left"} {
+			if got := trackedHomes(rs, head); len(got) != 1 || got[0] != realPath(proj) {
+				t.Fatalf("%s, made in the root's tree, is not answered for in the root's folder alone: %v (%+v)", head, got, rs)
+			}
+		}
+		for _, head := range []string{"root-left", "root-held"} {
+			if got := trackedHomes(rs, head); len(got) != 1 {
+				t.Fatalf("%s is not answered for in exactly one folder: %v (%+v)", head, got, rs)
+			}
+		}
+	} else {
+		// Nothing dropped: a sub-agent's branch it left (checked out nowhere) is still answered for.
+		if !trackedIn(rs, wt, "sub-left") && !trackedIn(rs, proj, "sub-left") {
+			t.Fatalf("the sub-agent's branch sub-left, which it left, is tracked in no folder: %+v", rs)
+		}
+		if !trackedIn(rs, wt, "sub-own") {
+			t.Fatalf("premise: the sub-agent's own branch is not tracked in its folder: %+v", rs)
+		}
+		for _, head := range []string{"sub-own", "sub-left"} {
+			if trackedIn(rs, proj, head) && trackedIn(rs, wt, head) {
+				t.Fatalf("%s is answered for in both the root's checkout and the sub-agent's worktree: %+v", head, rs)
+			}
 		}
 	}
 
@@ -77,8 +98,11 @@ func TestT003_81_ABranchIsNotAttachedToSiblingWorktrees(t *testing.T) {
 	))
 	e.StopNow(proj, sess, false)
 	rs = sessionRanges(t, e, proj, sess)
-	if trackedIn(rs, wt, "root-left") {
+	if hasWT && trackedIn(rs, wt, "root-left") {
 		t.Fatalf("root-left moved after an untrack and was attached to the sibling worktree: %+v", rs)
+	}
+	if got := trackedHomes(rs, "root-left"); len(got) != 1 {
+		t.Fatalf("root-left moved after an untrack and is not answered for in exactly one folder: %v", got)
 	}
 	if !trackedIn(rs, proj, "root-left") {
 		t.Fatalf("root-left moved after an untrack and is tracked again nowhere: %+v", rs)

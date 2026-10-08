@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // The environment fallback (PR #19 review item). cite is agent-facing — an
@@ -47,10 +49,7 @@ func TestT029_15_NoPathResolvesCurrentSessionFromEnv(t *testing.T) {
 	// Claude Code filed the transcript under), CLAUDE_CODE_SESSION_ID names the
 	// session, CLAUDE_CONFIG_DIR points at the config dir the mock wrote to. NO
 	// --path, NO stdin.
-	env := []string{
-		"CLAUDE_CODE_SESSION_ID=" + sessionID,
-		"CLAUDE_CONFIG_DIR=" + e.ConfigDir(),
-	}
+	env := e.SessionEnv(sessionID)
 	res := e.CLIDirectEnv(proj, env, "sr-session", "trajectory", "cite", "auth module")
 	if res.Code != 0 {
 		t.Fatalf("cite with no --path (env-resolved) exited %d, want 0:\n%s", res.Code, res.Output)
@@ -77,14 +76,28 @@ func TestT029_16_NoPathResolvesAnAnswerFromEnv(t *testing.T) {
 	// wrote — the answer envelope follows the mock's no-uuid preamble block and the root
 	// prompt, so it does not sit on a hardcoded line.
 	e.Run(proj, sessionID, "here is the task", Turns("done",
-		AnswerQuestion("q1", [2]string{"which approach?", "go with the second option"}),
+		harness.AnswerIfAsked(t, "q1", [2]string{"which approach?", "go with the second option"})...,
 	))
 	path := e.TranscriptPath(proj, sessionID)
 	answerLine := physicalLine(t, path, "go with the second option")
 
-	env := []string{
-		"CLAUDE_CODE_SESSION_ID=" + sessionID,
-		"CLAUDE_CONFIG_DIR=" + e.ConfigDir(),
+	env := e.SessionEnv(sessionID)
+	// Without an answer record the env-resolved transcript is read all the same, and
+	// holds no answer: the quote is not the person's words (exit 1, silent on stdout),
+	// while the prompt in that same transcript resolves.
+	if !harness.HasCap(t, harness.CapAskUserQuestion) {
+		if answerLine != 0 {
+			t.Fatalf("the record holds the answer text without an answer record:\n%s", readFile(t, path))
+		}
+		res := e.CLIDirectEnv(proj, env, "sr-session", "trajectory", "cite", "second option")
+		if res.Code != 1 || strings.Contains(res.Output, path+":") {
+			t.Fatalf("citing words never said (env-resolved) exited %d, want 1 and nothing on stdout:\n%s", res.Code, res.Output)
+		}
+		res = e.CLIDirectEnv(proj, env, "sr-session", "trajectory", "cite", "here is the task")
+		if res.Code != 0 {
+			t.Fatalf("the prompt did not resolve through the env fallback, so the miss above proves nothing (exit %d):\n%s", res.Code, res.Output)
+		}
+		return
 	}
 	res := e.CLIDirectEnv(proj, env, "sr-session", "trajectory", "cite", "second option")
 	if res.Code != 0 {

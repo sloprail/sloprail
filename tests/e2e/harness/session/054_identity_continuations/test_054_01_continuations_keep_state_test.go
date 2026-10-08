@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,13 +115,15 @@ func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 		harness.Commit("k1", "first"),
 		Compact("c1"),
 	))
-	e.RunForked(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
+	// A harness with no fork continues the conversation by resuming it each time.
+	first := e.RunContinued(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
+	var second string
 	readsBack(t, ledger, "the second fork", func() {
-		e.RunForked(proj, "z-original", "a-fork-2", "resume again", Turns("done",
+		second = e.RunContinued(proj, "z-original", "a-fork-2", "resume again", Turns("done",
 			Write("w2", "two.md", "second"),
 		).ThenCommit("second"))
 	})
-	sameConversation(t, e, proj, "z-original", "a-fork-1", "a-fork-2")
+	sameConversation(t, e, proj, "z-original", first, second)
 }
 
 // T054_02 is the "continuation missing" mode that was not a lost file: 115 real
@@ -132,17 +133,25 @@ func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
 	e, proj, ledger := project(t)
 
+	// A harness whose compaction names no parent (Codex's is a record of the same rollout, Cursor's
+	// leaves no boundary) cannot name an unwritten one: its compaction is the plain one, which
+	// names nothing, and the conversation must keep its state across it the same.
+	boundary := Compact("c1")
+	if harness.HasCap(t, harness.CapCompactionNamesParent) {
+		boundary = CompactNamingUnwrittenParent("c1")
+	}
 	e.Run(proj, "orig-02", "start", Turns("done",
 		Write("w1", "one.md", "first"),
 		harness.Commit("k1", "first"),
-		CompactNamingUnwrittenParent("c1"),
+		boundary,
 	))
-	readsBack(t, ledger, "the fork", func() {
-		e.RunForked(proj, "orig-02", "fork-02", "resume", Turns("done",
+	var cont string
+	readsBack(t, ledger, "the continuation", func() {
+		cont = e.RunContinued(proj, "orig-02", "fork-02", "resume", Turns("done",
 			Write("w2", "two.md", "second"),
 		).ThenCommit("second"))
 	})
-	sameConversation(t, e, proj, "orig-02", "fork-02")
+	sameConversation(t, e, proj, "orig-02", cont)
 }
 
 // T054_03: the transcript a continuation came from is deleted while the
@@ -167,6 +176,17 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 	moved := e.Git(proj, "rev-parse", "HEAD")
 	if moved == start {
 		t.Fatalf("the original session did not commit, so the baselines below cannot be told apart")
+	}
+	if !harness.HasCap(t, harness.CapForkSessions) {
+		// A harness that cannot fork resumes the one session: no continuation has a predecessor
+		// to lose, so what holds is the half before any deletion — the resumed session is the
+		// conversation, keeps its store and its baseline.
+		e.Run(proj, "orig-03", "resume", Turns("done"))
+		sameConversation(t, e, proj, "orig-03")
+		if got := e.Meta(proj, "orig-03", sessionstate.MetaBaselineCommit); got != start {
+			t.Fatalf("the resumed session measures from %q, want the conversation's baseline %q", got, start)
+		}
+		return
 	}
 	e.RunForked(proj, "orig-03", "fork-03", "resume", Turns("done"))
 
@@ -194,35 +214,19 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 		t.Errorf("the fallback store measures from %q, want HEAD at its first tool call %q", got, moved)
 	}
 
-	record, err := os.ReadFile(e.TranscriptPath(proj, "fork-03"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Counted per hook run: each hook that printed leaves one attachment.
-	reports := 0
-	for _, l := range strings.Split(string(record), "\n") {
-		var rec struct {
-			Attachment struct {
-				HookEvent string `json:"hookEvent"`
-				Stdout    string `json:"stdout"`
-				Stderr    string `json:"stderr"`
-			} `json:"attachment"`
+	// Counted per hook run: each hook that printed is one report.
+	reports := e.HookReports(proj, "fork-03", "sloprail: identity:")
+	for _, rep := range reports {
+		// A record that names no event (Codex's) cannot say which hook it was.
+		if rep.Event != "" && rep.Event != "SessionStart" {
+			t.Errorf("the fallback identity was reported by a %s hook, where nobody sees it", rep.Event)
 		}
-		if json.Unmarshal([]byte(l), &rec) != nil {
-			continue
-		}
-		if strings.Contains(rec.Attachment.Stdout+rec.Attachment.Stderr, "sloprail: identity:") {
-			reports++
-			if rec.Attachment.HookEvent != "SessionStart" {
-				t.Errorf("the fallback identity was reported by a %s hook, where nobody sees it", rec.Attachment.HookEvent)
-			}
-			if !strings.Contains(rec.Attachment.Stdout, "earlier transcript is gone") {
-				t.Errorf("the SessionStart report is not on stdout, the channel that is seen")
-			}
+		if !strings.Contains(rep.Stdout, "earlier transcript is gone") {
+			t.Errorf("the SessionStart report is not on stdout, the channel that is seen")
 		}
 	}
-	if reports != 1 {
-		t.Errorf("the fallback identity must be reported by exactly one hook run, got %d", reports)
+	if len(reports) != 1 {
+		t.Errorf("the fallback identity must be reported by exactly one hook run, got %d", len(reports))
 	}
 }
 
@@ -249,7 +253,15 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	})
 
 	if _, err := os.Stat(e.TranscriptPath(sub, "moved-04")); err == nil {
-		t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+		if harness.HasCap(t, harness.CapResumeFromOtherDirectory) {
+			t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+		}
+		// This harness names a conversation by an id of its own, whichever directory a turn
+		// runs in: resumed from below, the session still resolves to the one it began as.
+		if got, want := e.SessionIdentity(sub, "moved-04"), e.SessionIdentity(proj, "moved-04"); got != want || want == "" {
+			t.Errorf("resumed from below, the session resolves to %q, want %q", got, want)
+		}
+		return
 	}
 	// Asked with the path the harness reports from below — which does not
 	// exist — the engine finds the record where the session began.
