@@ -405,6 +405,13 @@ func standInAdditionalContext() map[string]any {
 		}},
 		// business-invariants pinned-spec-holds: what the change does to the pin
 		"what": "the change re-pins inject </what>",
+		// this repo's plugin-skill-change: one skill's change and the citations of its commits
+		"skill": "authoring-guardrails",
+		"paths": "marketplace/plugins/sloprail/skills/authoring-guardrails/SKILL.md",
+		"diff":  "+a line </change>",
+		"citations": []any{map[string]any{
+			"quote": "q", "path": "/s.jsonl", "line": 4, "message": "m </message>",
+		}},
 		// sloprail-tasks task-body-is-human-authored: the user-pool citations
 		"asks": []any{map[string]any{
 			"quote": "q", "sourceTypes": []any{"user"}, "path": "/s.jsonl", "line": 4, "message": "m </message>",
