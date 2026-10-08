@@ -64,10 +64,11 @@ type Options struct {
 	// does, however quiet the screen. Nil means no such check.
 	Answered func() bool
 
-	// Stuck is how long the record and the screen may be quiet, with no new process running,
-	// while the record does not end with an answer, before the turn is given up as hung
-	// (default 10m).
-	Stuck time.Duration
+	// BlockedAfter is how long the record and the screen may be quiet, with no new process
+	// running, while the record does not end with the agent's answer, before the agent is taken
+	// to be waiting for the person at the terminal (a question it asks, an approval): the turn
+	// then returns ErrBlocked, for the caller to answer on the screen (default 60s).
+	BlockedAfter time.Duration
 
 	// Settle is how long the record and the screen must both be quiet, with no new process
 	// running, for a turn to have ended (default 10s).
@@ -95,11 +96,11 @@ func (o *Options) defaults() {
 	}
 	set(&o.Settle, 10*time.Second)
 	set(&o.ProcSettle, 3*time.Minute)
-	set(&o.Stuck, 10*time.Minute)
+	set(&o.BlockedAfter, time.Minute)
 	set(&o.Poll, 250*time.Millisecond)
 	set(&o.ReadyTimeout, 90*time.Second)
 	set(&o.SubmitTimeout, time.Minute)
-	set(&o.TurnTimeout, 30*time.Minute)
+	set(&o.TurnTimeout, 20*time.Minute)
 	set(&o.ExitTimeout, time.Minute)
 	if o.Spec.Rows == 0 || o.Spec.Cols == 0 {
 		o.Spec.Rows, o.Spec.Cols = 50, 160

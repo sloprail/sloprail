@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -95,7 +96,16 @@ func (r *tuiRun) run(ctx context.Context) tuiOutcome {
 		return fail(err)
 	}
 	fmt.Fprintf(r.out, "sr-eval: interactive session is live; turn 1, prompt.md\n")
-	if err := sess.Turn(ctx, r.prompt); err != nil {
+	err = sess.Turn(ctx, r.prompt)
+	if errors.Is(err, tuidrive.ErrBlocked) {
+		// The agent asked something at the terminal (a question, an approval) and waits for a
+		// person. A simulated user answers it below; a fixture with none ends here, as a
+		// one-shot run ends with the question as its last output.
+		fmt.Fprintf(r.out, "sr-eval: the agent is waiting at the terminal for the user\n")
+		if r.maxTurns < 2 {
+			out.errs = append(out.errs, "the agent was waiting at the terminal for an answer and the fixture has no simulated user (user:)")
+		}
+	} else if err != nil {
 		return fail(err)
 	}
 
@@ -119,7 +129,9 @@ func (r *tuiRun) run(ctx context.Context) tuiOutcome {
 		}
 		fmt.Fprintf(r.out, "sr-eval: turn %d, the simulated user operated the terminal\n", turn)
 		// What the user did may have started a turn; it is over before the user looks again.
-		if err := sess.AwaitIdle(ctx); err != nil {
+		if err := sess.AwaitIdle(ctx); errors.Is(err, tuidrive.ErrBlocked) {
+			continue // it is waiting again: the user looks at the screen and answers
+		} else if err != nil {
 			out.errs = append(out.errs, err.Error())
 			fmt.Fprintf(r.errs, "sr-eval: %v\n", err)
 			break

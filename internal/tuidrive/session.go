@@ -19,6 +19,12 @@ import (
 // ErrExited is returned when the harness ended before the driver asked it to.
 var ErrExited = errors.New("tuidrive: the harness exited before the session was over")
 
+// ErrBlocked is returned when the agent has stopped mid-turn and is waiting at the terminal
+// for the person: a question widget, an approval. Nothing will happen until a key is pressed,
+// so waiting longer is not an answer. The caller reads the screen (Frame) and either answers
+// it (Key, Type, then AwaitIdle again) or gives the turn up.
+var ErrBlocked = errors.New("tuidrive: the agent is waiting for the user at the terminal")
+
 // Session is one interactive run on a pseudo-terminal.
 type Session struct {
 	opts     Options
@@ -237,8 +243,8 @@ func (s *Session) ended(ctx context.Context, known map[int]bool) error {
 			continue
 		}
 		if s.opts.Answered != nil && !s.opts.Answered() {
-			if !busy && quiet >= s.opts.Stuck {
-				return s.fail(fmt.Errorf("tuidrive: the agent went quiet for %s mid-turn: the session record does not end with its answer", s.opts.Stuck))
+			if !busy && quiet >= s.opts.BlockedAfter {
+				return s.fail(fmt.Errorf("%w: quiet for %s with the session record not ending in its answer", ErrBlocked, quiet.Round(time.Second)))
 			}
 			continue
 		}

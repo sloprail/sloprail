@@ -104,6 +104,20 @@ func fakeTurn(record, prompt string) {
 		os.Exit(3)
 	}
 	appendRecord(record, text("user", prompt))
+	for os.Getenv("FAKE_SPIN") != "" { // a spinner: the screen never stops changing
+		fmt.Print(".")
+		time.Sleep(50 * time.Millisecond)
+	}
+	if os.Getenv("FAKE_ASK") != "" { // a question widget: a call whose answer only the person gives
+		appendRecord(record, map[string]any{"role": "assistant", "tool_use": "AskQuestion"})
+		fmt.Print("\r\nQuestion 1 of 1\r\n")
+		one := make([]byte, 1)
+		for {
+			if _, err := os.Stdin.Read(one); err != nil || one[0] == '\r' {
+				break
+			}
+		}
+	}
 	time.Sleep(envMs("FAKE_WORK_MS"))
 	if d := envMs("FAKE_TOOL_MS"); d > 0 { // a tool call, whose outcome the record never holds
 		appendRecord(record, map[string]any{"role": "assistant", "tool_use": "Shell"})

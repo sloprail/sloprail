@@ -103,6 +103,16 @@ func fakeCursorTUI() {
 				typed.Reset()
 				jsonLine(record, say("user", "<user_query>\n"+p+"\n</user_query>"))
 				time.Sleep(100 * time.Millisecond)
+				if os.Getenv("SRE_TEST_ASK") != "" { // a question only the person answers
+					jsonLine(record, map[string]any{"role": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "tool_use", "name": "AskQuestion", "input": map[string]any{}}}}})
+					fmt.Print("\r\nQUESTION: proceed?\r\n")
+					one := make([]byte, 1)
+					for {
+						if _, err := os.Stdin.Read(one); err != nil || one[0] == '\r' {
+							break
+						}
+					}
+				}
 				jsonLine(record, say("assistant", "ANSWER to "+strings.SplitN(p, "\n", 2)[0]))
 				fmt.Printf("\r\nANSWER to %s\r\n", strings.SplitN(p, "\n", 2)[0])
 			default:
@@ -117,6 +127,18 @@ func fakeCursorTUI() {
 // fakeUser: round one types a reply and says the conversation goes on; round two is done.
 func fakeUser() {
 	prompt := os.Args[len(os.Args)-1]
+	if os.Getenv("SRE_TEST_ASK") != "" { // the screen shows the agent's question: answer it
+		if !strings.Contains(prompt, "QUESTION: proceed?") {
+			fmt.Fprintln(os.Stderr, "the user was not shown the question")
+			os.Exit(1)
+		}
+		if out, err := exec.Command(filepath.Join(os.Getenv("SRE_TEST_BIN"), "sr-eval"), "tui", "key", "enter").CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n%s", err, out)
+			os.Exit(1)
+		}
+		fmt.Println(`{"done": true}`)
+		return
+	}
 	if !strings.Contains(prompt, "ANSWER to first") || !strings.Contains(prompt, "<screen>") {
 		fmt.Fprintln(os.Stderr, "the user was not shown the screen after the prompt was sent")
 		os.Exit(1)
@@ -196,6 +218,65 @@ func TestTUICommandsNeedASession(t *testing.T) {
 // `sr-eval tui`, and the session is quit. One session holds both turns; the archive gets the
 // user's calls with the frames they returned.
 func TestTUIRun_OneSessionPromptThenTheSimulatedUserAtTheTerminal(t *testing.T) {
+	r, errs, rec := newTUITestRun(t, 3)
+	o := r.run(context.Background())
+	if len(o.errs) != 0 {
+		t.Fatalf("errors: %v\nstderr: %s", o.errs, errs.String())
+	}
+	body, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"first\\nsecond line of the prompt", "second message", "ANSWER to second message"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the one session record lacks %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(string(body), `"turn_ended"`) {
+		t.Error("the session did not end through the TUI's own quit")
+	}
+	calls := string(o.files["tui/calls.txt"])
+	for _, want := range []string{"call 1: type", `"second message"`, "call 2: key enter", "ANSWER to second message", "matched: true"} {
+		if !strings.Contains(calls, want) {
+			t.Errorf("the archive's account of the user's calls lacks %q:\n%s", want, calls)
+		}
+	}
+	if !strings.Contains(string(o.files["tui/final-screen.txt"]), "ANSWER to second message") {
+		t.Errorf("final screen: %s", o.files["tui/final-screen.txt"])
+	}
+}
+
+// A question the agent asks at the terminal does not hold the run: the turn returns as
+// waiting, the simulated user is shown the question and answers it with a key, and the turn
+// goes on to its answer. A fixture with no simulated user records that nobody answered.
+func TestTUIRun_AQuestionAtTheTerminalIsAnsweredByTheSimulatedUser(t *testing.T) {
+	t.Setenv("SRE_TEST_ASK", "1")
+	r, errs, rec := newTUITestRun(t, 3)
+	r.opts.BlockedAfter = 800 * time.Millisecond
+	o := r.run(context.Background())
+	if len(o.errs) != 0 {
+		t.Fatalf("errors: %v\nstderr: %s", o.errs, errs.String())
+	}
+	body, _ := os.ReadFile(rec)
+	if !strings.Contains(string(body), "ANSWER to first") {
+		t.Fatalf("the turn did not go on after the user answered:\n%s", body)
+	}
+	if !strings.Contains(string(o.files["tui/calls.txt"]), "call 1: key enter") {
+		t.Errorf("the user's answer is not archived:\n%s", o.files["tui/calls.txt"])
+	}
+
+	r, _, _ = newTUITestRun(t, 1)
+	r.opts.BlockedAfter = 800 * time.Millisecond
+	o = r.run(context.Background())
+	if len(o.errs) == 0 || !strings.Contains(o.errs[0], "no simulated user") {
+		t.Fatalf("an unanswered question must be recorded, got %v", o.errs)
+	}
+}
+
+// newTUITestRun is a TUI run of the stand-in programs (see TestMain) in a temp workspace; rec
+// is where the stand-in TUI keeps the session record.
+func newTUITestRun(t *testing.T, maxTurns int) (r *tuiRun, errs *bytes.Buffer, rec string) {
+	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	project := filepath.Join(root, "project")
@@ -221,45 +302,21 @@ func TestTUIRun_OneSessionPromptThenTheSimulatedUserAtTheTerminal(t *testing.T) 
 	h, _ := harness.Lookup("cursor")
 	inter, _ := interactiveOf(h)
 	ws := &workspace{root: root, project: project}
-	var out, errs bytes.Buffer
-	r := &tuiRun{
+	var out bytes.Buffer
+	errs = &bytes.Buffer{}
+	r = &tuiRun{
 		h: h, inter: inter, harnessID: "cursor",
-		fx: Fixture{Model: "m", User: &SimulatedUser{MaxTurns: 3}},
+		fx: Fixture{Model: "m", User: &SimulatedUser{MaxTurns: maxTurns}},
 		ws: ws,
 		agent: agentEnv{home: home, configDir: filepath.Join(home, ".cursor"), binDir: bin,
 			env: append(os.Environ(), "HOME="+home, "SRE_TEST_STATE="+state, "TERM=xterm-256color")},
-		binDir: bin, prompt: "first\nsecond line of the prompt", brief: "reply once", maxTurns: 3,
-		out: &out, errs: &errs,
+		binDir: bin, prompt: "first\nsecond line of the prompt", brief: "reply once", maxTurns: maxTurns,
+		out: &out, errs: errs,
 		opts: tuidrive.Options{Settle: 400 * time.Millisecond, Poll: 50 * time.Millisecond, ReadyTimeout: 15 * time.Second,
 			SubmitTimeout: 10 * time.Second, TurnTimeout: 30 * time.Second, ExitTimeout: 10 * time.Second},
 	}
-	o := r.run(context.Background())
-	if len(o.errs) != 0 {
-		t.Fatalf("errors: %v\nstderr: %s", o.errs, errs.String())
-	}
-
-	rec := filepath.Join(cursorrecord.ProjectDir(filepath.Join(home, ".cursor"), transcript.ResolveWorkDir(project)), "agent-transcripts", "chat1", "chat1.jsonl")
-	body, err := os.ReadFile(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"first\\nsecond line of the prompt", "second message", "ANSWER to second message"} {
-		if !strings.Contains(string(body), want) {
-			t.Errorf("the one session record lacks %q:\n%s", want, body)
-		}
-	}
-	if !strings.Contains(string(body), `"turn_ended"`) {
-		t.Error("the session did not end through the TUI's own quit")
-	}
-	calls := string(o.files["tui/calls.txt"])
-	for _, want := range []string{"call 1: type", `"second message"`, "call 2: key enter", "ANSWER to second message", "matched: true"} {
-		if !strings.Contains(calls, want) {
-			t.Errorf("the archive's account of the user's calls lacks %q:\n%s", want, calls)
-		}
-	}
-	if !strings.Contains(string(o.files["tui/final-screen.txt"]), "ANSWER to second message") {
-		t.Errorf("final screen: %s", o.files["tui/final-screen.txt"])
-	}
+	rec = filepath.Join(cursorrecord.ProjectDir(filepath.Join(home, ".cursor"), transcript.ResolveWorkDir(project)), "agent-transcripts", "chat1", "chat1.jsonl")
+	return r, errs, rec
 }
 
 // The grant is a bare command base: the form a harness like Cursor can express (it refused

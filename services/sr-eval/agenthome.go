@@ -134,6 +134,8 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	}
 
 	env := baseAgentEnv(h, os.Environ(), home, tmp, fresh)
+	roots := hostRoots(repoRootDir)
+	env = withoutHostPaths(env, roots)
 
 	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home)}
 
@@ -156,7 +158,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 		if os.Getenv("GOPATH") == "" {
 			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
 		}
-		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+cleanPath(os.Getenv("PATH"), roots))
 		return ae, nil
 	}
 
@@ -164,6 +166,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	if err != nil {
 		return agentEnv{}, err
 	}
+	path = cleanPath(path, roots)
 	ae.releaseURL = "file://" + releaseDir
 	ae.env = append(env, "PATH="+path,
 		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")

@@ -236,6 +236,56 @@ func TestPromptNotAcceptedIsNamed(t *testing.T) {
 	}
 }
 
+// A question the agent asks at the terminal is a turn that cannot end by waiting: the record
+// ends in a call only the person answers. It returns ErrBlocked, with the question on the
+// screen, and once the person answers (Enter) the turn goes on to its end.
+func TestAgentWaitingForTheUserReturnsBlockedThenContinuesWhenAnswered(t *testing.T) {
+	f, cmd := newFake(t, "FAKE_ASK=1")
+	f.opts.BlockedAfter = 600 * time.Millisecond
+	s := f.start(cmd)
+	ctx := context.Background()
+	if err := s.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Turn(ctx, "work")
+	if !errors.Is(err, ErrBlocked) || !strings.Contains(err.Error(), "Question 1 of 1") {
+		t.Fatalf("want ErrBlocked with the question on the screen, got %v", err)
+	}
+	if !strings.Contains(s.Frame(), "Question 1 of 1") {
+		t.Fatalf("the frame must show the question:\n%s", s.Frame())
+	}
+	if err := s.Key("enter"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AwaitIdle(ctx); err != nil {
+		t.Fatalf("after the answer the turn must end: %v", err)
+	}
+	if !f.answered() {
+		t.Fatalf("record: %v", f.records())
+	}
+	_ = s.Quit(ctx)
+}
+
+// The hard ceiling: a screen that never stops changing (a spinner that never ends) fails the
+// turn loudly instead of holding the run.
+func TestTurnCeilingFailsALoudHang(t *testing.T) {
+	f, cmd := newFake(t, "FAKE_SPIN=1")
+	f.opts.TurnTimeout = 1500 * time.Millisecond
+	s := f.start(cmd)
+	ctx := context.Background()
+	if err := s.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := s.Turn(ctx, "work")
+	if err == nil || !strings.Contains(err.Error(), "did not end within") || errors.Is(err, ErrBlocked) {
+		t.Fatalf("want the turn ceiling, got %v", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("the ceiling took %s", time.Since(start))
+	}
+}
+
 func TestSpecIsCheckedBeforeAnythingRuns(t *testing.T) {
 	for name, spec := range map[string]Spec{
 		"no ready":    {Quit: cursorLike.Quit},
