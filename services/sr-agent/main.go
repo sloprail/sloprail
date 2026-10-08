@@ -156,6 +156,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
 	cmd.Flags().Bool("agent-run", false,
 		"Run as the agent UNDER TEST rather than as a judge: the project's hooks and plugins stay live and the run is unattended (what sr-eval launches)")
+	cmd.Flags().Bool("interactive", false,
+		"With --agent-run: run the harness in its interactive (TUI) mode, on the terminal sr-agent itself runs on, for a caller that drives it there (sr-eval does, on a pseudo-terminal). Takes no prompt: the caller types it. For a harness whose hooks fire only in the TUI")
 	cmd.Flags().String("resume", "",
 		"With --agent-run: resume the session with this exact id (the harness's own session/thread/chat id), so a multi-turn run lands in one record")
 	cmd.Flags().String("claude-args", "",
@@ -222,19 +224,33 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if fromStdin, _ := cmd.Flags().GetBool("prompt-stdin"); fromStdin {
-		if len(args) > 0 || strings.TrimSpace(promptFlag) != "" {
-			return errors.New("--prompt-stdin reads the prompt from stdin; a positional or --prompt prompt as well would disagree with it, so pass only one")
+	agentRun, _ := cmd.Flags().GetBool("agent-run")
+	interactive, _ := cmd.Flags().GetBool("interactive")
+	fromStdin, _ := cmd.Flags().GetBool("prompt-stdin")
+	var prompt string
+	if interactive {
+		// The caller types the prompt on the terminal this runs on.
+		if !agentRun {
+			return errors.New("--interactive is the agent under test's interactive mode, so it goes with --agent-run: a judge is always one-shot")
 		}
-		body, err := io.ReadAll(cmd.InOrStdin())
-		if err != nil {
-			return fmt.Errorf("reading the prompt from stdin: %w", err)
+		if len(args) > 0 || strings.TrimSpace(promptFlag) != "" || fromStdin {
+			return errors.New("--interactive takes no prompt: the caller types it on the terminal, so a prompt given here would be asked twice")
 		}
-		promptFlag = string(body)
-	}
-	prompt, err := resolvePrompt(args, promptFlag)
-	if err != nil {
-		return err
+	} else {
+		if fromStdin {
+			if len(args) > 0 || strings.TrimSpace(promptFlag) != "" {
+				return errors.New("--prompt-stdin reads the prompt from stdin; a positional or --prompt prompt as well would disagree with it, so pass only one")
+			}
+			body, err := io.ReadAll(cmd.InOrStdin())
+			if err != nil {
+				return fmt.Errorf("reading the prompt from stdin: %w", err)
+			}
+			promptFlag = string(body)
+		}
+		var err error
+		if prompt, err = resolvePrompt(args, promptFlag); err != nil {
+			return err
+		}
 	}
 
 	spec, err := ResolveHarness(harnessFlag, os.Getenv)
@@ -242,16 +258,18 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	agentRun, _ := cmd.Flags().GetBool("agent-run")
 	resumeID, _ := cmd.Flags().GetString("resume")
 	if resumeID != "" && !agentRun {
 		return errors.New("--resume resumes the agent under test's session, so it goes with --agent-run")
+	}
+	if resumeID != "" && interactive {
+		return errors.New("--resume goes with the one-shot run: an interactive session is one conversation, started once and given every turn")
 	}
 	if agentRun {
 		if cmd.Flags().Changed("verify") {
 			return errors.New("--agent-run is the agent under test; --verify is for a judge, so pass only one")
 		}
-		if spec, err = spec.forAgentRun(resumeID); err != nil {
+		if spec, err = spec.forAgentRun(resumeID, interactive); err != nil {
 			return err
 		}
 	}
@@ -341,7 +359,12 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	defer cleanupGrant()
 	harnessArgs = append(harnessArgs, envArgs...)
 
-	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt, os.Getenv)
+	var inv Invocation
+	if interactive {
+		inv = BuildInteractiveInvocation(spec, resolution.Model, harnessArgs, os.Getenv)
+	} else {
+		inv = BuildInvocation(spec, resolution.Model, harnessArgs, prompt, os.Getenv)
+	}
 	inv.Env = grantEnv
 
 	if dryRun {
@@ -349,6 +372,9 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if interactive {
+		return runInteractiveHarness(cmd, inv)
+	}
 	return runHarness(cmd, inv)
 }
 

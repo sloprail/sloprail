@@ -47,10 +47,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
+	// The agent-under-test can read the process table: keep host paths out of our argv.
+	settleArgv()
+	// A run that is stopped (Ctrl-C, kill) ends every agent, simulated user and scorer it
+	// started: each is registered with procgroup. An orphaned one runs on, and bills.
+	procgroup.ExitOnSignal(nil)
 	err := newRoot().Execute()
 	if err != nil {
 		if err.Error() != "" {
@@ -74,6 +80,15 @@ happened — not what a mock was scripted to produce.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(newRunCmd(), newArchiveCmd())
+	cmd.AddCommand(newRunCmd(), newArchiveCmd(), newTUICmd())
 	return cmd
+}
+
+// settleArgv runs once per process: the re-executed process restores its real arguments, the
+// first one hides them (re-executing). Never both: restored arguments hidden again would
+// re-execute forever.
+func settleArgv() {
+	if !restoreArgv() {
+		hideArgv()
+	}
 }

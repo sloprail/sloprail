@@ -114,9 +114,12 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 			continue
 		}
 		dst := filepath.Join(home, name)
-		if info.IsDir() {
+		switch {
+		case info.IsDir():
 			err = copyTree(src, dst)
-		} else {
+		case name == ".gitconfig":
+			err = copyGlobalConfig(src, dst, append(hostRoots(repoRootDir), realHome))
+		default:
 			err = copyFile(src, dst)
 		}
 		if err != nil {
@@ -134,6 +137,8 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	}
 
 	env := baseAgentEnv(h, os.Environ(), home, tmp, fresh)
+	roots := hostRoots(repoRootDir)
+	env = withoutHostPaths(env, roots)
 
 	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home)}
 
@@ -156,7 +161,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 		if os.Getenv("GOPATH") == "" {
 			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
 		}
-		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+cleanPath(os.Getenv("PATH"), roots))
 		return ae, nil
 	}
 
@@ -164,6 +169,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	if err != nil {
 		return agentEnv{}, err
 	}
+	path = cleanPath(path, roots)
 	ae.releaseURL = "file://" + releaseDir
 	ae.env = append(env, "PATH="+path,
 		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
@@ -231,7 +237,7 @@ func buildRelease(ctx context.Context, repoRoot, dir string) error {
 		return err
 	}
 	for _, name := range sloprailBinaries {
-		build := exec.CommandContext(ctx, "go", "build", "-o", filepath.Join(stage, name), "./services/"+name)
+		build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", filepath.Join(stage, name), "./services/"+name)
 		build.Dir = repoRoot
 		build.Env = append(os.Environ(), "CGO_ENABLED=0")
 		if out, err := build.CombinedOutput(); err != nil {

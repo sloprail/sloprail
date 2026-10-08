@@ -331,7 +331,7 @@
             "path": "sr-session trajectory normalize",
             "use": "normalize",
             "short": "The trajectory as normalized entries, each carrying the events re-derived from it",
-            "long": "Read a trajectory as normalized entries, each enriched with the events\nre-derived from it.\n\nEach entry is the normalized Entry (spread whole — type, uuid, isSidechain,\nmessage and the rest) plus two fields: its 1-based physical line in the file,\nand the events re-derived FROM it. One assistant entry with three tool calls\nyields three events; an entry that yields none carries an empty array.\n\nOnly what can be RE-DERIVED from the record populates events — the pre-action\nfile and command events, and tags (PostTagWrite). Not the git-observed Post file\nevents, not PreToolUse, not Stop.\n\n  --path <PATH>          which trajectory to read; defaults to the hooked-in one\n  --events <Kind,...>    which event kinds populate each entry's events, named by\n                         the event's own kind (PreCommandInvoke, PostTagWrite,\n                         PreFileCreate, PreFileUpdate, PreFileDelete). Absent\n                         means every re-derivable kind; a kind normalize cannot\n                         re-derive is refused here.\n  --whole-session        read the entire record, not just the part no cycle has\n                         judged yet\n  --ran-only             keep only the tool calls that RAN: a call with no\n                         tool_result, or whose result is the harness saying it\n                         never ran (a hook block, a permission denied, an\n                         interrupt, a <tool_use_error>), is in the record as a\n                         tool_use but did nothing\n\nThe answer is NormalizedEntry[] as JSON, for whatever the hook already uses to\nread JSON.",
+            "long": "Read a trajectory as normalized entries, each enriched with the events\nre-derived from it.\n\nEach entry is the normalized Entry (spread whole — type, uuid, isSidechain,\nmessage and the rest) plus two fields: its 1-based physical line in the file,\nand the events re-derived FROM it. One assistant entry with three tool calls\nyields three events; an entry that yields none carries an empty array.\n\nOnly what can be RE-DERIVED from the record populates events — the pre-action\nfile and command events, and tags (PostTagWrite). Not the git-observed Post file\nevents, not PreToolUse, not Stop.\n\n  --path <PATH>          which trajectory to read; defaults to the hooked-in one\n  --root <DIR>           the workspace a record that names no working directory of\n                         its own (Cursor's) is read against, so its file paths are\n                         reported relative to it; without it nothing is assumed\n  --events <Kind,...>    which event kinds populate each entry's events, named by\n                         the event's own kind (PreCommandInvoke, PostTagWrite,\n                         PreFileCreate, PreFileUpdate, PreFileDelete). Absent\n                         means every re-derivable kind; a kind normalize cannot\n                         re-derive is refused here.\n  --whole-session        read the entire record, not just the part no cycle has\n                         judged yet\n  --ran-only             keep only the tool calls that RAN: a call with no\n                         tool_result, or whose result is the harness saying it\n                         never ran (a hook block, a permission denied, an\n                         interrupt, a <tool_use_error>), is in the record as a\n                         tool_use but did nothing\n\nThe answer is NormalizedEntry[] as JSON, for whatever the hook already uses to\nread JSON.",
             "flags": [
               {
                 "name": "events",
@@ -346,6 +346,10 @@
                 "name": "ran-only",
                 "default": "false",
                 "usage": "Keep only tool calls that ran (not refused, denied, interrupted, or left without a result)"
+              },
+              {
+                "name": "root",
+                "usage": "The workspace a record that names no cwd (Cursor's) is read against; without it such a record's file paths are not made relative"
               },
               {
                 "name": "whole-session",
@@ -550,6 +554,11 @@
       {
         "name": "harness",
         "usage": "Run this harness instead of the one the environment names (claude, codex, cursor)"
+      },
+      {
+        "name": "interactive",
+        "default": "false",
+        "usage": "With --agent-run: run the harness in its interactive (TUI) mode, on the terminal sr-agent itself runs on, for a caller that drives it there (sr-eval does, on a pseudo-terminal). Takes no prompt: the caller types it. For a harness whose hooks fire only in the TUI"
       },
       {
         "name": "model",

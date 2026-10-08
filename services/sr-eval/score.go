@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/sloprail/sloprail/internal/harness"
+	"github.com/sloprail/sloprail/internal/procgroup"
 	"os"
 	"os/exec"
 	"strings"
@@ -98,7 +99,7 @@ func score(ctx context.Context, fx Fixture, ws *workspace, harnessID, transcript
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	runErr := cmd.Run()
+	runErr := procgroup.Run(cmd, true)
 	res := scoreResult{Stdout: []byte(stdout.String()), Stderr: []byte(stderr.String())}
 	// Read whatever verdict the scorer wrote regardless of its exit code — a
 	// scorer that fails may still have recorded exactly which check failed
