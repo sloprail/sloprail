@@ -177,11 +177,26 @@ func TestT055_09_ARootWithoutRulesStillVerifiesASubagentsRange(t *testing.T) {
 		Bash("sb1", "mkdir -p "+other+"/docs && echo hi > "+other+"/docs/a.md && git -C "+other+" add -A && git -C "+other+" commit -q -m 'the sub-agent work'"),
 	))
 
-	e.Run(proj, sess, "delegate", Turns("root done",
-		harness.Dispatch("d1", "write the doc elsewhere", script, ""),
-	))
+	linked := harness.HasCap(t, harness.CapSubagentParentLink)
+	turns := []harness.Turn{harness.Dispatch("d1", "write the doc elsewhere", script, "")}
+	if !linked {
+		// The premise that the root's Stop runs and judges: the root has a rule of its own
+		// and owes a commit under it, so its Stop refuses with that rule's words. Without
+		// it, "the sub-agent's verdict is absent" would also hold of a Stop that never ran.
+		e.FileGuard(proj, "docs", "match: \"docs/**\"\nchecks:\n  - script: ./refuse.sh\n",
+			map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"ROOT-OWN-VERDICT\"}'\nexit 1\n"})
+		e.CommitAll(proj, "the root's rule")
+		turns = append([]harness.Turn{
+			Bash("rb0", "git -C "+proj+" commit -q --allow-empty -m 'register this folder'"),
+			Bash("rb1", "mkdir -p "+proj+"/docs && echo hi > "+proj+"/docs/r.md && git -C "+proj+" add -A && git -C "+proj+" commit -q -m 'the root work'"),
+		}, turns...)
+	}
+	e.Run(proj, sess, "delegate", Turns("root done", turns...))
 	got := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !harness.HasCap(t, harness.CapSubagentParentLink) {
+	if !linked {
+		if !strings.Contains(got, "ROOT-OWN-VERDICT") {
+			t.Fatalf("premise: the root's Stop did not run its own rule:\n%s", got)
+		}
 		// The sub-agent's record names no parent, so its range is not the root's to report.
 		if strings.Contains(got, "SUBAGENT-RANGE-VERDICT") {
 			t.Fatalf("a sub-agent linked to no parent had its range reported by the root's Stop:\n%s", got)
