@@ -1,0 +1,11 @@
+# A skill shipped in the sloprail plugin holds what its readers need and nothing else, each fact in
+# one place, written so a person reading it in the docs reads it as easily as an agent. What a
+# skill covers is that skill's brief, briefs/<skill>.md beside this file; the standard every skill
+# meets is the judge template. A skill is judged whole (all its files, not only the changed ones),
+# since a fact repeated across two files is visible only to a judge that reads both.
+match: path startsWith "marketplace/plugins/sloprail/skills/"
+subjects: ./subjects.sh
+checks:
+  - prepare: ./prepare.sh
+    judge: ./judge-skill.md.j2
+    model: size-md

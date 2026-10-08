@@ -1,0 +1,7 @@
+# Refuses a write that would leave a file of a skill in the sloprail plugin over 200 lines. The
+# cap is the file-guard's line-cap-lib.sh; that file-guard judges what was committed.
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "marketplace/plugins/sloprail/skills/"'
+checks:
+  - script: ./check.sh

@@ -1,184 +1,106 @@
 # Writing a match
 
-A `match` narrows a rule to the occurrences it is about. It is an expression that
-must evaluate to a **boolean**, over the variables its scope exposes — no
-filesystem, no environment, no other events. Absent means "every occurrence".
+A `match` narrows a rule to what it is about: the files a file-guard judges, the events a
+gate or a context wakes on. It is an expression that must come out true or false. Without
+one, a gate or context trigger applies to every event of its kind; a file-guard must have
+one.
 
-A **misspelled declared field is caught at load**: the rule is refused by name
-and session start prints what the scope carries. You need not defend against that
-one — but see "the open reads" below for the ones that are *not* caught.
+Put all the narrowing in `match`. A check that re-tests whether the event concerns it
+duplicates the match, and the two drift apart.
 
-## The three scopes differ in what they expose
+## What a match can read
 
-This is the one thing to get right, because a file-guard and a gate read the same
-fact under different names.
+A file-guard and a gate read the same fact under different names. This is the mistake to
+avoid: `path` bare in a file-guard, `event.path` in a gate or a context.
 
-### File-guard: the file's own facts, **bare**
+### In a file-guard: the file's own facts
 
-A file-guard's `match` reasons about a file in the changeset, so it sees the file's
-facts directly:
-
-| variable | type | |
+| name | type | |
 |---|---|---|
-| `path` | string | the file's repository-relative path |
-| `status` | string | `A`, `M`, `D` or `R` — the file's net change across the range. A rename (`R`) is selected if `match` holds on its new path **or** on the path it came from, evaluated with `path` the old path and `markers` the ones it carried there |
-| `markers` | list | the `sr:` markers the file carries at `head`, elements `{kind, fqn, line}` (a deleted file's are the ones it carried) |
-| `oldMarkers` | list | the markers it carried at the range's base (empty on a create) |
-| `trailers` | map | each commit-message trailer key in the range to its list of values |
+| `path` | string | the file's path, relative to the repository root |
+| `status` | string | `A`, `M`, `D` or `R`: the file's net change across the commits |
+| `markers` | list | the `sr:` markers the file carries after the change, each `{kind, fqn, line}` |
+| `oldMarkers` | list | the markers it carried before |
+| `trailers` | map | each commit-message trailer in the range, to its list of values |
 
-There is **no `context`** here: a file-guard judges committed bytes, in CI, with no
-session, and a context is session state. A file-guard whose `match` reads `context`
-fails to load; put the condition on a gate (a gate's `match` reads `context`).
+A renamed file is selected when the match holds on its new path or its old one. A file-guard
+judges commits with no session, so it cannot read a context.
 
 ```
 path endsWith "SKILL.md"
-any(markers, .kind == "invariant")
-any(markers, .kind == "moved-from")
 any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
 status == "A" and "move-only" in (trailers["Sloprail-Refactor"] ?? [])
 ```
 
-The last form is how a rule sees a marker **leave**: an update that strips a
-file's last marker has `markers` empty, so `any(markers, …)` alone never selects
-the very write that removes what the rule guards.
+Read `oldMarkers` too when the rule guards a marker: the change that removes a file's last
+marker leaves `markers` empty, and `any(markers, .kind == "invariant")` alone would never
+select it.
 
-### Gate and context: the event, **nested under `event`**
+### In a gate or a context: the event, under `event`
 
-A gate's and a context's `match` sees the fired **event** under `event`, plus the
-context map:
-
-| variable | type | |
+| name | type | |
 |---|---|---|
-| `event` | structure | the fired event's own fields, typed to the trigger's kind |
-| `context` | map | every declared context, by name, `{active, payload}` |
+| `event` | structure | the event's fields, as its kind declares them ([events.md](events.md)) |
+| `context` | map | every declared context by name, each `{active, payload}` |
 
 ```
 event.path startsWith "memories/decisions/"
 any(event.invocations, .bin == "curl")
-any(event.tags, .label == "research")
 not context["tag-declared"].active
 ```
 
-`event`'s fields are exactly what the kind carries — `event.path` on a
-`PreFileWrite` trigger, `event.invocations` on a `PreCommandInvoke` one,
-`event.tags` on a `PostTagWrite` one. A name the kind does not declare
-(`event.paht`) is refused at load.
+A field the trigger's kind does not carry (`event.paht`, or `event.path` on a
+`PreCommandInvoke` trigger) fails to load.
 
-**So: `path` bare in a file-guard, `event.path` in a gate or context.** Writing
-`path` in a gate, or `event.path` in a file-guard, is the most common cross-nature
-mistake.
-
-Neither scope exposes a `gates` map — a gate's verdict is not readable from a
-`match`. (A context's `enter`/`exit` *scripts* do receive `.gates` on stdin, but
-that is the check payload, not the match scope.)
-
-## Operators on a `string`
-
-The shipped rules use the **word** forms of the boolean operators (`and`, `or`,
-`not`); the symbol forms (`&&`, `||`, `!`) also parse, but match the examples and
-prefer words.
+## Operators
 
 | | |
 |---|---|
-| `startsWith` | `path startsWith "memories/"` |
-| `endsWith` | `path endsWith ".md"` |
-| `contains` | `path contains "/decisions/"` |
-| `matches` | `path matches "^docs/[0-9]+-"` (regular expression) |
-| `and` `or` `not` | `path startsWith "src/" and not (path endsWith "_test.go")` |
-| `==` `!=` | `path == "README.md"` |
+| `startsWith`, `endsWith`, `contains` | `path startsWith "memories/"` |
+| `matches`, a regular expression | `path matches "^docs/[0-9]+-"` |
+| `==`, `!=` | `path == "README.md"` |
+| `and`, `or`, `not` | `path startsWith "src/" and not (path endsWith "_test.go")` |
+| `in` | `"next" in .flags.tag` |
 
-## A `list`
-
-Read with `any`, `all`, `none` and `len`:
+Read a list with `any`, `all`, `none` and `len`:
 
 ```
-any(event.invocations, .bin == "curl")
 not any(event.invocations, .bin == "npm")
 len(event.invocations) > 1
-any(markers, .kind == "invariant")
+any(event.invocations, .bin == "rm" and any(.argv, # == "-rf"))
 ```
 
-A `bool` field is used directly, in a gate trigger: `event.resultKnown and not
-(event.newContent contains "---")`.
+A `bool` field is used as it is: `event.resultKnown and not (event.newContent contains "---")`.
 
-Check the type printed beside each field — the groups are not interchangeable.
+## A glob, in a file-guard
 
-## The glob shorthand — file-guard only
-
-A file-guard's `match` may be written as a **bare glob** instead of an
-expression, for the common "this path" case:
+A file-guard may give a bare glob instead of an expression:
 
 ```yaml
 match: "**/*.md"
-match: "**/tasks/*/*/ASK.md"
 ```
 
-The two forms are told apart by shape alone: a string with **no whitespace and no
-quotes** is a glob; anything containing a space or a quote is an expression. So
-`**/*.md` is a glob, and `path endsWith ".md"` is an expression — quote the whole
-value in YAML when it starts with `*` so the parser does not choke.
+A value with no space and no quote is a glob; anything else is an expression. Quote it in YAML
+when it starts with `*`. `**` crosses folders, `*` matches within one, `?` is one character,
+and `[...]` is a character class. Braces are literal, so write alternatives as an expression
+with `or`. Gates and contexts have no glob form.
 
-The glob grammar (anchored over the whole path, `/`-separated):
+## Reads the loader cannot check
 
-| | |
-|---|---|
-| `**` | any run of characters **including** `/` — crosses directories, so `memories/**/*.md` reaches any depth |
-| `*` | any run **except** `/` — one path segment |
-| `?` | any single character except `/` |
-| `[...]` | a character class, passed through |
-| `.` | a literal dot (the common extension case) |
+The loader refuses a misspelled field, including one inside a list predicate
+(`any(event.invocations, .bni == …)`). Two reads it cannot check, so a typo there is
+false forever and the rule never fires. Cause the event and watch the rule fire before
+trusting either:
 
-Brace alternation `{a,b}` is **not** expanded — a brace is a literal. A rule that
-needs alternation writes the expression form with `or`.
+- **A context name.** Contexts are named by the project, so `context["reserch-run"].active`,
+  misspelled, reads as absent rather than failing.
+- **A command's flag.** Flag names belong to the command, so `.flags.tagg` reads as an empty
+  list. A flag's values are always a list: write `"next" in .flags.tag`, never
+  `.flags.tag == "next"`, which fails to load.
 
-**Gates and contexts have no glob shorthand** — their scope is not "a file at a
-path", so they always write the expression: `event.path startsWith "…"`. Even a
-file-guard often wants the expression, to combine a path test with a marker or a
-`resultKnown` guard.
+## A match that cannot be evaluated refuses
 
-## The open reads — not caught at load
-
-Two places a `match` is checked against nothing, so a typo evaluates false forever
-and the rule silently never fires. Neither is a load error; **cause the event and
-watch it fire** before believing either.
-
-- **`context[...]`.** Context names are project-defined, unknown when the scope is
-  built, so the map is left open — `context["reserch-run"].active` (misspelled)
-  reads as absent, not as an error. This is the run-time cost of not punishing an
-  author for a name the engine cannot know.
-- **A flag off an invocation.** `event.invocations[].flags` belongs to the command
-  being run, not the engine, so a key read off it is verified against nothing. A
-  mistyped or non-existent flag compiles and reads as an empty list, so
-  `"next" in .flags.tag`, `len(.flags.tag) > 0` and `any(.flags.tag, …)` answer
-  false rather than error. Its values are declared (a list of strings each), so
-  `.flags.tag == "next"` is refused at load; `"next" in .flags.tag` is the match.
-
-The **inside of a list is checked** where its element shape is declared:
-`any(markers, .knid == …)` and `any(event.invocations, .bni == …)` are refused at
-load with the real keys named. Only the two open maps above escape that.
-
-## A match that ERRORS refuses — fail closed
-
-A `match` that **compiles** but cannot be **evaluated** against a given event — a
-field arriving at the wrong type, so `42 startsWith "x"` has no truth value — is
-not treated as "did not match". The engine cannot *answer* whether the rule
-applies, and inventing an answer in either direction is the engine deciding
-enforcement on its own account. So it **refuses the action** and says why:
-
-    the file-guard "…" could not be evaluated: its match "…" could not be
-    evaluated against this PreFileUpdate (…); refusing because a guard that
-    could not decide must not be read as approval
-
-This is fail-closed, and it is recent — an earlier version skipped the binding and
-let the write through, which is exactly the silent no-op this engine exists to
-prevent. The practical consequence for you: **a match must be answerable**. A
-field the kind declares but the event omits is filled with its type's zero value
-(so `newContent == ""` still works on an empty file); a field carried at the wrong
-type errors and refuses. You do not write anything special for this — but know
-that a broken match blocks rather than waves things through.
-
-## Narrowing is the match's job, not the check's
-
-A check that re-verifies whether the event concerns it re-implements its own
-match, and the two will drift. Put the narrowing in `match` and let the check
-assume it applies.
+A match that loads but cannot be evaluated for a given event, such as a field arriving with
+the wrong type, does not count as "did not match". The rule cannot tell whether it applies,
+so the action is refused with a message saying so. A broken match blocks; it never waves
+things through.
