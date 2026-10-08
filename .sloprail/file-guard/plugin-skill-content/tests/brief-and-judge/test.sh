@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # plugin-skill-content over a committed range, each refusal beside its permitted neighbour:
-# 1. a skill with no brief is refused naming the brief to write, and no judge runs.
+# 1. a skill with no brief is refused naming the brief to write, and no judge runs; with the
+#    brief written, it passes.
 # 2. the judge is handed the whole skill and its brief: a change to one of its two files sends both.
 #    A file naming sloprail's source is refused with the judge's reasoning; cut, it passes.
 # 3. the brief is part of the verdict: the same skill over the same brief is not judged again,
@@ -40,6 +41,10 @@ commit other
 if run "$BASE"; then dump "1: a skill with no brief passed"; fi
 refused "has no brief. Write $B/other.md" || dump "1: no refusal naming $B/other.md"
 [ ! -s "$JUDGE_LOG" ] || dump "1: the judge ran on a skill with no brief"
+printf '# other\n\nOTHER-BRIEF: readers write other rules.\n' > "$B/other.md"
+commit other-brief
+run "$BASE" || dump "1: the skill was refused once its brief was written"
+passed || dump "1: no passed verdict once the brief exists"
 
 # 2. whole skill, judged
 git checkout -q -b judged "$BASE"
@@ -52,6 +57,10 @@ commit internals
 if run "$BASE"; then dump "2: a skill naming sloprail's source passed"; fi
 refused "MOCK: names sloprail source internal/dispatch" || dump "2: no refusal carrying the judge's reasoning"
 [ "$(cat "$JUDGE_LOG")" = "2 brief=yes" ] || dump "2: the judge was not handed both files and the brief: $(cat "$JUDGE_LOG")"
+skill 'The engine does this.'
+commit cut
+run "$BASE" || dump "2: the cut skill was refused"
+passed || dump "2: no passed verdict for the cut skill"
 
 # 3. the brief is in the key: the same skill on a fresh history over the same brief is a stored
 #    pass; over a different brief it is judged again.
