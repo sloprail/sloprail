@@ -780,6 +780,22 @@ func untrackGone(reg sessionstate.Store, sessionID string, ranges []sessionstate
 	}
 }
 
+// judgedAtStopOf reports whether the Stop of the agent p names verifies range r. The root's Stop
+// (no agent id) verifies every range. A sub-agent's own Stop verifies the ranges it owns, except
+// those under a folder that no longer exists: it has no folder to fix them in, so what it still
+// owes goes back to the parent, whose Stop judges it from the branch or the pinned tip, both of
+// which outlive the folder.
+func judgedAtStopOf(p HookPayload, r sessionstate.TrackedRange) bool {
+	if p.AgentID == "" {
+		return true
+	}
+	if r.AgentID != p.AgentID {
+		return false
+	}
+	st, err := os.Stat(r.Folder)
+	return err == nil && st.IsDir()
+}
+
 // dropRemoved settles a tracked range whose folder is gone. A branch that still exists in the
 // session's own repository keeps being answered for: the range moves to the root's folder (its
 // commits are the session's, and the Stop verifies them there). A branch that is gone is NOT
@@ -951,8 +967,8 @@ func verifyTrackedRanges(cmd *cobra.Command, p HookPayload, reg *module.Registry
 		}
 	}
 	for i, r := range ranges {
-		if p.AgentID != "" && r.AgentID != p.AgentID {
-			continue // a sub-agent verifies its own ranges; the root's Stop covers all of them
+		if !judgedAtStopOf(p, r) {
+			continue // a sub-agent verifies its own ranges that it can still act on; the root's Stop covers all of them
 		}
 		if agent := runningAgentOf(r, running, runningBranch); agent != "" {
 			if msg, silent := plan.Silent[agent]; silent {
