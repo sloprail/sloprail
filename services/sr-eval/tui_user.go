@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/sloprail/sloprail/internal/harness"
 )
 
 // The simulated user of a TUI run sits at the terminal. It is an agent with one tool, a
@@ -25,9 +23,9 @@ does, with the three commands below (run them with the Bash tool). Each prints t
 as it is after the action. Only these commands reach the terminal: anything you write in
 plain text is your own thinking and is never sent to it.
 
-  %[1]s tui type <text>       type text at the input (it does not press Enter)
-  %[1]s tui key <name>        press a key: %[2]s
-  %[1]s tui wait [--pattern <regexp>] [--timeout 30s]
+  %[1]s type <text>       type text at the input (it does not press Enter)
+  %[1]s key <name>        press a key: %[2]s
+  %[1]s wait [--pattern <regexp>] [--timeout 30s]
                                   wait until the pattern appears on the screen, or (with no
                                   pattern) until the screen settles; with a short timeout it
                                   just shows the screen
@@ -57,7 +55,7 @@ answer with exactly one JSON object and nothing else:
 func tuiUserPrompt(brief, frame string) string {
 	safeBrief := strings.ReplaceAll(strings.TrimSpace(brief), "</brief>", "< /brief>")
 	safeFrame := strings.ReplaceAll(frame, "</screen>", "< /screen>")
-	return fmt.Sprintf(tuiUserPromptTemplate, "sr-eval", tuiKeysHint, safeBrief, safeFrame)
+	return fmt.Sprintf(tuiUserPromptTemplate, tuiUserCommand, tuiKeysHint, safeBrief, safeFrame)
 }
 
 // tuiKeysHint is the keys the user is told of: the ones a person selects and approves with.
@@ -87,7 +85,7 @@ func parseTUIUserReply(raw string) (done bool, err error) {
 // no plugins, no MCP servers: none of the project's guardrails can reach it), from an empty
 // temp directory, on a cheap model, with one tool granted: the tui command, and nothing of
 // the project's filesystem or shell beyond it.
-func simulateTUIUser(ctx context.Context, harnessID, binDir, sock, model, brief, frame string) (bool, error) {
+func simulateTUIUser(ctx context.Context, harnessID, binDir, userBin, sock, model, brief, frame string) (bool, error) {
 	cwd, err := os.MkdirTemp("", "sr-eval-user-")
 	if err != nil {
 		return false, err
@@ -101,8 +99,7 @@ func simulateTUIUser(ctx context.Context, harnessID, binDir, sock, model, brief,
 		"--prompt", tuiUserPrompt(brief, frame),
 	)
 	c.Dir = cwd
-	c.Env = append(harness.Current().SessionEnv(os.Environ()),
-		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), tuiSocketEnv+"="+sock)
+	c.Env = tuiUserEnv(binDir, userBin, sock)
 	var stdout, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &stdout, &stderr
 	if err := c.Run(); err != nil {
@@ -110,10 +107,3 @@ func simulateTUIUser(ctx context.Context, harnessID, binDir, sock, model, brief,
 	}
 	return parseTUIUserReply(stdout.String())
 }
-
-// tuiUserGrant is the one tool the simulated user is granted: the sr-eval command, named by
-// its base, which is all a harness like Cursor can scope a shell command by (it refuses a
-// path-scoped `Bash(<path> tui:*)`). It is found on PATH, where the run's binDir leads, not
-// by a path. The grant therefore covers every sr-eval subcommand, not just `tui`; the prompt
-// teaches only `tui`, and the user runs with no hooks, no plugins and an empty directory.
-const tuiUserGrant = "Bash(sr-eval:*)"

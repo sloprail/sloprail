@@ -132,7 +132,7 @@ func fakeUser() {
 			fmt.Fprintln(os.Stderr, "the user was not shown the question")
 			os.Exit(1)
 		}
-		if out, err := exec.Command(filepath.Join(os.Getenv("SRE_TEST_BIN"), "sr-eval"), "tui", "key", "enter").CombinedOutput(); err != nil {
+		if out, err := exec.Command(tuiUserCommand, "key", "enter").CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n%s", err, out)
 			os.Exit(1)
 		}
@@ -149,9 +149,8 @@ func fakeUser() {
 		return
 	}
 	_ = os.WriteFile(state, nil, 0o644)
-	sre := filepath.Join(os.Getenv("SRE_TEST_BIN"), "sr-eval")
 	for _, args := range [][]string{{"type", "second message"}, {"key", "enter"}, {"wait", "--pattern", "ANSWER to second", "--timeout", "10s"}} {
-		cmd := exec.Command(sre, append([]string{"tui"}, args...)...)
+		cmd := exec.Command(tuiUserCommand, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "sr-eval tui %v: %v\n%s", args, err, out)
 			os.Exit(1)
@@ -287,6 +286,19 @@ func newTUITestRun(t *testing.T, maxTurns int) (r *tuiRun, errs *bytes.Buffer, r
 			t.Fatal(err)
 		}
 	}
+	// An older release installed on the host, first on the operator's PATH, that knows nothing
+	// of `tui` (what a measured run's simulated user got by looking up `sr-eval`).
+	decoy := filepath.Join(root, "host-local-bin")
+	if err := os.MkdirAll(decoy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"sr-eval", tuiUserCommand} {
+		old := "#!/bin/sh\necho \"unknown command tui\" >&2\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(decoy, name), []byte(old), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", decoy+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("SRE_TEST_STATE", state)
 	t.Setenv("SRE_TEST_BIN", bin)
 	self, _ := os.Executable()
@@ -319,11 +331,70 @@ func newTUITestRun(t *testing.T, maxTurns int) (r *tuiRun, errs *bytes.Buffer, r
 	return r, errs, rec
 }
 
+// The pre-flight runs in the user's own environment and refuses what is not this run's build:
+// a command of the same name earlier on PATH, or a build without the terminal tools.
+func TestPreflightUserBin(t *testing.T) {
+	root := t.TempDir()
+	good := filepath.Join(root, "good")
+	if err := os.MkdirAll(good, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	self, _ := os.Executable()
+	// This run's sr-eval: the test binary as the cli, which has the tui command.
+	srEval := filepath.Join(good, "sr-eval")
+	if err := os.WriteFile(srEval, []byte("#!/bin/sh\n"+roleEnv+"=cli exec '"+self+"' \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userBin := filepath.Join(root, "userbin")
+	if err := writeUserBin(userBin, srEval); err != nil {
+		t.Fatal(err)
+	}
+	env := func(path string) []string { return []string{"PATH=" + path, "HOME=" + root} }
+	if err := preflightUserBin(userBin, env(userBin+":"+good+":/usr/bin:/bin")); err != nil {
+		t.Fatalf("this run's build behind the wrapper must pass: %v", err)
+	}
+
+	decoy := filepath.Join(root, "decoy")
+	_ = os.MkdirAll(decoy, 0o755)
+	_ = os.WriteFile(filepath.Join(decoy, tuiUserCommand), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	if err := preflightUserBin(userBin, env(decoy+":"+userBin+":/usr/bin:/bin")); err == nil || !strings.Contains(err.Error(), "not this run's") {
+		t.Fatalf("a same-named command earlier on PATH must be refused, got %v", err)
+	}
+
+	// A build that has no `tui` (an older release): the wrapper runs it and its help is not the tools'.
+	old := filepath.Join(root, "old")
+	_ = os.MkdirAll(old, 0o755)
+	oldEval := filepath.Join(old, "sr-eval")
+	_ = os.WriteFile(oldEval, []byte("#!/bin/sh\necho 'unknown command \"tui\" for \"sr-eval\"' >&2\nexit 1\n"), 0o755)
+	oldBin := filepath.Join(root, "oldbin")
+	if err := writeUserBin(oldBin, oldEval); err != nil {
+		t.Fatal(err)
+	}
+	if err := preflightUserBin(oldBin, env(oldBin+":/usr/bin:/bin")); err == nil || !strings.Contains(err.Error(), "not the build it should be") {
+		t.Fatalf("a build without the tui command must be refused, got %v", err)
+	}
+}
+
+// The wrapper is the command the user is granted, by its base name, and Cursor can express it.
+func TestUserBinWrapperRunsThisRunsSrEval(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeUserBin(dir, "/opt/it's/sr-eval"); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(dir, tuiUserCommand))
+	if !strings.Contains(string(body), `exec '/opt/it'\''s/sr-eval' tui "$@"`) {
+		t.Fatalf("wrapper:\n%s", body)
+	}
+	if err := writeUserBin(dir, "sr-eval"); err == nil {
+		t.Fatal("a relative sr-eval would be looked up on PATH again")
+	}
+}
+
 // The grant is a bare command base: the form a harness like Cursor can express (it refused
 // the path-scoped grant this replaced). services/sr-agent's TestCursorToken_SimulatedUserGrant
 // proves Cursor accepts exactly this string.
 func TestTUIUserGrant_IsACommandBase(t *testing.T) {
-	if tuiUserGrant != "Bash(sr-eval:*)" {
+	if tuiUserGrant != "Bash(sr-eval-tui:*)" {
 		t.Fatalf("the grant changed to %q: keep services/sr-agent's test of it in step", tuiUserGrant)
 	}
 }

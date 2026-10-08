@@ -80,6 +80,18 @@ func (r *tuiRun) run(ctx context.Context) tuiOutcome {
 	defer os.RemoveAll(dir)
 	sock := filepath.Join(dir, "s")
 
+	// The simulated user runs THIS run's sr-eval, through a wrapper of its own first on its
+	// PATH: proved here, in the environment it will have, before an agent is started.
+	userBin := filepath.Join(dir, "bin")
+	if r.maxTurns > 1 {
+		if err := writeUserBin(userBin, filepath.Join(r.binDir, "sr-eval")); err != nil {
+			return fail(err)
+		}
+		if err := preflightUserBin(userBin, tuiUserEnv(r.binDir, userBin, sock)); err != nil {
+			return fail(err)
+		}
+	}
+
 	cmd := exec.Command(filepath.Join(r.binDir, "sr-agent"), tuiAgentArgs(r.harnessID, r.fx.Model, r.fx.DisallowedTools)...)
 	cmd.Dir = r.ws.project
 	cmd.Env = r.agent.env
@@ -117,7 +129,7 @@ func (r *tuiRun) run(ctx context.Context) tuiOutcome {
 		defer srv.Close()
 	}
 	for turn := 2; turn <= r.maxTurns; turn++ {
-		done, err := simulateTUIUser(ctx, r.harnessID, r.binDir, sock, r.fx.User.UserModel(), r.brief, sess.Frame())
+		done, err := simulateTUIUser(ctx, r.harnessID, r.binDir, userBin, sock, r.fx.User.UserModel(), r.brief, sess.Frame())
 		if err != nil {
 			out.errs = append(out.errs, err.Error())
 			fmt.Fprintf(r.errs, "sr-eval: %v\n", err)
