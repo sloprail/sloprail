@@ -9,7 +9,7 @@
 #   1. detects the platform (darwin/linux, amd64/arm64)
 #   2. downloads that platform's archive from the latest GitHub Release
 #      (sloprail/sloprail), verifies it against the release's checksums.txt
-#   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks into one directory —
+#   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks, sr-test into one directory —
 #      $SLOPRAIL_INSTALL_DIR if set, else ~/.local/bin — because sibling
 #      resolution (internal/subbin) requires the set to be installed together
 #   3b. also installs a10n-claude-mock (pinned, see below) next to them, and jq and yq
@@ -391,12 +391,12 @@ mkdir -p "${INSTALL_DIR}"
 # Fail before copying anything if the release lacks a binary this script installs (an older
 # release predates one), instead of a bare `cp: cannot stat` halfway through.
 missing=""
-for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
+for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks sr-test; do
   [ -f "${tmp}/sloprail-${platform}/${bin}" ] || missing="${missing} ${bin}"
 done
 # sr:invariant install/install-verifies-the-release-checksum
 [ -z "$missing" ] || die "release ${tag} does not contain:${missing} — it predates those binaries, nothing was installed. Install from source instead: GOBIN=\"${INSTALL_DIR}\" go install github.com/sloprail/sloprail/services/...@main"
-for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
+for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks sr-test; do
   cp "${tmp}/sloprail-${platform}/${bin}" "${INSTALL_DIR}/${bin}"
   chmod +x "${INSTALL_DIR}/${bin}"
   # macOS kills a binary copied over an existing signed one at exec with a
