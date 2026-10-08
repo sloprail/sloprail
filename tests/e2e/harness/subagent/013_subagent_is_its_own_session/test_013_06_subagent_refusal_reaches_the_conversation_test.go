@@ -189,9 +189,9 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	}
 	// (Where the sub-agent shares the root's tree, the permitting rule ran at the root's
 	// Stop and the sub-agent's stop was not judged at all; the assertion is the same.)
-	if blocking := e.AnySubagentBlockingErrors(proj, "s-013-07"); len(blocking) > 0 {
-		t.Fatalf("a sub-agent cycle nothing objected to was recorded as refused (%v) — a refusal "+
-			"that appears without one stops meaning anything:\n%s", blocking, res.Output)
+	if !e.NoSubagentStopBlock(proj, "s-013-07") {
+		t.Fatalf("a sub-agent cycle nothing objected to was recorded as refused — a refusal "+
+			"that appears without one stops meaning anything:\n%s", res.Output)
 	}
 	if !res.Saw("root done") {
 		t.Errorf("the dispatching session did not complete though nothing refused:\n%s", res.Output)

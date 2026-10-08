@@ -103,14 +103,47 @@ func (e *Env) SubagentStopBlocked(projDir, sessionID, text string) bool {
 // de-duplication SubagentBlockingErrors does (a refusal repeated with the same words counts again).
 func (e *Env) SubagentStopFeedbackCount(projDir, sessionID string) int {
 	e.t.Helper()
+	e.requireSubagentStopObservable("SubagentStopFeedbackCount")
 	return e.driver.SubagentFeedbackCount(e.subagentRecords(projDir, sessionID))
 }
 
 // NoSubagentStopBlock reports that no sub-agent of the session was refused at its Stop: the strict
 // negative (AnySubagentBlockingErrors), which a refusal recorded without its feedback cannot satisfy.
+//
+// Where the harness never fires a sub-agent's stop hook (no CapSubagentLifecycleHooks: Cursor) there
+// is no refusal to read, and "none recorded" would be true of any run. The negative is then the
+// cause itself: no sub-agent ever reached the session's registry (which the start and stop hooks
+// feed), so no sub-agent Stop was judged, let alone refused.
 func (e *Env) NoSubagentStopBlock(projDir, sessionID string) bool {
 	e.t.Helper()
+	if !HasCap(e.t, CapSubagentLifecycleHooks) {
+		return e.subagentRegistryRows(projDir, sessionID) == 0
+	}
 	return len(e.AnySubagentBlockingErrors(projDir, sessionID)) == 0
+}
+
+// subagentRegistryRows is how many sub-agents the session's registry (`sr-session agents list`) holds.
+func (e *Env) subagentRegistryRows(projDir, sessionID string) int {
+	e.t.Helper()
+	r := e.CLIDirectEnv(projDir, e.SessionEnv(sessionID), "sr-session", "agents", "list", "--json")
+	if r.Code != 0 {
+		e.t.Fatalf("harness: agents list: exit %d:\n%s", r.Code, r.Output)
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal([]byte(r.Output), &rows); err != nil {
+		e.t.Fatalf("harness: agents list --json is not JSON (%v):\n%s", err, r.Output)
+	}
+	return len(rows)
+}
+
+// requireSubagentStopObservable fails the test that asks for a sub-agent's Stop refusals on a harness
+// that never fires the hook: the answer would be empty whatever happened, so a caller must branch on
+// CapSubagentLifecycleHooks and assert something real on the other side.
+func (e *Env) requireSubagentStopObservable(what string) {
+	e.t.Helper()
+	if !HasCap(e.t, CapSubagentLifecycleHooks) {
+		e.t.Fatalf("harness: %s asked on %s, which fires no sub-agent stop hook (no %s): branch on the capability", what, Selected(e.t), CapSubagentLifecycleHooks)
+	}
 }
 
 // shippedGates are the plugin's gates that would refuse a package's own setup: the

@@ -2308,6 +2308,7 @@ func (e *Env) StopContinuations(projDir, sessionID string) []string {
 // file — the record a re-run sub-agent reads its refusal from.
 func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
 	e.t.Helper()
+	e.requireSubagentStopObservable("SubagentBlockingErrors")
 	return e.driver.SubagentBlockingErrors(e.subagentRecords(projDir, sessionID))
 }
 
@@ -2323,6 +2324,7 @@ func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
 // SubagentBlockingErrors, which is the one that proves delivery.
 func (e *Env) AnySubagentBlockingErrors(projDir, sessionID string) []string {
 	e.t.Helper()
+	e.requireSubagentStopObservable("AnySubagentBlockingErrors")
 	return e.driver.AnySubagentBlockingErrors(e.subagentRecords(projDir, sessionID))
 }
 
