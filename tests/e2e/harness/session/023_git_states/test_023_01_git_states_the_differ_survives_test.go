@@ -497,8 +497,8 @@ func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
 	// The premise: a submodule really was added. Without it this asserts the
 	// absence of files that were never there.
 	if !e.Exists(proj, ".gitmodules") {
-		t.Skip("git refused to add a local submodule in this environment (protocol.file), so " +
-			"there is no gitlink here to be right or wrong about")
+		t.Fatal("`git -c protocol.file.allow=always submodule add` of a local repository left no " +
+			".gitmodules, so there is no gitlink here to be right or wrong about")
 	}
 
 	// The submodule's own files are NOT the parent's changes.
@@ -648,14 +648,19 @@ func TestT023_13_ARebaseInProgressDoesNotRetakeThePoint(t *testing.T) {
 	// Now the rebase, in a cycle of its own. Expected to stop on a conflict, so
 	// git's non-zero exit is the arrangement rather than a failure.
 	e.Run(proj, sess, "rebase into a conflict", Turns("done",
-		Bash("b2", "git checkout side >/dev/null 2>&1; git rebase main >/dev/null 2>&1; true"),
+		// Pinned so no user git config decides whether the rebase stops: rerere would
+		// replay a recorded resolution, autoStash/autoSquash/updateRefs change what a
+		// rebase does, and an editor must never be waited on.
+		Bash("b2", "git checkout side >/dev/null 2>&1; "+
+			"git -c rerere.enabled=false -c rebase.autoStash=false -c rebase.autoSquash=false -c rebase.updateRefs=false -c core.editor=true -c merge.conflictStyle=merge "+
+			"rebase main >/dev/null 2>&1; true"),
 	))
 
 	// The premise: a rebase really is in progress. Without it this is a test
 	// about an ordinary cycle and the assertion below is vacuous.
 	if !e.Exists(proj, ".git/rebase-merge") && !e.Exists(proj, ".git/rebase-apply") {
-		t.Skip("no rebase is in progress after the conflict attempt, so the operation branch " +
-			"is not being exercised in this environment")
+		t.Fatal("no rebase is in progress after the conflict attempt, so the operation branch " +
+			"is not being exercised")
 	}
 
 	if after := e.Meta(proj, sess, sessionstate.MetaBaselineCommit); after != before {

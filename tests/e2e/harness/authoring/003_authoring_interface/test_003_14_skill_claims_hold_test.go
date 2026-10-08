@@ -676,7 +676,7 @@ func TestT003_19_LoadCheckReportsTheVocabulary(t *testing.T) {
 	t.Run("a misspelled field is answered with the kind's real fields and types", func(t *testing.T) {
 		decl, ok := reg.KindDeclFor("PreFileCreate")
 		if !ok || len(decl.Fields) == 0 {
-			t.Skip("PreFileCreate carries no fields to report")
+			t.Fatal("PreFileCreate carries no fields to report: the assertions below would be vacuous")
 		}
 
 		proj := e.Project()
