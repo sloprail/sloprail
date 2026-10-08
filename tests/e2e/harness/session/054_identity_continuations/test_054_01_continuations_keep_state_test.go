@@ -145,12 +145,13 @@ func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
 		harness.Commit("k1", "first"),
 		boundary,
 	))
-	readsBack(t, ledger, "the fork", func() {
-		e.RunForked(proj, "orig-02", "fork-02", "resume", Turns("done",
+	var cont string
+	readsBack(t, ledger, "the continuation", func() {
+		cont = e.RunContinued(proj, "orig-02", "fork-02", "resume", Turns("done",
 			Write("w2", "two.md", "second"),
 		).ThenCommit("second"))
 	})
-	sameConversation(t, e, proj, "orig-02", "fork-02")
+	sameConversation(t, e, proj, "orig-02", cont)
 }
 
 // T054_03: the transcript a continuation came from is deleted while the
