@@ -101,6 +101,13 @@ jobs:
           # wants is unambiguous regardless.
           git fetch origin "$DEFAULT_BRANCH"
           base="$(git merge-base "origin/$DEFAULT_BRANCH" "${{ github.sha }}")"
+          # On the default branch itself that merge-base IS the pushed commit, so the
+          # diff was always empty and every push to main skipped the suite. There the
+          # range is what the push brought: the commit before it (event.before).
+          if [ "$base" = "${{ github.sha }}" ]; then
+            base="${{ github.event.before }}"
+            git cat-file -e "$base^{commit}" 2>/dev/null || base=""
+          fi
           # No merge-base at all (an unrelated-history branch, or the default
           # branch itself force-pushed away from what this checkout knows) —
           # fail open rather than risk skipping real changes on a comparison
