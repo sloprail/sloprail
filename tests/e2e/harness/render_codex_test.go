@@ -36,12 +36,12 @@ func TestCodexRendersWhatCodexCanDo(t *testing.T) {
 
 func TestCodexReportsWhatItCannotDo(t *testing.T) {
 	cases := map[string]Turn{
-		"ToolUse":        ToolUse("t1", "fill_form", map[string]string{"a": "b"}),
-		"ToolUseJSON":    ToolUseJSON("t2", "x", `{}`),
-		"BashBatch":      BashBatch("bb", "a", "b"),
-		"Background":     Background("bg", "Bash", map[string]string{"command": "x"}),
-		"ToolResult":     ToolResult("r1", "x"),
-		"IsolatedDispat": Dispatch("d1", "go", "/tmp/s.sh", "worktree"),
+		"ToolUse":         ToolUse("t1", "fill_form", map[string]string{"a": "b"}),
+		"ToolUseJSON":     ToolUseJSON("t2", "x", `{}`),
+		"BashBatch":       BashBatch("bb", "a", "b"),
+		"BackgroundAgent": Background("bg", "Agent", map[string]string{"prompt": "x"}),
+		"ToolResult":      ToolResult("r1", "x"),
+		"IsolatedDispat":  Dispatch("d1", "go", "/tmp/s.sh", "worktree"),
 	}
 	for name, turn := range cases {
 		_, err := codexDriver{}.RenderScript(Turns("fin", turn))

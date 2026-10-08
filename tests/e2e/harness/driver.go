@@ -109,6 +109,22 @@ const (
 	// and the call as separate records, so the prose and the call are two entries.
 	CapProseWithCallInOneEntry = "prose-with-call-in-one-entry"
 
+	// CapSeveralCallsInOneEntry: one assistant message of the record can hold several tool
+	// calls (Claude Code writes the message with every tool_use block). Codex's rollout and
+	// Cursor's transcript write a call apiece, so a turn that makes three calls is three entries.
+	CapSeveralCallsInOneEntry = "several-calls-in-one-entry"
+
+	// CapDispatchWithoutCallID: a sub-agent can be dispatched by a tool call that names no id
+	// (Claude Code's sub-agent meta then records an empty toolUseId). Codex and Cursor give every
+	// call an id, and name the dispatch's link (or none) in their own records.
+	CapDispatchWithoutCallID = "dispatch-without-call-id"
+
+	// CapCompactionNamesParent: a compaction's boundary record names the record it continues
+	// (Claude Code's logicalParentUuid), which a preserved-segment compaction can leave naming
+	// a record no file holds. Codex's compaction is a record in the same rollout and Cursor's
+	// leaves no boundary at all: neither names a parent.
+	CapCompactionNamesParent = "compaction-names-parent"
+
 	// CapShellDenyBesideGrant: a judge can be granted a shell command and denied a form of it
 	// in the same run. Cursor does not enforce a shell deny beside a shell grant (measured), so
 	// sr-agent refuses such a run rather than promise a confinement it cannot give.

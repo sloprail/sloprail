@@ -35,10 +35,10 @@ func TestCursorRendersWhatCursorCanDo(t *testing.T) {
 
 func TestCursorReportsWhatItCannotDo(t *testing.T) {
 	cases := map[string]Turn{
-		"BashBatch":      BashBatch("bb", "a", "b"),
-		"Background":     Background("bg", "Bash", map[string]string{"command": "x"}),
-		"ToolResult":     ToolResult("r1", "x"),
-		"IsolatedDispat": Dispatch("d1", "go", "/tmp/s.sh", "worktree"),
+		"BashBatch":       BashBatch("bb", "a", "b"),
+		"BackgroundAgent": Background("bg", "Agent", map[string]string{"prompt": "x"}),
+		"ToolResult":      ToolResult("r1", "x"),
+		"IsolatedDispat":  Dispatch("d1", "go", "/tmp/s.sh", "worktree"),
 	}
 	for name, turn := range cases {
 		_, err := cursorDriver{}.RenderScript(Turns("fin", turn))

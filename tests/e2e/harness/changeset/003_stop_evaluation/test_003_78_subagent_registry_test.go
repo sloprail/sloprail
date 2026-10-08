@@ -96,8 +96,27 @@ func TestT003_78_ABackgroundSubagentIsMarkedAndItsNotificationEndsIt(t *testing.
 		Bash("b1", "git switch -q -c sub-b"),
 		harness.CommitFile("c1", "docs/b.md", "fine words", "sub adds b"),
 	))
+	if !harness.HasCap(t, harness.CapBackgroundTasks) {
+		// Codex's spawn_agent and Cursor's Task have no background launch for the record to show
+		// (they answer at once whatever the call), so a dispatched sub-agent is never marked
+		// background: it is one row, ended by its SubagentStop like any other.
+		e.Run(proj, sess, "delegate", Turns("root done", harness.Dispatch("d1", "write the docs", sub, harness.OwnTree(t))))
+		rows := registryOf(t, e, proj, sess)
+		if !harness.HasCap(t, harness.CapSubagentParentLink) {
+			// A harness whose sub-agent hooks name no parent session has nothing to register the
+			// agent under: the session's registry holds no sub-agent, background or not.
+			if len(rows) != 0 {
+				t.Fatalf("a sub-agent that names no parent session is registered under one: %+v", rows)
+			}
+			return
+		}
+		if len(rows) != 1 || rows[0].Background || rows[0].Status != "completed" {
+			t.Fatalf("want one completed sub-agent, not marked background (no launch shows it was), got %+v", rows)
+		}
+		return
+	}
 	e.Run(proj, sess, "delegate in the background", Turns("root done",
-		harness.Background("ag1", "Agent", map[string]string{"prompt": "write the docs", "description": "background", "script": sub, "isolation": "worktree"}),
+		harness.Background("ag1", "Agent", map[string]string{"prompt": "write the docs", "description": "background", "script": sub, "isolation": harness.OwnTree(t)}),
 	))
 	rows := registryOf(t, e, proj, sess)
 	if len(rows) != 1 || !rows[0].Background {

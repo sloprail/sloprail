@@ -82,7 +82,14 @@ func TestT041_29_ABackgroundBashsOutputReadFromItsFileIsCitable(t *testing.T) {
 		harness.ReadLaunchedOutput("r1"),
 	))
 	record := readFile(t, e.TranscriptPath(proj, "s-041-29"))
-	for _, want := range []string{"Command running in background with ID: ", "TASKBASH-3311 12 passed"} {
+	wants := []string{"TASKBASH-3311 12 passed"}
+	if harness.HasCap(t, harness.CapBackgroundTasks) {
+		// Where the harness has background tasks the launch is answered with a receipt naming
+		// the task. Codex and Cursor answer with none (the command's
+		// output goes to a file the next call reads): the output read from that file is what grounds.
+		wants = append(wants, "Command running in background with ID: ")
+	}
+	for _, want := range wants {
 		if !strings.Contains(record, want) {
 			t.Fatalf("%q is not in the record, so this would not test it", want)
 		}
@@ -144,13 +151,26 @@ func TestT041_45_AnAgentTranscriptReadBackIsNotToolOutput(t *testing.T) {
 func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
 	reply := subagentScript(t, harness.Turns("TASKAGENT-7702 all 40 tests pass"))
-	e.Run(proj, "s-041-30", prompt, Turns("done",
-		harness.Background("ag1", "Agent", map[string]string{"prompt": "run the suite", "description": "background", "script": reply}),
-	))
-	record := readFile(t, e.TranscriptPath(proj, "s-041-30"))
-	for _, want := range []string{"Async agent launched successfully.", "<task-notification>", "TASKAGENT-7702"} {
-		if !strings.Contains(record, want) {
-			t.Fatalf("%q is not in the record, so this would not test it", want)
+	if harness.HasCap(t, harness.CapBackgroundTasks) {
+		e.Run(proj, "s-041-30", prompt, Turns("done",
+			harness.Background("ag1", "Agent", map[string]string{"prompt": "run the suite", "description": "background", "script": reply}),
+		))
+		record := readFile(t, e.TranscriptPath(proj, "s-041-30"))
+		for _, want := range []string{"Async agent launched successfully.", "<task-notification>", "TASKAGENT-7702"} {
+			if !strings.Contains(record, want) {
+				t.Fatalf("%q is not in the record, so this would not test it", want)
+			}
+		}
+	} else {
+		// Codex's spawn_agent and Cursor's Task have no background choice: the call answers at once
+		// and the agent runs concurrently, so a dispatch is the launch, and no notification hands the
+		// task back. Its reply reaches the parent some other way (a wait on the agent, the sub-agent's
+		// own record) and is the same model-written text, citable nowhere.
+		e.Run(proj, "s-041-30", prompt, Turns("done",
+			harness.Dispatch("ag1", "run the suite", reply, ""),
+		))
+		if len(e.SubagentRecordPaths(proj, "s-041-30")) == 0 {
+			t.Fatalf("the agent left no record of its own, so this would not test it")
 		}
 	}
 	res := e.Run(proj, "s-041-30", "write it down", Turns("done",
