@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# Template for a FILE-GUARD's script check. Copy it next to your file-guard.yaml and
-# change only fine(). Everything else (reading the changeset, refusing what could not
-# be read, the refusal format) is already right.
-#
-# It checks each file `match` selected, one at a time. A rule about the change as a
-# whole reads `.changeset.commits`, `.changeset.others` and `.changeset.citations` too.
-# The payload is described in file-guard.md, "What a check receives".
-#
-# exit 0 permits. To refuse, print {"reason":"..."} and exit 1.
+# plugin-skill-length's file-guard check, from the skill's check-template.sh: every committed file
+# of a skill in the sloprail plugin fits line-cap-lib.sh's cap.
 set -uo pipefail
 
 payload="$(cat)"
@@ -26,15 +19,12 @@ printf '%s' "$payload" | jq -e '.changeset.files | type == "array"' >/dev/null 2
 count="$(printf '%s' "$payload" | jq -r '.changeset.files | length')" || count=""
 case "$count" in '' | *[!0-9]*) refuse "the changeset's files could not be read, so they could not be checked" ;; esac
 
+. "$(dirname "$0")/line-cap-lib.sh" || refuse "line-cap-lib.sh could not be loaded, so the line cap could not be applied"
+
 # fine PATH CONTENT — the rule itself. Return 0 if CONTENT is acceptable; otherwise
 # print one sentence saying what is wrong and how to fix it, and return 1.
 fine() {
-  local path="$1" content="$2"
-  if ! grep -q 'CHANGE-ME' <<<"$content"; then
-    return 0
-  fi
-  echo "replace this with what $path must hold, and how to fix it"
-  return 1
+  line_cap_fine "$2"
 }
 
 i=0

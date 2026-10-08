@@ -68,7 +68,7 @@ jobs:
           # the shape internal/subbin's sibling resolution requires.
           mkdir -p /tmp/verify
           tar -C /tmp/verify -xzf dist/sloprail-darwin-arm64.tar.gz
-          for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
+          for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks sr-test; do
             test -x "/tmp/verify/sloprail-darwin-arm64/$bin" || { echo "missing or not executable: $bin"; exit 1; }
           done
           /tmp/verify/sloprail-darwin-arm64/sr-session start </dev/null >/dev/null

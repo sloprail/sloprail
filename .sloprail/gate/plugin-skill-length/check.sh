@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Template for a GATE's script check on a pending write (`on: PreFileWrite`). Copy it
-# next to your gate.yaml and change only fine(). It refuses a write whose result is
-# unknown (resultKnown false) rather than pass bytes nobody saw; see gate.md, "An
-# unknown result is yours to refuse".
-#
-# exit 0 permits. To refuse, print {"reason":"..."} and exit 1.
-set -uo pipefail
+# plugin-skill-length's gate check, from the skill's gate-check-template.sh: a pending write of a
+# file of a skill in the sloprail plugin fits the file-guard's line-cap-lib.sh cap.
+set -euo pipefail
 
 payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1"; }
@@ -18,14 +14,15 @@ refuse() {
   exit 1
 }
 
+. "$(dirname "$0")/../../file-guard/plugin-skill-length/line-cap-lib.sh" ||
+  refuse "line-cap-lib.sh could not be loaded, so the line cap could not be applied"
+
 # fine CONTENT — the rule itself. Return 0 if CONTENT is acceptable; otherwise
 # print one sentence saying what is wrong and how to fix it, and return 1.
 fine() {
-  local content="$1"
-  if ! grep -q 'CHANGE-ME' <<<"$content"; then
-    return 0
-  fi
-  echo "replace this with what $path must hold, and how to fix it"
+  local why
+  why="$(line_cap_fine "$1")" && return 0
+  echo "$path: $why"
   return 1
 }
 

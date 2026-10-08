@@ -50,7 +50,9 @@ func versionOf(path string) (string, error) {
 		return "", err
 	}
 	if bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-		return bi.Main.Version, nil
+		// A release binary built from its tag's tree reads "<tag>+dirty" (the
+		// build's own files): the same version as far as the pin goes.
+		return strings.TrimSuffix(bi.Main.Version, "+dirty"), nil
 	}
 	return "", fmt.Errorf("no module version in build info (path %s)", bi.Path)
 }
