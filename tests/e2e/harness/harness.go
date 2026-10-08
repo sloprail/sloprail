@@ -678,9 +678,6 @@ func (e *Env) InnerScenario(projDir string, s Scenario) {
 	e.t.Helper()
 	path := filepath.Join(projDir, ".inner-scenario.sh")
 	if err := s.Script(path); err != nil {
-		if SkipIfUnsupported(e.t, err) {
-			return
-		}
 		e.t.Fatalf("harness: write inner scenario: %v", err)
 	}
 }
@@ -2637,7 +2634,6 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, mode SessionMod
 	e.t.Helper()
 	scriptPath := filepath.Join(projDir, ".scenario.sh")
 	if err := s.Script(scriptPath); err != nil {
-		SkipIfUnsupported(e.t, err)
 		e.t.Fatalf("harness: write scenario: %v", err)
 	}
 	e.prompts[sessionID] = append(e.prompts[sessionID], prompt)

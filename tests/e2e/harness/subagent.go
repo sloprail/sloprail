@@ -31,7 +31,6 @@ func writeSubagentScript(t testing.TB, s Scenario) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sub.sh")
 	if err := s.Script(path); err != nil {
-		SkipIfUnsupported(t, err)
 		t.Fatalf("harness: write sub-agent scenario: %v", err)
 	}
 	return path
