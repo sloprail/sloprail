@@ -46,7 +46,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 
 	res := e.Run(proj, "s-015-01", "delegate into isolation", Turns("root done",
 		Bash("rb1", "echo 'the root did this' > only-the-root-made-this.md"),
-		Dispatch("d1", "do the delegated job", sub, "worktree"),
+		Dispatch("d1", "do the delegated job", sub, harness.OwnTree(t)),
 	).ThenCommit("the root's work"))
 
 	if !res.Saw("root done") {
@@ -55,6 +55,43 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	if hitRetryCap(res.Output) {
 		t.Fatalf("the sub-agent was driven to the retry cap — a trapped cycle, not a judged one:\n%s",
 			res.Output)
+	}
+
+	// A harness whose sub-agents cannot take a tree of their own (Codex, Cursor) leaves the
+	// sub-agent working in the root's. Then there is no separate tree to judge in: the
+	// sub-agent's commit lands in the very history the root's Stop judges, so that Stop
+	// judges BOTH files, as the root, and the sub-agent's own stop is refused for nothing.
+	// The sub-agent's commands are still its own session, seen where hooks run.
+	if !harness.HasCap(t, harness.CapWorktrees) {
+		if trees := worktrees(t, proj); len(trees) != 0 {
+			t.Fatalf("a worktree was bound (%v) for a dispatch that could not ask for one", trees)
+		}
+		if !e.Exists(proj, "only-the-sub-made-this.md") {
+			t.Fatalf("the sub-agent's file is not in the shared tree, so nothing here is about its work:\n%s", res.Output)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-015-01") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		rootLines := e.FileGuardLedgerLines(proj, "recorder", "log")
+		for _, f := range []string{"only-the-root-made-this.md", "only-the-sub-made-this.md"} {
+			l, ok := lineAbout(rootLines, f)
+			if !ok {
+				t.Fatalf("the root's Stop did not judge %s (%v): in the shared tree it owns the whole range", f, rootLines)
+			}
+			if agentOf(l) != "" {
+				t.Fatalf("%s was judged as a sub-agent (%s), but only the root's Stop judges the shared tree", f, l)
+			}
+		}
+		idLines := memoLines(t, idLed.Path())
+		subLine, ok := lineAbout(idLines, "only-the-sub-made-this.md")
+		rootLine, ok2 := lineAbout(idLines, "only-the-root-made-this.md")
+		if !ok || !ok2 {
+			t.Fatalf("the gate did not see both commands (%v), so there is no identity to compare", idLines)
+		}
+		if sessionOf(subLine) == "" || sessionOf(subLine) == sessionOf(rootLine) {
+			t.Fatalf("the sub-agent's command did not run as a session of its own.\n  sub-agent: %s\n  root:      %s", subLine, rootLine)
+		}
+		return
 	}
 
 	wt := theWorktree(t, proj)
@@ -224,7 +261,7 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-05", "delegate several turns", Turns("root done",
-		Dispatch("d1", "do three things", sub, "worktree"),
+		Dispatch("d1", "do three things", sub, harness.OwnTree(t)),
 	))
 
 	if !res.Saw("root done") {
@@ -234,12 +271,30 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
 	}
 
-	wt := theWorktree(t, proj)
-	e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-05", e.RunBase("s-015-05"), "HEAD")
-	lines := subLedger(t, proj, wt, "recorder", "log")
-	for _, l := range lines {
-		if agentOf(l) == "" || agentOf(l) != agentOf(lines[0]) {
-			t.Fatalf("the file-guard did not judge everything as one sub-agent identity: %v", lines)
+	// Without a tree of its own (Codex, Cursor) the sub-agent's commit is in the root's range:
+	// the root's Stop judges every file of it, as the root, and the sub-agent's stop is not refused.
+	var lines []string
+	if harness.HasCap(t, harness.CapWorktrees) {
+		wt := theWorktree(t, proj)
+		e.CheckRunRange(filepath.Join(proj, ".claude", "worktrees", wt), "s-015-05", e.RunBase("s-015-05"), "HEAD")
+		lines = subLedger(t, proj, wt, "recorder", "log")
+		for _, l := range lines {
+			if agentOf(l) == "" || agentOf(l) != agentOf(lines[0]) {
+				t.Fatalf("the file-guard did not judge everything as one sub-agent identity: %v", lines)
+			}
+		}
+	} else {
+		if trees := worktrees(t, proj); len(trees) != 0 {
+			t.Fatalf("a worktree was bound (%v) for a dispatch that could not ask for one", trees)
+		}
+		if !e.NoSubagentStopBlock(proj, "s-015-05") {
+			t.Fatalf("a sub-agent sharing the root's tree was refused at its own stop:\n%s", res.Output)
+		}
+		lines = e.FileGuardLedgerLines(proj, "recorder", "log")
+		for _, l := range lines {
+			if agentOf(l) != "" {
+				t.Fatalf("the root's Stop judged a file as a sub-agent (%s) in the shared tree", l)
+			}
 		}
 	}
 	for _, want := range []string{"sub-one.md", "sub-two.md", "sub-three.md"} {
@@ -301,7 +356,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 
 	res := e.Run(proj, "s-015-03", "remember across a delegation", Turns("root done",
 		Bash("rb1", "echo root > root-before.md"),
-		Dispatch("d1", "delegate", sub, "worktree"),
+		Dispatch("d1", "delegate", sub, harness.OwnTree(t)),
 		Bash("rb2", "echo root > root-after.md"),
 	))
 	if !res.Saw("root done") {
@@ -370,8 +425,8 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	second := harness.SubagentScript(t, harness.Turns("two done", Bash("a2", "echo two > second-subs-file.md")).ThenCommit("the second sub-agent's work"))
 
 	res := e.Run(proj, "s-015-04", "delegate twice", Turns("root done",
-		Dispatch("d1", "first job", first, "worktree"),
-		Dispatch("d2", "second job", second, "worktree"),
+		Dispatch("d1", "first job", first, harness.OwnTree(t)),
+		Dispatch("d2", "second job", second, harness.OwnTree(t)),
 	))
 	if !res.Saw("root done") {
 		t.Fatalf("a session dispatching two sub-agents did not complete:\n%s", res.Output)
@@ -379,8 +434,17 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	if hitRetryCap(res.Output) {
 		t.Fatalf("a sub-agent hit the retry cap:\n%s", res.Output)
 	}
-	if trees := worktrees(t, proj); len(trees) != 2 {
+	// Two sub-agents were in play: a tree each where the harness can isolate them, and
+	// otherwise two records and no tree at all (both work in the root's).
+	if trees := worktrees(t, proj); harness.HasCap(t, harness.CapWorktrees) && len(trees) != 2 {
 		t.Fatalf("want a worktree per sub-agent, found %d (%v) — two sub-agents were never in play", len(trees), trees)
+	} else if !harness.HasCap(t, harness.CapWorktrees) {
+		if len(trees) != 0 {
+			t.Fatalf("a worktree was bound (%v) for a dispatch that could not ask for one", trees)
+		}
+		if records := e.SubagentRecordPaths(proj, "s-015-04"); len(records) != 2 || records[0] == records[1] {
+			t.Fatalf("want two sub-agents with a record each, saw %v", records)
+		}
 	}
 
 	lines := memoLines(t, led.Path())
