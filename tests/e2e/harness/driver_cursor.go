@@ -140,9 +140,8 @@ cnt() { n=$(grep -c "$1" "$SF" 2>/dev/null); echo "${n:-0}"; }
 BASE=0; [ "$SF" = "${SLOP_BASE_FILE:-}" ] && BASE=${SLOP_BASE:-0}
 PROG=$(( $(cnt '"type":"tool_use"') + $(cnt '"role":"user"') - BASE - 1 ))
 `)
-	acts := s.launchedOutputActions()
-	for i := range acts {
-		line, err := c.render(acts[i])
+	for i, t := range launchedOutput(foldCallOutput(s.turns)) {
+		line, err := c.render(t.act)
 		if err != nil {
 			return "", err
 		}

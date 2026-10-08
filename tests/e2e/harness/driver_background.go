@@ -30,21 +30,19 @@ func backgroundShell(id, command string) string {
 	return "( " + command + "\n) > \"" + out + "\" 2>&1"
 }
 
-// launchedOutputActions are the scenario's actions with each ReadLaunchedOutput naming the output
-// file of the most recent background launch before it, for the harnesses that make the file
-// themselves.
-func (s Scenario) launchedOutputActions() []Action {
-	out := make([]Action, 0, len(s.turns))
+// launchedOutput is turns with each ReadLaunchedOutput naming the output file of the most
+// recent background launch before it, for the harnesses that make the file themselves.
+func launchedOutput(turns []Turn) []Turn {
+	out := make([]Turn, 0, len(turns))
 	last := ""
-	for _, t := range s.turns {
-		a := t.act
-		if a.Kind == ActToolUse && a.Background {
-			last = a.ID
+	for _, t := range turns {
+		if t.act.Kind == ActToolUse && t.act.Background {
+			last = t.act.ID
 		}
 		if t.launchedOutput {
-			a.Input = map[string]string{"file_path": backgroundOutputFile(last)}
+			t.act.Input = map[string]string{"file_path": backgroundOutputFile(last)}
 		}
-		out = append(out, a)
+		out = append(out, t)
 	}
 	return out
 }
