@@ -102,7 +102,7 @@ say "sloprail install: detected ${platform}"
 # Run from a release, version.txt is not beside install.sh: the default below is
 # kept equal to it (TestInstallShDefaultMatchesThePin).
 HARNESS_MOCKS_REPO="sloprail/harness-mocks"
-HARNESS_MOCK_DEFAULT_VERSION="0.4.0"
+HARNESS_MOCK_DEFAULT_VERSION="0.4.1"
 
 harness_mock_version() {
   v=""
