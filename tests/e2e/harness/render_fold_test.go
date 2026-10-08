@@ -14,6 +14,9 @@ func TestCodexRendersACallWithOutputAsTheCommandPrintingIt(t *testing.T) {
 	if !strings.Contains(script, `printf`) || strings.Count(script, `"name":"Bash"`) != 1 {
 		t.Errorf("the pair is not one command printing the output:\n%s", script)
 	}
+	if strings.Contains(script, "it's green") || strings.Contains(script, `green`) {
+		t.Errorf("the output text is literally in the command:\n%s", script)
+	}
 }
 
 func TestCursorRendersACallWithOutputAsTheCommandPrintingIt(t *testing.T) {
@@ -25,5 +28,8 @@ func TestCursorRendersACallWithOutputAsTheCommandPrintingIt(t *testing.T) {
 	// two steps (progress 0 and 1): the pair is one, so no step is numbered 2
 	if !strings.Contains(script, `printf`) || strings.Count(script, `"name":"Bash"`) != 2 || strings.Contains(script, `-eq 2 ]`) {
 		t.Errorf("the pair is not one step printing the output:\n%s", script)
+	}
+	if strings.Contains(script, `green`) {
+		t.Errorf("the output text is literally in the step's command:\n%s", script)
 	}
 }

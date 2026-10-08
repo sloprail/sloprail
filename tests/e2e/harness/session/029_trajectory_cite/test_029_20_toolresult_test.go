@@ -45,14 +45,15 @@ func TestT029_20_ToolResultLineExitsZeroWithContent(t *testing.T) {
 
 	if !harness.HasCap(t, harness.CapRecordHoldsToolResults) {
 		// The record holds no tool result (Cursor keeps the outputs in sloprail's own store),
-		// so no line of it is one: the only line naming the marker is the CALL, the agent's
-		// command, and that is not a tool_result the session produced.
-		callLine := physicalLine(t, path, "GREENMARKER")
+		// so no line of it is one: the only line of the call is the agent's command, and that
+		// is not a tool_result the session produced. The fold's command carries the output
+		// encoded (printf ... | base64 -d), so the marker is in no line of the record.
+		callLine := physicalLine(t, path, "base64 -d")
 		if callLine == 0 {
 			t.Fatalf("the call is not in the transcript\n%s", readFile(t, path))
 		}
-		if n := strings.Count(readFile(t, path), "GREENMARKER"); n != 1 {
-			t.Fatalf("the record names the output %d times, want once (the call), since it holds no results:\n%s", n, readFile(t, path))
+		if n := strings.Count(readFile(t, path), "GREENMARKER"); n != 0 {
+			t.Fatalf("the record names the output %d times, want none (it holds no results and the call does not spell it):\n%s", n, readFile(t, path))
 		}
 		res := toolResultCmd(e, proj, path, callLine)
 		if res.Code != 1 || strings.TrimSpace(res.Output) != "" {
