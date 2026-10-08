@@ -12,7 +12,9 @@
 #   3. unpacks sr, sr-session, sr-file, sr-mark, sr-agent, sr-eval, sr-checks into one directory —
 #      $SLOPRAIL_INSTALL_DIR if set, else ~/.local/bin — because sibling
 #      resolution (internal/subbin) requires the set to be installed together
-#   3b. also installs a10n-claude-mock (pinned, see below) next to them
+#   3b. also installs a10n-claude-mock (pinned, see below) next to them, and jq and yq
+#       when they are not already on $PATH (package manager, else the official static
+#       binary into the same directory)
 #   4. warns, once, if that directory is not on $PATH — the wrapper the
 #      plugin's hooks call (sr-session-hook.sh) gives the same install command
 #      back if this step was skipped, so this is not the only place a stranger
@@ -49,11 +51,12 @@ BINARIES_ONLY=""
 
 usage() {
   cat <<'USAGE'
-usage: install.sh [--harness claude|codex|cursor|all] [--binaries-only]
+usage: install.sh [--harness claude|codex|cursor|all] [--binaries-only] [--tools-only [DIR]]
 
 Installs the sr* binaries, then sets up each agent harness found on this machine
 (or the one named; several: --harness claude,cursor). --binaries-only skips the
-harness step.
+harness step. jq and yq are installed too when missing (package manager, else the
+official static binary into the install directory); --tools-only does just that.
 
 Per harness, from the project root (sloprail is installed per project):
 
@@ -183,9 +186,81 @@ gh_ok() {
   command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1
 }
 
+# --- jq and yq (the tests and sloprail's shipped scripts need them) -------------
+# install_tool NAME DIR: present -> nothing. Else the platform's package manager
+# (brew; apt-get/dnf/apk, through sudo only when not root, and only a passwordless one:
+# this may run under `curl | sh`, where a prompt cannot be answered), else the official
+# static binary into DIR, next to the sr* binaries. Prints what it installed; dies if
+# none of that works. SLOPRAIL_TOOLS_NO_PM=1 skips the package managers;
+# SLOPRAIL_JQ_URL / SLOPRAIL_YQ_URL replace the static binary's URL (tests, mirrors).
+as_root() {
+  if [ "$(id -u)" = 0 ]; then "$@"
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then sudo -n "$@"
+  else return 1; fi
+}
+
+install_tool() {
+  it_name="$1"
+  it_dir="$2"
+  if command -v "$it_name" >/dev/null 2>&1 || [ -x "${it_dir}/${it_name}" ]; then
+    return 0
+  fi
+  it_how=""
+  if [ -z "${SLOPRAIL_TOOLS_NO_PM:-}" ]; then
+    if command -v brew >/dev/null 2>&1; then
+      brew install "$it_name" >/dev/null 2>&1 && it_how="brew"
+    elif [ "$it_name" = jq ]; then
+      # (yq has no trustworthy distro package: Debian's `yq` is a different tool.)
+      if command -v apt-get >/dev/null 2>&1; then
+        as_root apt-get install -y jq >/dev/null 2>&1 && it_how="apt-get"
+      elif command -v dnf >/dev/null 2>&1; then
+        as_root dnf install -y jq >/dev/null 2>&1 && it_how="dnf"
+      elif command -v apk >/dev/null 2>&1; then
+        as_root apk add jq >/dev/null 2>&1 && it_how="apk"
+      fi
+    fi
+  fi
+  if [ -n "$it_how" ] && command -v "$it_name" >/dev/null 2>&1; then
+    say "sloprail install: ${it_name} installed with ${it_how}"
+    return 0
+  fi
+  case "$it_name" in
+  jq)
+    it_os="$os"
+    [ "$os" = darwin ] && it_os="macos"
+    it_url="${SLOPRAIL_JQ_URL:-https://github.com/jqlang/jq/releases/latest/download/jq-${it_os}-${arch}}"
+    it_home="https://github.com/jqlang/jq/releases"
+    ;;
+  yq)
+    it_url="${SLOPRAIL_YQ_URL:-https://github.com/mikefarah/yq/releases/latest/download/yq_${os}_${arch}}"
+    it_home="https://github.com/mikefarah/yq/releases"
+    ;;
+  *) die "install_tool: unknown tool ${it_name}" ;;
+  esac
+  mkdir -p "$it_dir"
+  it_tmp="$(mktemp)"
+  if ! fetch "$it_url" "$it_tmp" 2>/dev/null; then
+    rm -f "$it_tmp"
+    die "${it_name} is required and could not be installed: no usable package manager, and ${it_url} could not be downloaded. Install it yourself (brew install ${it_name}, or ${it_home}) and re-run"
+  fi
+  cp "$it_tmp" "${it_dir}/${it_name}"
+  rm -f "$it_tmp"
+  chmod +x "${it_dir}/${it_name}"
+  command -v codesign >/dev/null 2>&1 && codesign --sign - --force "${it_dir}/${it_name}" 2>/dev/null || true
+  "${it_dir}/${it_name}" --version >/dev/null 2>&1 || die "${it_name} downloaded from ${it_url} into ${it_dir} does not run on this machine"
+  say "sloprail install: ${it_name} installed as a static binary into ${it_dir}"
+}
+
 # --harness-mock-only: used by make distribute-local, installs just the mock.
 if [ "${1:-}" = "--harness-mock-only" ]; then
   install_harness_mock "${2:-$INSTALL_DIR}"
+  exit 0
+fi
+
+# --tools-only: just jq and yq (what the tests need), into DIR.
+if [ "${1:-}" = "--tools-only" ]; then
+  install_tool jq "${2:-$INSTALL_DIR}"
+  install_tool yq "${2:-$INSTALL_DIR}"
   exit 0
 fi
 
@@ -333,6 +408,8 @@ for bin in sr sr-session sr-file sr-mark sr-agent sr-eval sr-checks; do
 done
 
 install_harness_mock "${INSTALL_DIR}"
+install_tool jq "${INSTALL_DIR}"
+install_tool yq "${INSTALL_DIR}"
 
 # Codex skips a plugin's hooks, silently, until they are trusted. If Codex is here and
 # sloprail's plugin is enabled in it, trust its hooks now (a no-op otherwise); run
