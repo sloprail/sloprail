@@ -32,6 +32,14 @@ type JudgeAccess struct {
 	// ConfinedToWritable: the harness stops the judge writing anywhere outside Writable
 	// (a sandbox, or a hook the engine installs), so a directory not listed is not writable.
 	ConfinedToWritable bool
+
+	// AllowedTools and AddDirs are the launch's own lists, in argv order, and ArgvExact says
+	// the harness's argv carries them verbatim (Claude Code: --allowed-tools and --add-dir),
+	// so a test can pin the exact grant and not only what each entry means. Empty and false
+	// where the harness spells its grants another way.
+	AllowedTools []string
+	AddDirs      []string
+	ArgvExact    bool
 }
 
 // argvFlagValues is every value following flag in a recorded argv (one argument per line),
@@ -116,6 +124,9 @@ func (claudeDriver) JudgeAccess(argvFile string) (JudgeAccess, error) {
 		}
 	}
 	a.Readable = argvFlagValues(lines, "--add-dir")
+	a.AllowedTools = argvFlagValues(lines, "--allowed-tools")
+	a.AddDirs = a.Readable
+	a.ArgvExact = true
 	return a, nil
 }
 

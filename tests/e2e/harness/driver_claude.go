@@ -880,8 +880,9 @@ func (claudeDriver) ConfigEnv(e *Env) []string { return []string{"CLAUDE_CONFIG_
 // Observe: Claude sessions are named by the caller (--session-id), so there is nothing to learn.
 func (claudeDriver) Observe(*Env, Launch, string) {}
 
-// JudgeHooksOff: the judge's claude is launched with disableAllHooks in its settings, the only
-// switch that stops the project's and plugins' hooks (empty hooks/enabledPlugins objects merge).
+// JudgeHooksOff: the judge's claude is launched with exactly the isolation --settings
+// (disableAllHooks, the only switch that stops the project's and plugins' hooks: empty
+// hooks/enabledPlugins objects merge), as sr-agent's baseArgs pass it.
 func (claudeDriver) JudgeHooksOff(argv, _ string) bool {
-	return strings.Contains(argv, `"disableAllHooks":true`)
+	return argvFlagValue(strings.Split(argv, "\n"), "--settings") == claudecode.IsolationSettings
 }

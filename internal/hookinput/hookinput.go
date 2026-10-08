@@ -156,9 +156,10 @@ func SessionRecord(p harness.HookInput) (string, error) {
 	}
 	if loc, ok := harness.Current().(harness.TranscriptLocator); ok {
 		// The harness can find a record its payload did not name (harness.TranscriptLocator).
-		if path := loc.LocateTranscript(p); path != "" {
-			return path, nil
-		}
+		// A locating harness that finds none has none (Codex --ephemeral writes no
+		// rollout): falling through to Claude Code's projects layout would name a
+		// file this harness never writes and report it as a fault of its own.
+		return loc.LocateTranscript(p), nil
 	}
 	if p.SessionID == "" {
 		// No path and no id: nothing to resolve and nothing to guess from. Not a
