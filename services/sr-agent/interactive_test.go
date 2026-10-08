@@ -27,6 +27,22 @@ func TestInteractive_JudgeStaysOneShot(t *testing.T) {
 	assert.Contains(t, err.Error(), "--agent-run")
 }
 
+// The simulated user of a TUI run is granted `Bash(sr-eval:*)` (services/sr-eval tuiUserGrant).
+// Cursor names a shell command by its base only: that grant is expressible, the path-scoped
+// one it replaced is refused.
+func TestCursorToken_SimulatedUserGrant(t *testing.T) {
+	got, err := cursorToken("Bash(sr-eval:*)")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Shell(sr-eval)"}, got)
+
+	_, err = cursorToken("Bash(/var/x/sr-eval tui:*)")
+	require.Error(t, err)
+
+	stdout, _, err := runCLI(t, "--harness=cursor", "--model", "size-sm", "--allowed-tools", "Bash(sr-eval:*)", "--dry-run", "x")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "cursor-agent -p")
+}
+
 func TestInteractive_Refusals(t *testing.T) {
 	for name, c := range map[string]struct {
 		args []string

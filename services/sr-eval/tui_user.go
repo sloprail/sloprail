@@ -54,10 +54,10 @@ answer with exactly one JSON object and nothing else:
 
 // tuiUserPrompt renders a round's prompt. A closing tag in the brief or the screen is broken
 // so neither can forge the boundary.
-func tuiUserPrompt(srEval, brief, frame string) string {
+func tuiUserPrompt(brief, frame string) string {
 	safeBrief := strings.ReplaceAll(strings.TrimSpace(brief), "</brief>", "< /brief>")
 	safeFrame := strings.ReplaceAll(frame, "</screen>", "< /screen>")
-	return fmt.Sprintf(tuiUserPromptTemplate, srEval, tuiKeysHint, safeBrief, safeFrame)
+	return fmt.Sprintf(tuiUserPromptTemplate, "sr-eval", tuiKeysHint, safeBrief, safeFrame)
 }
 
 // tuiKeysHint is the keys the user is told of: the ones a person selects and approves with.
@@ -94,12 +94,11 @@ func simulateTUIUser(ctx context.Context, harnessID, binDir, sock, model, brief,
 	}
 	defer os.RemoveAll(cwd)
 
-	srEval := filepath.Join(binDir, "sr-eval")
 	c := exec.CommandContext(ctx, filepath.Join(binDir, "sr-agent"),
 		"--harness", harnessID,
 		"--model", model,
-		"--allowed-tools", "Bash("+srEval+" tui:*)",
-		"--prompt", tuiUserPrompt(srEval, brief, frame),
+		"--allowed-tools", tuiUserGrant,
+		"--prompt", tuiUserPrompt(brief, frame),
 	)
 	c.Dir = cwd
 	c.Env = append(harness.Current().SessionEnv(os.Environ()),
@@ -111,3 +110,10 @@ func simulateTUIUser(ctx context.Context, harnessID, binDir, sock, model, brief,
 	}
 	return parseTUIUserReply(stdout.String())
 }
+
+// tuiUserGrant is the one tool the simulated user is granted: the sr-eval command, named by
+// its base, which is all a harness like Cursor can scope a shell command by (it refuses a
+// path-scoped `Bash(<path> tui:*)`). It is found on PATH, where the run's binDir leads, not
+// by a path. The grant therefore covers every sr-eval subcommand, not just `tui`; the prompt
+// teaches only `tui`, and the user runs with no hooks, no plugins and an empty directory.
+const tuiUserGrant = "Bash(sr-eval:*)"
