@@ -82,13 +82,30 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 	}
 }
 
-// allRepoTemplates lists every .j2 the repo ships: the marketplace plugins and
-// the repo's own .sloprail/ rules.
+// allRepoTemplates lists every .j2 the repo ships: the marketplace plugins, the
+// repo's own .sloprail/ rules, and the example rule trees the e2e tests keep under
+// tests/**/testdata/**/sloprail/ (the examples moved to sloprail-community, but
+// these copies are still executed by tests).
 func allRepoTemplates(t *testing.T, repo string) []string {
 	t.Helper()
 	templates := findTemplates(t, filepath.Join(repo, "marketplace", "plugins"))
 	require.NotEmpty(t, templates, "no .md.j2 templates found under %s — the walk or the path is wrong", repo)
-	return append(templates, findTemplates(t, filepath.Join(repo, ".sloprail"))...)
+	templates = append(templates, findTemplates(t, filepath.Join(repo, ".sloprail"))...)
+	return append(templates, testdataTemplates(t, repo)...)
+}
+
+// testdataTemplates lists every .md.j2 under a `sloprail/` rule tree inside
+// tests/**/testdata/.
+func testdataTemplates(t *testing.T, repo string) []string {
+	t.Helper()
+	var out []string
+	for _, p := range findTemplates(t, filepath.Join(repo, "tests")) {
+		slash := filepath.ToSlash(p)
+		if strings.Contains(slash, "/testdata/") && strings.Contains(slash, "/sloprail/") && strings.HasSuffix(slash, ".md.j2") {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // fencedInterpolations returns the 1-based lines of a template's source where a
