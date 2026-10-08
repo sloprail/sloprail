@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
-# Template for a GATE's script check on a pre-write event (`on: PreFileWrite`).
-# Copy it next to your gate.yaml and change only fine(). A gate PREVENTS: it sees
-# the write before it lands, and the engine does not fail it closed for you — a
-# write whose result could not be computed (a sed -i, a notebook create, an sr-file
-# line it could not resolve) arrives with resultKnown false and an empty
-# newContent, and this template refuses it rather than admit bytes nobody saw.
-# Keep a plain file-guard of the same name (file-guard's check-template.sh) for
-# the settled result.
+# Template for a GATE's script check on a pending write (`on: PreFileWrite`). Copy it
+# next to your gate.yaml and change only fine(). It refuses a write whose result is
+# unknown (resultKnown false) rather than pass bytes nobody saw; see gate.md, "An
+# unknown result is yours to refuse".
 #
-# Contract: stdin is the GateCheckPayload ({"event":{...},"transcriptPath":...}).
 # exit 0 permits. To refuse, print {"reason":"..."} and exit 1.
-set -euo pipefail
+set -uo pipefail
 
 payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1"; }

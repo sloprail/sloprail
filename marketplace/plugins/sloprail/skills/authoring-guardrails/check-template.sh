@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
-# Template for a FILE-GUARD's script check. Copy it next to your file-guard.yaml
-# and change only fine(). Everything else — reading the changeset, refusing what
-# could not be read, the refusal format — is already right; the plugin's
-# authoring-slop rule refuses scripts that get those wrong.
+# Template for a FILE-GUARD's script check. Copy it next to your file-guard.yaml and
+# change only fine(). Everything else (reading the changeset, refusing what could not
+# be read, the refusal format) is already right.
 #
-# A file-guard judges COMMITS: merge-base(--base, --head)..--head of `sr-checks run`,
-# handed to the check as one Changeset. The files `match` selected are under
-# `.changeset.files[]`, each {path, status, oldPath, oldContent, newContent,
-# oldMarkers, newMarkers, diff} — committed content, always known, so there is no
-# "could not be read" case to handle. `$SR_TREE` is a read-only snapshot of head if
-# the rule needs a file `match` did not select. To refuse a write BEFORE it lands,
-# write a gate instead: see gate-check-template.sh.
+# It checks each file `match` selected, one at a time. A rule about the change as a
+# whole reads `.changeset.commits`, `.changeset.others` and `.changeset.citations` too.
+# The payload is described in file-guard.md, "What a check receives".
 #
-# A rule that is about one file at a time (size, frontmatter) loops over the files,
-# as below; a rule about the change as a whole reads `.changeset.commits`,
-# `.changeset.others` and `.changeset.citations` too.
-#
-# Contract: stdin is the CheckPayload ({"event":{"kind":"Changeset"},"changeset":{...},
-# "transcriptPath":...}). exit 0 permits. To refuse, print {"reason":"..."} and exit 1.
+# exit 0 permits. To refuse, print {"reason":"..."} and exit 1.
 set -uo pipefail
 
 payload="$(cat)"
