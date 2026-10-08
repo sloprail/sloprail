@@ -21,10 +21,11 @@ echo '{"reason":"secrets/ is off limits"}'
 exit 1
 `
 
-// The agent is launched with --agent-run: an agent working in the project, its hooks live and
-// free to write it. A judge is not that on every harness (Cursor's is confined by the engine to
-// its answer file, so its writes never reach the other rules), and what these tests are about is
-// the rules' reach into an agent a check launched.
+// The agent is launched as a judge where a judge can write the project (CapJudgeWritesProject:
+// Claude), and with --agent-run elsewhere ({{agent-mode}}): a Cursor judge is confined by the
+// engine to its answer file and a Codex one to a read-only sandbox, so their writes never reach
+// the other rules, and what these tests are about is the rules' reach into an agent a check
+// launched.
 //
 // judgeOnlyScript launches an agent and does nothing else. No counter: with the
 // guard in place there is no recursion to bound, and T015_01 is where the
@@ -32,7 +33,7 @@ exit 1
 const judgeOnlyScript = `#!/bin/sh
 cat >/dev/null
 echo ran >> ledger.txt
-sr-agent --harness {{harness}} --agent-run --model size-xs "judge this note" >/dev/null 2>&1
+sr-agent --harness {{harness}} {{agent-mode}}--model size-xs "judge this note" >/dev/null 2>&1
 exit 0
 `
 
