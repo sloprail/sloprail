@@ -51,6 +51,9 @@ import (
 )
 
 func main() {
+	// The agent-under-test can read the process table: keep host paths out of our argv.
+	restoreArgv()
+	hideArgv()
 	err := newRoot().Execute()
 	if err != nil {
 		if err.Error() != "" {

@@ -39,6 +39,8 @@ func TestMain(m *testing.M) {
 		fakeCursorTUI()
 	case "user":
 		fakeUser()
+	case "argv":
+		argvRole()
 	case "cli":
 		if err := newRoot().Execute(); err != nil {
 			fmt.Fprintln(os.Stderr, err)

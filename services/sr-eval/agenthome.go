@@ -114,9 +114,12 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 			continue
 		}
 		dst := filepath.Join(home, name)
-		if info.IsDir() {
+		switch {
+		case info.IsDir():
 			err = copyTree(src, dst)
-		} else {
+		case name == ".gitconfig":
+			err = copyGlobalConfig(src, dst, append(hostRoots(repoRootDir), realHome))
+		default:
 			err = copyFile(src, dst)
 		}
 		if err != nil {
@@ -234,7 +237,7 @@ func buildRelease(ctx context.Context, repoRoot, dir string) error {
 		return err
 	}
 	for _, name := range sloprailBinaries {
-		build := exec.CommandContext(ctx, "go", "build", "-o", filepath.Join(stage, name), "./services/"+name)
+		build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", filepath.Join(stage, name), "./services/"+name)
 		build.Dir = repoRoot
 		build.Env = append(os.Environ(), "CGO_ENABLED=0")
 		if out, err := build.CombinedOutput(); err != nil {
