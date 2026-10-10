@@ -156,6 +156,16 @@ plugin_version() {
 # (Makefile's distribute-local comment: "copying only the changed ones is how
 # a stale sr-session outlives the sr that dispatches to it").
 # sr:invariant install/session-start-installs-the-matching-release
+# both_streams TEXT: prints TEXT on stdout (what the agent is told) and on stderr (what the
+# person sees). Not `| tee /dev/stderr`: that OPENS the path, which fails with "No such device
+# or address" when stderr is a socket, as it is for a hook of a session whose own output is
+# captured (a headless run, CI, an eval). Under `set -e` that failure ended this script before
+# the install it was announcing, and the session ran with nothing enforcing.
+both_streams() {
+  printf '%s\n' "$1"
+  printf '%s\n' "$1" >&2
+}
+
 run_auto_install() {
   tag="${1:-v$(plugin_version)}"
   install_log="$(mktemp)"
@@ -163,10 +173,10 @@ run_auto_install() {
     sr_session_bin="$(find_sr_session)" || sr_session_bin=""
   fi
   if [ -n "$sr_session_bin" ]; then
-    echo "sloprail: installed ${tag}: ${sr_session_bin}" | tee /dev/stderr
+    both_streams "sloprail: installed ${tag}: ${sr_session_bin}"
   else
-    echo "sloprail: the automatic install failed; guardrails are NOT enforcing until it is fixed:" | tee /dev/stderr
-    tail -5 "$install_log" | tee /dev/stderr
+    both_streams "sloprail: the automatic install failed; guardrails are NOT enforcing until it is fixed:"
+    both_streams "$(tail -5 "$install_log")"
   fi
   rm -f "$install_log"
 }
@@ -191,7 +201,7 @@ run_auto_install() {
 # plugin can only run what it ships.
 if [ -z "$sr_session_bin" ] && [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_NO_AUTO_INSTALL:-}" ]; then
   tag="${SLOPRAIL_INSTALL_TAG:-v$(plugin_version)}"
-  echo "sloprail: installing the sr binaries (${tag}) into ${SLOPRAIL_INSTALL_DIR:-~/.local/bin}, one time. Set SLOPRAIL_NO_AUTO_INSTALL=1 to install by hand instead." | tee /dev/stderr
+  both_streams "sloprail: installing the sr binaries (${tag}) into ${SLOPRAIL_INSTALL_DIR:-~/.local/bin}, one time. Set SLOPRAIL_NO_AUTO_INSTALL=1 to install by hand instead."
   run_auto_install "$tag"
 fi
 
@@ -221,7 +231,7 @@ if [ -n "$sr_session_bin" ] && [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_N
     && [ "$installed_version" != "$required_version" ] \
     && [ "$(printf '%s\n%s\n' "$installed_version" "$required_version" | sort -V | head -1)" = "$installed_version" ]; then
     tag="v${required_version}"
-    echo "sloprail: sr-session ${installed_version} is older than this plugin needs (${required_version}); upgrading to ${tag}. Set SLOPRAIL_NO_AUTO_INSTALL=1 to skip." | tee /dev/stderr
+    both_streams "sloprail: sr-session ${installed_version} is older than this plugin needs (${required_version}); upgrading to ${tag}. Set SLOPRAIL_NO_AUTO_INSTALL=1 to skip."
     run_auto_install "$tag"
   fi
 fi
