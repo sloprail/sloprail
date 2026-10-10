@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,9 +9,9 @@ import (
 	"testing"
 )
 
-// The judges' transcripts are found beside the agent's project directory and filed by rule,
-// and usage.json adds up what each session's own record says it cost, per role.
-func TestJudgeFilesAndUsage(t *testing.T) {
+// The judges' transcripts are found beside the agent's project directory and filed by rule;
+// another project's judges are not taken.
+func TestJudgeFiles(t *testing.T) {
 	root := t.TempDir()
 	proj := filepath.Join(root, "-tmp-p")
 	held := proj + "--sloprail-file-guard-invariant-held"
@@ -22,9 +21,7 @@ func TestJudgeFilesAndUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cost := func(usd string) string {
-		return `{"type":"user"}` + "\n" + `{"type":"cost-state","totalCostUSD":` + usd + `,"totalAPIDuration":2000,"modelUsage":{"m":{"outputTokens":7}}}` + "\n"
-	}
+	cost := func(string) string { return `{"type":"user"}` + "\n" }
 	agent := filepath.Join(proj, "a.jsonl")
 	mustWriteFile(t, agent, cost("0.5"))
 	mustWriteFile(t, filepath.Join(held, "j1.jsonl"), cost("0.25"))
@@ -34,17 +31,6 @@ func TestJudgeFilesAndUsage(t *testing.T) {
 	judges := judgeFiles(agent)
 	if len(judges) != 2 || judges["judges/file-guard-invariant-held/j1.jsonl"] == nil {
 		t.Fatalf("judges: %v", keysOf(judges))
-	}
-	var u runUsage
-	body, _ := os.ReadFile(agent)
-	if err := json.Unmarshal(usageFile(body, judges), &u); err != nil {
-		t.Fatal(err)
-	}
-	if u.TotalUSD["agent"] != 0.5 || u.TotalUSD["judge"] != 0.5 || u.TotalUSD["all"] != 1 || len(u.Sessions) != 3 {
-		t.Fatalf("usage: %+v", u)
-	}
-	if u.Sessions[1].Rule != "file-guard-invariant-held" || u.Sessions[1].APISeconds != 2 {
-		t.Fatalf("judge session: %+v", u.Sessions[1])
 	}
 }
 

@@ -283,16 +283,13 @@ func runFixtureSteps(cmd *cobra.Command) error {
 				rec.Files[name] = body
 			}
 		}
-		// The judges' own sessions, what every session cost, and the repository as it ended.
+		// The judges' own sessions and the repository as it ended.
 		if rec.Files == nil {
 			rec.Files = map[string][]byte{}
 		}
-		judges := judgeFiles(transcriptPath)
-		for name, body := range judges {
+		for name, body := range judgeFiles(transcriptPath) {
 			rec.Files[name] = body
 		}
-		agentBody, _ := os.ReadFile(transcriptPath)
-		rec.Files["usage.json"] = usageFile(agentBody, judges)
 		if bundle, berr := repoBundle(ctx, ws.project); berr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: warning: the end-state repository was not kept: %v\n", berr)
 		} else {

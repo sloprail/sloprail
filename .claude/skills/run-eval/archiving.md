@@ -23,11 +23,11 @@ it tracked) and its sloprail state store, and `checks/<repo>.jsonl`, the
 verdicts `sr-checks run` stored for the tracked ranges. An empty checks file
 means no check ran in the run, whatever the score says.
 
-Three more things are kept beside them. `judges/<rule>/<id>.jsonl` are the
+Two more things are kept beside them. `judges/<rule>/<id>.jsonl` are the
 transcripts of the judges the run's checks started: each judge is a session
 of its own, in a project directory beside the agent's, so the session archive
-does not hold it. `usage.json` lists what every session's own record says it
-cost (the agent's and each judge's, with the totals per role). `repo.bundle`
+does not hold it. What a session cost is not stored apart: it is the last
+`cost-state` line of its transcript. `repo.bundle`
 is the project's repository as the run left it, every branch included
 (`git clone repo.bundle` restores it).
 
