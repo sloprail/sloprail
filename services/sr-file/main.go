@@ -156,15 +156,17 @@ func newRoot() *cobra.Command {
 // make the common case the wrong one. `--concrete=false` restores CUE's default.
 func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "validate <path> --schema <schema.cue>",
-		Short: "Check a file against a CUE schema",
-		Long: "Check a file against a CUE schema.\n\n" +
+		Use:   "validate <path> --schema <schema.cue|schema.json>",
+		Short: "Check a file against a CUE schema or a JSON Schema",
+		Long: "Check a file against a CUE schema, or against a JSON Schema.\n\n" +
 			"WHICH BYTES ARE THE DOCUMENT is decided by the file's extension: the frontmatter of a\n" +
 			".md, the whole of a .yaml, .yml or .json. A markdown file is a YAML document wearing\n" +
 			"prose below it, so handing the whole file to a schema checker gets an error about the\n" +
 			"prose. An extension outside that set is an error rather than a guess.\n\n" +
 			"THE SCHEMA IS CUE, unmodified — the same file `cue vet` would take. Exit status is 0\n" +
-			"when the document satisfies the schema and 1 when it does not, so a hook can read it.\n\n" +
+			"when the document satisfies the schema and 1 when it does not, so a hook can read it.\n" +
+			"A schema whose name ends in .json is read as a JSON Schema instead (draft 2020-12 unless\n" +
+			"its own $schema says otherwise) and checked the same way, with the same messages.\n\n" +
 			"Failures name the file, the field, and what was expected, one line per problem, and\n" +
 			"every problem is reported rather than only the first.\n\n" +
 			"BYTES ON STDIN, with '-' as the path, for a hook holding content that is not on disk:\n" +
@@ -180,6 +182,7 @@ func newValidateCmd() *cobra.Command {
 			"EXAMPLES:\n" +
 			"  sr-file validate memories/note.md --schema .sloprail/schemas/note.cue\n" +
 			"  sr-file validate config.yaml --schema schema.cue --path '#Config'\n" +
+			"  sr-file validate answer.json --schema response.schema.json\n" +
 			"  jq -r .event.fields.newContent event.json | sr-file validate - --as .md --schema s.cue\n" +
 			"  sr-file validate DECISION.md --schema s.cue --emit | jq -r .transcript_path",
 		Args:          cobra.ExactArgs(1),
@@ -187,7 +190,7 @@ func newValidateCmd() *cobra.Command {
 		SilenceErrors: true,
 		RunE:          runValidate,
 	}
-	cmd.Flags().StringP("schema", "s", "", "The CUE schema to check against (required)")
+	cmd.Flags().StringP("schema", "s", "", "The schema to check against: CUE, or a JSON Schema when its name ends in .json (required)")
 	cmd.Flags().BoolP("concrete", "c", true, "Require all fields to be concrete — a missing required field fails (cue vet's -c)")
 	cmd.Flags().StringP("path", "d", "", "Schema definition to check against, e.g. '#Config' (cue vet's -d)")
 	cmd.Flags().String("as", "", "How to read bytes on stdin: .md, .yaml or .json. Required with '-', and refused with a path")
@@ -346,6 +349,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	err = ValidateWith(doc, string(schemaSrc), schemaPath, Options{
 		Concrete:   concrete,
 		Definition: defPath,
+		JSONSchema: IsJSONSchemaPath(schemaPath),
 	})
 	switch {
 	case err == nil:

@@ -31,6 +31,7 @@ import (
 	cueerrors "cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/token"
 	"cuelang.org/go/encoding/json"
+	"cuelang.org/go/encoding/jsonschema"
 	"cuelang.org/go/encoding/yaml"
 )
 
@@ -119,6 +120,49 @@ type Options struct {
 	// Definition selects a named definition inside the schema to check against,
 	// e.g. "#Config" — `cue vet -d`. Empty checks against the schema's top level.
 	Definition string
+
+	// JSONSchema reads the schema as a JSON Schema document (draft 2020-12 unless
+	// its own $schema says otherwise) instead of as CUE. CUE still does the
+	// checking: the schema is translated to CUE first, so a problem is reported in
+	// the same words either way.
+	JSONSchema bool
+}
+
+// IsJSONSchemaPath says a schema file is a JSON Schema rather than CUE: its name
+// ends in .json. A CUE schema is never JSON-named, so the extension decides and
+// no flag is needed.
+func IsJSONSchemaPath(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), ".json")
+}
+
+// compileSchema turns the schema's source into the CUE value a document is
+// unified with: CUE compiled as it is, a JSON Schema translated to CUE first.
+// Every failure is the schema's own (ErrSchemaCompile), never the document's.
+func compileSchema(ctx *cue.Context, schemaSrc, schemaName string, asJSONSchema bool) (cue.Value, error) {
+	if !asJSONSchema {
+		schema := ctx.CompileString(schemaSrc, cue.Filename(schemaName))
+		if err := schema.Err(); err != nil {
+			return cue.Value{}, fmt.Errorf("%w: %s", ErrSchemaCompile, renderCUE(err))
+		}
+		return schema, nil
+	}
+	expr, err := json.Extract(schemaName, []byte(schemaSrc))
+	if err != nil {
+		return cue.Value{}, fmt.Errorf("%w: %s is not JSON: %s", ErrSchemaCompile, schemaName, renderCUE(err))
+	}
+	raw := ctx.BuildExpr(expr)
+	if err := raw.Err(); err != nil {
+		return cue.Value{}, fmt.Errorf("%w: %s", ErrSchemaCompile, renderCUE(err))
+	}
+	file, err := jsonschema.Extract(raw, &jsonschema.Config{PkgName: "schema"})
+	if err != nil {
+		return cue.Value{}, fmt.Errorf("%w: %s is not a JSON Schema this can read: %s", ErrSchemaCompile, schemaName, renderCUE(err))
+	}
+	schema := ctx.BuildFile(file)
+	if err := schema.Err(); err != nil {
+		return cue.Value{}, fmt.Errorf("%w: %s", ErrSchemaCompile, renderCUE(err))
+	}
+	return schema, nil
 }
 
 // Validate checks doc against the CUE schema in schemaSrc, requiring concrete
@@ -135,9 +179,9 @@ func Validate(doc Document, schemaSrc, schemaName string) error {
 func ValidateWith(doc Document, schemaSrc, schemaName string, opts Options) error {
 	ctx := cuecontext.New()
 
-	schema := ctx.CompileString(schemaSrc, cue.Filename(schemaName))
-	if err := schema.Err(); err != nil {
-		return fmt.Errorf("%w: %s", ErrSchemaCompile, renderCUE(err))
+	schema, err := compileSchema(ctx, schemaSrc, schemaName, opts.JSONSchema)
+	if err != nil {
+		return err
 	}
 
 	if opts.Definition != "" {
