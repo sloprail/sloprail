@@ -33,12 +33,12 @@
         "claude-md",
         "stop-hook"
       ],
-      "version": "0.5.0",
+      "version": "0.5.1",
       "source": {
         "source": "git-subdir",
         "url": "sloprail/sloprail",
         "path": "marketplace/plugins/sloprail",
-        "ref": "v0.5.0"
+        "ref": "v0.5.1"
       },
       "author": {
         "name": "sloprail",
@@ -55,12 +55,12 @@
         "agentic-coding",
         "code-quality"
       ],
-      "version": "0.5.0",
+      "version": "0.5.1",
       "source": {
         "source": "git-subdir",
         "url": "sloprail/sloprail",
         "path": "marketplace/plugins/sloprail-tasks",
-        "ref": "v0.5.0"
+        "ref": "v0.5.1"
       },
       "author": {
         "name": "sloprail",
@@ -77,12 +77,12 @@
         "agentic-coding",
         "code-quality"
       ],
-      "version": "0.5.0",
+      "version": "0.5.1",
       "source": {
         "source": "git-subdir",
         "url": "sloprail/sloprail",
         "path": "marketplace/plugins/sloprail-content",
-        "ref": "v0.5.0"
+        "ref": "v0.5.1"
       },
       "author": {
         "name": "sloprail",
