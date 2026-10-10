@@ -8,10 +8,27 @@ name: test
 # push only. A pull_request trigger as well would run every job TWICE on any
 # branch that has one open — the same commit, the same result, twice the wall
 # clock and twice the runner minutes.
+# The paths are the code and the tests. test-skipped.yml holds the opposite list and
+# reports the required checks for a push this one does not run on: keep the two in step.
 on:
   push:
-  # The full suite on any branch, on demand: `gh workflow run test --ref <branch>`.
-  # That is how integration/* gets its full run (at checkpoints, not on every merge).
+    paths:
+      - '**.go'
+      - go.mod
+      - go.sum
+      - Makefile
+      - install.sh
+      - 'internal/**'
+      - 'services/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'scripts/**'
+      - 'marketplace/**'
+      - .github/workflows/test.yml
+      # a release's version bump is not code
+      - '!marketplace/plugins/*/.*-plugin/plugin.json'
+  # Everything on any branch, on demand, the Codex and Cursor suites included:
+  # `gh workflow run test --ref <branch>`.
   workflow_dispatch:
 
 permissions:
@@ -25,53 +42,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
-  # changes decides whether this push touched anything unit/e2e/install-sh
-  # could actually catch a regression in. Two kinds of diff are exempt:
-  #
-  #   - the version files cut-release.yml's bump commit writes (plugin.json/
-  #     marketplace.json) — a version string in already-shipped JSON, no Go,
-  #     no shell.
-  #   - any OTHER workflow file (.github/workflows/*.yml except this one) —
-  #     unit/e2e/install-sh exercise Go code and install.sh, not workflow
-  #     YAML; a change to release.yml or cut-release.yml is proven (or not)
-  #     by actually running IT, which is a different job's concern
-  #     (actionlint, or the workflow's own next real run), not by re-running
-  #     a test suite that never reads workflow files at all. THIS file
-  #     (test.yml) is excluded from that exemption on purpose: a bug in the
-  #     job that decides what to skip, or in any job below it, has to be
-  #     proven by the very matrix it controls, so a self-change always runs
-  #     everything.
-  #
-  # Either way, code-changed downstream turns "nothing worth testing changed"
-  # into a skip: fast, green, and every required context still REPORTS for
-  # the commit (a skipped job's conclusion still satisfies a required status
-  # check), so a bump or workflow-only PR is never stuck waiting on a check
-  # that never ran.
-  #
-  # Diffed against where this branch FORKED from the default branch (git
-  # merge-base), not against github.event.before. before is the all-zeros SHA
-  # on a branch's first push — exactly what scripts/cut-release.sh's
-  # release/vX.Y.Z branch is EVERY time (a fresh branch off main, one commit)
-  # — so treating that as "fail open, assume code changed" defeated the skip
-  # for the one case it exists for, discovered by actually running it: PR #54
-  # ran the full matrix on a plugin.json-only diff. merge-base answers "what
-  # did THIS branch add relative to where it started," which is right for
-  # both a brand-new release branch and an ordinary feature branch with
-  # several commits — not "does this branch differ from main" via a plain
-  # `git diff main...HEAD` (nearly always true the INSTANT a branch exists,
-  # for the trivial reason that main itself keeps moving — that question
-  # would defeat the skip just as completely, the opposite failure mode).
+  # changes reads the head commit for an [e2e-only: ...] tag. Such a commit runs only
+  # the e2e-adhoc job below; every other job's steps skip.
   changes:
-    name: which files changed
+    name: what to run
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # An [e2e-only: ...] commit runs ONLY the e2e-adhoc job below (every other
     # job's steps skip) — see the adhoc step.
     outputs:
-      # The full suite runs on a push to main, or when dispatched (workflow_dispatch) on
-      # any branch: an integration/* branch is run that way at checkpoints, not on every
-      # merge into it. Other pushes skip it; [e2e-only: ...] commits run a subset.
-      code-changed: ${{ (steps.adhoc.outputs.adhoc == 'true' || (github.ref != 'refs/heads/main' && github.event_name != 'workflow_dispatch')) && 'false' || steps.diff.outputs.code-changed }}
+      code-changed: ${{ steps.adhoc.outputs.adhoc != 'true' }}
       adhoc: ${{ steps.adhoc.outputs.adhoc }}
       adhoc-harness: ${{ steps.adhoc.outputs.harness }}
       adhoc-pkgs: ${{ steps.adhoc.outputs.pkgs }}
@@ -80,69 +60,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: diff
-        env:
-          # github.event.repository.default_branch is a field of the push
-          # EVENT payload GitHub already sent this job — no git command, no
-          # network call, no output-parsing. `git remote show origin` (the
-          # previous approach) queries the remote for its FULL branch list
-          # (60+ in this repo) just to grep one line back out of it, and
-          # failed outright in CI on the very next real run — caught by
-          # actually running it, not by reasoning about it, so this went
-          # straight to the payload field rather than to a hardened version
-          # of the same shell-out.
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          # Explicit fetch rather than trusting origin/$DEFAULT_BRANCH to
-          # already exist locally: actions/checkout@v4's own remote-tracking
-          # refs depend on which ref it was told to check out and its exact
-          # fetch config, which is more moving parts than this needs to
-          # reason about — one direct fetch of the one ref this actually
-          # wants is unambiguous regardless.
-          git fetch origin "$DEFAULT_BRANCH"
-          base="$(git merge-base "origin/$DEFAULT_BRANCH" "${{ github.sha }}")"
-          # On the default branch itself that merge-base IS the pushed commit, so the
-          # diff was always empty and every push to main skipped the suite. There the
-          # range is what the push brought: the commit before it (event.before).
-          if [ "$base" = "${{ github.sha }}" ]; then
-            base="${{ github.event.before }}"
-            git cat-file -e "$base^{commit}" 2>/dev/null || base=""
-          fi
-          # No merge-base at all (an unrelated-history branch, or the default
-          # branch itself force-pushed away from what this checkout knows) —
-          # fail open rather than risk skipping real changes on a comparison
-          # that cannot mean anything.
-          if [ -z "$base" ]; then
-            echo "code-changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          changed="$(git diff --name-only "$base" "${{ github.sha }}")"
-          # Exempt: the two version files, and any workflow file except this
-          # one (test.yml — see the job's own doc comment for why it is the
-          # one exception). POSIX grep has no negative lookahead, so rather
-          # than one pattern encoding "workflow file, but NOT this specific
-          # name", the workflow-file check runs only once test.yml is
-          # already known absent from the diff — a changed test.yml must
-          # never be filtered out by the broader workflows/*.yml pattern
-          # below it, or it would silently exempt itself.
-          exempt="$(printf '%s\n' "$changed" | grep -vE '^(marketplace/plugins/[^/]+/\.claude-plugin/plugin\.json|\.claude-plugin/marketplace\.json)$' || true)"
-          if printf '%s\n' "$exempt" | grep -qx '\.github/workflows/test\.yml'; then
-            other="$exempt"
-          else
-            other="$(printf '%s\n' "$exempt" | grep -vE '^\.github/workflows/[^/]+\.ya?ml$' || true)"
-          fi
-          if [ -z "$other" ]; then
-            echo "code-changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "code-changed=true" >> "$GITHUB_OUTPUT"
-          fi
-      # A quick repro in CI instead of the whole suite: a pushed commit whose
-      # message carries
-      #   [e2e-only: harness=codex pkgs=./tests/e2e/harness/fileguard/...,./tests/e2e/harness/gate/... run=TestT034_01]
-      # (harness defaults to claude, run to every test) runs just those packages
-      # under that harness in e2e-adhoc, and every other job skips. e2e (all)
-      # then FAILS on purpose, so a branch whose head is such a commit cannot
-      # merge on it: push a commit without the tag for the full run.
       - id: adhoc
         env:
           MSG: ${{ github.event.head_commit.message }}
@@ -319,7 +236,7 @@ jobs:
           E2E: ${{ needs.e2e.result }}
         run: |
           echo "changes=$CHANGES code-changed=$CODE_CHANGED adhoc=$ADHOC e2e=$E2E"
-          [ "$CHANGES" = success ] || { echo "the which-files-changed job did not succeed"; exit 1; }
+          [ "$CHANGES" = success ] || { echo "the what-to-run job did not succeed"; exit 1; }
           [ "$ADHOC" != true ] || { echo "an [e2e-only] commit ran a subset only: push a commit without the tag for the full run"; exit 1; }
           [ "$E2E" = success ] && exit 0
           if [ "$E2E" = skipped ] && [ "$CODE_CHANGED" != true ]; then exit 0; fi
