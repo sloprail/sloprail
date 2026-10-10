@@ -51,7 +51,6 @@ jobs:
     # An [e2e-only: ...] commit runs ONLY the e2e-adhoc job below (every other
     # job's steps skip) — see the adhoc step.
     outputs:
-      code-changed: ${{ steps.adhoc.outputs.adhoc != 'true' }}
       adhoc: ${{ steps.adhoc.outputs.adhoc }}
       adhoc-harness: ${{ steps.adhoc.outputs.harness }}
       adhoc-pkgs: ${{ steps.adhoc.outputs.pkgs }}
@@ -92,16 +91,16 @@ jobs:
       # (unit/install-sh have no matrix, so this line has to say it every
       # step) — see the e2e job's own comment for why the job-level form is
       # wrong for any job whose name is REQUIRED by main's ruleset.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: install jq and yq
         run: |
           command -v jq >/dev/null || sudo apt-get install -y jq
@@ -110,11 +109,11 @@ jobs:
             sudo chmod +x /usr/local/bin/yq
           }
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: build
         run: go build ./...
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: vet
         run: go vet ./...
 
@@ -124,7 +123,7 @@ jobs:
       # worktree under .claude/ is a second copy of this repository, so every
       # file would be reported twice with a path that is not ours. Asking git
       # which files it tracks is the same question with the right answer.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: gofmt
         run: |
           unformatted="$(git ls-files '*.go' | xargs gofmt -l)"
@@ -132,11 +131,11 @@ jobs:
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: unit
         run: make test-unit
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: services
         run: make test-services
 
@@ -178,16 +177,16 @@ jobs:
     # shard genuinely hung rather than the runner being slow.
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: install jq and yq
         run: |
           command -v jq >/dev/null || sudo apt-get install -y jq
@@ -200,14 +199,14 @@ jobs:
       # tests/e2e/harness/{MOCK,CODEX_MOCK,CURSOR_MOCK}_VERSION — the same
       # `make mock` a contributor runs, built from source (harness-mocks is
       # public), so CI and local agree and a mock bump is a reviewed change.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: install the mocks
         run: make mock
 
       # Checked here as well as by the harness (which installs a missing pinned
       # mock itself and fails if it cannot): a broken install step stops the job
       # at once rather than inside every package.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: e2e
         run: |
           test -x .bin/a10n-claude-mock || {
@@ -219,9 +218,8 @@ jobs:
   # One stable name for branch protection to require, however the shard list
   # changes. always(): a failed or cancelled shard must fail THIS job rather
   # than leave it skipped (a skipped required check counts as passing).
-  # Every matrix leg reports success even when changes found nothing to test
-  # (its steps skip, the job does not), so the only legitimate non-success is
-  # the e2e job itself skipped because the changes job was.
+  # Every matrix leg reports success even on an [e2e-only] commit (its steps
+  # skip, the job does not), so anything but success here is a failure.
   e2e-all:
     name: e2e (all)
     needs: [changes, e2e]
@@ -231,15 +229,13 @@ jobs:
     steps:
       - env:
           CHANGES: ${{ needs.changes.result }}
-          CODE_CHANGED: ${{ needs.changes.outputs.code-changed }}
           ADHOC: ${{ needs.changes.outputs.adhoc }}
           E2E: ${{ needs.e2e.result }}
         run: |
-          echo "changes=$CHANGES code-changed=$CODE_CHANGED adhoc=$ADHOC e2e=$E2E"
+          echo "changes=$CHANGES adhoc=$ADHOC e2e=$E2E"
           [ "$CHANGES" = success ] || { echo "the what-to-run job did not succeed"; exit 1; }
           [ "$ADHOC" != true ] || { echo "an [e2e-only] commit ran a subset only: push a commit without the tag for the full run"; exit 1; }
           [ "$E2E" = success ] && exit 0
-          if [ "$E2E" = skipped ] && [ "$CODE_CHANGED" != true ]; then exit 0; fi
           echo "an e2e shard did not succeed"
           exit 1
 
@@ -264,15 +260,15 @@ jobs:
         codex-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
       # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install jq and yq
         run: |
           command -v jq >/dev/null || sudo apt-get install -y jq
@@ -281,10 +277,10 @@ jobs:
             sudo chmod +x /usr/local/bin/yq
           }
 
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: e2e (codex)
         shell: bash
         env:
@@ -314,15 +310,15 @@ jobs:
         cursor-shard: [session, session2, pre_tool, rest, rest2, rest3, rest4]
     timeout-minutes: 45
     steps:
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
       # Required by tests (tests/repo, grounding e2e): they fail, not skip, without them.
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install jq and yq
         run: |
           command -v jq >/dev/null || sudo apt-get install -y jq
@@ -331,10 +327,10 @@ jobs:
             sudo chmod +x /usr/local/bin/yq
           }
 
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: install the mocks
         run: make mock
-      - if: needs.changes.outputs.code-changed == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - if: needs.changes.outputs.adhoc != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         name: e2e (cursor)
         shell: bash
         env:
@@ -369,25 +365,25 @@ jobs:
       # one `matrix:` away from happening here too, so every job in this file
       # is held to the per-step form for the one property that actually
       # matters — the job's OWN name always reports, skip or not.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         uses: actions/checkout@v4
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: shellcheck
         run: |
           brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
           shellcheck install.sh marketplace/plugins/sloprail/hooks/sr-session-hook.sh
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: build release archives
         run: make release
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: serve the archives like a GitHub Release would
         run: |
           python3 -m http.server 8931 --directory dist --bind 127.0.0.1 &
@@ -403,7 +399,7 @@ jobs:
       # not a rewritten stand-in.
       # jq/yq: with neither on PATH (a PATH of basic tools only) and no package manager
       # allowed, install.sh puts static binaries (here local stand-ins) in the install dir.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: install.sh installs jq and yq
         run: |
           sandbox="$RUNNER_TEMP/tools-sandbox"; mkdir -p "$sandbox/bin" "$sandbox/src" "$sandbox/dest"
@@ -414,7 +410,7 @@ jobs:
           test -x "$sandbox/dest/jq" && test -x "$sandbox/dest/yq"
           if env -i HOME="$sandbox" PATH="$sandbox/bin" SLOPRAIL_TOOLS_NO_PM=1 SLOPRAIL_YQ_URL="file://$sandbox/none" /bin/sh /tmp/install-tools-under-test.sh --tools-only "$sandbox/dest2"; then echo "a missing download was not an error"; exit 1; fi
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: run install.sh end to end
         run: |
           cp install.sh /tmp/install-under-test.sh
@@ -426,7 +422,7 @@ jobs:
           # is arbitrary; this test's mock doesn't care which tag it says.
           SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-installed" /tmp/install-under-test.sh
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: installed binaries actually run
         run: |
           "$RUNNER_TEMP/sloprail-installed/sr-session" start </dev/null >/dev/null
@@ -436,7 +432,7 @@ jobs:
       # login, so CI cannot run it; what it can prove is that the plugin lands where Cursor
       # loads local plugins from, whole and executable, and that its hook runs against the
       # installed binaries and answers in the JSON Cursor requires.
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: install.sh --harness cursor
         run: |
           export SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-cursor-bin"
@@ -455,7 +451,7 @@ jobs:
           printf '%s\n' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["additional_context"]'
           echo "cursor plugin installed and its sessionStart hook answers"
 
-      - if: needs.changes.outputs.code-changed == 'true'
+      - if: needs.changes.outputs.adhoc != 'true'
         name: tampered download is rejected
         run: |
           cp dist/sloprail-darwin-arm64.tar.gz /tmp/original.tar.gz
@@ -468,12 +464,12 @@ jobs:
           echo "tampered archive was correctly rejected"
           cp /tmp/original.tar.gz dist/sloprail-darwin-arm64.tar.gz
 
-      # needs.changes.outputs.code-changed == 'true' is ANDed into this one's
+      # needs.changes.outputs.adhoc != 'true' is ANDed into this one's
       # own always(): always() alone would try to kill a server this run
       # never started when the job was skipped, which is harmless (the `||
       # true` swallows it) but pointless — the AND just keeps the log free of
       # a step that visibly "ran" a no-op on every skipped push.
-      - if: always() && needs.changes.outputs.code-changed == 'true'
+      - if: always() && needs.changes.outputs.adhoc != 'true'
         name: stop local server
         run: kill "$(cat /tmp/http-server.pid)" 2>/dev/null || true
 
