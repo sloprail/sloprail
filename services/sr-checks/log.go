@@ -24,6 +24,9 @@ type logEntry struct {
 	Subject string   `json:"subject"`
 	Status  string   `json:"status"` // pass | fail
 	Reasons []string `json:"reasons,omitempty"`
+	// Metadata is what each judge check's post_process returned with its result, by the
+	// step that returned it (`check[<n>]:judge:<template>`). Absent when none returned any.
+	Metadata map[string]map[string]any `json:"metadata,omitempty"`
 	// Key is the verdict's content-addressed cache key (checkcache.Key.ID).
 	Key string `json:"key"`
 	// JudgedAt is the stamp of the run that stored the verdict, RFC3339 UTC.
@@ -60,6 +63,8 @@ and only reads: it never writes, and never runs a script or a judge. It needs no
 
 status is pass or fail; reasons is present for a fail only. judgedAt is the time the run that stored
 the verdict was recorded. base and head are that run's commit range, null when it recorded none.
+A verdict whose judge check returned metadata through its post_process also has "metadata": an object
+from the step that returned it ("check[0]:judge:./rubric.md.j2") to that metadata.
 
 --rule limits the listing to one file-guard, by folder name or qualified name.
 --failing keeps only the fails.
@@ -201,6 +206,7 @@ func logEntries(runs []checkcache.Run, rule string, failing bool, since time.Tim
 			if c.Status == checkcache.StatusFail {
 				e.Reasons = failReasons(c)
 			}
+			e.Metadata = stepMetadata(c)
 			out = append(out, e)
 		}
 	}
@@ -232,6 +238,32 @@ func failReasons(c checkcache.Check) []string {
 		reasons = []string{}
 	}
 	return reasons
+}
+
+// stepMetadata is the metadata a stored verdict's steps kept, by step kind; nil when none did.
+func stepMetadata(c checkcache.Check) map[string]map[string]any {
+	body, err := json.Marshal(c.Metadata["steps"])
+	if err != nil {
+		return nil
+	}
+	var rows []struct {
+		Kind     string         `json:"kind"`
+		Metadata map[string]any `json:"metadata"`
+	}
+	if json.Unmarshal(body, &rows) != nil {
+		return nil
+	}
+	var out map[string]map[string]any
+	for _, r := range rows {
+		if len(r.Metadata) == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string]map[string]any{}
+		}
+		out[r.Kind] = r.Metadata
+	}
+	return out
 }
 
 func storedSteps(meta map[string]any) []struct{ Status, Reason string } {

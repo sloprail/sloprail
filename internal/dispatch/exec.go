@@ -313,7 +313,14 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 // Adding them again would duplicate a resolution this runner does not own.
 // sr:invariant checks/check-launched-agent-does-not-reenter-its-rule
 func (s scriptCall) env() []string {
-	env := os.Environ()
+	return append(os.Environ(), s.ownEnv()...)
+}
+
+// ownEnv is what env adds to the parent's environment, in order. Split out so a
+// script that is not exec'd by this process (a judge's post_process, run from the
+// judge's verify script) is handed the same variables a prepare gets.
+func (s scriptCall) ownEnv() []string {
+	var env []string
 	if s.GuardName != "" {
 		env = append(env, "SR_GUARDRAIL="+s.GuardName)
 	}

@@ -1,0 +1,6 @@
+predicate: >-
+  The {@fld:judges:Judge.answer} a mock gives in place of the model is
+  checked against the {@fld:judges:Judge.response_schema} and handed to the
+  {@fld:judges:Judge.post_process} as a model's answer is, and an answer
+  either of them would send back to a model is an error, never a verdict.
+why: A rule's test passes on a mock while the schema and the script the rule ships were never run.

@@ -1,9 +1,12 @@
 package declaration
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -464,8 +467,57 @@ func validateCheckScripts(dir string, checks []Check) []Problem {
 		where := fmt.Sprintf("check %d", i)
 		problems = append(problems, validateScripts(dir, where+" script", c.Script)...)
 		problems = append(problems, validateScripts(dir, where+" prepare", c.Prepare)...)
+		problems = append(problems, validateScripts(dir, where+" post_process", c.PostProcess)...)
+		if c.isJudge() && c.hasResponseSchema() {
+			problems = append(problems, validateResponseSchema(dir, where, c)...)
+		}
 	}
 	return problems
+}
+
+// validateResponseSchema checks a judge's `response_schema` file as far as it can be
+// checked without a schema engine: it is there, it is a JSON object, it describes an
+// object, and, when the check has no `post_process`, the object it describes still
+// carries the verdict (a required boolean `pass`, and a string `reasoning` where it
+// names one), because nothing else would read a verdict out of the answer.
+// Whether the schema is valid JSON Schema beyond that is found when it is first used,
+// and refuses there.
+// sr:invariant judges/response-schema-without-post-process-carries-the-verdict
+func validateResponseSchema(dir, where string, c Check) []Problem {
+	path := c.ResponseSchema
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return []Problem{prob(ErrBadResponseSchema, where, "response_schema %q could not be read: %v", c.ResponseSchema, err)}
+	}
+	var schema struct {
+		Type       any `json:"type"`
+		Properties map[string]struct {
+			Type any `json:"type"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return []Problem{prob(ErrBadResponseSchema, where, "response_schema %q is not a JSON object holding a JSON Schema: %v", c.ResponseSchema, err)}
+	}
+	if schema.Type != nil && schema.Type != "object" {
+		return []Problem{prob(ErrBadResponseSchema, where,
+			"response_schema %q describes a %v, but a judge answers with one JSON object: set its top-level \"type\" to \"object\"", c.ResponseSchema, schema.Type)}
+	}
+	if c.hasPostProcess() {
+		return nil
+	}
+	pass, hasPass := schema.Properties["pass"]
+	reasoning, hasReasoning := schema.Properties["reasoning"]
+	if !hasPass || pass.Type != "boolean" || !hasReasoning || reasoning.Type != "string" || !slices.Contains(schema.Required, "pass") {
+		return []Problem{prob(ErrSchemaNeedsPostProcess, where,
+			"response_schema %q does not describe a verdict (a required top-level boolean \"pass\" and a string \"reasoning\"), so a post_process is needed: "+
+				"add `post_process: ./<script>` to this check to work out pass and reasoning from the answer, or add those two properties to the schema",
+			c.ResponseSchema)}
+	}
+	return nil
 }
 
 // validateJudgeTuning checks a check's judge-only tuning fields — `model`,
@@ -498,6 +550,10 @@ func validateJudgeTuning(c Check, where string) []Problem {
 	if c.hasDisallowedTools() && !c.isJudge() {
 		problems = append(problems, prob(ErrStrayDisallowedTools, where,
 			"sets disallowed_tools without a judge — it denies tools to a judge's agent, and a script check has none"))
+	}
+	if (c.hasResponseSchema() || c.hasPostProcess()) && !c.isJudge() {
+		problems = append(problems, prob(ErrStrayResponseShaping, where,
+			"sets response_schema/post_process without a judge — both shape a judge's answer, and a script check's exit status is its verdict"))
 	}
 	if !c.isJudge() {
 		return problems

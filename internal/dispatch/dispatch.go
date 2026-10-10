@@ -255,6 +255,12 @@ type Verdict struct {
 	// sr-agent named: "usage limit", "authentication", "version skew" or "other". Only with
 	// NoVerdict. It lets a run report one "judges unavailable" outage instead of a refusal per check.
 	Unavailable string
+
+	// Metadata is the structured data a judge check's post_process returned with
+	// its result, on a pass or a fail alike. Nil for every other check, and for a
+	// refusal that is no verdict. It is kept with the stored verdict and never
+	// shown to the agent.
+	Metadata map[string]any
 }
 
 // pass is the clean verdict.

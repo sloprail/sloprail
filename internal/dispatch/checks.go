@@ -228,6 +228,13 @@ func (r Runner) judgeCall(req Request, c declaration.Check, p Prepared) (judgeCa
 		DisallowedTools: c.DisallowedTools,
 		Workspace:       req.judgeProject(),
 		Env:             req.Env,
+
+		ResponseSchema:   c.ResponseSchema,
+		PostProcess:      c.PostProcess,
+		SessionWorkspace: req.Workspace,
+		SessionID:        req.SessionID,
+		TranscriptPath:   req.TranscriptPath,
+		AgentID:          req.AgentID,
 	}, Verdict{}, nil
 }
 

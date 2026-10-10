@@ -543,13 +543,12 @@ func TestT003_16b_SkillDoesNotTeachPreventive(t *testing.T) {
 // there produces a check whose read returns empty and which then permits
 // everything, which is the silent no-op wearing the shape of a working rule.
 //
-// The new format hands a check a FLAT CheckPayload: the event's fields directly
-// under `.event`, `.transcriptPath` for the record, `.context` for the declared
-// contexts. There is no `.event.fields.*` nesting and no `guardrailDir` field. A
-// check is a `script:` or a `judge:`, never `type: command`. So the skill must
-// name those, and must not have carried the old wire form back in.
+// A check is handed a flat CheckPayload: the event's fields directly under `.event`,
+// `.transcriptPath` for the record, `.context` for the declared contexts. A check is a
+// `script:` or a `judge:`. The skill states each of these once, in whichever of its
+// files owns it, so the claims are read off the whole skill folder.
 func TestT003_17_SkillCheckContractMatchesTheEngine(t *testing.T) {
-	skill := skillText(t)
+	skill := skillCorpusText(t)
 
 	// The flat payload keys a check reads off its stdin.
 	for _, key := range []string{"CheckPayload", ".event", "transcriptPath", "context"} {
@@ -566,13 +565,9 @@ func TestT003_17_SkillCheckContractMatchesTheEngine(t *testing.T) {
 		t.Error("the skill does not show `judge:`, the model check form this build accepts")
 	}
 
-	// The new payload is FLAT: `.event.path`, not the old `.event.fields.path`. The
-	// skill is expected to STATE this — it says outright "there is no `.event.fields.*`
-	// nesting" to steer an author off the old shape — so the assertion is that the
-	// skill says the fields are flat under `.event`, not that the string
-	// ".event.fields" never appears (it appears precisely in the warning).
-	if !strings.Contains(skill, "no") || !strings.Contains(skill, ".event.fields") {
-		t.Error("the skill does not warn that there is no `.event.fields.*` nesting — an author carrying the old nested shape over writes a check that reads nothing")
+	// The old nested shape is taught nowhere: no file of the skill reads `.event.fields.*`.
+	if strings.Contains(skill, ".event.fields") {
+		t.Error("the skill shows `.event.fields`, the old nested shape: a check written against it reads nothing")
 	}
 }
 

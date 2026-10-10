@@ -20,9 +20,8 @@ exit: ./exit.sh
 | `enter` | the script that decides whether the context turns on |
 | `exit` | the script that decides, at each Stop while it is on, whether it turns off |
 
-A context can trigger on any event before an action and on the events after a file write or a
-tag (`PostFileWrite`, `PostTagWrite`), but not on `Stop`: its `exit` runs there anyway
-([events.md](events.md#which-kinds-each-nature-can-bind)).
+Which events a context can trigger on: [events.md](events.md#which-kinds-each-nature-can-bind).
+It cannot trigger on `Stop`; its `exit` runs there anyway.
 
 ## `enter`: turn on, or decline
 

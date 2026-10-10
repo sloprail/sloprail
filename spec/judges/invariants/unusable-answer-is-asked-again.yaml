@@ -1,0 +1,10 @@
+predicate: >-
+  An {@fld:judges:Judge.answer} that does not match the
+  {@fld:judges:Judge.response_schema}, or that the
+  {@fld:judges:Judge.post_process} rejects with
+  {@fld:judges:Judge.post_process_exit_status} 65, is sent back to the model
+  with the complaint and asked again up to {@fld:judges:Judge.attempts} times;
+  a {@ent:judges:Judge} whose answers were never usable refuses in fixed words
+  having reached no verdict.
+why: An answer in the wrong shape is read as a verdict, or one slip of the model blocks the action for good.
+needs: [noninteractive-run]

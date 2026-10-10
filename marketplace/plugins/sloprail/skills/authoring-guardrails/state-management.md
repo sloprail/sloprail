@@ -17,8 +17,8 @@ there is no rule in scope. See `sr-session state --help` for the subcommands.
 
 ## A context records, a Stop gate judges
 
-`Stop` carries no fields, so a gate on it needs its subject from somewhere. The usual shape is
-two rules:
+A gate on `Stop` gets its subject from a context ([events.md](events.md#stop-a-cycle-ended)). The
+usual shape is two rules:
 
 - a **context** whose `enter` runs on the events where something happened (a tag was written,
   a file landed) and records each one, one key per subject, reaching no verdict;

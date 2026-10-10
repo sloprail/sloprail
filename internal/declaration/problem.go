@@ -142,6 +142,21 @@ var (
 	// fault.
 	ErrBadTimeout = errors.New("declaration: judge timeout is not a positive duration")
 
+	// ErrStrayResponseShaping: a check sets `response_schema` or `post_process`
+	// without a `judge`. Both shape a judge's answer, and a script check has no
+	// answer to shape: its exit status is its verdict. Declaration fault.
+	ErrStrayResponseShaping = errors.New("declaration: response_schema/post_process set on a check with no judge")
+
+	// ErrBadResponseSchema: a judge's `response_schema` cannot be read, is not a
+	// JSON object, or does not describe an object. The judge could never be told
+	// what to answer, so the rule cannot run as written. Declaration fault.
+	ErrBadResponseSchema = errors.New("declaration: judge response_schema is not a usable JSON Schema")
+
+	// ErrSchemaNeedsPostProcess: a judge's `response_schema` describes an answer
+	// with no top-level boolean `pass` and string `reasoning`, and the check has
+	// no `post_process` to work the verdict out of it. Declaration fault.
+	ErrSchemaNeedsPostProcess = errors.New("declaration: judge response_schema carries no verdict and the check has no post_process")
+
 	// ErrStrayAllowedTools: a check sets `allowed_tools` without a `judge`. It
 	// grants tools to a judge's agent, so a script-only check — which names its own
 	// tools by being an executable — has nothing to apply them to. Its own sentinel

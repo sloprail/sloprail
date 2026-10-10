@@ -62,7 +62,8 @@ Sloprail-Cites-* trailer on the commit that last really changed the file, which 
 alone.
 
 Prints each subject's latest result, then each refusal. Exits 0 when everything passes, 1 when
-anything fails or has no result.`,
+anything fails or has no result. With --json each result is an object {rule, subject, kind, status,
+source, reason}, and a judge check whose post_process returned metadata has it under "metadata".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return execute(cmd, modeVerify) },
 	}
@@ -79,6 +80,8 @@ func newShowCmd() *cobra.Command {
 (nothing is asked of a model, nothing is written), over the whole range asked about (verify
 starts from each rule's effective base instead), and always exit 0: a reader's view, not a gate.
 
+--json prints each result as an object {rule, subject, kind, status, source, reason}; a judge check
+whose post_process returned metadata has it under "metadata", as it was stored with the verdict.
 --failing keeps only what is not passing: a fail, a result still missing, or an error.
 --rule limits the listing to one file-guard, by folder name or qualified name.`,
 		Args: cobra.NoArgs,

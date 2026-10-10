@@ -1,0 +1,7 @@
+predicate: >-
+  A {@fld:judges:Judge.post_process} that cannot be run, ends with a
+  {@fld:judges:Judge.post_process_exit_status} other than 0 or 65, returns
+  no single result, or returns {@fld:judges:Judge.metadata} over its bound
+  makes the {@ent:judges:Judge} refuse having reached no verdict, and the
+  model is not asked again for it.
+why: A crashed script lets the model's raw answer stand as approval, or bills another model call for a fault the model cannot fix.

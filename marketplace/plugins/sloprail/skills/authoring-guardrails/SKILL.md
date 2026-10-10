@@ -40,8 +40,7 @@ runs.
 | Is the session in a mode other rules depend on? | [context](context.md) | "A refactor was declared; it stays on until it is finished." |
 
 A file-guard judges commits after the fact; only a gate can refuse an action before it
-happens. A rule that must do both, refuse a bad write and judge what was committed, is two
-rules with one name: a gate and a file-guard.
+happens. For a rule that must do both, see [gate.md](gate.md#preventing-a-write-or-a-delete).
 
 Alongside the three natures there is the [structure gate](structure-gate.md): one allowlist of
 the paths that may be written at all.
@@ -83,17 +82,12 @@ is the verdict. Start from [check-template.sh](check-template.sh) for a file-gua
 [gate-check-template.sh](gate-check-template.sh) for a gate that prevents a write, and change
 only `fine()`. A [judge check](judge-checks.md) is a prompt template a model answers.
 
-The event's fields sit directly under `.event`: `.event.path`, `.event.newContent`,
-`.event.kind`. There is no `.event.fields` nesting. Beside the event, the payload carries
-`.transcriptPath` (the session record) and, on a gate, `.context` (every declared context).
-A file-guard's checks receive a changeset of commits instead of an event. Every event kind
-and its fields: [events.md](events.md).
+What a check reads, every event kind and its fields: [events.md](events.md).
 
 ## Prove it fires
 
-A rule that does not load is reported to you at the next hook and at Stop; that report is the
-load check, and it names every event kind and field the build knows. You do not need to run
-anything for it.
+A rule that does not load is reported to you at the next hook and at Stop, without your running
+anything: the load check ([events.md](events.md)).
 
 Loading is not firing. A rule can load and still never refuse anything: a `match` true of
 nothing real, a misspelled key the loader cannot see, a check that permits where it meant to

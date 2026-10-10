@@ -11,10 +11,12 @@ checks:
     model: size-md                         # optional
     allowed_tools: [WebFetch]              # optional: more than reading the project
     disallowed_tools: [WebSearch]          # optional
+    response_schema: ./response.schema.json   # optional: the shape of the answer
+    post_process: ./post-process.sh           # optional: turns the answer into the verdict
 ```
 
 `prepare`, `model`, `allowed_tools` and `disallowed_tools` belong to a judge; on a script check
-they fail to load.
+they fail to load. So do `response_schema` and `post_process`.
 
 ## The template
 
@@ -43,9 +45,8 @@ It can use:
   `context`;
 - `transcriptPath`, and `additionalContext` when a `prepare` produced one.
 
-Rendering is safe by default. Every value has `</` broken, so it cannot close the tag it sits
-in, and a value in a quoted attribute (`path="{{ event.path }}"`) cannot end the attribute.
-Always quote attribute values. Use `| raw` for a value that is meant as markup, and `| tojson`
+Values are escaped when rendered, so a value cannot close the tag or the quoted attribute it
+sits in: always quote attribute values (`path="{{ event.path }}"`). Use `| raw` for a value that is meant as markup, and `| tojson`
 for a map or a list (`{{ additionalContext.items | tojson }}`). Do not wrap a value in a
 Markdown code fence: a value holding a fence line of its own would close it. A filter that
 does not exist is reported as a load error.
@@ -64,10 +65,8 @@ Printing nothing is fine. A `prepare` that fails, or prints anything other than 
 fails the check, with its own words as the reason. A script check may have a `prepare` too; its
 `additionalContext` then reaches the script under that key.
 
-A verdict is cached on the subject's files and fingerprint, never on what `prepare` produced
-or on the rendered prompt. So anything a judge depends on beyond the subject's files, whether
-`prepare` computed it or the judge reads it itself, belongs in the subject's fingerprint
-([file-guard.md](file-guard.md#verdicts-are-cached-by-content)).
+A verdict is not cached on what `prepare` produced or on the rendered prompt: see
+[file-guard.md](file-guard.md#verdicts-are-cached-by-content) for what it is cached on.
 
 ## The verdict
 
@@ -80,6 +79,47 @@ A judge fails closed. If the model cannot be run, times out, or never gives a we
 verdict, the check refuses. When a flaky model call must not block work, write the check as a
 script that calls a model itself and exits 0 on its own failures, saying in a comment which
 exits those are.
+
+## A structured answer
+
+Two optional keys let the judge answer in a shape of your own, and let a script of yours turn
+that answer into the verdict.
+
+`response_schema` is a JSON Schema file beside the rule. The judge is shown it in place of the
+default answer format and must answer with one JSON object that matches it. An answer that
+does not match is sent back to the judge with the problems, as a malformed verdict is.
+
+`post_process` is a script that runs after the judge answered, the mirror of `prepare`. It
+runs in the rule's folder with the [environment](script-checks.md#the-environment) every script
+gets, plus `SR_JUDGE_INPUT`: a file holding, as JSON, what the template was rendered with. It
+reads the judge's answer on stdin and prints the check's result:
+
+```bash
+#!/usr/bin/env bash
+# post-process.sh: every id the judge was given is answered; the check passes when all pass.
+answer="$(cat)"
+for id in $(jq -r '.additionalContext.ids[]' "$SR_JUDGE_INPUT"); do
+  jq -e --arg id "$id" '.invariants | has($id)' <<<"$answer" >/dev/null ||
+    { echo "no entry for $id: answer for every id you were given" >&2; exit 65; }
+done
+jq -c '{pass: all(.invariants[]; .code == "pass"),
+        reasoning: ([.invariants | to_entries[] | select(.value.code == "fail")
+                     | "\(.key): \(.value.why)"] | join("; ")),
+        metadata: {invariants: .invariants}}' <<<"$answer"
+```
+
+- `pass` and `reasoning` are the check's verdict, with the meaning they have in a judge's own.
+- `metadata` is optional: a JSON object of at most 64 KiB, kept with the stored verdict and
+  never shown to the agent. `sr-checks show --json` prints it on the judge's row.
+- Exit 65 rejects the answer as unusable: the judge is asked again, with what the script wrote
+  to stderr.
+- Anything else (another non-zero exit, output that is not one such object, `metadata` over
+  the limit) fails the check closed, like a judge that could not decide, and the judge is not
+  asked again.
+
+Either key works without the other. Without `response_schema`, `post_process` receives the
+default `{"pass": …, "reasoning": …}` answer. Without `post_process`, the schema must keep a
+required boolean `pass` and a string `reasoning` at its top level, or the rule fails to load.
 
 ## The model
 

@@ -1,0 +1,7 @@
+predicate: >-
+  A {@ent:cache:StoredVerdict} keeps the {@fld:cache:StoredVerdict.metadata}
+  its judge returned when it was judged, on a pass and a fail alike: a run
+  that replays it and a verify or a show that reads it report that judge's
+  result with the same metadata, without the judge being asked again, and a
+  judge that returned none has none.
+why: A reader of the checks sees a verdict without the per-item findings it was built from, or pays for the judge again to get them.
