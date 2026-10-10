@@ -131,6 +131,9 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	// longer trusts whatever sr-agent happens to be first on ITS OWN PATH
 	// (the old siblingBinDir), which silently tested a stale install when one
 	// existed. See agentHome's doc comment for the measured gap this closes.
+	// Read before the build and the run: what the run is built from is what stands here now,
+	// and a commit made while the agent works must not be recorded as its source.
+	sloprailRef, fixtureRef := refOf(ctx, root), refOf(ctx, fx.Dir)
 	agent, err := ws.agentHome(ctx, root, fx.FreshMachine, prov, h)
 	if err != nil {
 		return fmt.Errorf("build the agent's HOME: %w", err)
@@ -252,8 +255,8 @@ func runFixtureSteps(cmd *cobra.Command) error {
 		FixtureDir:  fx.Dir,
 		Model:       fx.Model,
 		Variant:     fx.Variant,
-		Sloprail:    refOf(ctx, root),
-		FixtureRepo: refOf(ctx, fx.Dir),
+		Sloprail:    sloprailRef,
+		FixtureRepo: fixtureRef,
 		Harness:     harnessID,
 		Passed:      sr.Passed,
 		Reason:      sr.Reason,
@@ -268,6 +271,18 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	}
 
 	if !noArchive {
+		// What the sessions left behind (the check results above all) is part of the run's record.
+		// A failure to take it is reported and the run is archived without it.
+		if files, serr := runSessionFiles(ctx, agent, ws.project, harnessID); serr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: warning: the session archive (state, tracked ranges, check results) was not taken: %v\n", serr)
+		} else {
+			if rec.Files == nil {
+				rec.Files = map[string][]byte{}
+			}
+			for name, body := range files {
+				rec.Files[name] = body
+			}
+		}
 		if archiveDir, archErr := archiveRun(rec, transcriptPath, subagentFiles(h.Transcripts(), transcriptPath), sr.Stdout, sr.Stderr, sr.Verdict); archErr != nil {
 			// Archiving failure is reported, not fatal — the scorer's own
 			// verdict already ran and is the thing exit status carries.

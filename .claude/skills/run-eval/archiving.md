@@ -14,7 +14,14 @@ transcripts), and the scorer's raw stdout/stderr.
 whose build ran (sr-eval, the plugin, the judges) and `fixture_repo` the
 repository the fixture was read from, each as `commit`, `describe` (the
 nearest release tag), `remote` and `dirty`. A `dirty: true` run had changes no
-commit holds, so its commit alone does not reproduce it.
+commit holds, so its commit alone does not reproduce it. Both are read when
+the run starts.
+
+`session/` holds what the agent's sessions left behind, as `sr-eval archive`
+saves it: `archive.json`, per session the transcript, `refs.json` (the ranges
+it tracked) and its sloprail state store, and `checks/<repo>.jsonl`, the
+verdicts `sr-checks run` stored for the tracked ranges. An empty checks file
+means no check ran in the run, whatever the score says.
 
 ```
 sr-eval run --fixture <dir>
