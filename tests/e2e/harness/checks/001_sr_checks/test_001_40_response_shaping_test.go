@@ -312,3 +312,63 @@ func TestT001_43_AMockedJudgeStillGoesThroughSchemaAndPostProcess(t *testing.T) 
 		t.Fatalf("a model was reached behind the mock:\n%s", r.Output)
 	}
 }
+
+// attemptsOf makes the session's sr-agent the real one with its limit of attempts set to n
+// (the engine leaves it at sr-agent's default of 2).
+func attemptsOf(e *Env, n string) {
+	e.InstallShim("sr-agent", "#!/bin/sh\nexec "+shellQ(e.BinPath("sr-agent"))+" --verify-attempts "+n+" \"$@\"\n")
+}
+
+// T001_44: how often an unusable answer is sent back is the judge's limit of attempts, and
+// no more. At 1 the first unusable answer ends it; at 3 an answer that is usable only the
+// third time is the verdict, and one never usable is asked for exactly three times.
+// sr:proves judges/unusable-answer-is-asked-again
+func TestT001_44_AnUnusableAnswerIsAskedForUpToTheAttemptsLimit(t *testing.T) {
+	offSchema := `{"pass": false, "reasoning": "the citation has no test"}`
+	rejected := `{"invariants": {"docs/dated": {"code": "pass", "tests": "pass", "why": "a date is there"}}}`
+
+	t.Run("one attempt: not asked again", func(t *testing.T) {
+		e, proj, base := tableProject(t)
+		attemptsOf(e, "1")
+		agent := answersInTurn(t, e, offSchema, tableAllPass)
+		run := checks(e, proj, "run", "--base", base, "--head", "HEAD")
+		if run.Code != 1 {
+			t.Fatalf("run exited %d, want 1 (the only answer was off the schema):\n%s", run.Code, run.Output)
+		}
+		contains(t, run.Output, "did not match the check's response_schema")
+		if n := agentCalls(t, agent); n != 1 {
+			t.Fatalf("the judge was asked %d times, want 1: a usable second answer was waiting, and must not be asked for", n)
+		}
+	})
+	t.Run("three attempts: the third answer is the verdict", func(t *testing.T) {
+		e, proj, base := tableProject(t)
+		attemptsOf(e, "3")
+		agent := answersInTurn(t, e, offSchema, rejected, tableAllPass)
+		if run := checks(e, proj, "run", "--base", base, "--head", "HEAD"); run.Code != 0 {
+			t.Fatalf("run exited %d, want 0 (the third answer passes; at the default of 2 it is never reached):\n%s", run.Code, run.Output)
+		}
+		if n := agentCalls(t, agent); n != 3 {
+			t.Fatalf("the judge was asked %d times, want 3", n)
+		}
+		third, err := os.ReadFile(filepath.Join(agent, "prompt.3"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		contains(t, string(third), "no entry for the invariant docs/cited")
+	})
+	t.Run("three attempts: never usable is asked for three times, then no verdict", func(t *testing.T) {
+		e, proj, base := tableProject(t)
+		attemptsOf(e, "3")
+		agent := answersInTurn(t, e, rejected)
+		run := checks(e, proj, "run", "--base", base, "--head", "HEAD")
+		if run.Code != 1 {
+			t.Fatalf("run exited %d, want 1:\n%s", run.Code, run.Output)
+		}
+		contains(t, run.Output, "post_process rejected the judge's answer as unusable")
+		if n := agentCalls(t, agent); n != 3 {
+			t.Fatalf("the judge was asked %d times, want exactly 3", n)
+		}
+		verify := checks(e, proj, "verify", "--base", base, "--head", "HEAD")
+		contains(t, verify.Output, "not judged yet")
+	})
+}

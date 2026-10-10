@@ -349,6 +349,29 @@ func TestShapedJudge_FailedPostProcessRefuses(t *testing.T) {
 		})
 	}
 
+	// The two statuses that are not a failure, beside the ones above: 0 with a result is the
+	// verdict, and 65 sends the answer back instead of ending the check.
+	t.Run("exit 0 with a result is a verdict, not a failure", func(t *testing.T) {
+		j := shapedRule(t, "", "#!/bin/sh\ncat >/dev/null\necho '{\"pass\": false, \"reasoning\": \"too thin\"}'\nexit 0\n")
+		bin := agentAnswering(t, `{"pass": true, "reasoning": "fine"}`, `{"pass": true, "reasoning": "fine"}`)
+		v, err := askJudge(j, "the rubric")
+		require.NoError(t, err)
+		require.True(t, v.Refused)
+		assert.False(t, v.NoVerdict, "exit 0 returned a result: that is a verdict")
+		assert.Equal(t, "too thin", v.Reason)
+		assert.Equal(t, "1", attempts(t, bin))
+	})
+	t.Run("exit 65 asks the judge again, where every other failure does not", func(t *testing.T) {
+		// It rejects the first answer it is handed and accepts the next.
+		j := shapedRule(t, "", "#!/bin/sh\ncat >/dev/null\nif [ -e seen ]; then echo '{\"pass\": true, \"reasoning\": \"second answer\"}'; exit 0; fi\n: > seen\necho 'say more' >&2\nexit 65\n")
+		bin := agentAnswering(t, `{"pass": true, "reasoning": "fine"}`, `{"pass": true, "reasoning": "fine"}`)
+		v, err := askJudge(j, "the rubric")
+		require.NoError(t, err)
+		assert.False(t, v.Refused, "65 is not a failure of the post_process: the next answer was taken: %s", v.Reason)
+		assert.False(t, v.NoVerdict)
+		assert.Equal(t, "second answer", v.Reason)
+		assert.Equal(t, "2", attempts(t, bin), "the judge was asked again")
+	})
 	t.Run("not executable: refused before the model is asked", func(t *testing.T) {
 		j := shapedRule(t, "", "#!/bin/sh\nexit 0\n")
 		require.NoError(t, os.Chmod(filepath.Join(j.Dir, "post-process.sh"), 0o644))
