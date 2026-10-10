@@ -33,7 +33,8 @@ func TestSetUp_RunsInTheAgentsEnvironmentWithGitPinned(t *testing.T) {
 	mustWriteFile(t, filepath.Join(dir, "setup.sh"), "#!/bin/sh\nset -eu\n"+
 		"echo x > a.txt\ngit add a.txt\ngit commit -q -m a\n"+
 		"printf '%s' \"$HOME\" > home.txt\n"+
-		"printf '%s' \"$SR_EVAL_PROJECT_DIR\" > project.txt\n")
+		"printf '%s' \"$SR_EVAL_PROJECT_DIR\" > project.txt\n"+
+		"printf '%s' \"${SR_EVAL_VARIANT-unset}\" > variant.txt\n")
 	if err := os.Chmod(filepath.Join(dir, "setup.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +58,10 @@ func TestSetUp_RunsInTheAgentsEnvironmentWithGitPinned(t *testing.T) {
 
 	if got := readTrimmed(t, filepath.Join(project, "home.txt")); got != agentHome {
 		t.Errorf("setup ran with HOME %q, want the agent's %q — it inherited the operator's environment", got, agentHome)
+	}
+	// No --variant: the variable is set and empty, so a setup can default on it.
+	if got := readTrimmed(t, filepath.Join(project, "variant.txt")); got != "" {
+		t.Errorf("SR_EVAL_VARIANT was %q in a run with no variant, want it set and empty", got)
 	}
 	if got := readTrimmed(t, filepath.Join(project, "project.txt")); got != project {
 		t.Errorf("SR_EVAL_PROJECT_DIR was %q, want %q", got, project)

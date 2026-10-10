@@ -28,11 +28,14 @@ var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-ag
 // what it exposes to a score script as SR_EVAL_BIN_DIR — set for every run,
 // fresh or ordinary, since both now build rather than trust an existing PATH.
 type agentEnv struct {
-	home       string
-	env        []string
-	configDir  string
-	releaseURL string
-	binDir     string
+	// stopAuthSync ends keepAuthLinked's watch after one last pass. Never nil once
+	// agentHome returned without an error.
+	stopAuthSync func()
+	home         string
+	env          []string
+	configDir    string
+	releaseURL   string
+	binDir       string
 }
 
 // agentHome builds the HOME every agent-under-test runs in, and the
@@ -56,7 +59,9 @@ type agentEnv struct {
 //   - ~/.ssh is linked: SSH to GitHub. (OpenSSH reads the passwd home, not
 //     $HOME, so it works either way; linked so `ls ~/.ssh` agrees.)
 //   - ~/.gitconfig and ~/.config/gh are COPIED, not linked: an agent that runs
-//     `git config --global` or re-logs gh must not reach the real ones.
+//     `git config --global` or re-logs gh must not reach the real ones. The
+//     copy of ~/.gitconfig ends in an identity of the agent's own with signing
+//     off (agentGitIdentity): the operator's signing key is not in this HOME.
 //
 // An ordinary run builds THIS checkout's binaries fresh (into the workspace,
 // not overwriting anything installed) and puts them first on PATH. A
@@ -109,16 +114,21 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	}
 	for _, name := range []string{".gitconfig", filepath.Join(".config", "gh")} {
 		src := filepath.Join(realHome, name)
+		dst := filepath.Join(home, name)
 		info, err := os.Stat(src)
+		if name == ".gitconfig" {
+			// Written whether or not the operator has one: the agent's identity is its own.
+			if err := copyGlobalConfig(src, dst, append(hostRoots(repoRootDir), realHome)); err != nil {
+				return agentEnv{}, fmt.Errorf("write the agent's ~/%s: %w", name, err)
+			}
+			continue
+		}
 		if err != nil {
 			continue
 		}
-		dst := filepath.Join(home, name)
 		switch {
 		case info.IsDir():
 			err = copyTree(src, dst)
-		case name == ".gitconfig":
-			err = copyGlobalConfig(src, dst, append(hostRoots(repoRootDir), realHome))
 		default:
 			err = copyFile(src, dst)
 		}
@@ -140,7 +150,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	roots := hostRoots(repoRootDir)
 	env = withoutHostPaths(env, roots)
 
-	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home)}
+	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home), stopAuthSync: func() {}}
 
 	// Every run — fresh or ordinary — launches THIS checkout's own binaries,
 	// built new into the workspace rather than trusted from wherever binDir
@@ -162,6 +172,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
 		}
 		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+cleanPath(os.Getenv("PATH"), roots))
+		ae.stopAuthSync = keepAuthLinked(ctx, realHome, home, prov.AuthFiles())
 		return ae, nil
 	}
 
@@ -173,6 +184,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	ae.releaseURL = "file://" + releaseDir
 	ae.env = append(env, "PATH="+path,
 		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
+	ae.stopAuthSync = keepAuthLinked(ctx, realHome, home, prov.AuthFiles())
 	return ae, nil
 }
 
@@ -262,6 +274,11 @@ func buildRelease(ctx context.Context, repoRoot, dir string) error {
 // binary. The harness itself often shares such a directory
 // (~/.local/bin holds both), so when dropping those directories loses it, a
 // directory holding only a link to it is put first.
+//
+// The agent's own ~/.local/bin (empty until install.sh fills it) comes before all of them, as
+// it is on a machine whose owner has ~/.local/bin on PATH: what the session's install put
+// there is then found by the agent's shell and by the rule scripts `sr-checks run` starts
+// from it (yq, sr-file). Without it a check run by the agent fails on "command not found".
 func freshPath(home, harnessBinary string) (string, error) {
 	harnessBin, _ := exec.LookPath(harnessBinary)
 
@@ -283,6 +300,7 @@ func freshPath(home, harnessBinary string) (string, error) {
 		}
 		kept = append([]string{shim}, kept...)
 	}
+	kept = append([]string{filepath.Join(home, ".local", "bin")}, kept...)
 	return strings.Join(kept, string(os.PathListSeparator)), nil
 }
 

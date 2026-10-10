@@ -171,3 +171,54 @@ func TestLoadFixture_Plugins(t *testing.T) {
 		})
 	}
 }
+
+// A run names one of the fixture's declared variants; a name it does not
+// declare is refused, with the declared ones named, rather than run as the
+// fixture as written (which would report a "bare" run that had every rule).
+func TestUseVariant_OnlyADeclaredVariantRuns(t *testing.T) {
+	dir := newTestFixtureTree(t, false)
+	mustWriteFile(t, filepath.Join(dir, "fixture.yaml"),
+		"seed: seed\nmodel: haiku\nscore: score.sh\nvariants:\n  sloprail: {}\n  bare: {noSloprail: true}\n")
+	fx, err := LoadFixture(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	plain, err := fx.UseVariant("")
+	if err != nil || plain.Variant != "" || plain.NoSloprail() {
+		t.Errorf("no --variant: got variant %q, noSloprail %v, err %v; want the fixture as written", plain.Variant, plain.NoSloprail(), err)
+	}
+	with, err := fx.UseVariant("sloprail")
+	if err != nil || with.Variant != "sloprail" || with.NoSloprail() {
+		t.Errorf("variant sloprail: got %q, noSloprail %v, err %v", with.Variant, with.NoSloprail(), err)
+	}
+	bare, err := fx.UseVariant("bare")
+	if err != nil || bare.Variant != "bare" || !bare.NoSloprail() {
+		t.Errorf("variant bare: got %q, noSloprail %v, err %v", bare.Variant, bare.NoSloprail(), err)
+	}
+	if _, err := fx.UseVariant("naked"); err == nil || !strings.Contains(err.Error(), "bare, sloprail") {
+		t.Errorf("an undeclared variant must be refused naming the declared ones, got %v", err)
+	}
+}
+
+// A noSloprail variant gets none of the example's shipped rules, even though
+// the fixture declares exampleSloprail for its other variants.
+func TestExampleSloprailDir_EmptyForANoSloprailVariant(t *testing.T) {
+	dir := newTestFixtureTree(t, false)
+	mustWriteFile(t, filepath.Join(dir, "fixture.yaml"),
+		"seed: seed\nmodel: haiku\nscore: score.sh\nexampleSloprail: true\nvariants:\n  bare: {noSloprail: true}\n")
+	fx, err := LoadFixture(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if fx.ExampleSloprailDir() == "" {
+		t.Fatal("the fixture as written must still get the example's rules")
+	}
+	bare, err := fx.UseVariant("bare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bare.ExampleSloprailDir(); got != "" {
+		t.Errorf("a noSloprail variant was handed the example's rules at %s", got)
+	}
+}

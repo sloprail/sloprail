@@ -10,6 +10,27 @@ directory: `$XDG_DATA_HOME/sloprail/eval-runs` (or, on a platform with no
 `run.json`, the agent-under-test's transcript (and any sub-agent
 transcripts), and the scorer's raw stdout/stderr.
 
+`run.json` also says what the run was made of: `sloprail` is the checkout
+whose build ran (sr-eval, the plugin, the judges) and `fixture_repo` the
+repository the fixture was read from, each as `commit`, `describe` (the
+nearest release tag), `remote` and `dirty`. A `dirty: true` run had changes no
+commit holds, so its commit alone does not reproduce it. Both are read when
+the run starts.
+
+`session/` holds what the agent's sessions left behind, as `sr-eval archive`
+saves it: `archive.json`, per session the transcript, `refs.json` (the ranges
+it tracked) and its sloprail state store, and `checks/<repo>.jsonl`, the
+verdicts `sr-checks run` stored for the tracked ranges. An empty checks file
+means no check ran in the run, whatever the score says.
+
+Two more things are kept beside them. `judges/<rule>/<id>.jsonl` are the
+transcripts of the judges the run's checks started: each judge is a session
+of its own, in a project directory beside the agent's, so the session archive
+does not hold it. What a session cost is not stored apart: it is the last
+`cost-state` line of its transcript. `repo.bundle`
+is the project's repository as the run left it, every branch included
+(`git clone repo.bundle` restores it).
+
 ```
 sr-eval run --fixture <dir>
 # archived under: $XDG_DATA_HOME/sloprail/eval-runs/<fixture-name>/<run-id>/

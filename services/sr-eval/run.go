@@ -34,6 +34,7 @@ could not be completed (nothing to score at all).`,
 	cmd.Flags().String("fixture", "", "Path to the fixture directory (fixture.yaml + prompt.md + score script)")
 	cmd.Flags().String("harness", "", "The harness the agent-under-test runs under: "+strings.Join(harness.Names(), ", ")+" (default: $"+harness.SelectEnv+", else "+defaultHarness+")")
 	cmd.Flags().String("model", "", "Override the fixture's own model set — run the same fixture against a different model without editing fixture.yaml")
+	cmd.Flags().String("variant", "", "Run one of the fixture's declared variants (fixture.yaml variants:) — its name reaches the setup and score scripts as SR_EVAL_VARIANT")
 	cmd.Flags().Bool("keep", false, "Do not remove the isolated workspace after scoring — print its path instead")
 	cmd.Flags().Bool("no-archive", false, "Do not record this run in the local eval-run archive (~/.local/share/sloprail/eval-runs, or $SLOPRAIL_EVAL_RUNS_DIR)")
 	_ = cmd.MarkFlagRequired("fixture")
@@ -100,6 +101,10 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	if modelOverride != "" {
 		fx.Model = modelOverride
 	}
+	variant, _ := cmd.Flags().GetString("variant")
+	if fx, err = fx.UseVariant(variant); err != nil {
+		return err
+	}
 	prompt, err := fx.Prompt()
 	if err != nil {
 		return err
@@ -126,10 +131,14 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	// longer trusts whatever sr-agent happens to be first on ITS OWN PATH
 	// (the old siblingBinDir), which silently tested a stale install when one
 	// existed. See agentHome's doc comment for the measured gap this closes.
+	// Read before the build and the run: what the run is built from is what stands here now,
+	// and a commit made while the agent works must not be recorded as its source.
+	sloprailRef, fixtureRef := refOf(ctx, root), refOf(ctx, fx.Dir)
 	agent, err := ws.agentHome(ctx, root, fx.FreshMachine, prov, h)
 	if err != nil {
 		return fmt.Errorf("build the agent's HOME: %w", err)
 	}
+	defer agent.stopAuthSync()
 	binDir := agent.binDir
 	if fx.FreshMachine {
 		fmt.Fprintf(out, "sr-eval: fresh machine: HOME %s — plugin installed, no sr binaries; install.sh's release is this checkout's build (%s)\n",
@@ -137,7 +146,11 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	} else {
 		fmt.Fprintf(out, "sr-eval: agent HOME %s (isolated; the real one is never written)\n", agent.home)
 	}
-	if err := ws.installPlugins(ctx, prov, root, agent, fx.Plugins); err != nil {
+	if fx.NoSloprail() {
+		// The control of a comparison: no plugin, so no hooks and no rules-first
+		// instruction, and (ExampleSloprailDir) none of the example's rules.
+		fmt.Fprintf(out, "sr-eval: variant %s runs without sloprail: no plugin installed, no example rules applied\n", fx.Variant)
+	} else if err := ws.installPlugins(ctx, prov, root, agent, fx.Plugins); err != nil {
 		return fmt.Errorf("wire project settings: %w", err)
 	}
 
@@ -238,23 +251,50 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	sr, scoreErr := score(ctx, fx, ws, harnessID, transcriptPath, binDir, agent.home)
 
 	rec := runRecord{
-		Fixture:    filepath.Base(fx.Dir),
-		FixtureDir: fx.Dir,
-		Model:      fx.Model,
-		Harness:    harnessID,
-		Passed:     sr.Passed,
-		Reason:     sr.Reason,
-		AgentError: agentErrText,
-		Files:      archiveFiles,
-		Transcript: transcriptPath,
-		StartedAt:  startedAt,
-		FinishedAt: time.Now(),
+		Fixture:     filepath.Base(fx.Dir),
+		FixtureDir:  fx.Dir,
+		Model:       fx.Model,
+		Variant:     fx.Variant,
+		Sloprail:    sloprailRef,
+		FixtureRepo: fixtureRef,
+		Harness:     harnessID,
+		Passed:      sr.Passed,
+		Reason:      sr.Reason,
+		AgentError:  agentErrText,
+		Files:       archiveFiles,
+		Transcript:  transcriptPath,
+		StartedAt:   startedAt,
+		FinishedAt:  time.Now(),
 	}
 	if scoreErr != nil {
 		rec.Reason = fmt.Sprintf("scorer could not run: %v", scoreErr)
 	}
 
 	if !noArchive {
+		// What the sessions left behind (the check results above all) is part of the run's record.
+		// A failure to take it is reported and the run is archived without it.
+		if files, serr := runSessionFiles(ctx, agent, ws.project, harnessID); serr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: warning: the session archive (state, tracked ranges, check results) was not taken: %v\n", serr)
+		} else {
+			if rec.Files == nil {
+				rec.Files = map[string][]byte{}
+			}
+			for name, body := range files {
+				rec.Files[name] = body
+			}
+		}
+		// The judges' own sessions and the repository as it ended.
+		if rec.Files == nil {
+			rec.Files = map[string][]byte{}
+		}
+		for name, body := range judgeFiles(transcriptPath) {
+			rec.Files[name] = body
+		}
+		if bundle, berr := repoBundle(ctx, ws.project); berr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: warning: the end-state repository was not kept: %v\n", berr)
+		} else {
+			rec.Files["repo.bundle"] = bundle
+		}
 		if archiveDir, archErr := archiveRun(rec, transcriptPath, subagentFiles(h.Transcripts(), transcriptPath), sr.Stdout, sr.Stderr, sr.Verdict); archErr != nil {
 			// Archiving failure is reported, not fatal — the scorer's own
 			// verdict already ran and is the thing exit status carries.
