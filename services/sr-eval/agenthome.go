@@ -59,7 +59,9 @@ type agentEnv struct {
 //   - ~/.ssh is linked: SSH to GitHub. (OpenSSH reads the passwd home, not
 //     $HOME, so it works either way; linked so `ls ~/.ssh` agrees.)
 //   - ~/.gitconfig and ~/.config/gh are COPIED, not linked: an agent that runs
-//     `git config --global` or re-logs gh must not reach the real ones.
+//     `git config --global` or re-logs gh must not reach the real ones. The
+//     copy of ~/.gitconfig ends in an identity of the agent's own with signing
+//     off (agentGitIdentity): the operator's signing key is not in this HOME.
 //
 // An ordinary run builds THIS checkout's binaries fresh (into the workspace,
 // not overwriting anything installed) and puts them first on PATH. A
@@ -112,16 +114,21 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	}
 	for _, name := range []string{".gitconfig", filepath.Join(".config", "gh")} {
 		src := filepath.Join(realHome, name)
+		dst := filepath.Join(home, name)
 		info, err := os.Stat(src)
+		if name == ".gitconfig" {
+			// Written whether or not the operator has one: the agent's identity is its own.
+			if err := copyGlobalConfig(src, dst, append(hostRoots(repoRootDir), realHome)); err != nil {
+				return agentEnv{}, fmt.Errorf("write the agent's ~/%s: %w", name, err)
+			}
+			continue
+		}
 		if err != nil {
 			continue
 		}
-		dst := filepath.Join(home, name)
 		switch {
 		case info.IsDir():
 			err = copyTree(src, dst)
-		case name == ".gitconfig":
-			err = copyGlobalConfig(src, dst, append(hostRoots(repoRootDir), realHome))
 		default:
 			err = copyFile(src, dst)
 		}
