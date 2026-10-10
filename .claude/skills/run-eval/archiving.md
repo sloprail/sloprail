@@ -23,6 +23,14 @@ it tracked) and its sloprail state store, and `checks/<repo>.jsonl`, the
 verdicts `sr-checks run` stored for the tracked ranges. An empty checks file
 means no check ran in the run, whatever the score says.
 
+Three more things are kept beside them. `judges/<rule>/<id>.jsonl` are the
+transcripts of the judges the run's checks started: each judge is a session
+of its own, in a project directory beside the agent's, so the session archive
+does not hold it. `usage.json` lists what every session's own record says it
+cost (the agent's and each judge's, with the totals per role). `repo.bundle`
+is the project's repository as the run left it, every branch included
+(`git clone repo.bundle` restores it).
+
 ```
 sr-eval run --fixture <dir>
 # archived under: $XDG_DATA_HOME/sloprail/eval-runs/<fixture-name>/<run-id>/

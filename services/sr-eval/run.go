@@ -283,6 +283,21 @@ func runFixtureSteps(cmd *cobra.Command) error {
 				rec.Files[name] = body
 			}
 		}
+		// The judges' own sessions, what every session cost, and the repository as it ended.
+		if rec.Files == nil {
+			rec.Files = map[string][]byte{}
+		}
+		judges := judgeFiles(transcriptPath)
+		for name, body := range judges {
+			rec.Files[name] = body
+		}
+		agentBody, _ := os.ReadFile(transcriptPath)
+		rec.Files["usage.json"] = usageFile(agentBody, judges)
+		if bundle, berr := repoBundle(ctx, ws.project); berr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: warning: the end-state repository was not kept: %v\n", berr)
+		} else {
+			rec.Files["repo.bundle"] = bundle
+		}
 		if archiveDir, archErr := archiveRun(rec, transcriptPath, subagentFiles(h.Transcripts(), transcriptPath), sr.Stdout, sr.Stderr, sr.Verdict); archErr != nil {
 			// Archiving failure is reported, not fatal — the scorer's own
 			// verdict already ran and is the thing exit status carries.
