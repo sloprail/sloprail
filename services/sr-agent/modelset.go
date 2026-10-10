@@ -43,6 +43,10 @@ type Resolution struct {
 	// Model is the harness-native model name to run.
 	Model string
 
+	// Args is what the matched size adds to the harness's arguments (its reasoning
+	// effort, see harnessSpec.sizeArgs). Empty for a concrete name.
+	Args []string
+
 	// Matched is the entry that produced it.
 	Matched Preference
 
@@ -155,9 +159,11 @@ func ResolveModelSet(prefs []Preference, spec harnessSpec) (Resolution, error) {
 
 	for i, pref := range prefs {
 		var model string
+		var args []string
 		switch pref.Kind {
 		case KindAlias:
 			model = spec.sizes[pref.Alias]
+			args = append([]string(nil), spec.sizeArgs[pref.Alias]...)
 			// Empty would mean the registry has a hole aliasesComplete should
 			// have caught. Skipping would silently make the entries after this
 			// one reachable — the exact breakage that check exists to prevent —
@@ -181,6 +187,7 @@ func ResolveModelSet(prefs []Preference, spec harnessSpec) (Resolution, error) {
 
 		return Resolution{
 			Model:        model,
+			Args:         args,
 			Matched:      pref,
 			MatchedIndex: i,
 			Skipped:      append([]Preference(nil), prefs[:i]...),

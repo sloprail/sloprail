@@ -79,6 +79,12 @@ type harnessSpec struct {
 	// whole design rests on, and aliasesComplete pins that at startup.
 	sizes map[SizeAlias]string
 
+	// sizeArgs is what a size adds to the harness's arguments besides the model: a
+	// reasoning effort, where the harness takes one as its own flag. This is what
+	// tells two sizes of the same model apart. A concrete model name carries none,
+	// and the harness's own args flag comes later on the command line and wins.
+	sizeArgs map[SizeAlias][]string
+
 	// offers reports whether this harness has a model by that exact name. This
 	// is what makes a concrete entry harness-specific — the same string is a
 	// match under one harness and a skip under another.
@@ -184,6 +190,10 @@ type harnessSpec struct {
 // up is honest — the alias asks for a size and gets the closest thing this
 // harness has — and it keeps every alias resolving, which is the property that
 // makes an alias always end the search.
+//
+// `size-lg` and `size-xl` are both Opus and differ in reasoning effort: medium
+// and high (sizeArgs). The other sizes run at whatever effort Claude Code
+// defaults to.
 var claudeCodeSpec = harnessSpec{
 	name:   ClaudeCode,
 	binary: claudecode.Binary,
@@ -205,6 +215,10 @@ var claudeCodeSpec = harnessSpec{
 		SizeLG:  "opus",
 		SizeXL:  "opus",
 		SizeXXL: "fable",
+	},
+	sizeArgs: map[SizeAlias][]string{
+		SizeLG: {"--effort", "medium"},
+		SizeXL: {"--effort", "high"},
 	},
 	// A concrete name is offered when it looks like one of this harness's own.
 	//
