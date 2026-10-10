@@ -75,6 +75,21 @@ user:                   # optional — makes the run multi-turn, see below
   baseline. A failing setup fails the run before the agent starts. See
   `examples/business-invariants/eval/goodwill-refund/`, whose seed starts
   with a marker pinned to SPEC.md.
+- **`variants`** — the ways one fixture can be prepared, by name, so a
+  with-and-without comparison is one fixture, not two copies:
+
+  ```yaml
+  variants:
+    sloprail: {}
+    bare: {noSloprail: true}
+  ```
+
+  `sr-eval run --variant bare` picks one (a name not declared is refused).
+  The name reaches the `setup` and `score` scripts as `SR_EVAL_VARIANT`
+  (empty when the run names none), and the setup script does the preparing.
+  `noSloprail: true` is the one thing sr-eval itself does for a variant: no
+  plugin is installed and `exampleSloprail`'s rules are not applied, so the
+  agent runs with no sloprail at all. `run.json` records the variant.
 - **`disallowedTools`** — harness tools the agent-under-test does not have
   (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`,
   comma-joined. Each entry is one tool name, optionally with a rule in
