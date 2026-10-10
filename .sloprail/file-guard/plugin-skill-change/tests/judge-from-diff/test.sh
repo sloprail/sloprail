@@ -6,9 +6,14 @@ set -euo pipefail
 # not this rule's.
 git init -q .
 mkdir -p .sloprail/file-guard marketplace/plugins/sloprail/skills/demo
+# The workspace starts with a copy of the rules under test. When they come from a read-only tree
+# (sr-checks runs this case on one) the copied files are read-only too and cannot be overwritten.
+chmod -R u+w .sloprail
 cp -R "$SR_TEST_SLOPRAIL_DIR/file-guard/plugin-skill-change" .sloprail/file-guard/
+chmod -R u+w .sloprail
 rm -rf .sloprail/file-guard/plugin-skill-change/tests
 cp -R "$SR_TEST_SLOPRAIL_DIR/_lib" .sloprail/
+chmod -R u+w .sloprail
 printf 'disabled:\n  - sloprail/file-guard/rule-tests-pass\n' > .sloprail/config.yaml
 printf '# Demo\n\nSee [more](more.md).\n' > marketplace/plugins/sloprail/skills/demo/SKILL.md
 printf '# More\n\nA long fact, said at length.\n' > marketplace/plugins/sloprail/skills/demo/more.md
