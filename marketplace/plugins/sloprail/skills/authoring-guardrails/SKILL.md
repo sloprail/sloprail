@@ -82,17 +82,12 @@ is the verdict. Start from [check-template.sh](check-template.sh) for a file-gua
 [gate-check-template.sh](gate-check-template.sh) for a gate that prevents a write, and change
 only `fine()`. A [judge check](judge-checks.md) is a prompt template a model answers.
 
-The event's fields sit directly under `.event`: `.event.path`, `.event.newContent`,
-`.event.kind`. Beside the event, the payload carries
-`.transcriptPath` (the session record) and, on a gate, `.context` (every declared context).
-A file-guard's checks receive a changeset of commits instead of an event. Every event kind
-and its fields: [events.md](events.md).
+What a check reads, every event kind and its fields: [events.md](events.md).
 
 ## Prove it fires
 
-A rule that does not load is reported to you at the next hook and at Stop; that report is the
-load check, and it names every event kind and field the build knows. You do not need to run
-anything for it.
+A rule that does not load is reported to you at the next hook and at Stop, without your running
+anything: the load check ([events.md](events.md)).
 
 Loading is not firing. A rule can load and still never refuse anything: a `match` true of
 nothing real, a misspelled key the loader cannot see, a check that permits where it meant to
