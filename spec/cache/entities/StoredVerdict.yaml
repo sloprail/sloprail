@@ -22,3 +22,6 @@ fields:
   - name: reasons
     type: string
     doc: "Why it failed."
+  - name: metadata
+    type: unknown
+    doc: "The structured data the rule's judges returned beside their verdicts."

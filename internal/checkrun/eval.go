@@ -216,6 +216,8 @@ type CheckOutcome struct {
 	Status  string `json:"status"` // pass | fail | missing
 	Source  string `json:"source"` // ran | cached | stored
 	Reason  string `json:"reason,omitempty"`
+	// Metadata is what a judge check's post_process returned with its result, as stored.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 func (ev *changesetEvaluation) note(o CheckOutcome) {
@@ -1271,6 +1273,12 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		if v.Refused || v.Reason != "" {
 			meta["reasoning"] = v.Reason
 		}
+		// What a judge's post_process returned is kept with the verdict it came with.
+		// sr:invariant cache/stored-verdict-keeps-metadata
+		if v.Metadata != nil {
+			meta[judgeMetadataKey] = v.Metadata
+			out.Metadata = v.Metadata
+		}
 		rec.Metadata = meta
 		if err := ev.recordCheck(runID, rec); err != nil {
 			return dispatchcore.Verdict{}, engineError(g, err)
@@ -1359,6 +1367,10 @@ func (ev *changesetEvaluation) incompleteReason(rr *ruleRun) string {
 // noVerdictMeta marks a stored row as the judge having returned no verdict.
 const noVerdictMeta = "no_verdict"
 
+// judgeMetadataKey is where a stored check keeps what its judge's post_process returned as
+// `metadata`, beside the engine's own keys (reasoning, model).
+const judgeMetadataKey = "metadata"
+
 // returnedNoVerdict says a check was refused for want of an answer, not for a verdict on the
 // content: a judge that answered nothing parseable, a script that could not run or said it
 // errored. A script's own refusal is its verdict.
@@ -1413,6 +1425,8 @@ type stepRow struct {
 	Kind    string `json:"kind"`
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"`
+	// Metadata is what the step's judge returned through its post_process.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // stepsOf are the steps this evaluation ran (or carried) for a guard over its subject, in
@@ -1425,7 +1439,7 @@ func (ev *changesetEvaluation) stepsOf(rr *ruleRun) []stepRow {
 	var rows []stepRow
 	for _, o := range ev.outcomes {
 		if o.Rule == rule && o.Status != "missing" && (o.Subject == rr.subject.ID || slices.Contains(rr.subject.Files, o.Subject)) {
-			rows = append(rows, stepRow{Subject: o.Subject, Kind: o.Kind, Status: o.Status, Reason: o.Reason})
+			rows = append(rows, stepRow{Subject: o.Subject, Kind: o.Kind, Status: o.Status, Reason: o.Reason, Metadata: o.Metadata})
 		}
 	}
 	return rows
@@ -1511,12 +1525,17 @@ func (ev *changesetEvaluation) lookup(rr *ruleRun) (v dispatchcore.Verdict, err 
 		if reused != "" {
 			src = reused
 		}
-		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: ev.currentAdvice(st.Reason)}
+		// A reused verdict comes back whole: each step with the metadata it was stored with.
+		// sr:invariant cache/stored-verdict-keeps-metadata
+		o := CheckOutcome{Rule: g.Qualified(), Subject: st.Subject, Kind: st.Kind, Status: st.Status, Source: src, Reason: ev.currentAdvice(st.Reason), Metadata: st.Metadata}
 		ev.note(o)
 		if !ev.verify {
 			rec := checkstore.CheckRecord{Subject: st.Subject, Kind: st.Kind, Status: stepStatus(st.Status), Metadata: map[string]any{"replayed": true}}
 			if st.Reason != "" {
 				rec.Metadata["reasoning"] = st.Reason
+			}
+			if st.Metadata != nil {
+				rec.Metadata[judgeMetadataKey] = st.Metadata
 			}
 			if err := ev.recordCheck(rr.runID, rec); err != nil {
 				return dispatchcore.Verdict{}, engineError(g, err), true

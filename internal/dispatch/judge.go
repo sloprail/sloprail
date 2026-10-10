@@ -36,6 +36,11 @@ import (
 // checks it; sr-agent retries the agent with the verifier's complaint if the
 // shape is wrong, and reports the final verdict as its exit status.
 //
+// A check may shape the answer further: a `response_schema` replaces the verdict
+// shape with a JSON Schema of the rule's own, and a `post_process` script turns
+// the answer into the verdict and its metadata. Both run inside the same verify
+// script, so an unusable answer is re-asked the same way (judgeshape.go).
+//
 // # Fail-closed on the substrate, verdict fails closed too
 //
 // If sr-agent cannot be run, or the model never produced a well-formed verdict
@@ -125,7 +130,29 @@ type judgeCall struct {
 	// SR_HEAD, so the judge's agent reads the snapshot of head rather than the
 	// working tree.
 	Env []string
+
+	// ResponseSchema is the check's `response_schema`: a JSON Schema file, relative
+	// to Dir, the answer must match. Empty means the default verdict shape.
+	ResponseSchema string
+
+	// PostProcess is the check's `post_process`: a script, relative to Dir, run on
+	// the judge's answer to produce the check's result. Empty means the answer is
+	// the result.
+	PostProcess string
+
+	// SessionWorkspace, SessionID, TranscriptPath and AgentID are the session facts
+	// a post_process is handed in its environment, the same ones a prepare gets
+	// (scriptCall). SessionWorkspace is the session's own workspace, which Workspace
+	// (the tree the judge reads, a snapshot under a changeset) need not be.
+	SessionWorkspace string
+	SessionID        string
+	TranscriptPath   string
+	AgentID          string
 }
+
+// shaped says the check shapes its judge's answer (a response_schema, a
+// post_process, or both), so the answer goes through the shaped verifier.
+func (j judgeCall) shaped() bool { return j.ResponseSchema != "" || j.PostProcess != "" }
 
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
 // a verdict-constraining verify script, and turn the outcome into a Verdict.
@@ -219,17 +246,19 @@ fix the work.`
 // sr:invariant judges/failed-judge-refuses-in-fixed-words
 func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// The verify script sr-agent will run against the agent's output file. Written
-	// to a temp file this package owns, made executable, removed after.
-	verifier, cleanup, err := writeVerifier(j.GuardName)
-	if err != nil {
-		// Could not stage the verifier — a full temp dir, a permissions problem.
-		// Fail-closed: without the verifier the verdict is unconstrained.
-		return refuseNoVerdict(fmt.Sprintf(
-			"the judge could not be prepared (%v); refusing rather than asking the model with no verdict constraint", err)), nil
+	// to a temp file this package owns, made executable, removed after. A check that
+	// shapes its answer (response_schema, post_process) gets the shaped verifier.
+	staged, cleanup, refusal := stageJudge(j)
+	if refusal != "" {
+		// Could not stage the verifier — a full temp dir, a permissions problem, a
+		// schema or post_process that is not there. Fail-closed, before the model is
+		// paid for: without the verifier the verdict is unconstrained.
+		return refuseNoVerdict(refusal), nil
 	}
 	defer cleanup()
+	verifier := staged.verifier
 
-	prompt := renderedPrompt + workspaceNote(j.Workspace) + verdictInstruction
+	prompt := renderedPrompt + workspaceNote(j.Workspace) + staged.instruction
 
 	// sr-agent is invoked as a shell command so the same runShell timeout and
 	// process-group kill protect a model call here as protect a script check —
@@ -272,12 +301,12 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 		// sr-agent exited 0: the verifier accepted a passing verdict. Its reasoning
 		// rides on the verdict (a pass carries no refusal, so nothing shows it to
 		// the agent) for the check store to keep.
-		return Verdict{Reason: passReasonFromVerifierOutput(stderr, stdout)}, nil
+		return staged.withMetadata(Verdict{Reason: passReasonFromVerifierOutput(stderr, stdout)}), nil
 	}
 	// Non-zero: either the verdict was `pass:false` (the verifier rejected it and
 	// sr-agent's attempts ran out) or the substrate failed. Both refuse; the
 	// reason is the verifier's complaint, which sr-agent writes to stderr.
-	return judgeRefusal(stdout, stderr), nil
+	return staged.withMetadata(judgeRefusal(stdout, stderr)), nil
 }
 
 // judgeCommand is the shell line that runs sr-agent for a judge.
@@ -385,7 +414,7 @@ func judgeRefusal(stdout, stderr []byte) Verdict {
 	answered := false
 	for _, b := range [][]byte{stderr, stdout} {
 		if r := reasonFromVerifierOutput(b); r != "" {
-			v.NoVerdict = strings.HasPrefix(r, noVerdictReason)
+			v.NoVerdict = isNoVerdictReason(r)
 			answered = true
 			break
 		}
@@ -608,9 +637,13 @@ func writeVerifier(guardName string) (path string, cleanup func(), err error) {
 // (`{"pass":...,"reasoning":...}`), and a greedy `{.*}` would merge two objects on
 // one line and make jq emit a two-line value, which the old rule-quality hook was
 // burned by. A missing or unparseable verdict exits non-zero so sr-agent retries.
-var verifierScript = `#!/bin/sh
-set -u
-# The agent's output file: sr-agent passes it as argv[1] and on stdin. Read argv
+var verifierScript = verifierPreamble + verifierReadAnswer + verifierDecide
+
+// verifierPreamble opens every verify script.
+const verifierPreamble = "#!/bin/sh\nset -u\n"
+
+// verifierReadAnswer leaves the answer's one JSON object in $json, or asks again.
+var verifierReadAnswer = `# The agent's output file: sr-agent passes it as argv[1] and on stdin. Read argv
 # first, fall back to stdin.
 raw=""
 if [ -n "${1:-}" ] && [ -f "$1" ]; then
@@ -635,7 +668,10 @@ if [ -z "$json" ]; then
   exit 1
 fi
 
-# Read .pass DIRECTLY, not '.pass // empty': jq's // is the alternative operator,
+`
+
+// verifierDecide turns the verdict in $json into the exit code and the reasoning line.
+var verifierDecide = `# Read .pass DIRECTLY, not '.pass // empty': jq's // is the alternative operator,
 # and a boolean false is falsy to it, so '.pass // empty' turns a real "false"
 # verdict into empty and the "was not a boolean" branch fires on a legitimate
 # fail. Reading .pass straight yields the literal "true"/"false"/"null".

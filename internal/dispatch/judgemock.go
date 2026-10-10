@@ -24,6 +24,11 @@ import (
 // as JSON) and prints `{"pass": bool, "reasoning": "..."}`. A script that fails to run,
 // exits non-zero or prints anything else makes the check an ERROR, never a pass; so does a
 // judge with no entry, so a model is never reached by accident while the variable is set.
+//
+// For a check with a `response_schema` or a `post_process` the script prints the judge's
+// ANSWER instead, in the shape that check's judge answers in, and the answer then goes
+// through the same schema validation and post_process a model's answer does. An answer
+// those would send back to a model is an ERROR here: a mock is not asked twice.
 // The variable is read by the engine itself, so it holds under sr-test, `sr-checks run`
 // and the hooks alike.
 const JudgeMocksEnv = "SR_CHECKS_JUDGE_MOCKS"
@@ -95,6 +100,9 @@ func runMockedJudge(j judgeCall, raw string) (Verdict, error) {
 	if err := procgroup.Run(cmd, true); err != nil {
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) failed: %w: %s", id, script, err, strings.TrimSpace(stderr.String()))
 	}
+	if j.shaped() {
+		return shapeMockedAnswer(j, id, script, stdout.Bytes(), timeout)
+	}
 	var out struct {
 		Pass      *bool  `json:"pass"`
 		Reasoning string `json:"reasoning"`
@@ -104,7 +112,8 @@ func runMockedJudge(j judgeCall, raw string) (Verdict, error) {
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) did not print {\"pass\": bool, \"reasoning\": string}", id, script)
 	}
 	if *out.Pass {
-		return pass(), nil
+		// A pass keeps its reasoning, as a model's does, for the record.
+		return Verdict{Reason: strings.TrimSpace(out.Reasoning)}, nil
 	}
 	reason := strings.TrimSpace(out.Reasoning)
 	if reason == "" {
@@ -112,3 +121,43 @@ func runMockedJudge(j judgeCall, raw string) (Verdict, error) {
 	}
 	return refuse(reason), nil
 }
+
+// shapeMockedAnswer puts a mock's answer through the shaped verifier a model's answer goes
+// through (the response_schema, then the post_process), run here because no sr-agent is.
+// A verdict comes back as one; whatever would send a model back to answer again, and
+// whatever is no verdict at all, is an error naming what the verifier said.
+// sr:invariant judges/mocked-answer-is-shaped-like-a-models
+func shapeMockedAnswer(j judgeCall, id, script string, answer []byte, timeout time.Duration) (Verdict, error) {
+	staged, cleanup, refusal := stageJudge(j)
+	if refusal != "" {
+		return Verdict{}, fmt.Errorf("the judge %q could not be prepared for its mock (%s): %s", id, script, refusal)
+	}
+	defer cleanup()
+	answerPath := staged.verifier + ".answer"
+	if err := os.WriteFile(answerPath, answer, 0o600); err != nil {
+		return Verdict{}, fmt.Errorf("the mock for judge %q (%s): its answer could not be staged: %w", id, script, err)
+	}
+	stdout, stderr, code, expired, _, startErr := runArgv(j.Dir, []string{staged.verifier, answerPath}, answer, judgeEnv(j), timeout)
+	said := strings.TrimSpace(string(stderr) + string(stdout))
+	switch {
+	case startErr != nil:
+		return Verdict{}, fmt.Errorf("the mock for judge %q (%s): its answer could not be checked: %w", id, script, startErr)
+	case expired:
+		return Verdict{}, fmt.Errorf("the mock for judge %q (%s): checking its answer (response_schema, post_process) did not finish in %s", id, script, timeout)
+	case code == 0:
+		return staged.withMetadata(Verdict{Reason: passReasonFromVerifierOutput(stderr, stdout)}), nil
+	}
+	reason := reasonFromVerifierOutput(stderr)
+	if code != finalRejectionExit || reason == "" || isNoVerdictReason(reason) {
+		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) gave an answer the check could not use: %s", id, script, said)
+	}
+	v := staged.withMetadata(refuse(reason))
+	if v.NoVerdict {
+		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) gave an answer the check could not use: %s", id, script, v.Reason)
+	}
+	return v, nil
+}
+
+// finalRejectionExit is the verify script's "a well-formed fail, do not ask again"
+// (services/sr-agent FinalRejectionExit).
+const finalRejectionExit = 3

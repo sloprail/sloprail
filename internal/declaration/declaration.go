@@ -587,7 +587,29 @@ type Check struct {
 	// harness's own syntax, parentheses and spaces included. Judge-only, like
 	// AllowedTools.
 	DisallowedTools []string `yaml:"disallowed_tools"`
+
+	// ResponseSchema is an optional JSON Schema file, resolved relative to the
+	// rule's folder, naming the shape a Judge must answer in. The judge is shown
+	// the schema in place of the default verdict instruction, and an answer that
+	// does not match it is sent back to the judge like a malformed verdict. Empty
+	// means the default shape, `{"pass": bool, "reasoning": string}`. Without a
+	// PostProcess the schema must still describe a top-level boolean `pass` and
+	// string `reasoning`, or nothing could read the verdict out of the answer.
+	// Judge-only.
+	ResponseSchema string `yaml:"response_schema"`
+
+	// PostProcess is an optional deterministic executable, resolved relative to
+	// the rule's folder, that runs AFTER a Judge answered: the mirror of Prepare.
+	// It receives the judge's answer on stdin and prints the check's result,
+	// `{"pass": bool, "reasoning": string, "metadata": {...}}`. Judge-only.
+	PostProcess string `yaml:"post_process"`
 }
+
+// hasResponseSchema reports whether this check names the shape its judge answers in.
+func (c Check) hasResponseSchema() bool { return c.ResponseSchema != "" }
+
+// hasPostProcess reports whether this check runs a script on its judge's answer.
+func (c Check) hasPostProcess() bool { return c.PostProcess != "" }
 
 // hasModel reports whether this check sets a judge model override.
 func (c Check) hasModel() bool { return c.Model != "" }

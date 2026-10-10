@@ -1,0 +1,7 @@
+predicate: >-
+  For a {@ent:judges:Judge} with a {@fld:judges:Judge.post_process}, the
+  {@fld:judges:Judge.pass} and {@fld:judges:Judge.reasoning} are the ones the
+  post_process returns for the model's {@fld:judges:Judge.answer}, whatever
+  verdict the answer itself held, and its {@fld:judges:Judge.metadata} is
+  what the post_process returned with them, on a pass and a fail alike.
+why: A rule cannot compute its verdict from a structured answer, or the model's own pass overrides the rule's arithmetic.

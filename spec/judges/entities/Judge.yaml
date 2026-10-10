@@ -17,6 +17,24 @@ fields:
   - name: reasoning
     type: string
     doc: The model's stated reason for its verdict.
+  - name: response_schema
+    type: string
+    doc: The JSON Schema a rule gives for the shape of the model's answer.
+  - name: post_process
+    type: string
+    doc: The script a rule gives to work the verdict out of the model's answer.
+  - name: answer
+    type: unknown
+    doc: The JSON object the model answers with.
+    constraint_expr: with no response_schema, an object holding pass and reasoning
+  - name: post_process_exit_status
+    type: int32
+    doc: The status a post_process ends with.
+    constraint_expr: 0 returns a result, 65 rejects the answer as unusable, any other value is a failure
+  - name: metadata
+    type: unknown
+    doc: Structured data a post_process returns beside the verdict.
+    constraint_expr: a JSON object of at most 65536 bytes
   - name: attempts
     type: int32
     doc: How many times the model may be asked before a malformed answer fails the judge.
