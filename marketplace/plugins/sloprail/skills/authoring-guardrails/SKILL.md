@@ -82,11 +82,7 @@ is the verdict. Start from [check-template.sh](check-template.sh) for a file-gua
 [gate-check-template.sh](gate-check-template.sh) for a gate that prevents a write, and change
 only `fine()`. A [judge check](judge-checks.md) is a prompt template a model answers.
 
-The event's fields sit directly under `.event`: `.event.path`, `.event.newContent`,
-`.event.kind`. There is no `.event.fields` nesting. Beside the event, the payload carries
-`.transcriptPath` (the session record) and, on a gate, `.context` (every declared context).
-A file-guard's checks receive a changeset of commits instead of an event. Every event kind
-and its fields: [events.md](events.md).
+What a check reads, every event kind and its fields: [events.md](events.md).
 
 ## Prove it fires
 
