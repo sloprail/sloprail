@@ -1,0 +1,38 @@
+# Reports the required checks of test.yml for a push that changed no code and no test.
+#
+# test.yml runs only when a path of its list changed, and a workflow that does not run
+# reports nothing, which would leave a docs-only pull request waiting on its required
+# checks for ever. The paths here are the opposite of test.yml's list: keep them in step.
+name: test (nothing to run)
+
+on:
+  push:
+    paths:
+      - '**'
+      - '!**.go'
+      - '!go.mod'
+      - '!go.sum'
+      - '!Makefile'
+      - '!install.sh'
+      - '!internal/**'
+      - '!services/**'
+      - '!tests/**'
+      - '!tools/**'
+      - '!scripts/**'
+      - '!marketplace/**'
+      - '!.github/workflows/test.yml'
+      - 'marketplace/plugins/*/.*-plugin/plugin.json'
+
+permissions: {}
+
+jobs:
+  skipped:
+    # The names of test.yml's required checks.
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    strategy:
+      matrix:
+        check: ['unit + services', 'e2e (all)', 'install.sh (stranger install path)']
+    steps:
+      - run: echo "no code or test changed in this push"
