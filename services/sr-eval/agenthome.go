@@ -274,6 +274,11 @@ func buildRelease(ctx context.Context, repoRoot, dir string) error {
 // binary. The harness itself often shares such a directory
 // (~/.local/bin holds both), so when dropping those directories loses it, a
 // directory holding only a link to it is put first.
+//
+// The agent's own ~/.local/bin (empty until install.sh fills it) comes before all of them, as
+// it is on a machine whose owner has ~/.local/bin on PATH: what the session's install put
+// there is then found by the agent's shell and by the rule scripts `sr-checks run` starts
+// from it (yq, sr-file). Without it a check run by the agent fails on "command not found".
 func freshPath(home, harnessBinary string) (string, error) {
 	harnessBin, _ := exec.LookPath(harnessBinary)
 
@@ -295,6 +300,7 @@ func freshPath(home, harnessBinary string) (string, error) {
 		}
 		kept = append([]string{shim}, kept...)
 	}
+	kept = append([]string{filepath.Join(home, ".local", "bin")}, kept...)
 	return strings.Join(kept, string(os.PathListSeparator)), nil
 }
 
