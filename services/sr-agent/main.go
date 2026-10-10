@@ -106,6 +106,8 @@ MODEL SETS
       A size, not a model. Every harness maps every one of them, so an alias
       ALWAYS resolves — which means anything after an alias in a set can never
       be reached. Writing size-md,claude-opus-5 probably meant the other order.
+      Where two sizes are the same model they differ in reasoning effort: under
+      Claude Code size-lg is Opus at medium effort and size-xl is Opus at high.
 
   claude-opus-5, sonnet, ...
       One harness's own model. Matches only under that harness, so a set may
@@ -306,6 +308,8 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The size's own arguments go first, so the same flag in the harness args wins.
+	harnessArgs = append(resolution.Args, harnessArgs...)
 
 	// The tools the agent may use, parsed from the comma/space-separated flag into
 	// the list the harness merges with the write grant it needs. Empty when the
@@ -409,8 +413,12 @@ func resolvePrompt(args []string, promptFlag string) (string, error) {
 // Unreachable entries are named because they are almost always a mistake — an
 // alias sitting in front of the models the author actually wanted.
 func reportResolution(w interface{ Write([]byte) (int, error) }, spec harnessSpec, res Resolution) {
+	model := res.Model
+	if len(res.Args) > 0 {
+		model += " " + strings.Join(res.Args, " ")
+	}
 	fmt.Fprintf(w, "sr-agent: harness %s, model %s (from %q)\n",
-		spec.name, res.Model, res.Matched.Raw)
+		spec.name, model, res.Matched.Raw)
 
 	if len(res.Skipped) > 0 {
 		fmt.Fprintf(w, "sr-agent: skipped %s — not offered by %s\n",

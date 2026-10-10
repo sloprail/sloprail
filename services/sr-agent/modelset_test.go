@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -353,4 +354,28 @@ func TestResolveModelSet_RefusalSuggestsAliases(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "size-md"),
 		"the refusal should point at aliases as the harness-agnostic way out")
+}
+
+// The two Opus sizes are told apart by reasoning effort, and only a size carries one:
+// a concrete model name runs at the harness's own default.
+func TestResolveModelSet_ClaudeSizesCarryTheirEffort(t *testing.T) {
+	for set, want := range map[string][]string{
+		"size-md":         nil,
+		"size-lg":         {"--effort", "medium"},
+		"size-xl":         {"--effort", "high"},
+		"claude-opus-5-5": nil,
+	} {
+		res, err := ResolveModelSet(mustParse(t, set), claudeCodeSpec)
+		if err != nil {
+			t.Fatalf("%s: %v", set, err)
+		}
+		if !slices.Equal(res.Args, want) {
+			t.Errorf("%s: args = %v, want %v", set, res.Args, want)
+		}
+	}
+	lg, _ := ResolveModelSet(mustParse(t, "size-lg"), claudeCodeSpec)
+	xl, _ := ResolveModelSet(mustParse(t, "size-xl"), claudeCodeSpec)
+	if lg.Model != xl.Model {
+		t.Errorf("size-lg and size-xl are the same model at two efforts, got %q and %q", lg.Model, xl.Model)
+	}
 }
