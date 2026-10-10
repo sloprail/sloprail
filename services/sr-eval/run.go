@@ -135,6 +135,7 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("build the agent's HOME: %w", err)
 	}
+	defer agent.stopAuthSync()
 	binDir := agent.binDir
 	if fx.FreshMachine {
 		fmt.Fprintf(out, "sr-eval: fresh machine: HOME %s — plugin installed, no sr binaries; install.sh's release is this checkout's build (%s)\n",

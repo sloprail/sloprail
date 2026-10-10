@@ -17,8 +17,10 @@ type Provisioner interface {
 
 	// AuthFiles are the files, relative to HOME, that carry the login when it is a
 	// file (Codex's auth.json). A launcher LINKS exactly these and nothing else of the
-	// config directory (a rotated refresh token must land in the operator's real file). A login kept in the platform's keychain (Claude Code, Cursor)
-	// lists nothing: the launcher links ~/Library for every harness.
+	// config directory (a rotated refresh token must land in the operator's real file). A login kept in the platform's keychain (Cursor; Claude Code
+	// on macOS) needs no file: the launcher links ~/Library for every harness. Claude Code
+	// lists its credentials file for the platforms with no keychain; a listed file the
+	// operator does not have is skipped.
 	AuthFiles() []string
 
 	// ConfigDirIn is the harness's configuration directory under a given home: where

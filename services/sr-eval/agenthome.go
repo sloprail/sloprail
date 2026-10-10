@@ -28,11 +28,14 @@ var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-ag
 // what it exposes to a score script as SR_EVAL_BIN_DIR — set for every run,
 // fresh or ordinary, since both now build rather than trust an existing PATH.
 type agentEnv struct {
-	home       string
-	env        []string
-	configDir  string
-	releaseURL string
-	binDir     string
+	// stopAuthSync ends keepAuthLinked's watch after one last pass. Never nil once
+	// agentHome returned without an error.
+	stopAuthSync func()
+	home         string
+	env          []string
+	configDir    string
+	releaseURL   string
+	binDir       string
 }
 
 // agentHome builds the HOME every agent-under-test runs in, and the
@@ -140,7 +143,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	roots := hostRoots(repoRootDir)
 	env = withoutHostPaths(env, roots)
 
-	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home)}
+	ae := agentEnv{home: home, configDir: prov.ConfigDirIn(home), stopAuthSync: func() {}}
 
 	// Every run — fresh or ordinary — launches THIS checkout's own binaries,
 	// built new into the workspace rather than trusted from wherever binDir
@@ -162,6 +165,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
 		}
 		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+cleanPath(os.Getenv("PATH"), roots))
+		ae.stopAuthSync = keepAuthLinked(ctx, realHome, home, prov.AuthFiles())
 		return ae, nil
 	}
 
@@ -173,6 +177,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	ae.releaseURL = "file://" + releaseDir
 	ae.env = append(env, "PATH="+path,
 		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
+	ae.stopAuthSync = keepAuthLinked(ctx, realHome, home, prov.AuthFiles())
 	return ae, nil
 }
 
