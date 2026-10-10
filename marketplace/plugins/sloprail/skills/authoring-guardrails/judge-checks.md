@@ -45,9 +45,7 @@ It can use:
   `context`;
 - `transcriptPath`, and `additionalContext` when a `prepare` produced one.
 
-Rendering is safe by default. Every value has `</` broken, so it cannot close the tag it sits
-in, and a value in a quoted attribute (`path="{{ event.path }}"`) cannot end the attribute.
-Always quote attribute values. Use `| raw` for a value that is meant as markup, and `| tojson`
+Always quote attribute values (`path="{{ event.path }}"`). Use `| raw` for a value that is meant as markup, and `| tojson`
 for a map or a list (`{{ additionalContext.items | tojson }}`). Do not wrap a value in a
 Markdown code fence: a value holding a fence line of its own would close it. A filter that
 does not exist is reported as a load error.
@@ -66,10 +64,8 @@ Printing nothing is fine. A `prepare` that fails, or prints anything other than 
 fails the check, with its own words as the reason. A script check may have a `prepare` too; its
 `additionalContext` then reaches the script under that key.
 
-A verdict is cached on the subject's files and fingerprint, never on what `prepare` produced
-or on the rendered prompt. So anything a judge depends on beyond the subject's files, whether
-`prepare` computed it or the judge reads it itself, belongs in the subject's fingerprint
-([file-guard.md](file-guard.md#verdicts-are-cached-by-content)).
+A verdict is not cached on what `prepare` produced or on the rendered prompt: see
+[file-guard.md](file-guard.md#verdicts-are-cached-by-content) for what it is cached on.
 
 ## The verdict
 

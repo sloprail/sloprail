@@ -87,8 +87,7 @@ On a `PreFileDelete`, `oldContentKnown` plays the same part for the bytes being 
 
 `Stop` fires once at the end of every cycle, whether or not anything changed. It is the
 trigger for a rule about the result of a turn: "the turn promised an artifact; did it produce
-one?" `Stop` carries no fields, so a Stop gate finds its subject in what a context recorded
-([state-management.md](state-management.md)) or in the transcript.
+one?" Where a Stop gate finds its subject: [events.md](events.md#stop-a-cycle-ended).
 
 A refused Stop is handed back to the agent, and its next reply is judged the same way, until
 one passes. `.sloprail/config.yaml` caps how many refusals in a row a turn takes:

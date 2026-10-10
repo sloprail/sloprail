@@ -41,10 +41,7 @@ In a trigger, `PreFileWrite` stands for `PreFileCreate` and `PreFileUpdate` toge
 `PostFileWrite` for the two `Post` kinds. A delete is never part of a write.
 
 - `oldContent` is the file before the change; `newContent` is what the change leaves.
-- `resultKnown` is `false` when sloprail could not work out what a write will leave (an
-  in-place `sed -i`, a `git apply`, a notebook edit). `newContent` is then `""`, which reads
-  the same as emptying the file, so a gate that reads the content must check it first
-  ([gate.md](gate.md#an-unknown-result-is-yours-to-refuse)).
+- `resultKnown`: see [gate.md](gate.md#an-unknown-result-is-yours-to-refuse).
 - `oldContentKnown` and `newContentKnown` are `false` when the file was not read (too large,
   or not a regular file); the content is then `""`.
 - `newMarkers` and `oldMarkers` are the `sr:` markers in the text, a list of
