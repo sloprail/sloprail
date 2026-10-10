@@ -45,7 +45,8 @@ It can use:
   `context`;
 - `transcriptPath`, and `additionalContext` when a `prepare` produced one.
 
-Always quote attribute values (`path="{{ event.path }}"`). Use `| raw` for a value that is meant as markup, and `| tojson`
+Values are escaped when rendered, so a value cannot close the tag or the quoted attribute it
+sits in: always quote attribute values (`path="{{ event.path }}"`). Use `| raw` for a value that is meant as markup, and `| tojson`
 for a map or a list (`{{ additionalContext.items | tojson }}`). Do not wrap a value in a
 Markdown code fence: a value holding a fence line of its own would close it. A filter that
 does not exist is reported as a load error.
