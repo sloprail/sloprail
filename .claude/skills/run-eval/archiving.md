@@ -10,6 +10,12 @@ directory: `$XDG_DATA_HOME/sloprail/eval-runs` (or, on a platform with no
 `run.json`, the agent-under-test's transcript (and any sub-agent
 transcripts), and the scorer's raw stdout/stderr.
 
+`run.json` also says what the run was made of: `sloprail` is the checkout
+whose build ran (sr-eval, the plugin, the judges) and `fixture_repo` the
+repository the fixture was read from, each as `commit`, `describe` (the
+nearest release tag), `remote` and `dirty`. A `dirty: true` run had changes no
+commit holds, so its commit alone does not reproduce it.
+
 ```
 sr-eval run --fixture <dir>
 # archived under: $XDG_DATA_HOME/sloprail/eval-runs/<fixture-name>/<run-id>/

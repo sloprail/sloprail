@@ -247,18 +247,20 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	sr, scoreErr := score(ctx, fx, ws, harnessID, transcriptPath, binDir, agent.home)
 
 	rec := runRecord{
-		Fixture:    filepath.Base(fx.Dir),
-		FixtureDir: fx.Dir,
-		Model:      fx.Model,
-		Variant:    fx.Variant,
-		Harness:    harnessID,
-		Passed:     sr.Passed,
-		Reason:     sr.Reason,
-		AgentError: agentErrText,
-		Files:      archiveFiles,
-		Transcript: transcriptPath,
-		StartedAt:  startedAt,
-		FinishedAt: time.Now(),
+		Fixture:     filepath.Base(fx.Dir),
+		FixtureDir:  fx.Dir,
+		Model:       fx.Model,
+		Variant:     fx.Variant,
+		Sloprail:    refOf(ctx, root),
+		FixtureRepo: refOf(ctx, fx.Dir),
+		Harness:     harnessID,
+		Passed:      sr.Passed,
+		Reason:      sr.Reason,
+		AgentError:  agentErrText,
+		Files:       archiveFiles,
+		Transcript:  transcriptPath,
+		StartedAt:   startedAt,
+		FinishedAt:  time.Now(),
 	}
 	if scoreErr != nil {
 		rec.Reason = fmt.Sprintf("scorer could not run: %v", scoreErr)
