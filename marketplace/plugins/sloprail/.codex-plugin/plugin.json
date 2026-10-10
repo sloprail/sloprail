@@ -1,5 +1,5 @@
 {
   "name": "sloprail",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Guardrails with a Stop gate."
 }
