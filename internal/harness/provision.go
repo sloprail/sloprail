@@ -15,13 +15,17 @@ type Provisioner interface {
 	// PATH must still reach).
 	Binary() string
 
-	// AuthFiles are the files, relative to HOME, that carry the login when it is a
-	// file (Codex's auth.json). A launcher LINKS exactly these and nothing else of the
-	// config directory (a rotated refresh token must land in the operator's real file). A login kept in the platform's keychain (Cursor; Claude Code
-	// on macOS) needs no file: the launcher links ~/Library for every harness. Claude Code
-	// lists its credentials file for the platforms with no keychain; a listed file the
-	// operator does not have is skipped.
-	AuthFiles() []string
+	// AuthFiles are the files that carry the login when it is a file (Codex's auth.json,
+	// Claude Code's .credentials.json): where the OPERATOR's real one is, resolved the way
+	// the harness itself resolves it for a process with that home and environment (a
+	// config-directory variable such as CLAUDE_CONFIG_DIR or CODEX_HOME wins over the
+	// default under home), and where the agent's copy sits under the sandbox's HOME. A
+	// launcher LINKS exactly these and nothing else of the config directory (a rotated
+	// refresh token must land in the operator's real file). A login kept in the platform's
+	// keychain (Cursor; Claude Code on macOS) needs no file: the launcher links ~/Library
+	// for every harness. Claude Code lists its credentials file for the platforms with no
+	// keychain; a listed file the operator does not have is skipped.
+	AuthFiles(home string, getenv func(string) string) []AuthFile
 
 	// ConfigDirIn is the harness's configuration directory under a given home: where
 	// its transcripts land in a sandbox whose HOME is not the process's own.
@@ -35,6 +39,16 @@ type Provisioner interface {
 	// InstallPlugins installs sloprail's plugin (and any further ones from the same
 	// marketplace) for a project, the way a user does, into the sandbox.
 	InstallPlugins(ctx context.Context, in PluginInstall) error
+}
+
+// AuthFile is one login file: the operator's real one and the agent's place for it.
+type AuthFile struct {
+	// Real is the absolute path of the operator's own login file.
+	Real string
+	// InHome is where the agent's harness looks for it, relative to the sandbox's HOME
+	// (whose config directory is the default one: the variable naming another is not
+	// passed into the sandbox).
+	InHome string
 }
 
 // PluginInstall is one plugin installation into a sandbox.

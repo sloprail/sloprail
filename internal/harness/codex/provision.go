@@ -17,10 +17,16 @@ const Binary = "codex"
 func (Harness) Binary() string { return Binary }
 
 // AuthFiles implements harness.Provisioner: a Codex login (ChatGPT or API key) is
-// auth.json in the config directory, which the launcher links (Codex rotates the
-// refresh token and rewrites the file in place); the rest of it (config.toml, sessions, caches) is
-// the operator's and stays behind.
-func (Harness) AuthFiles() []string { return []string{filepath.Join(".codex", "auth.json")} }
+// auth.json in the config directory ($CODEX_HOME when set, else ~/.codex), which the
+// launcher links (Codex rotates the refresh token and rewrites the file in place); the
+// rest of it (config.toml, sessions, caches) is the operator's and stays behind.
+func (Harness) AuthFiles(home string, getenv func(string) string) []harness.AuthFile {
+	dir := filepath.Join(home, ".codex")
+	if v := strings.TrimSpace(getenv("CODEX_HOME")); v != "" {
+		dir = v
+	}
+	return []harness.AuthFile{{Real: filepath.Join(dir, "auth.json"), InHome: filepath.Join(".codex", "auth.json")}}
+}
 
 // ConfigDirIn implements harness.Provisioner.
 func (Harness) ConfigDirIn(home string) string { return filepath.Join(home, ".codex") }
