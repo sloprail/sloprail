@@ -130,6 +130,19 @@ type Fixture struct {
 	// turn, exactly as before.
 	User *SimulatedUser `yaml:"user"`
 
+	// Variants names the ways this one fixture can be prepared, e.g. the same
+	// project with and without its rules, so a comparison does not need two
+	// copies of a fixture. `sr-eval run --variant <name>` picks one; it must be
+	// declared here. The name reaches the setup script and the score script as
+	// SR_EVAL_VARIANT, and the setup script does the preparing: sr-eval itself
+	// only reads what a Variant declares. Without --variant a run is the
+	// fixture as written, and SR_EVAL_VARIANT is empty.
+	Variants map[string]Variant `yaml:"variants"`
+
+	// Variant is the variant this run was asked for ("" when none): not a YAML
+	// field, set by the run from --variant (UseVariant).
+	Variant string `yaml:"-"`
+
 	// Score names the script, relative to Dir, that judges the run. It
 	// receives the environment documented in score.go and reports pass/fail
 	// by exit code, exactly like a guardrail script check — the same
@@ -137,6 +150,41 @@ type Fixture struct {
 	// a silently-skipped one.
 	Score string `yaml:"score"`
 }
+
+// Variant is one way of preparing a fixture. See Fixture.Variants.
+type Variant struct {
+	// NoSloprail, when true, runs the agent-under-test with no sloprail at
+	// all: the plugin is not installed (nor any of Plugins), and the example's
+	// shipped rules are not applied even when ExampleSloprail is set. It is
+	// the control of a with-and-without comparison. An overlay is still
+	// applied as it is; removing rules an overlay carries is the setup
+	// script's job.
+	NoSloprail bool `yaml:"noSloprail"`
+}
+
+// UseVariant returns the fixture set to run as the variant name. An empty
+// name is the fixture as written; any other must be declared in Variants.
+func (f Fixture) UseVariant(name string) (Fixture, error) {
+	if name == "" {
+		return f, nil
+	}
+	if _, ok := f.Variants[name]; !ok {
+		declared := make([]string, 0, len(f.Variants))
+		for v := range f.Variants {
+			declared = append(declared, v)
+		}
+		slices.Sort(declared)
+		if len(declared) == 0 {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml declares no variants, so --variant %q names nothing", f.Dir, name)
+		}
+		return Fixture{}, fmt.Errorf("%s/fixture.yaml has no variant %q — it declares %s", f.Dir, name, strings.Join(declared, ", "))
+	}
+	f.Variant = name
+	return f, nil
+}
+
+// NoSloprail reports whether this run's variant runs without sloprail.
+func (f Fixture) NoSloprail() bool { return f.Variants[f.Variant].NoSloprail }
 
 // SimulatedUser configures the agent that plays the user after the first
 // turn. See Fixture.User.
@@ -360,6 +408,9 @@ func (f Fixture) exampleSloprailDir() string {
 // destination explicitly instead of reusing the plain copyTree(src, project)
 // call Overlay uses.
 func (f Fixture) ExampleSloprailDir() string {
+	if f.NoSloprail() {
+		return ""
+	}
 	if !f.ExampleSloprail {
 		return ""
 	}

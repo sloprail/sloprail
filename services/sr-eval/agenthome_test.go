@@ -46,10 +46,11 @@ func TestFreshPath_DropsSloprailKeepsHarness(t *testing.T) {
 			t.Fatalf("a directory holding sr-session stayed on PATH: %s", got)
 		}
 	}
-	if len(dirs) != 2 || dirs[1] != other {
-		t.Fatalf("want [shim, %s], got %v", other, dirs)
+	// The agent's own ~/.local/bin leads: what its session installs there must be found.
+	if len(dirs) != 3 || dirs[0] != filepath.Join(home, ".local", "bin") || dirs[2] != other {
+		t.Fatalf("want [%s, shim, %s], got %v", filepath.Join(home, ".local", "bin"), other, dirs)
 	}
-	if target, err := os.Readlink(filepath.Join(dirs[0], "claude")); err != nil || target != filepath.Join(shared, "claude") {
+	if target, err := os.Readlink(filepath.Join(dirs[1], "claude")); err != nil || target != filepath.Join(shared, "claude") {
 		t.Fatalf("the harness binary must be linked back first, got %q, %v", target, err)
 	}
 }

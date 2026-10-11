@@ -18,8 +18,12 @@ const Binary = "claude"
 // Binary implements harness.Provisioner.
 func (Harness) Binary() string { return Binary }
 
-// AuthFiles implements harness.Provisioner: Claude Code's login is in the keychain.
-func (Harness) AuthFiles() []string { return nil }
+// AuthFiles implements harness.Provisioner. On macOS Claude Code's login is in the
+// keychain (the launcher links ~/Library) and this file does not exist; everywhere else
+// the login IS this file, and a sandbox HOME without it is "Not logged in".
+func (Harness) AuthFiles() []string {
+	return []string{filepath.Join(".claude", ".credentials.json")}
+}
 
 // ConfigDirIn implements harness.Provisioner.
 func (Harness) ConfigDirIn(home string) string { return filepath.Join(home, ".claude") }

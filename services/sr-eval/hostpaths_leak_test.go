@@ -143,3 +143,42 @@ func TestAgentSurface_NamesNoHostPath(t *testing.T) {
 		}
 	}
 }
+
+// The agent commits as itself and unsigned, whatever the operator's config says, and with no
+// operator config at all: a commit in the agent's HOME must not need the operator's signing key.
+func TestAgentGitConfig_OwnIdentityUnsigned(t *testing.T) {
+	for name, cfg := range map[string]string{
+		"operator signs": "[user]\n\tname = Op\n\temail = op@example.com\n\tsigningkey = ABCDEF\n[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[alias]\n\tst = status",
+		"no config":      "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			realHome, home := t.TempDir(), t.TempDir()
+			src := filepath.Join(realHome, ".gitconfig")
+			if cfg != "" {
+				if err := os.WriteFile(src, []byte(cfg), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dst := filepath.Join(home, ".gitconfig")
+			if err := copyGlobalConfig(src, dst, []string{realHome}); err != nil {
+				t.Fatal(err)
+			}
+			get := func(key string) string {
+				c := exec.Command("git", "config", "--file", dst, "--get", key)
+				out, _ := c.Output()
+				return strings.TrimSpace(string(out))
+			}
+			for key, want := range map[string]string{
+				"user.name": "sr-eval agent", "user.email": "agent@sr-eval.invalid",
+				"commit.gpgsign": "false", "tag.gpgsign": "false",
+			} {
+				if got := get(key); got != want {
+					t.Errorf("%s = %q, want %q", key, got, want)
+				}
+			}
+			if cfg != "" && get("alias.st") != "status" {
+				t.Errorf("the operator's alias was not kept")
+			}
+		})
+	}
+}

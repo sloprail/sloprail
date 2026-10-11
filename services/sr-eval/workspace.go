@@ -216,7 +216,7 @@ func (w *workspace) runSetup(ctx context.Context, fx Fixture, env []string) erro
 	script := filepath.Join(fx.Dir, fx.Setup)
 	c := exec.CommandContext(ctx, script)
 	c.Dir = w.project
-	c.Env = setupEnv(env, w.project)
+	c.Env = append(setupEnv(env, w.project), "SR_EVAL_VARIANT="+fx.Variant)
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w: %s", script, err, strings.TrimSpace(string(out)))
 	}

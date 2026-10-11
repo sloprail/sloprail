@@ -79,6 +79,7 @@ cannot prove one (a sub-agent's, on Cursor) is archived only when --session name
 	cmd.Flags().String("into", "", "The archive repository (default: <XDG data dir>/sloprail/session-archives)")
 	cmd.Flags().String("label", "", "The archive's group name (default: the project directory's name)")
 	cmd.Flags().String("harness", "", "The harness whose sessions to archive (default: $"+harness.SelectEnv+", else "+defaultHarness+")")
+	cmd.Flags().Bool("no-commit", false, "Write the entry under --into and commit nothing (--into need not be a repository)")
 	return cmd
 }
 
@@ -126,6 +127,7 @@ func runArchive(cmd *cobra.Command, _ []string) error {
 	into, _ := cmd.Flags().GetString("into")
 	label, _ := cmd.Flags().GetString("label")
 	harnessName, _ := cmd.Flags().GetString("harness")
+	noCommit, _ := cmd.Flags().GetBool("no-commit")
 	switch {
 	case len(ids) == 0 && !all:
 		return errors.New("sr-eval archive: name the sessions: --session <id> (repeatable) or --all-sessions")
@@ -145,7 +147,7 @@ func runArchive(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	out, err := archiveSessions(h, cwd, ids, all, into, label, time.Now())
+	out, err := archiveSessions(h, cwd, ids, all, into, label, time.Now(), !noCommit)
 	if err != nil {
 		return err
 	}
@@ -166,8 +168,9 @@ func sessionArchiveRoot() (string, error) {
 }
 
 // archiveSessions archives the sessions of the project at cwd, as harness h keeps them, and
-// returns the entry's directory.
-func archiveSessions(h harness.Harness, cwd string, ids []string, all bool, into, label string, now time.Time) (string, error) {
+// returns the entry's directory. With commit false the entry is only written: into is a plain
+// directory, for a caller that keeps the entry inside an archive of its own (sr-eval run).
+func archiveSessions(h harness.Harness, cwd string, ids []string, all bool, into, label string, now time.Time, commit bool) (string, error) {
 	t := h.Transcripts()
 	lister, ok := t.(harness.SessionLister)
 	if !ok {
@@ -216,8 +219,10 @@ func archiveSessions(h harness.Harness, cwd string, ids []string, all bool, into
 		}
 	}
 
-	if err := ensureArchiveRepo(into); err != nil {
-		return "", err
+	if commit {
+		if err := ensureArchiveRepo(into); err != nil {
+			return "", err
+		}
 	}
 	entry, err := runID(now)
 	if err != nil {
@@ -257,6 +262,9 @@ func archiveSessions(h harness.Harness, cwd string, ids []string, all bool, into
 	}
 	if err := os.WriteFile(filepath.Join(dir, "archive.json"), body, 0o644); err != nil {
 		return "", fmt.Errorf("sr-eval archive: write archive.json: %w", err)
+	}
+	if !commit {
+		return dir, nil
 	}
 	if err := commitDir(into, dir, fmt.Sprintf("session-archive: %s (%d sessions)", label, len(ids))); err != nil {
 		return "", err

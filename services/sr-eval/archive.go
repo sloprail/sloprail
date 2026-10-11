@@ -18,17 +18,20 @@ const AppName = "sloprail"
 // alongside the archived transcripts. Field names are stable — a future
 // `sr-eval report` (or any other consumer) reads this file, not stdout.
 type runRecord struct {
-	Fixture      string    `json:"fixture"`     // the fixture directory's own name (basename)
-	FixtureDir   string    `json:"fixture_dir"` // absolute path, for reproducing the run
-	Model        string    `json:"model"`       // the resolved --model (fixture default or override)
-	Harness      string    `json:"harness"`     // the canonical id (claude, codex, cursor) the run was launched under
-	Passed       bool      `json:"passed"`
-	Reason       string    `json:"reason"`      // empty on a pass
-	AgentError   string    `json:"agent_error"` // the agent-under-test's own exit error, if any — a run can still be scored after this
-	Transcript   string    `json:"transcript"`  // the SOURCE path this run's transcript was copied from
-	HasSubagents bool      `json:"has_subagents"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
+	Fixture      string     `json:"fixture"`                // the fixture directory's own name (basename)
+	FixtureDir   string     `json:"fixture_dir"`            // absolute path, for reproducing the run
+	Model        string     `json:"model"`                  // the resolved --model (fixture default or override)
+	Variant      string     `json:"variant,omitempty"`      // the --variant the run was asked for; absent when none
+	Sloprail     *sourceRef `json:"sloprail,omitempty"`     // the sloprail checkout whose build ran (sr-eval, the plugin, the judges)
+	FixtureRepo  *sourceRef `json:"fixture_repo,omitempty"` // the repository the fixture was read from, when it is in one
+	Harness      string     `json:"harness"`                // the canonical id (claude, codex, cursor) the run was launched under
+	Passed       bool       `json:"passed"`
+	Reason       string     `json:"reason"`      // empty on a pass
+	AgentError   string     `json:"agent_error"` // the agent-under-test's own exit error, if any — a run can still be scored after this
+	Transcript   string     `json:"transcript"`  // the SOURCE path this run's transcript was copied from
+	HasSubagents bool       `json:"has_subagents"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   time.Time  `json:"finished_at"`
 
 	// Files are further files of the run kept beside run.json (path under the run directory to
 	// content): a TUI run keeps the simulated user's calls and the frames they returned.
@@ -145,5 +148,9 @@ func commitRun(root, runDir string, rec runRecord) error {
 	if !rec.Passed {
 		verdict = "fail"
 	}
-	return commitDir(root, runDir, fmt.Sprintf("%s: %s (%s)", rec.Fixture, verdict, rec.Model))
+	what := rec.Model
+	if rec.Variant != "" {
+		what = rec.Variant + ", " + rec.Model
+	}
+	return commitDir(root, runDir, fmt.Sprintf("%s: %s (%s)", rec.Fixture, verdict, what))
 }
