@@ -186,6 +186,9 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	}
 
 	var agentErrs []string
+	// The turns whose agent-under-test's harness died (sr-agent named the cause): such a run
+	// was not completed, whatever its transcript scores (runOutcome).
+	var harnessFailures []string
 	// An agent whose hooks fire only in its interactive mode is run there, on a terminal, in
 	// one session for every turn; any other is run one-shot, a process per turn.
 	var archiveFiles map[string][]byte
@@ -218,9 +221,13 @@ func runFixtureSteps(cmd *cobra.Command) error {
 			fmt.Fprintf(out, "sr-eval: turn %d, simulated user says: %s\n", turn, message)
 		}
 		var reply bytes.Buffer
-		if agentErr := launchAgent(ctx, io.MultiWriter(out, &reply), cmd.ErrOrStderr(), ws, binDir,
+		var watch failureWatch
+		if agentErr := launchAgent(ctx, io.MultiWriter(out, &reply), io.MultiWriter(cmd.ErrOrStderr(), &watch), ws, binDir,
 			agentArgs(harnessID, fx.Model, message, sessionID, fx.DisallowedTools), agent.env); agentErr != nil {
 			agentErrs = append(agentErrs, fmt.Sprintf("turn %d: %v", turn, agentErr))
+			if cause := watch.Cause(); cause != "" {
+				harnessFailures = append(harnessFailures, fmt.Sprintf("turn %d: %s", turn, cause))
+			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error on turn %d: %v\n", turn, agentErr)
 			// Not returned yet: a refusal or a crash mid-run still leaves a
 			// transcript worth scoring — the scorer is what decides whether an
@@ -269,6 +276,13 @@ func runFixtureSteps(cmd *cobra.Command) error {
 	if scoreErr != nil {
 		rec.Reason = fmt.Sprintf("scorer could not run: %v", scoreErr)
 	}
+	if len(harnessFailures) > 0 {
+		rec.HarnessFailure = strings.Join(harnessFailures, "; ")
+		rec.Passed = false
+		if rec.Reason == "" {
+			rec.Reason = "the run could not be completed: the agent-under-test's harness failed"
+		}
+	}
 
 	if !noArchive {
 		// What the sessions left behind (the check results above all) is part of the run's record.
@@ -306,16 +320,16 @@ func runFixtureSteps(cmd *cobra.Command) error {
 		}
 	}
 
-	if scoreErr != nil {
-		fmt.Fprintf(out, "sr-eval: FAIL (scorer could not run: %v)\n", scoreErr)
-		return &evalFailure{code: 2}
-	}
-	if sr.Passed {
-		fmt.Fprintf(out, "sr-eval: PASS\n")
+	line, code := runOutcome(sr, scoreErr, harnessFailures)
+	fmt.Fprintln(out, line)
+	if code == 0 {
 		return nil
 	}
-	fmt.Fprintf(out, "sr-eval: FAIL — %s\n", sr.Reason)
-	return &evalFailure{code: 1}
+	if len(harnessFailures) > 0 {
+		// Said on stderr too, as every run that could not be completed is.
+		return &evalFailure{code: code, msg: line}
+	}
+	return &evalFailure{code: code}
 }
 
 // evalFailure carries the exit code a failed or unrunnable eval reports,

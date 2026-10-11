@@ -56,9 +56,12 @@ func TestProvisioners_AreCompleteForEveryHarness(t *testing.T) {
 		if got := p.ConfigDirIn("/h"); filepath.Dir(got) != "/h" {
 			t.Errorf("%s: config dir %q is not directly under HOME", id, got)
 		}
-		for _, f := range p.AuthFiles() {
-			if filepath.IsAbs(f) || filepath.Ext(f) == "" {
-				t.Errorf("%s: auth file %q must be a HOME-relative file, never a directory", id, f)
+		for _, f := range p.AuthFiles("/h", func(string) string { return "" }) {
+			if filepath.IsAbs(f.InHome) || filepath.Ext(f.InHome) == "" {
+				t.Errorf("%s: auth file %q must be a HOME-relative file, never a directory", id, f.InHome)
+			}
+			if f.Real != filepath.Join("/h", f.InHome) {
+				t.Errorf("%s: with no config-dir variable the operator's login %q must be the default under HOME", id, f.Real)
 			}
 		}
 	}
@@ -158,7 +161,8 @@ func TestLinkAuthFiles_WritesGoThroughToTheRealFile(t *testing.T) {
 	}
 	mustWriteFile(t, filepath.Join(real, rel), "old-token")
 	mustWriteFile(t, filepath.Join(real, ".codex", "config.toml"), "operator config")
-	if err := linkAuthFiles(real, sandbox, []string{rel, filepath.Join(".codex", "absent.json")}); err != nil {
+	absent := filepath.Join(".codex", "absent.json")
+	if err := linkAuthFiles(sandbox, []harness.AuthFile{{Real: filepath.Join(real, rel), InHome: rel}, {Real: filepath.Join(real, absent), InHome: absent}}); err != nil {
 		t.Fatal(err)
 	}
 	// What codex does: open the existing path, truncate, write.

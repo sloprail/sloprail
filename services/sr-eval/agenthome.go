@@ -109,7 +109,13 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	// existing path and truncating it in place (no rename), which writes through the link:
 	// the rotated token lands in the real file. (An agent that logs out removes the link,
 	// not the file.)
-	if err := linkAuthFiles(realHome, home, prov.AuthFiles()); err != nil {
+	// The operator's login is where THEIR harness keeps it (prov.AuthFiles: under
+	// CLAUDE_CONFIG_DIR or CODEX_HOME when set), not necessarily under the real HOME: an
+	// operator running Claude Code with CLAUDE_CONFIG_DIR is logged in there, and the
+	// default ~/.claude may be another account's login. The agent's copy is at the default
+	// place in its own HOME: the variable itself is not passed in (baseAgentEnv).
+	authFiles := prov.AuthFiles(realHome, os.Getenv)
+	if err := linkAuthFiles(home, authFiles); err != nil {
 		return agentEnv{}, err
 	}
 	for _, name := range []string{".gitconfig", filepath.Join(".config", "gh")} {
@@ -172,7 +178,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
 		}
 		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+cleanPath(os.Getenv("PATH"), roots))
-		ae.stopAuthSync = keepAuthLinked(ctx, realHome, home, prov.AuthFiles())
+		ae.stopAuthSync = keepAuthLinked(ctx, home, authFiles)
 		return ae, nil
 	}
 
@@ -184,7 +190,7 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	ae.releaseURL = "file://" + releaseDir
 	ae.env = append(env, "PATH="+path,
 		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
-	ae.stopAuthSync = keepAuthLinked(ctx, realHome, home, prov.AuthFiles())
+	ae.stopAuthSync = keepAuthLinked(ctx, home, authFiles)
 	return ae, nil
 }
 
@@ -322,20 +328,20 @@ func onPath(name string, dirs []string) bool {
 	return false
 }
 
-// linkAuthFiles links each of the harness's login files (HOME-relative) from the real
-// HOME into the sandbox's, creating its directory. A file the operator does not have is skipped.
-func linkAuthFiles(realHome, home string, names []string) error {
-	for _, name := range names {
-		src := filepath.Join(realHome, name)
-		if _, err := os.Stat(src); err != nil {
+// linkAuthFiles links each of the harness's login files from the operator's real one into
+// its place under the sandbox's HOME, creating its directory. A file the operator does not
+// have is skipped.
+func linkAuthFiles(home string, files []harness.AuthFile) error {
+	for _, f := range files {
+		if _, err := os.Stat(f.Real); err != nil {
 			continue
 		}
-		dst := filepath.Join(home, name)
+		dst := filepath.Join(home, f.InHome)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 			return err
 		}
-		if err := os.Symlink(src, dst); err != nil {
-			return fmt.Errorf("link ~/%s: %w", name, err)
+		if err := os.Symlink(f.Real, dst); err != nil {
+			return fmt.Errorf("link %s to ~/%s: %w", f.Real, f.InHome, err)
 		}
 	}
 	return nil
