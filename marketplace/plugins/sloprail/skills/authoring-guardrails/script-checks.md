@@ -78,3 +78,16 @@ sr-session trajectory normalize --path "$tp" --events PreCommandInvoke | jq '…
 
 A check that must remember something from one cycle to judge it in another keeps it in
 `sr-session state` ([state-management.md](state-management.md)).
+
+## A batch
+
+Handed a batch ([file-guard.md](file-guard.md#batch-subjects-judged-together)), a script's exit
+status decides every subject of it alike. To decide each on its own, exit 0 and print one
+verdict per subject id, exactly the batch's ids:
+
+```json
+{"verdicts": {"cwd/cd-dash": {"pass": true}, "cwd/home": {"pass": false, "reasoning": "no test"}}}
+```
+
+`reasoning` and `metadata` (an object, at most 64 KiB per subject) are optional. Verdicts that
+miss an id or name another fail the whole batch closed, with no verdict stored.
