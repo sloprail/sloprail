@@ -594,14 +594,17 @@ type Check struct {
 	// does not match it is sent back to the judge like a malformed verdict. Empty
 	// means the default shape, `{"pass": bool, "reasoning": string}`. Without a
 	// PostProcess the schema must still describe a top-level boolean `pass` and
-	// string `reasoning`, or nothing could read the verdict out of the answer.
-	// Judge-only.
+	// string `reasoning` (or, for a judge handed a batch, a required object
+	// `verdicts`), or nothing could read the verdict out of the answer. It
+	// describes the WHOLE answer, a batch's included. Judge-only.
 	ResponseSchema string `yaml:"response_schema"`
 
 	// PostProcess is an optional deterministic executable, resolved relative to
 	// the rule's folder, that runs AFTER a Judge answered: the mirror of Prepare.
 	// It receives the judge's answer on stdin and prints the check's result,
-	// `{"pass": bool, "reasoning": string, "metadata": {...}}`. Judge-only.
+	// `{"pass": bool, "reasoning": string, "metadata": {...}}`, or, for a judge
+	// handed a batch, `{"verdicts": {"<subject id>": <that result>, ...}}`.
+	// Judge-only.
 	PostProcess string `yaml:"post_process"`
 }
 

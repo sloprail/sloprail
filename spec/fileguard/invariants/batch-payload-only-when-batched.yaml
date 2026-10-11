@@ -1,0 +1,6 @@
+predicate: >-
+  A check of a {@ent:fileguard:FileGuard} is handed a {@ent:fileguard:Batch}
+  exactly when the subjects it judges carry a {@fld:fileguard:Subject.batch},
+  however few of the batch are left to judge, one included; a subject with no
+  batch is handed alone, as the single subject it has always been handed as.
+why: A rule's checks read a payload whose shape changes with how many subjects a run happened to leave, or a rule that never asked for batches is handed one.

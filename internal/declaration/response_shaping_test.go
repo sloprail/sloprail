@@ -60,6 +60,8 @@ func TestLoad_Check_ResponseSchemaWithoutVerdictNeedsPostProcess(t *testing.T) {
 		"no reasoning":           `{"type": "object", "required": ["pass"], "properties": {"pass": {"type": "boolean"}}}`,
 		"pass is optional":       `{"type": "object", "properties": {"pass": {"type": "boolean"}, "reasoning": {"type": "string"}}}`,
 		"pass only nested":       `{"type": "object", "properties": {"verdict": {"type": "object", "required": ["pass"], "properties": {"pass": {"type": "boolean"}, "reasoning": {"type": "string"}}}}}`,
+		"verdicts is optional":   `{"type": "object", "properties": {"verdicts": {"type": "object"}}}`,
+		"verdicts not an object": `{"type": "object", "required": ["verdicts"], "properties": {"verdicts": {"type": "array"}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			iv := loadOneInvalid(t, map[string]string{
@@ -125,4 +127,19 @@ func TestLoad_Check_PostProcessThatCannotRunKeepsTheRuleLoaded(t *testing.T) {
 	require.Len(t, loaded.FileGuards, 1, "the rule stays loaded")
 	require.NotEmpty(t, loaded.Degraded, "and is reported")
 	assert.Contains(t, loaded.Degraded[0].Reason, "post_process")
+}
+
+// A schema for a judge handed a batch carries the verdicts instead: a required object
+// `verdicts`. It loads without a post_process; whether the judge is handed a batch is known
+// only when it runs, and its verifier holds the answer to the batch's shape then.
+// sr:proves judges/response-schema-without-post-process-carries-the-verdict
+func TestLoad_Check_ABatchSchemaCarriesTheVerdicts(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/batch/file-guard.yaml": shapedGuard("    response_schema: ./response.schema.json\n"),
+		"file-guard/batch/response.schema.json": `{"type": "object", "required": ["verdicts"],
+  "properties": {"verdicts": {"type": "object", "additionalProperties": {"type": "object", "required": ["pass"],
+    "properties": {"pass": {"type": "boolean"}, "reasoning": {"type": "string"}}}}}}`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	assert.Equal(t, "./response.schema.json", loaded.FileGuards[0].Checks[0].ResponseSchema)
 }

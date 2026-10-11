@@ -33,9 +33,13 @@ type Payload struct {
 	Changeset Changeset `json:"changeset"`
 	// Subject is what is being judged as one unit. Without `subjects:` it is the
 	// whole changeset; with it, one entry the rule's script returned. Carried
-	// from the start so `subjects:` adds a producer, not a field.
-	Subject        Subject `json:"subject"`
-	TranscriptPath string  `json:"transcriptPath"`
+	// from the start so `subjects:` adds a producer, not a field. Absent from a
+	// batch's payload, which carries Batch instead.
+	Subject Subject `json:"subject,omitzero"`
+	// Batch is the subjects a check is handed together, when the rule's `subjects:`
+	// script grouped them (Subject.Batch). Nil for every other payload.
+	Batch          *Batch `json:"batch,omitempty"`
+	TranscriptPath string `json:"transcriptPath"`
 }
 
 // Event is the fixed event a changeset evaluation presents.
@@ -140,6 +144,10 @@ type Subject struct {
 	// besides its files' content (a file the checks open with their own tools): added to the
 	// verdict's cache key. Session-independent; empty for the default subject.
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// Batch is the id of the batch the `subjects:` script put the subject in: the
+	// subjects of one batch are handed to the rule's checks together, and each still
+	// gets its own verdict. Empty: the subject is handed alone, as a `subject`.
+	Batch string `json:"batch,omitempty"`
 }
 
 // SubRange is a sub-range of the changeset, as commit names.

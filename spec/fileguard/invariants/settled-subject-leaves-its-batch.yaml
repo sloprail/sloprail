@@ -1,0 +1,5 @@
+predicate: >-
+  A {@ent:fileguard:Subject} that has a stored verdict, or that a check of its
+  rule refused, is not among the {@fld:fileguard:Batch.subjects} any later
+  check of that rule is handed; a batch left with no subject runs no check.
+why: A judge is paid again for a subject already decided, or a refused subject is judged on and its later verdict overwrites the refusal.

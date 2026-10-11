@@ -478,8 +478,11 @@ func validateCheckScripts(dir string, checks []Check) []Problem {
 // validateResponseSchema checks a judge's `response_schema` file as far as it can be
 // checked without a schema engine: it is there, it is a JSON object, it describes an
 // object, and, when the check has no `post_process`, the object it describes still
-// carries the verdict (a required boolean `pass`, and a string `reasoning` where it
-// names one), because nothing else would read a verdict out of the answer.
+// carries the verdict, because nothing else would read a verdict out of the answer: a
+// required boolean `pass` and a string `reasoning` (one subject's verdict), or a required
+// object `verdicts` (a batch's, one entry per subject). Which of the two a judge must
+// answer in depends on whether its `subjects:` script batches the subject it judges,
+// known only when it runs: the verifier holds the answer to that shape then.
 // Whether the schema is valid JSON Schema beyond that is found when it is first used,
 // and refuses there.
 // sr:invariant judges/response-schema-without-post-process-carries-the-verdict
@@ -511,10 +514,14 @@ func validateResponseSchema(dir, where string, c Check) []Problem {
 	}
 	pass, hasPass := schema.Properties["pass"]
 	reasoning, hasReasoning := schema.Properties["reasoning"]
-	if !hasPass || pass.Type != "boolean" || !hasReasoning || reasoning.Type != "string" || !slices.Contains(schema.Required, "pass") {
+	verdict := hasPass && pass.Type == "boolean" && hasReasoning && reasoning.Type == "string" && slices.Contains(schema.Required, "pass")
+	verdicts, hasVerdicts := schema.Properties["verdicts"]
+	batch := hasVerdicts && verdicts.Type == "object" && slices.Contains(schema.Required, "verdicts")
+	if !verdict && !batch {
 		return []Problem{prob(ErrSchemaNeedsPostProcess, where,
-			"response_schema %q does not describe a verdict (a required top-level boolean \"pass\" and a string \"reasoning\"), so a post_process is needed: "+
-				"add `post_process: ./<script>` to this check to work out pass and reasoning from the answer, or add those two properties to the schema",
+			"response_schema %q does not describe a verdict (a required top-level boolean \"pass\" and a string \"reasoning\", "+
+				"or, for a judge handed a batch, a required object \"verdicts\"), so a post_process is needed: "+
+				"add `post_process: ./<script>` to this check to work out the verdict from the answer, or add those properties to the schema",
 			c.ResponseSchema)}
 	}
 	return nil

@@ -29,6 +29,9 @@ import (
 // ANSWER instead, in the shape that check's judge answers in, and the answer then goes
 // through the same schema validation and post_process a model's answer does. An answer
 // those would send back to a model is an ERROR here: a mock is not asked twice.
+//
+// A judge handed a batch is mocked like a check that shapes its answer: the script prints the
+// judge's answer for the whole batch, which goes through the batch's verifier (batchjudge.go).
 // The variable is read by the engine itself, so it holds under sr-test, `sr-checks run`
 // and the hooks alike.
 const JudgeMocksEnv = "SR_CHECKS_JUDGE_MOCKS"
@@ -100,7 +103,7 @@ func runMockedJudge(j judgeCall, raw string) (Verdict, error) {
 	if err := procgroup.Run(cmd, true); err != nil {
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) failed: %w: %s", id, script, err, strings.TrimSpace(stderr.String()))
 	}
-	if j.shaped() {
+	if j.shaped() || j.batched() {
 		return shapeMockedAnswer(j, id, script, stdout.Bytes(), timeout)
 	}
 	var out struct {
@@ -145,13 +148,17 @@ func shapeMockedAnswer(j judgeCall, id, script string, answer []byte, timeout ti
 	case expired:
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s): checking its answer (response_schema, post_process) did not finish in %s", id, script, timeout)
 	case code == 0:
-		return staged.withMetadata(Verdict{Reason: passReasonFromVerifierOutput(stderr, stdout)}), nil
+		v := staged.accepted(passReasonFromVerifierOutput(stderr, stdout))
+		if v.NoVerdict {
+			return Verdict{}, fmt.Errorf("the mock for judge %q (%s) gave an answer the check could not use: %s", id, script, v.Reason)
+		}
+		return v, nil
 	}
 	reason := reasonFromVerifierOutput(stderr)
 	if code != finalRejectionExit || reason == "" || isNoVerdictReason(reason) {
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) gave an answer the check could not use: %s", id, script, said)
 	}
-	v := staged.withMetadata(refuse(reason))
+	v := staged.rejected(refuse(reason))
 	if v.NoVerdict {
 		return Verdict{}, fmt.Errorf("the mock for judge %q (%s) gave an answer the check could not use: %s", id, script, v.Reason)
 	}

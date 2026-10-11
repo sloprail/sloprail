@@ -43,3 +43,6 @@ fields:
     type: string
     doc: Why a judge produced no verdict at all.
     enum: [usage limit, authentication, version skew, other]
+  - name: verdicts
+    type: unknown
+    doc: The verdicts, one per subject id, of a judge handed a batch of subjects.

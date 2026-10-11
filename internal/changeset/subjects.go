@@ -7,7 +7,8 @@ import (
 )
 
 // ParseSubjects reads what a rule's `subjects:` script printed: a JSON array of
-// {"id": "...", "files": ["..."], "fingerprint": "..."} (fingerprint optional). Each id must be
+// {"id": "...", "files": ["..."], "fingerprint": "...", "batch": "..."} (fingerprint and
+// batch optional; batch groups subjects, see Batches). Each id must be
 // unique and non-empty. A subject is a FILE subject when it names files (every one of them a
 // file the changeset selected: the verdict is keyed by their content, plus the fingerprint
 // when there is one) or any other subject (an FQN, say), which names no file and must then
@@ -21,9 +22,10 @@ func ParseSubjects(stdout []byte, cs Changeset) ([]Subject, error) {
 		ID          string   `json:"id"`
 		Files       []string `json:"files"`
 		Fingerprint string   `json:"fingerprint"`
+		Batch       *string  `json:"batch"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(string(stdout))), &raw); err != nil {
-		return nil, fmt.Errorf("printed something that is not a JSON array of {id, files, fingerprint}: %w", err)
+		return nil, fmt.Errorf("printed something that is not a JSON array of {id, files, fingerprint, batch}: %w", err)
 	}
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("named no subject, though the rule selected %d file(s)", len(cs.Files))
@@ -42,6 +44,9 @@ func ParseSubjects(stdout []byte, cs Changeset) ([]Subject, error) {
 			return nil, fmt.Errorf("subject id %q is named twice", r.ID)
 		case len(r.Files) == 0 && r.Fingerprint == "":
 			return nil, fmt.Errorf("subject %q names no file and has no fingerprint, so nothing says what its verdict is about", r.ID)
+		case r.Batch != nil && *r.Batch == "":
+			// An empty id is a bug in the script, not "no batch": omit the key for that.
+			return nil, fmt.Errorf("subject %q names an empty batch; omit \"batch\" to hand it alone", r.ID)
 		}
 		seen[r.ID] = true
 		for _, f := range r.Files {
@@ -49,7 +54,11 @@ func ParseSubjects(stdout []byte, cs Changeset) ([]Subject, error) {
 				return nil, fmt.Errorf("subject %q names %q, which the rule did not select", r.ID, f)
 			}
 		}
-		out = append(out, Subject{ID: r.ID, Files: r.Files, Context: map[string]any{}, Fingerprint: r.Fingerprint})
+		sub := Subject{ID: r.ID, Files: r.Files, Context: map[string]any{}, Fingerprint: r.Fingerprint}
+		if r.Batch != nil {
+			sub.Batch = *r.Batch
+		}
+		out = append(out, sub)
 	}
 	return out, nil
 }

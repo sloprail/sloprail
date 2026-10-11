@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -130,6 +131,7 @@ type changesetEvaluation struct {
 
 	mu       sync.Mutex
 	outcomes []CheckOutcome
+	batchOf  map[[2]string]string // rule and subject id -> the batch it runs in (guarded by mu)
 
 	// Under verify the rules of one range share one checkout of its head: nothing writes to a
 	// snapshot (it is read-only), and a checkout of a large tree is by far the dearest step.
@@ -212,10 +214,13 @@ func (ev *changesetEvaluation) checkStatus(rule string) ([]checkstore.CheckStatu
 type CheckOutcome struct {
 	Rule    string `json:"rule"`
 	Subject string `json:"subject"`
-	Kind    string `json:"kind"`
-	Status  string `json:"status"` // pass | fail | missing
-	Source  string `json:"source"` // ran | cached | stored
-	Reason  string `json:"reason,omitempty"`
+	// Batch is the batch the subject's checks were run in, when the rule's `subjects:` script
+	// put it in one.
+	Batch  string `json:"batch,omitempty"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"` // pass | fail | missing
+	Source string `json:"source"` // ran | cached | stored
+	Reason string `json:"reason,omitempty"`
 	// Metadata is what a judge check's post_process returned with its result, as stored.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
@@ -261,21 +266,21 @@ func forEach(n, limit int, fn func(i int)) {
 	wg.Wait()
 }
 
-// ruleRun is one rule mid-evaluation: prepared (changeset, snapshot) and carrying how
-// far its checks have got.
+// ruleRun is one subject of a rule mid-evaluation: what its checks are handed when it runs
+// alone, its verdict key, its run, and its outcome. Its checks run in a unit (one subject,
+// or the batch it is in), which carries how far they have got.
 type ruleRun struct {
 	g          declaration.FileGuard
 	req        dispatchcore.Request
 	payload    changeset.Payload
 	subject    changeset.Subject
 	unresolved []changeset.Unresolved
-	tree       *gitrepo.Snapshot
+	tree       *gitrepo.Snapshot // the unit's snapshot (the unit drops it)
 	head       string
 	base       string // the range's base, and the trees of base and head ("" when unreadable)
 	baseTree   string
 	headTree   string
 	runID      string
-	next       int // index of the first check not yet run
 
 	// key is the guard's verdict key over its subject ("" when it cannot be keyed).
 	key string
@@ -294,6 +299,43 @@ type ruleRun struct {
 	nothing     bool // the rule had nothing to run: it decided nothing unless it refused
 }
 
+// unit is one unit of execution of a rule: the subjects its checks are run on together, as
+// the rule's `subjects:` script grouped them (changeset.Batches). A subject it put in no
+// batch is a unit of its own, handed its `subject` payload as always; the subjects of one
+// batch id are one unit, handed the `batch` payload. Per subject (its ruleRun): the key, the
+// stored verdict, the in-flight lock, the requirements, the run and its steps. Per unit:
+// prepare, the script checks, the judges and their post_process, the judge slot.
+type unit struct {
+	g     declaration.FileGuard
+	batch string     // the batch id; "" for a subject handed alone
+	runs  []*ruleRun // its subjects, in the order the `subjects:` script printed them
+	cs    changeset.Changeset
+	rng   gitrepo.Range
+	tree  *gitrepo.Snapshot // the unit's snapshot, dropped once it is done
+	path  string            // the snapshot's path ("" for a lean verify)
+	next  int               // index of the first check not yet run
+}
+
+// alive are the unit's subjects still to be decided: a subject leaves its unit once it is
+// settled (a stored verdict, a refusal, an engine error).
+func (u *unit) alive() []*ruleRun {
+	var out []*ruleRun
+	for _, rr := range u.runs {
+		if !rr.settled {
+			out = append(out, rr)
+		}
+	}
+	return out
+}
+
+// label names the unit in progress lines: its subject, or its batch.
+func (u *unit) label(alive []*ruleRun) string {
+	if u.batch == "" {
+		return alive[0].subject.ID
+	}
+	return fmt.Sprintf("batch %s (%d subjects)", u.batch, len(alive))
+}
+
 // evaluateChangesets evaluates every file-guard over rng and returns each refusal, in
 // the order the guards were declared, with every check's outcome. root is the
 // repository root; store may be nil. In verify mode nothing is recorded.
@@ -305,15 +347,17 @@ type ruleRun struct {
 // Rules are independent, so they run concurrently (SLOPRAIL_STOP_CONCURRENCY, default
 // 6) in three steps:
 //
-//  1. prepare every rule: its changeset and snapshot;
-//  2. the CHEAP checks of every rule: its requirements and the script checks that
-//     precede its first judge, in declared order. A refusal here settles that rule
-//     alone: its own judges are skipped (with the reason);
-//  3. the rest of every rule that did not refuse (its judges and what follows)
+//  1. prepare every rule: its changeset and its units of execution (each subject alone, or
+//     the batches its `subjects:` script grouped subjects in), a snapshot per unit;
+//  2. the CHEAP checks of every unit: each subject's stored verdict and requirements, then
+//     the script checks that precede the rule's first judge, in declared order. A refusal
+//     here settles that subject alone: its own judges are skipped (with the reason);
+//  3. the rest of every unit with a subject still undecided (its judges and what follows)
 //     concurrently, so one rule's refusal never hides another rule's judges.
 //
-// Within a rule the declared order and first-refusal-ends are kept. The judged
-// verdicts are put in the cache once, at the end (one write per run).
+// Within a unit the declared order is kept, and a subject's first refusal ends it for that
+// subject; the others of its batch go on. The judged verdicts are put in the cache once, at
+// the end (one write per run).
 // sr:invariant fileguard/refusals-independent
 func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 	guards := p.Guards
@@ -350,8 +394,8 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		ev.diags[g.Qualified()] = &bytes.Buffer{} // filled before the pool: read-only map after
 	}
 
-	prepared := make([][]*ruleRun, len(guards)) // each rule's subjects, ready to run
-	skipped := make([]*ruleRun, len(guards))    // a rule with nothing to run: its outcome
+	prepared := make([][]*unit, len(guards)) // each rule's units, ready to run
+	skipped := make([]*ruleRun, len(guards)) // a rule with nothing to run: its outcome
 	forEach(len(guards), limit, func(i int) {
 		g := guards[i]
 		if IsLaunchedBy(os.Getenv, g.Name) {
@@ -360,34 +404,33 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 				g.Name, LaunchedByEnv)
 			return
 		}
-		rrs, r, refused := ev.prepare(g)
-		if len(rrs) == 0 {
+		units, r, refused := ev.prepare(g)
+		if len(units) == 0 {
 			skipped[i] = &ruleRun{g: g, result: r, refused: refused, settled: true, nothing: true}
 			return
 		}
-		prepared[i] = rrs
+		prepared[i] = units
 	})
-	var runs, out []*ruleRun // every subject to run; every outcome, in declaration order
+	var units []*unit  // every unit to run
+	var out []*ruleRun // every outcome, in declaration order
 	for i := range guards {
 		if skipped[i] != nil {
 			out = append(out, skipped[i])
 		}
-		runs = append(runs, prepared[i]...)
-		out = append(out, prepared[i]...)
+		units = append(units, prepared[i]...)
+		for _, u := range prepared[i] {
+			out = append(out, u.runs...)
+		}
 	}
 
-	ev.total.Store(int32(len(runs)))
+	ev.total.Store(int32(len(out) - countNonNil(skipped)))
 	// The cheap checks of every rule, before any judge.
-	forEach(len(runs), limit, func(i int) {
-		if runs[i] != nil {
-			ev.runCheap(runs[i])
-		}
-	})
+	forEach(len(units), limit, func(i int) { ev.runCheap(units[i]) })
 	// A refusal in one rule defers only that rule's own judges; every other rule's
 	// judges still run.
-	forEach(len(runs), limit, func(i int) {
-		if runs[i] != nil && !runs[i].settled {
-			ev.runRest(runs[i])
+	forEach(len(units), limit, func(i int) {
+		if len(units[i].alive()) > 0 {
+			ev.runRest(units[i])
 		}
 	})
 
@@ -416,6 +459,9 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 	ev.errMu.Unlock()
 	fmt.Fprintf(errw, "sloprail: file-guards evaluated in %s (%d rules, concurrency %d)\n",
 		time.Since(start).Round(time.Millisecond), len(guards), limit)
+	for i, o := range ev.outcomes {
+		ev.outcomes[i].Batch = ev.batchOf[[2]string{o.Rule, o.Subject}]
+	}
 	sort.SliceStable(ev.outcomes, func(i, j int) bool {
 		a, b := ev.outcomes[i], ev.outcomes[j]
 		if a.Rule != b.Rule {
@@ -427,6 +473,17 @@ func Evaluate(p Params) ([]FileGuardResult, []CheckOutcome) {
 		return a.Kind < b.Kind
 	})
 	return refusals, ev.outcomes
+}
+
+// countNonNil counts the rules that had nothing to run.
+func countNonNil(rrs []*ruleRun) int {
+	n := 0
+	for _, rr := range rrs {
+		if rr != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // refusal is the result for a rule that could not be evaluated or that refused.
@@ -482,11 +539,12 @@ func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checks
 		g.Name, err), nil)), true
 }
 
-// prepare readies one rule over the range: the changeset, the snapshot, and the run recorded
-// RUNNING. A nil ruleRun means there is nothing more to do — the result and whether it
-// refused are the outcome.
+// prepare readies one rule over the range: the changeset, its units (each subject alone, or
+// the batches the `subjects:` script grouped them in), a snapshot per unit, and each
+// subject's run recorded RUNNING. No unit means there is nothing more to do — the result and
+// whether it refused are the outcome.
 // sr:invariant fileguard/nothing-selected-passes
-func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, FileGuardResult, bool) {
+func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*unit, FileGuardResult, bool) {
 	rule := g.Qualified()
 	// RULE AGE: the range is the stated one, raised to the rule's floor (the parent of its last
 	// change) when that is later, so work made before the rule existed is not its debt.
@@ -608,8 +666,10 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		}
 	}
 
-	rrs := make([]*ruleRun, 0, len(subjects))
-	for i, sub := range subjects {
+	// One snapshot per unit: units run concurrently, and each drops its own once done.
+	groups := changeset.Batches(subjects)
+	units := make([]*unit, 0, len(groups))
+	for i, grp := range groups {
 		if i > 0 && !lean {
 			if tree, err = snapshot(); err != nil {
 				dropAll()
@@ -620,21 +680,40 @@ func (ev *changesetEvaluation) prepare(g declaration.FileGuard) ([]*ruleRun, Fil
 		if tree != nil {
 			treePath = tree.Path
 		}
-		req := ev.requestFor(g, r, subjectChangeset(cs, sub), sub, treePath, unresolved)
-		// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
-		// never reads as a pass.
-		subRun := run
-		if g.Subjects != "" {
-			subRun.Metadata = map[string]any{"eventKind": changeset.Kind, "subject": sub.ID}
+		u := &unit{g: g, batch: grp.Batch, cs: cs, rng: r, tree: tree, path: treePath}
+		for _, at := range grp.Subjects {
+			sub := subjects[at]
+			req := ev.requestFor(g, r, changeset.NewPayload(subjectChangeset(cs, sub), sub, ev.params.Transcript), treePath)
+			// Recorded RUNNING, finished only once every check is stored: a run that dies half-way
+			// never reads as a pass.
+			subRun := run
+			if g.Subjects != "" {
+				subRun.Metadata = map[string]any{"eventKind": changeset.Kind, "subject": sub.ID}
+				if sub.Batch != "" {
+					subRun.Metadata["batch"] = sub.Batch
+					ev.noteBatch(g.Qualified(), sub)
+				}
+			}
+			runID, err := ev.record(subRun)
+			if err != nil {
+				dropAll()
+				return ev.fail(g, run, err)
+			}
+			u.runs = append(u.runs, &ruleRun{g: g, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head, base: r.Base, baseTree: run.BaseTree, headTree: run.HeadTree})
 		}
-		runID, err := ev.record(subRun)
-		if err != nil {
-			dropAll()
-			return ev.fail(g, run, err)
-		}
-		rrs = append(rrs, &ruleRun{g: g, req: req, payload: *req.Changeset, subject: sub, runID: runID, unresolved: unresolved, tree: tree, head: r.Head, base: r.Base, baseTree: run.BaseTree, headTree: run.HeadTree})
+		units = append(units, u)
 	}
-	return rrs, FileGuardResult{}, false
+	return units, FileGuardResult{}, false
+}
+
+// noteBatch remembers the batch a subject runs in, for the outcomes this evaluation reports.
+func (ev *changesetEvaluation) noteBatch(rule string, sub changeset.Subject) {
+	ev.mu.Lock()
+	defer ev.mu.Unlock()
+	if ev.batchOf == nil {
+		ev.batchOf = map[[2]string]string{}
+	}
+	ev.batchOf[[2]string{rule, sub.ID}] = sub.Batch
 }
 
 // ruleRange is the stated range raised to the rule's floor (the parent of its last change)
@@ -728,14 +807,26 @@ type Shown struct {
 	Range      gitrepo.Range
 	RuleHash   string
 	Unresolved []changeset.Unresolved
-	// Subjects: one per `subjects:` entry, or the whole changeset when the rule has none.
+	// Subjects: one per `subjects:` entry handed alone, or the whole changeset when the rule
+	// has no `subjects:` script.
 	Subjects []ShownSubject
+	// Batches: one per batch the `subjects:` script grouped subjects in, in order of first
+	// appearance.
+	Batches []ShownBatch
 }
 
 // ShownSubject is one subject and the payload its checks receive.
 type ShownSubject struct {
 	ID      string
 	Payload changeset.Payload
+}
+
+// ShownBatch is one batch: its subjects, and the payload its checks receive when none of
+// them has a stored verdict.
+type ShownBatch struct {
+	ID       string
+	Subjects []string
+	Payload  changeset.Payload
 }
 
 // Show builds, for one rule and with no store, exactly what Evaluate would hand it: the
@@ -781,18 +872,27 @@ func Show(p Params, g declaration.FileGuard) (Shown, error) {
 			return out, err
 		}
 	}
-	for _, sub := range subjects {
-		out.Subjects = append(out.Subjects, ShownSubject{ID: sub.ID, Payload: changeset.NewPayload(cs, sub, p.Transcript)})
+	for _, grp := range changeset.Batches(subjects) {
+		if grp.Batch == "" {
+			sub := subjects[grp.Subjects[0]]
+			out.Subjects = append(out.Subjects, ShownSubject{ID: sub.ID, Payload: changeset.NewPayload(cs, sub, p.Transcript)})
+			continue
+		}
+		b := changeset.Batch{ID: grp.Batch}
+		for _, at := range grp.Subjects {
+			b.Subjects = append(b.Subjects, subjects[at])
+		}
+		out.Batches = append(out.Batches, ShownBatch{ID: b.ID, Subjects: b.IDs(), Payload: batchPayload(cs, b, p.Transcript)})
 	}
 	return out, nil
 }
 
-// requestFor is what a rule's checks are handed for one subject of the changeset.
-func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Range, cs changeset.Changeset, sub changeset.Subject, tree string, unresolved []changeset.Unresolved) dispatchcore.Request {
-	payload := changeset.NewPayload(cs, sub, ev.params.Transcript)
+// requestFor is what a rule's checks are handed with a payload (one subject's, or a batch's):
+// the event carries the payload's citations.
+func (ev *changesetEvaluation) requestFor(g declaration.FileGuard, r gitrepo.Range, payload changeset.Payload, tree string) dispatchcore.Request {
 	return dispatchcore.Request{
 		Nature:         dispatchcore.NatureFileGuard,
-		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.Citations))}},
+		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(changeset.Plain(payload.Changeset.Citations))}},
 		TranscriptPath: ev.params.Transcript,
 		Subagent:       ev.params.Subagent,
 		Dir:            g.Dir,
@@ -824,7 +924,7 @@ func (ev *changesetEvaluation) agentEnv(env ...string) []string {
 func (ev *changesetEvaluation) guardSubjects(g declaration.FileGuard, r gitrepo.Range, cs changeset.Changeset, tree string) ([]changeset.Subject, error) {
 	trusted := cs
 	TrustTrailers(&trusted)
-	req := ev.requestFor(g, r, trusted, changeset.Whole(trusted), tree, nil)
+	req := ev.requestFor(g, r, changeset.NewPayload(trusted, changeset.Whole(trusted), ev.params.Transcript), tree)
 	out, v, err := ev.runner.RunSubjects(withoutSession(req), g.Subjects)
 	if err != nil {
 		return nil, fmt.Errorf("its subjects script %q could not run: %w", g.Subjects, err)
@@ -840,7 +940,7 @@ func (ev *changesetEvaluation) guardSubjects(g declaration.FileGuard, r gitrepo.
 }
 
 // fail is engineFailure in prepare's three-value shape.
-func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.CheckRun, err error) ([]*ruleRun, FileGuardResult, bool) {
+func (ev *changesetEvaluation) fail(g declaration.FileGuard, run checkstore.CheckRun, err error) ([]*unit, FileGuardResult, bool) {
 	r, refused := ev.engineFailure(g, run, err)
 	return nil, r, refused
 }
@@ -863,56 +963,132 @@ func (ev *changesetEvaluation) dropTree(g declaration.FileGuard, tree *gitrepo.S
 	}
 }
 
-// runCheap runs a rule's requirements and the script checks before its first judge,
-// settling the rule if it refused or has no judge to wait on.
-func (ev *changesetEvaluation) runCheap(rr *ruleRun) {
+// runCheap runs what a unit can decide before any judge: each subject's stored verdict (a
+// subject that has one leaves the unit before anything runs) and its requirements, then the
+// unit's script checks that precede its first judge, in declared order. A subject refused
+// here is settled, its judges recorded as deferred; the unit is settled once no subject is
+// left in it or no check is.
+// sr:invariant fileguard/settled-subject-leaves-its-batch
+func (ev *changesetEvaluation) runCheap(u *unit) {
 	t := time.Now()
-	defer func() { rr.cheap = time.Since(t) }()
-	if v, err, settled := ev.lookup(rr); settled {
-		ev.finish(rr, v, err)
-		return
-	}
-	v, err := ev.runRequires(rr)
-	if err == nil && !v.Refused {
-		for rr.next < len(rr.g.Checks) && rr.g.Checks[rr.next].Script != "" {
-			if v, err = ev.runCheck(rr, rr.next); err != nil || v.Refused {
-				break
+	defer func() {
+		for _, rr := range u.runs {
+			rr.cheap = time.Since(t)
+		}
+	}()
+	for _, rr := range u.runs {
+		if v, err, settled := ev.lookup(rr); settled {
+			ev.finish(rr, v, err)
+			continue
+		}
+		v, err := ev.runRequires(rr)
+		if err != nil || v.Refused {
+			if err == nil {
+				ev.skipDeferred(rr, 0)
 			}
-			rr.next++
+			ev.finish(rr, v, err)
 		}
 	}
-	if err != nil || v.Refused || rr.next >= len(rr.g.Checks) {
-		if err == nil && v.Refused {
-			ev.skipDeferred(rr)
+	checks := u.g.Checks
+	for ; u.next < len(checks) && checks[u.next].Script != "" && len(u.alive()) > 0; u.next++ {
+		ev.runStep(u, u.next, true)
+	}
+	if u.next >= len(checks) {
+		for _, rr := range u.alive() {
+			ev.finish(rr, dispatchcore.Verdict{}, nil)
 		}
-		ev.finish(rr, v, err)
+	}
+	if len(u.alive()) == 0 {
+		ev.dropUnitTree(u)
 	}
 }
 
-// runRest runs what is left of a rule: its judges, in declared order, and the checks
-// after them, stopping at the first refusal.
-func (ev *changesetEvaluation) runRest(rr *ruleRun) {
+// runRest runs what is left of a unit: its judges, in declared order, and the checks after
+// them, each on the subjects still in the unit. A subject refused by a check leaves; the
+// others go on to the next check; those still in at the end pass.
+func (ev *changesetEvaluation) runRest(u *unit) {
 	t := time.Now()
-	defer func() { rr.slow = time.Since(t) }()
-	defer ev.releaseInflight(rr) // after finish: the verdict is stored before the key is let go
-	if v, err, settled := ev.claimInflight(rr); settled {
-		ev.finish(rr, v, err)
-		return
-	}
-	var v dispatchcore.Verdict
-	var err error
-	for ; rr.next < len(rr.g.Checks); rr.next++ {
-		if v, err = ev.runCheck(rr, rr.next); err != nil || v.Refused {
-			break
+	defer func() {
+		for _, rr := range u.runs {
+			rr.slow = time.Since(t)
+		}
+	}()
+	defer ev.dropUnitTree(u)
+	// After every finish: each verdict is stored before its key is let go.
+	defer func() {
+		for _, rr := range u.runs {
+			ev.releaseInflight(rr)
+		}
+	}()
+	// The in-flight locks are taken in one order (by key) whatever the batch, so two runs
+	// whose batches share subjects cannot each hold what the other waits for.
+	claim := u.alive()
+	sort.SliceStable(claim, func(i, j int) bool { return claim[i].key < claim[j].key })
+	for _, rr := range claim {
+		if v, err, settled := ev.claimInflight(rr); settled {
+			ev.finish(rr, v, err)
 		}
 	}
-	ev.finish(rr, v, err)
+	for ; u.next < len(u.g.Checks) && len(u.alive()) > 0; u.next++ {
+		ev.runStep(u, u.next, false)
+	}
+	for _, rr := range u.alive() {
+		ev.finish(rr, dispatchcore.Verdict{}, nil)
+	}
 }
 
-// skipDeferred records, for a rule that refused on a cheap check, each judge it did not
-// reach as a skip with the reason, so a judge is never silently absent.
-func (ev *changesetEvaluation) skipDeferred(rr *ruleRun) {
-	for i := rr.next; i < len(rr.g.Checks); i++ {
+// runStep runs check i on the subjects still in the unit and settles each it refused (or
+// could not decide). cheap: a refusal also records the judges it defers.
+func (ev *changesetEvaluation) runStep(u *unit, i int, cheap bool) {
+	alive := u.alive()
+	c := u.g.Checks[i]
+	d := ev.decide(u.g, ev.request(u, alive), c, u.label(alive))
+	for _, rr := range alive {
+		v, err := ev.recordStep(rr, i, c, d)
+		switch {
+		case err != nil:
+			ev.finish(rr, v, err)
+		case v.Refused:
+			if cheap {
+				ev.skipDeferred(rr, i+1)
+			}
+			ev.finish(rr, v, nil)
+		}
+	}
+}
+
+// request is what a unit's checks are handed now. A subject handed alone gets its own
+// request, as it always has; a batch gets the batch payload over the subjects still in it
+// (even one), and the citations that are evidence for any of them.
+// sr:invariant fileguard/batch-payload-only-when-batched
+func (ev *changesetEvaluation) request(u *unit, alive []*ruleRun) dispatchcore.Request {
+	if u.batch == "" {
+		return alive[0].req
+	}
+	b := changeset.Batch{ID: u.batch}
+	for _, rr := range alive {
+		b.Subjects = append(b.Subjects, rr.subject)
+	}
+	return ev.requestFor(u.g, u.rng, batchPayload(u.cs, b, ev.params.Transcript), u.path)
+}
+
+// batchPayload is what a batch's checks receive: the changeset with the citations that are
+// evidence for one of its subjects, and the batch in place of a subject.
+func batchPayload(cs changeset.Changeset, b changeset.Batch, transcriptPath string) changeset.Payload {
+	cs.Citations = append([]changeset.Citation{}, cs.EvidenceForBatch(b)...)
+	return changeset.NewBatchPayload(cs, b, transcriptPath)
+}
+
+// dropUnitTree removes the unit's snapshot, once.
+func (ev *changesetEvaluation) dropUnitTree(u *unit) {
+	ev.dropTree(u.g, u.tree, u.rng.Head)
+	u.tree = nil
+}
+
+// skipDeferred records, for a subject refused before its judges ran, each judge from check
+// `from` on as a skip with the reason, so a judge is never silently absent.
+func (ev *changesetEvaluation) skipDeferred(rr *ruleRun, from int) {
+	for i := from; i < len(rr.g.Checks); i++ {
 		c := rr.g.Checks[i]
 		if c.Judge == "" {
 			continue
@@ -946,7 +1122,6 @@ func (ev *changesetEvaluation) finish(rr *ruleRun, verdict dispatchcore.Verdict,
 			ev.progressf("sloprail: file-guard %s %s: %s (%d/%d settled, %s)", g.Attribution(), rr.subject.ID, status, n, ev.total.Load(), ev.elapsed())
 		}
 	}()
-	ev.dropTree(rr.g, rr.tree, rr.head)
 	if failed != nil {
 		rr.result, rr.refused = refusal(g, namingFiles(failed.Error(), rr.payload.Changeset.Files)), true
 		var down *judgesUnavailableError
@@ -1248,66 +1423,70 @@ func describeCommit(cs changeset.Changeset, sha string) string {
 	return short(sha)
 }
 
-// runCheck runs one check of a rule and records it, after its prepare (run up front, see
-// prepareAll). Whether it needs running at all was settled by the guard's key (see lookup):
-// a hit never gets here, and a step an interrupted run already passed is carried over.
-func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdict, error) {
-	g, req, runID, c := rr.g, rr.req, rr.runID, rr.g.Checks[i]
-	rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: checkKind(i, c)}
-	out := CheckOutcome{Rule: g.Qualified(), Subject: rec.Subject, Kind: rec.Kind, Source: "ran"}
-	fail := func(err error) (dispatchcore.Verdict, error) {
-		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
-		_ = ev.recordCheck(runID, rec) // already failing
-		return dispatchcore.Verdict{}, engineError(g, err)
-	}
-	settle := func(v dispatchcore.Verdict, meta map[string]any) (dispatchcore.Verdict, error) {
-		rec.Status = checkstore.StatusPass
-		if meta == nil {
-			meta = map[string]any{}
-		}
-		// Every verdict keeps its reasoning, a pass included: what the judge said is the
-		// record of why the range was let through.
-		if v.Refused {
-			rec.Status = checkstore.StatusFail
-		}
-		if v.Refused || v.Reason != "" {
-			meta["reasoning"] = v.Reason
-		}
-		// What a judge's post_process returned is kept with the verdict it came with.
-		// sr:invariant cache/stored-verdict-keeps-metadata
-		if v.Metadata != nil {
-			meta[judgeMetadataKey] = v.Metadata
-			out.Metadata = v.Metadata
-		}
-		rec.Metadata = meta
-		if err := ev.recordCheck(runID, rec); err != nil {
-			return dispatchcore.Verdict{}, engineError(g, err)
-		}
-		out.Status, out.Reason = rec.Status, ""
-		if v.Refused {
-			out.Reason = v.Reason
-		}
-		ev.note(out)
-		return v, nil
-	}
+// decision is what one check concluded for the subjects it was handed together, before any
+// of it is recorded: no verdict (err, an engine failure, recorded as an error on each), a
+// skip (prepare asked for it), or a verdict, which may hold one verdict per subject
+// (Verdict.For).
+type decision struct {
+	err     error          // the engine failure; nil when the check decided
+	errMeta map[string]any // what each subject's error row records
+	skip    bool
+	verdict dispatchcore.Verdict
+	meta    map[string]any // the engine's own keys each step row records (the judge's model)
+}
 
+// decide runs one check for one request, after its prepare: a subject's own request or a
+// batch's. Whether it needs running at all was settled by each subject's key (see lookup): a
+// hit never gets here, and a step an interrupted run already passed is carried over. label
+// names what is judged in progress lines.
+func (ev *changesetEvaluation) decide(g declaration.FileGuard, req dispatchcore.Request, c declaration.Check, label string) decision {
+	failed := func(err error) decision {
+		return decision{err: engineError(g, err), errMeta: map[string]any{"reasoning": err.Error()}}
+	}
 	// prepare (a judge's or a script's) adds its additionalContext to what the check is given.
 	prep, pv, err := ev.runner.PrepareJudge(req, c)
 	if err != nil {
-		return fail(err)
+		return failed(err)
 	}
 	if pv.Refused && pv.NoVerdict {
 		// prepare could not run: an engine-side failure, recorded as an error, never as a verdict.
-		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": pv.Reason, noVerdictMeta: true}
-		_ = ev.recordCheck(runID, rec) // already failing
-		return dispatchcore.Verdict{}, engineError(g, errors.New(pv.Reason))
+		return decision{err: engineError(g, errors.New(pv.Reason)), errMeta: map[string]any{"reasoning": pv.Reason, noVerdictMeta: true}}
 	}
 	if pv.Refused {
 		// A refusal of prepare is the check's verdict (fail-closed): stored and replayed like
 		// any other, so the Stop's verify reads it instead of "not judged yet".
-		return settle(pv, map[string]any{"model": c.Model})
+		return decision{verdict: pv, meta: map[string]any{"model": c.Model}}
 	}
 	if prep.Skip {
+		return decision{skip: true}
+	}
+	var v dispatchcore.Verdict
+	meta := map[string]any{}
+	if c.Script != "" {
+		v, err = ev.runner.RunScript(req, c, prep)
+	} else {
+		meta["model"] = c.Model
+		v, err = ev.judgeInSlot(g, label, c, func() (dispatchcore.Verdict, error) { return ev.runner.Judge(req, c, prep) })
+	}
+	if err != nil {
+		return failed(err)
+	}
+	return decision{verdict: v, meta: meta}
+}
+
+// recordStep records what check i decided for one subject, as that subject's own step, and
+// returns the subject's verdict (or the engine failure that is no verdict).
+// sr:invariant fileguard/one-verdict-per-subject
+func (ev *changesetEvaluation) recordStep(rr *ruleRun, i int, c declaration.Check, d decision) (dispatchcore.Verdict, error) {
+	g, runID := rr.g, rr.runID
+	rec := checkstore.CheckRecord{Subject: rr.subject.ID, Kind: checkKind(i, c)}
+	out := CheckOutcome{Rule: g.Qualified(), Subject: rec.Subject, Kind: rec.Kind, Source: "ran"}
+	if d.err != nil {
+		rec.Status, rec.Metadata = checkstore.StatusError, maps.Clone(d.errMeta)
+		_ = ev.recordCheck(runID, rec) // already failing
+		return dispatchcore.Verdict{}, d.err
+	}
+	if d.skip {
 		rec.Status, rec.Metadata = checkstore.StatusSkip, map[string]any{"reasoning": "prepare asked to skip the check", "model": c.Model}
 		if err := ev.recordCheck(runID, rec); err != nil {
 			return dispatchcore.Verdict{}, engineError(g, err)
@@ -1316,21 +1495,12 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		ev.note(out)
 		return dispatchcore.Verdict{}, nil
 	}
-	var v dispatchcore.Verdict
-	meta := map[string]any{}
-	if c.Script != "" {
-		v, err = ev.runner.RunScript(req, c, prep)
-	} else {
-		meta["model"] = c.Model
-		v, err = ev.judgeInSlot(rr, c, func() (dispatchcore.Verdict, error) { return ev.runner.Judge(req, c, prep) })
-	}
-	if err != nil {
-		return fail(err)
-	}
+	v := d.verdict.For(rr.subject.ID)
 	if returnedNoVerdict(v) {
-		// The judge never produced a verdict (it answered nothing parseable): an engine-side
-		// failure, not a FAIL verdict on the content. It is recorded as an error, never as a
-		// verdict under the key, so `verify` says "not judged yet" and the next `run` asks again.
+		// The check never produced a verdict on this subject (a judge that answered nothing
+		// parseable, a batch answer that did not name it): an engine-side failure, not a FAIL
+		// verdict on the content. It is recorded as an error, never as a verdict under the key,
+		// so `verify` says "not judged yet" and the next `run` asks again.
 		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": v.Reason, noVerdictMeta: true}
 		_ = ev.recordCheck(runID, rec) // already failing
 		failed := engineError(g, errors.New(v.Reason))
@@ -1339,7 +1509,35 @@ func (ev *changesetEvaluation) runCheck(rr *ruleRun, i int) (dispatchcore.Verdic
 		}
 		return dispatchcore.Verdict{}, failed
 	}
-	return settle(v, meta)
+	meta := maps.Clone(d.meta)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	rec.Status = checkstore.StatusPass
+	// Every verdict keeps its reasoning, a pass included: what the judge said is the
+	// record of why the range was let through.
+	if v.Refused {
+		rec.Status = checkstore.StatusFail
+	}
+	if v.Refused || v.Reason != "" {
+		meta["reasoning"] = v.Reason
+	}
+	// What a judge's post_process returned is kept with the verdict it came with.
+	// sr:invariant cache/stored-verdict-keeps-metadata
+	if v.Metadata != nil {
+		meta[judgeMetadataKey] = v.Metadata
+		out.Metadata = v.Metadata
+	}
+	rec.Metadata = meta
+	if err := ev.recordCheck(runID, rec); err != nil {
+		return dispatchcore.Verdict{}, engineError(g, err)
+	}
+	out.Status, out.Reason = rec.Status, ""
+	if v.Refused {
+		out.Reason = v.Reason
+	}
+	ev.note(out)
+	return v, nil
 }
 
 // incompleteReason is why the latest run left the rule's check over this subject without a
@@ -1749,18 +1947,20 @@ func (ev *changesetEvaluation) log(g declaration.FileGuard) io.Writer {
 // evaluate runs one rule on its own, start to finish: its cheap checks, then its
 // judges. The bool is whether it refused.
 func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (FileGuardResult, bool) {
-	rrs, r, refused := ev.prepare(g)
-	if len(rrs) == 0 {
+	units, r, refused := ev.prepare(g)
+	if len(units) == 0 {
 		return r, refused
 	}
 	var last FileGuardResult
 	any := false
-	for _, rr := range rrs {
-		if ev.runCheap(rr); !rr.settled {
-			ev.runRest(rr)
+	for _, u := range units {
+		if ev.runCheap(u); len(u.alive()) > 0 {
+			ev.runRest(u)
 		}
-		if rr.refused {
-			last, any = rr.result, true
+		for _, rr := range u.runs {
+			if rr.refused {
+				last, any = rr.result, true
+			}
 		}
 	}
 	return last, any
@@ -1849,23 +2049,24 @@ func (ev *changesetEvaluation) heartbeat(stop <-chan struct{}) {
 }
 
 // judgeInSlot runs one judge once the machine has a free judge slot (shared by every
-// parallel `sr-checks run`); it waits for one and never fails for want of it.
-func (ev *changesetEvaluation) judgeInSlot(rr *ruleRun, c declaration.Check, judge func() (dispatchcore.Verdict, error)) (dispatchcore.Verdict, error) {
+// parallel `sr-checks run`); it waits for one and never fails for want of it. One call takes
+// one slot, whether it judges one subject or a batch; label names what it judges.
+func (ev *changesetEvaluation) judgeInSlot(g declaration.FileGuard, label string, c declaration.Check, judge func() (dispatchcore.Verdict, error)) (dispatchcore.Verdict, error) {
 	if ev.locks == nil {
 		return judge()
 	}
 	release, err := ev.locks.AcquireSlot()
 	if err != nil {
-		fmt.Fprintln(ev.log(rr.g), "sloprail: judge slots unavailable, judging without a limit:", err)
+		fmt.Fprintln(ev.log(g), "sloprail: judge slots unavailable, judging without a limit:", err)
 		return judge()
 	}
 	defer release()
 	ev.busy.Add(1)
 	defer ev.busy.Add(-1)
 	t := time.Now()
-	ev.progressf("sloprail: judging %s %s with %q", rr.g.Attribution(), rr.subject.ID, c.Judge)
+	ev.progressf("sloprail: judging %s %s with %q", g.Attribution(), label, c.Judge)
 	defer func() {
-		ev.progressf("sloprail: judged %s %s in %s", rr.g.Attribution(), rr.subject.ID, time.Since(t).Round(time.Second))
+		ev.progressf("sloprail: judged %s %s in %s", g.Attribution(), label, time.Since(t).Round(time.Second))
 	}()
 	return judge()
 }

@@ -1,0 +1,6 @@
+predicate: >-
+  Every {@ent:fileguard:Subject} in a {@ent:fileguard:Batch} gets its own
+  verdict, run record and steps under its own key: a check run on the batch
+  decides each subject by its own entry of {@fld:fileguard:Batch.verdicts}
+  when it returned them, and all of them alike when it did not.
+why: One subject's failure is stored as another's, or a batch's verdict cannot be replayed for the subject whose content did not change.
