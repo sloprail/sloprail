@@ -1,0 +1,12 @@
+doc: "Subjects of one rule that its checks are handed together, as the rule's subjects script grouped them, each still given its own verdict."
+fields:
+  - name: id
+    type: string
+    doc: "The batch's name, as the subjects script gave it."
+    constraint_expr: "non-empty"
+  - name: subjects
+    type: Subject[]
+    doc: "The subjects a check is handed in the batch, in the order the subjects script printed them."
+  - name: verdicts
+    type: unknown
+    doc: "What a check returns for the batch when it decides each subject on its own: one entry per subject id, each a pass, a reasoning and metadata."

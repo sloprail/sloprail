@@ -47,6 +47,8 @@
 package dispatch
 
 import (
+	"fmt"
+
 	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
@@ -261,6 +263,28 @@ type Verdict struct {
 	// refusal that is no verdict. It is kept with the stored verdict and never
 	// shown to the agent.
 	Metadata map[string]any
+
+	// Subjects is, for a check handed a batch that decided each of its subjects on its own (a
+	// judge's answer, a script's or a post_process's {"verdicts": ...}), each subject's verdict
+	// under its id: exactly the batch's ids. Nil when the verdict is the same for every subject
+	// the check was handed (a single subject, or a batch the check passed or failed whole).
+	// Read it through For.
+	Subjects map[string]Verdict
+}
+
+// For is the verdict a check reached for one subject it was handed: the subject's own
+// entry when the check decided each subject, else the verdict itself. A check that decided
+// per subject and has no entry for this one reached no verdict on it (fail-closed).
+// sr:invariant fileguard/one-verdict-per-subject
+func (v Verdict) For(id string) Verdict {
+	if v.Subjects == nil {
+		return v
+	}
+	if own, ok := v.Subjects[id]; ok {
+		return own
+	}
+	return refuseNoVerdict(fmt.Sprintf("the check decided its batch subject by subject and gave %q no verdict; "+
+		"refusing because a check that reached no verdict must not be read as approval", id))
 }
 
 // pass is the clean verdict.

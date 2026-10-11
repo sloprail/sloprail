@@ -1,7 +1,8 @@
 predicate: >-
   A rule whose {@ent:judges:Judge} has a {@fld:judges:Judge.response_schema}
   and no {@fld:judges:Judge.post_process} loads only when the schema
-  describes an {@fld:judges:Judge.answer} with a required boolean pass and a
-  string reasoning at its top level; any other schema is refused at load,
-  saying a post_process is needed.
+  describes an {@fld:judges:Judge.answer} that carries the verdict at its top
+  level: a required boolean pass and a string reasoning, or a required object
+  of {@fld:judges:Judge.verdicts}; any other schema is refused at load, saying
+  a post_process is needed.
 why: A judge answers in a shape nothing can read a verdict from, and every action it guards is refused or let through blind.

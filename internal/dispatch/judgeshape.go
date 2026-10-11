@@ -67,6 +67,8 @@ const (
 	reasonMetadataTooLarge     = "the check's post_process returned metadata over the limit of 65536 bytes"
 	reasonMetadataUnreadable   = "the check's post_process result could not be read back"
 	reasonRefusedForNoApproval = " Refusing because a check that reached no verdict must not be read as approval."
+	reasonBatchAnswerMismatch  = "the judge's answer did not hold exactly one verdict for each subject of its batch"
+	reasonBatchResultMismatch  = "the check's post_process did not print {\"verdicts\": {...}} with exactly one verdict for each subject of its batch"
 )
 
 // noVerdictReasons are the reasons that say the judge reached no verdict.
@@ -79,6 +81,8 @@ var noVerdictReasons = []string{
 	reasonPostProcessNoResult,
 	reasonMetadataTooLarge,
 	reasonMetadataUnreadable,
+	reasonBatchAnswerMismatch,
+	reasonBatchResultMismatch,
 }
 
 // isNoVerdictReason says a reason the verifier printed is one of its own fixed
@@ -99,12 +103,16 @@ type stagedJudge struct {
 	verifier     string
 	instruction  string
 	metadataPath string
+	// verdictsPath is, for a judge handed a batch, where the verifier leaves each subject's
+	// verdict ({"verdicts": ...}) once it accepted the answer; ids are the batch's subjects.
+	verdictsPath string
+	ids          []string
 }
 
 // stageJudge stages a judge's verifier. A non-empty refusal is why it could not
 // be staged; the model is then never asked.
 func stageJudge(j judgeCall) (staged stagedJudge, cleanup func(), refusal string) {
-	if !j.shaped() {
+	if !j.shaped() && !j.batched() {
 		verifier, cleanup, err := writeVerifier(j.GuardName)
 		if err != nil {
 			return stagedJudge{}, func() {}, fmt.Sprintf(
@@ -116,9 +124,10 @@ func stageJudge(j judgeCall) (staged stagedJudge, cleanup func(), refusal string
 }
 
 // stageShapedJudge stages the verifier of a check with a response_schema, a
-// post_process or both, in a directory of its own: the script, the judge's input
-// (for the post_process), and the files the script works in. A schema or a
-// post_process that is not there, or cannot be run, refuses here, before the model.
+// post_process or both, or of a judge handed a batch, in a directory of its own: the
+// script, the judge's input (for the post_process), and the files the script works
+// in. A schema or a post_process that is not there, or cannot be run, refuses here,
+// before the model.
 // sr:invariant judges/failed-post-process-refuses
 func stageShapedJudge(j judgeCall) (staged stagedJudge, cleanup func(), refusal string) {
 	none := func() {}
@@ -136,6 +145,11 @@ func stageShapedJudge(j judgeCall) (staged stagedJudge, cleanup func(), refusal 
 				j.ResponseSchema, err)
 		}
 		instruction = schemaInstruction(string(schema), j.PostProcess == "")
+		if j.batched() {
+			instruction = batchInstruction(j.Batch, string(schema), j.PostProcess != "")
+		}
+	} else if j.batched() {
+		instruction = batchInstruction(j.Batch, "", j.PostProcess != "")
 	}
 
 	var postProcess []string
@@ -178,17 +192,33 @@ func stageShapedJudge(j judgeCall) (staged stagedJudge, cleanup func(), refusal 
 		return fail(err)
 	}
 	staged = stagedJudge{verifier: filepath.Join(work, "verify.sh"), instruction: instruction}
-	if len(postProcess) > 0 {
-		staged.metadataPath = filepath.Join(work, "metadata.json")
-	}
-	script := shapedVerifierScript(shapedVerifier{
+	v := shapedVerifier{
 		Work:        work,
 		Schema:      schemaPath,
 		RuleDir:     j.Dir,
 		PostProcess: postProcess,
 		Env:         append(postProcessEnv(j), JudgeInputEnv+"="+inputPath),
-		Metadata:    staged.metadataPath,
-	})
+	}
+	var script string
+	if j.batched() {
+		ids, err := json.Marshal(j.Batch)
+		if err != nil {
+			return fail(err)
+		}
+		v.IDs = filepath.Join(work, "ids.json")
+		if err := os.WriteFile(v.IDs, ids, 0o600); err != nil {
+			return fail(err)
+		}
+		staged.verdictsPath, staged.ids = filepath.Join(work, "verdicts.json"), j.Batch
+		v.Verdicts = staged.verdictsPath
+		script = batchVerifierScript(v)
+	} else {
+		if len(postProcess) > 0 {
+			staged.metadataPath = filepath.Join(work, "metadata.json")
+		}
+		v.Metadata = staged.metadataPath
+		script = shapedVerifierScript(v)
+	}
 	if err := os.WriteFile(staged.verifier, []byte(script), 0o700); err != nil {
 		return fail(err)
 	}
@@ -279,6 +309,8 @@ type shapedVerifier struct {
 	PostProcess []string // the post_process's argv, nil for none
 	Env         []string // KEY=VALUE pairs the post_process is handed
 	Metadata    string   // where the post_process's metadata is left
+	IDs         string   // a batch's subject ids, as a JSON array in a file ("" unbatched)
+	Verdicts    string   // where a batch's per-subject verdicts are left
 }
 
 // shapedVerifierScript is the verify script of a check that shapes its answer.
@@ -325,14 +357,15 @@ func shapedVerifierScript(v shapedVerifier) string {
 	b.WriteString(`[ -n "$metadata" ] && rm -f "$metadata"
 `)
 	b.WriteString(verifierReadAnswer)
-	b.WriteString(shapedVerifierSteps)
+	b.WriteString(verifierSchemaStep)
+	b.WriteString(verifierPostProcessStep)
 	b.WriteString(verifierDecide)
 	return b.String()
 }
 
-// shapedVerifierSteps is the fixed middle of the shaped verify script: the schema
-// check and the post_process, between reading the answer and deciding on it.
-var shapedVerifierSteps = `# Text shown to the judge on a re-ask: bounded, and with the markers the engine
+// verifierSchemaStep is the shaped verify script's check of the answer against the
+// response_schema, and the helpers every later step uses.
+var verifierSchemaStep = `# Text shown to the judge on a re-ask: bounded, and with the markers the engine
 # scans for broken, so an answer cannot plant a verdict in its own complaint.
 for_judge() { head -c 4000 | sed 's/JUDGE-/JUDGE_/g'; }
 final() { printf 'JUDGE-REASON: %s\n' "$1" >&2; exit 3; }
@@ -359,7 +392,11 @@ if [ -n "$schema" ]; then
   fi
 fi
 
-if [ -n "$has_post_process" ]; then
+`
+
+// verifierPostProcessStep runs the post_process of a judge handed one subject, and
+// leaves its result in $json for verifierDecide.
+var verifierPostProcessStep = `if [ -n "$has_post_process" ]; then
   out="$(run_post_process < "$work/answer.json" 2> "$work/post-process.err")"
   code=$?
   if [ "$code" -eq "$reject_exit" ]; then

@@ -45,6 +45,9 @@ The output is JSON on stdout:
                       others, citations — each with the commits that carried it and the
                       files they changed), subject. A rule with a subjects: script
                       prints subjects, one payload per subject, from running that script.
+  batches             the batches that script grouped subjects in (a subject's "batch"):
+                      each {id, subjects, payload}, the payload carrying "batch" (its id and
+                      its subjects) in place of "subject", as the batch's checks receive it.
 
 Nothing is run and nothing is recorded. Where the session cannot be found from the environment
 (no harness session identity), quotes are not resolved.`,
@@ -67,6 +70,14 @@ type changesetOutput struct {
 	// Payload: what a check receives on stdin; with a `subjects:` script, one per subject.
 	Payload  *changeset.Payload `json:"payload,omitempty"`
 	Subjects []changesetSubject `json:"subjects,omitempty"`
+	// Batches: the subjects a `subjects:` script grouped, each batch with what its checks receive.
+	Batches []changesetBatch `json:"batches,omitempty"`
+}
+
+type changesetBatch struct {
+	ID       string            `json:"id"`
+	Subjects []string          `json:"subjects"`
+	Payload  changeset.Payload `json:"payload"`
 }
 
 type changesetSubject struct {
@@ -98,6 +109,9 @@ func runChangeset(cmd *cobra.Command, _ []string) error {
 	}
 	for _, s := range shown.Subjects {
 		out.Subjects = append(out.Subjects, changesetSubject{ID: s.ID, Payload: s.Payload})
+	}
+	for _, b := range shown.Batches {
+		out.Batches = append(out.Batches, changesetBatch{ID: b.ID, Subjects: b.Subjects, Payload: b.Payload})
 	}
 	if g.Subjects == "" && len(out.Subjects) == 1 {
 		out.Payload, out.Subjects = &out.Subjects[0].Payload, nil

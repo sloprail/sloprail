@@ -82,6 +82,8 @@ starts from each rule's effective base instead), and always exit 0: a reader's v
 
 --json prints each result as an object {rule, subject, kind, status, source, reason}; a judge check
 whose post_process returned metadata has it under "metadata", as it was stored with the verdict.
+A subject the rule's subjects: script put in a batch has its batch id under "batch" (and the text
+listing names it): its checks ran on the batch, its result is still its own.
 --failing keeps only what is not passing: a fail, a result still missing, or an error.
 --rule limits the listing to one file-guard, by folder name or qualified name.`,
 		Args: cobra.NoArgs,
@@ -284,6 +286,9 @@ func execute(cmd *cobra.Command, m mode) error {
 		} else {
 			for _, o := range outcomes {
 				line := fmt.Sprintf("%-7s %s  %s/%s  (%s)", o.Status, o.Rule, o.Subject, o.Kind, o.Source)
+				if o.Batch != "" {
+					line += "  [batch " + o.Batch + "]"
+				}
 				if o.Status == "skipped" && o.Reason != "" {
 					line += "  " + o.Reason
 				}

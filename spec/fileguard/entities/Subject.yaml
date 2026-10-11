@@ -12,3 +12,7 @@ fields:
     type: string
     doc: "What else the verdict depends on beyond the files."
     constraint_expr: "required when files is empty"
+  - name: batch
+    type: string
+    doc: "The batch the subject is handed to the rule's checks in, together with the other subjects of that batch; absent for a subject handed alone."
+    constraint_expr: "non-empty when present"

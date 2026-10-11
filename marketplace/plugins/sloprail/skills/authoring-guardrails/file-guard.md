@@ -77,6 +77,7 @@ A file-guard's checks get one `Changeset` on stdin instead of an event:
 - `citations` are the range's resolved `Sloprail-Cites-*` trailers ([grounding.md](grounding.md)).
 - `subject` is the unit being decided. A check's subject is, by default, the whole changeset,
   so a script loops over `.changeset.files[]`, as [check-template.sh](check-template.sh) does.
+  A batch's checks get `batch` instead ([below](#batch-subjects-judged-together)).
   A `require` is decided per file: its subject is one file, and the rest of the changeset is
   context.
 
@@ -117,6 +118,24 @@ on, and changing it re-judges that subject only. A subject that is not files (a 
 name) gives a `fingerprint` and no `files`. The script runs with no session, in CI too, so it
 must depend on nothing but the changeset and the repository. To judge each file on its own,
 return one subject per file.
+
+### `batch`: subjects judged together
+
+A subject may carry a `batch` id. The subjects of one batch are handed to every stage of the
+rule together (each `prepare`, script and judge runs once per batch, and a judge call takes
+one slot), and each still gets its own verdict, cache entry and row in `sr-checks show`:
+
+```json
+[{"id": "cwd/cd-dash", "files": ["spec/cwd.yaml"], "batch": "cwd"},
+ {"id": "cwd/home", "files": ["spec/cwd.yaml"], "batch": "cwd"}]
+```
+
+Its checks then find `.batch`, `{"id": "cwd", "subjects": [...]}`, in place of `.subject`,
+even when only one subject of it is left. A subject with a stored verdict leaves its batch
+before anything runs, a subject a check refuses leaves it before the next check, and a batch
+left empty runs nothing. Grouping is the script's decision: omit `batch` (never `""`) to hand
+a subject alone, exactly as before. What a batch's checks answer is in
+[script-checks.md](script-checks.md#a-batch) and [judge-checks.md](judge-checks.md#a-batch).
 
 ## Deleted files
 

@@ -1,0 +1,7 @@
+predicate: >-
+  {@fld:fileguard:Batch.verdicts} decide a {@ent:fileguard:Batch} only when
+  they hold exactly one well-formed entry for each id of its
+  {@fld:fileguard:Batch.subjects} and no other; a judge whose own answer
+  misses or adds an id is asked again, and any other result that does is no
+  verdict for every subject of the batch.
+why: A subject the judge never answered for is read as passed, or an entry for another subject decides one it was not about.

@@ -66,6 +66,9 @@ func (r Runner) runCheck(req Request, c declaration.Check) (Verdict, error) {
 //
 // A script's own prepare (optional) has run first: its additionalContext reaches the
 // script under that key of the payload.
+//
+// Handed a batch, a script that exits 0 may print {"verdicts": ...} to decide each subject
+// on its own (scriptBatchVerdict); a non-zero exit fails the whole batch.
 // sr:invariant checks/exit-status-is-the-verdict
 // sr:invariant checks/error-reports-are-not-answers
 func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Verdict, error) {
@@ -94,6 +97,10 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check, p Prepared) (Ve
 		return Verdict{}, err
 	}
 	if res.Passed {
+		if ids := req.batchIDs(); ids != nil {
+			// Handed a batch, a script that passed may still have decided each subject.
+			return scriptBatchVerdict(c.Script, ids, res.Stdout), nil
+		}
 		return pass(), nil
 	}
 	if res.Unrunnable || res.Errored {
@@ -235,6 +242,7 @@ func (r Runner) judgeCall(req Request, c declaration.Check, p Prepared) (judgeCa
 		SessionID:        req.SessionID,
 		TranscriptPath:   req.TranscriptPath,
 		AgentID:          req.AgentID,
+		Batch:            req.batchIDs(),
 	}, Verdict{}, nil
 }
 

@@ -148,7 +148,14 @@ type judgeCall struct {
 	SessionID        string
 	TranscriptPath   string
 	AgentID          string
+
+	// Batch is, for a judge handed a batch of subjects, their ids in order: the answer must
+	// hold exactly one verdict for each (batchjudge.go). Nil for a judge handed one subject.
+	Batch []string
 }
+
+// batched says the judge is handed a batch: it answers with a verdict per subject.
+func (j judgeCall) batched() bool { return j.Batch != nil }
 
 // shaped says the check shapes its judge's answer (a response_schema, a
 // post_process, or both), so the answer goes through the shaped verifier.
@@ -301,12 +308,12 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 		// sr-agent exited 0: the verifier accepted a passing verdict. Its reasoning
 		// rides on the verdict (a pass carries no refusal, so nothing shows it to
 		// the agent) for the check store to keep.
-		return staged.withMetadata(Verdict{Reason: passReasonFromVerifierOutput(stderr, stdout)}), nil
+		return staged.accepted(passReasonFromVerifierOutput(stderr, stdout)), nil
 	}
 	// Non-zero: either the verdict was `pass:false` (the verifier rejected it and
 	// sr-agent's attempts ran out) or the substrate failed. Both refuse; the
 	// reason is the verifier's complaint, which sr-agent writes to stderr.
-	return staged.withMetadata(judgeRefusal(stdout, stderr)), nil
+	return staged.rejected(judgeRefusal(stdout, stderr)), nil
 }
 
 // judgeCommand is the shell line that runs sr-agent for a judge.

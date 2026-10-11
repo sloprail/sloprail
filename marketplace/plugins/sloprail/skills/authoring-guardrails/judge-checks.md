@@ -40,7 +40,8 @@ It can use:
 
 - `change`, the unified diff: on a file-guard, of the files `match` selected over the range;
   on a gate, of the event's old content to its new;
-- on a file-guard, `changeset` and `subject` ([file-guard.md](file-guard.md#what-a-check-receives));
+- on a file-guard, `changeset` and `subject`, or `batch` in place of `subject` when the rule
+  batches its subjects ([file-guard.md](file-guard.md#what-a-check-receives));
 - on a gate or a context, `event` and its fields (`event.path`, `event.newContent`), and
   `context`;
 - `transcriptPath`, and `additionalContext` when a `prepare` produced one.
@@ -119,7 +120,26 @@ jq -c '{pass: all(.invariants[]; .code == "pass"),
 
 Either key works without the other. Without `response_schema`, `post_process` receives the
 default `{"pass": …, "reasoning": …}` answer. Without `post_process`, the schema must keep a
-required boolean `pass` and a string `reasoning` at its top level, or the rule fails to load.
+required boolean `pass` and a string `reasoning` at its top level (or, for a batch, a required
+object `verdicts`), or the rule fails to load.
+
+## A batch
+
+A judge handed a batch ([file-guard.md](file-guard.md#batch-subjects-judged-together)) gives
+one verdict per subject. sloprail lists the batch's ids under the template and asks, by
+default, for
+
+```json
+{"verdicts": {"<id>": {"pass": true, "reasoning": ""}, "<id>": {"pass": false, "reasoning": "…"}}}
+```
+
+with exactly the batch's ids. An answer that misses an id or names another is sent back to the
+judge naming them. `response_schema` still describes the whole answer, in any shape: a
+`post_process` then maps it to `{"verdicts": …}`, each entry `{pass, reasoning, metadata}`
+(`metadata` at most 64 KiB per subject), and exit 65 asks again for the whole batch. Its
+verdicts must hold exactly the batch's ids, or the batch fails closed with no verdict stored.
+Without a `post_process`, the schema must describe `{"verdicts": …}` itself. A judge that
+reaches no verdict leaves every subject of its batch without one.
 
 ## The model
 
