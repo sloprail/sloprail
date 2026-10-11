@@ -20,9 +20,27 @@ func (Harness) Binary() string { return Binary }
 
 // AuthFiles implements harness.Provisioner. On macOS Claude Code's login is in the
 // keychain (the launcher links ~/Library) and this file does not exist; everywhere else
-// the login IS this file, and a sandbox HOME without it is "Not logged in".
-func (Harness) AuthFiles() []string {
-	return []string{filepath.Join(".claude", ".credentials.json")}
+// the login IS this file, and a sandbox HOME without it is "Not logged in". The operator's
+// file is in Claude Code's config directory as Claude Code resolves it: $CLAUDE_CONFIG_DIR
+// when set, else ~/.claude. An operator running under CLAUDE_CONFIG_DIR is logged in
+// there; the default ~/.claude may hold another account's login, or none.
+func (Harness) AuthFiles(home string, getenv func(string) string) []harness.AuthFile {
+	return []harness.AuthFile{{
+		Real:   filepath.Join(operatorConfigDir(home, getenv), credentialsFile),
+		InHome: filepath.Join(".claude", credentialsFile),
+	}}
+}
+
+// credentialsFile is Claude Code's login file in its config directory.
+const credentialsFile = ".credentials.json"
+
+// operatorConfigDir is Claude Code's config directory for a process with that home and
+// environment: $CLAUDE_CONFIG_DIR wins, else <home>/.claude.
+func operatorConfigDir(home string, getenv func(string) string) string {
+	if dir := strings.TrimSpace(getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, ".claude")
 }
 
 // ConfigDirIn implements harness.Provisioner.

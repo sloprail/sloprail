@@ -20,7 +20,7 @@ func (Harness) Binary() string { return Binary }
 // AuthFiles implements harness.Provisioner: cursor-agent's login is in the platform's
 // keychain (measured: the token is a keychain item, not a file under ~/.cursor), which
 // the launcher's ~/Library link carries.
-func (Harness) AuthFiles() []string { return nil }
+func (Harness) AuthFiles(string, func(string) string) []harness.AuthFile { return nil }
 
 // ConfigDirIn implements harness.Provisioner.
 func (Harness) ConfigDirIn(home string) string { return filepath.Join(home, ".cursor") }

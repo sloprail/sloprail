@@ -163,6 +163,21 @@ func TestBaseAgentEnv_DropsAmbientSession(t *testing.T) {
 	}
 }
 
+// The operator's CLAUDE_CONFIG_DIR (or CODEX_HOME) is where THEIR login and state are: the
+// agent's harness must keep its config in its own HOME, so the variable never reaches it.
+// sr:proves authoring-tools/eval-agent-runs-isolated
+func TestBaseAgentEnv_DropsTheOperatorsConfigDir(t *testing.T) {
+	for _, id := range []string{"claude", "codex"} {
+		for _, kv := range baseAgentEnv(testHarness(t, id), []string{
+			"CLAUDE_CONFIG_DIR=/operator/claude", "CODEX_HOME=/operator/codex", "KEEP=1",
+		}, "/h", "/t", false) {
+			if key, _, _ := strings.Cut(kv, "="); key == "CLAUDE_CONFIG_DIR" && id == "claude" || key == "CODEX_HOME" && id == "codex" {
+				t.Errorf("%s: %s leaked into the agent env", id, kv)
+			}
+		}
+	}
+}
+
 // Two runs never share a temp root: each agent's TMPDIR is its own workspace's,
 // so a clone made through $TMPDIR or mktemp cannot collide with an earlier run's.
 func TestBaseAgentEnv_TMPDIRIsPerRun(t *testing.T) {

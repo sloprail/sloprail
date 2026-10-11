@@ -7,9 +7,12 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/sloprail/sloprail/internal/harness"
 )
 
-// A login file is LINKED into the agent's HOME (linkAuthFiles) so a token the
+// A login file is LINKED into the agent's HOME (linkAuthFiles) from the operator's real
+// one (harness.AuthFile.Real: where the operator's harness keeps it) so a token the
 // harness refreshes during the run lands in the operator's real file. That
 // holds only while the harness writes the file in place. One that saves by
 // writing a temporary file and renaming it over the path replaces the LINK
@@ -21,8 +24,8 @@ import (
 // and one that is no longer the link is written back to the real file and
 // linked again. The returned function stops the watch after one last pass, so
 // a refresh in the run's final moments is carried back too.
-func keepAuthLinked(ctx context.Context, realHome, home string, names []string) (stop func()) {
-	if len(names) == 0 {
+func keepAuthLinked(ctx context.Context, home string, files []harness.AuthFile) (stop func()) {
+	if len(files) == 0 {
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -37,7 +40,7 @@ func keepAuthLinked(ctx context.Context, realHome, home string, names []string) 
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				restoreAuthLinks(realHome, home, names)
+				restoreAuthLinks(home, files)
 			}
 		}
 	}()
@@ -46,7 +49,7 @@ func keepAuthLinked(ctx context.Context, realHome, home string, names []string) 
 		once.Do(func() {
 			cancel()
 			wg.Wait()
-			restoreAuthLinks(realHome, home, names)
+			restoreAuthLinks(home, files)
 		})
 	}
 }
@@ -54,10 +57,10 @@ func keepAuthLinked(ctx context.Context, realHome, home string, names []string) 
 // restoreAuthLinks carries back every login file the harness replaced; a
 // failure is said on stderr and tried again on the next pass, never fatal to
 // the run (the run is not what is at risk: the operator's login is).
-func restoreAuthLinks(realHome, home string, names []string) {
-	for _, name := range names {
-		if err := restoreAuthLink(filepath.Join(realHome, name), filepath.Join(home, name)); err != nil {
-			fmt.Fprintf(os.Stderr, "sr-eval: the login the agent refreshed could not be carried back to ~/%s: %v\n", name, err)
+func restoreAuthLinks(home string, files []harness.AuthFile) {
+	for _, f := range files {
+		if err := restoreAuthLink(f.Real, filepath.Join(home, f.InHome)); err != nil {
+			fmt.Fprintf(os.Stderr, "sr-eval: the login the agent refreshed could not be carried back to %s: %v\n", f.Real, err)
 		}
 	}
 }
